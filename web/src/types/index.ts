@@ -154,17 +154,34 @@ export interface ExamStabilityMetrics {
   score: number // 0..100
 }
 
-// 深度体检报告(当前仅稳定性段;speed/unlock 为后续段预留)
+// 深度体检 - 单区测速结果(成功含 TTFB 与下行速率,失败仅 error)
+export interface ExamRegionResult {
+  code: string
+  name: string
+  ttfb_ms: number
+  down_mbps: number
+  error?: string
+}
+
+// 深度体检 - 多地域测速段聚合结果(逐区一行)
+export interface ExamRegionSpeedMetrics {
+  regions: ExamRegionResult[]
+}
+
+// 深度体检报告(稳定性段 + 多地域测速段;unlock 为后续段预留)
 export interface ExamReport {
   stability?: ExamStabilityMetrics
+  region_speed?: ExamRegionSpeedMetrics
 }
 
 // 深度体检 SSE 事件帧
 export interface ExamEvent {
-  phase: 'sample' | 'section_done' | 'done' | 'error'
+  phase: 'sample' | 'region' | 'section_done' | 'done' | 'error'
   section?: string
   sample?: ExamStabilitySample
   metrics?: ExamStabilityMetrics
+  region?: ExamRegionResult
+  region_speed?: ExamRegionSpeedMetrics
   report?: ExamReport
   error?: string
 }
