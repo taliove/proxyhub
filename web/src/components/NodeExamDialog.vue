@@ -69,8 +69,38 @@
       />
     </section>
 
-    <!-- 后续段落占位:多地域测速、解锁(后续票据实现) -->
-    <section class="exam-placeholder">后续段落(多地域测速 / 解锁)将在此展示</section>
+    <!-- 多地域测速区(第二段):8 区串行,随 SSE 逐行到达。 -->
+    <section class="exam-section">
+      <header class="exam-section-head">
+        <span class="exam-section-title">多地域测速</span>
+        <span class="exam-section-sub">{{ regionPhaseText }}</span>
+      </header>
+
+      <table v-if="regions.length" class="exam-region-table">
+        <thead>
+          <tr>
+            <th>区域</th>
+            <th>延迟</th>
+            <th>下行速率</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in regions" :key="r.code">
+            <td>{{ r.name }}</td>
+            <td>{{ regionRowStatus(r) === 'error' ? '-' : formatTtfb(r.ttfb_ms) }}</td>
+            <td>{{ regionRowStatus(r) === 'error' ? '-' : formatMbps(r.down_mbps) }}</td>
+            <td :class="`exam-region-status exam-region-status-${regionRowStatus(r)}`">
+              {{ regionStatusText(r) }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="exam-region-empty">等待多地域测速…</div>
+    </section>
+
+    <!-- 后续段落占位:解锁(后续票据实现) -->
+    <section class="exam-placeholder">后续段落(解锁)将在此展示</section>
 
     <template #footer>
       <el-button v-if="!running && done" @click="rerun">重新体检</el-button>
@@ -81,7 +111,12 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { ExamEvent, ExamStabilityMetrics, ExamStabilitySample } from '@/types'
+import type {
+  ExamEvent,
+  ExamStabilityMetrics,
+  ExamStabilitySample,
+  ExamRegionResult
+} from '@/types'
 import {
   scoreColorVar,
   scoreLabel,
@@ -90,6 +125,13 @@ import {
   buildSparklinePoints,
   buildSparklinePath
 } from './exam/stability'
+import {
+  regionRowStatus,
+  regionStatusText,
+  formatTtfb,
+  formatMbps,
+  upsertRegionRow
+} from './exam/regionspeed'
 
 const SPARK_W = 300
 const SPARK_H = 56
@@ -100,9 +142,11 @@ const done = ref(false)
 const nodeName = ref('')
 const phaseText = ref('准备中…')
 const errorText = ref('')
+const regionPhaseText = ref('等待中…')
 
 const samples = ref<ExamStabilitySample[]>([])
 const metrics = ref<ExamStabilityMetrics | null>(null)
+const regions = ref<ExamRegionResult[]>([])
 
 let payload: { self_node_id?: number; node_key?: string } = {}
 let es: EventSource | null = null
@@ -145,7 +189,9 @@ const open = (p: { self_node_id?: number; node_key?: string }, name: string) => 
 const reset = () => {
   samples.value = []
   metrics.value = null
+  regions.value = []
   errorText.value = ''
+  regionPhaseText.value = '等待中…'
   done.value = false
 }
 
@@ -174,6 +220,11 @@ const onFrame = (e: MessageEvent) => {
 
   if (frame.phase === 'sample' && frame.sample) {
     samples.value = [...samples.value, frame.sample]
+  } else if (frame.phase === 'region' && frame.region) {
+    regions.value = upsertRegionRow(regions.value, frame.region)
+    regionPhaseText.value = '多地域测速中…'
+  } else if (frame.phase === 'section_done' && frame.section === 'region_speed') {
+    regionPhaseText.value = '多地域测速完成'
   } else if (frame.phase === 'section_done' && frame.metrics) {
     metrics.value = frame.metrics
     phaseText.value = '稳定性完成'
@@ -280,6 +331,36 @@ defineExpose({ open })
 }
 .exam-error {
   margin-top: var(--ph-space-3);
+}
+.exam-region-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ph-text-sm);
+}
+.exam-region-table th,
+.exam-region-table td {
+  padding: var(--ph-space-2) var(--ph-space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--ph-border-light);
+}
+.exam-region-table th {
+  font-weight: 600;
+  color: var(--ph-text-secondary);
+}
+.exam-region-status {
+  font-weight: 600;
+}
+.exam-region-status-ok {
+  color: var(--ph-success);
+}
+.exam-region-status-error {
+  color: var(--ph-danger);
+}
+.exam-region-empty {
+  padding: var(--ph-space-4);
+  text-align: center;
+  font-size: var(--ph-text-sm);
+  color: var(--ph-text-secondary);
 }
 .exam-placeholder {
   margin-top: var(--ph-space-4);

@@ -49,6 +49,12 @@ func TestHandleNodeExamStream_EventSequence(t *testing.T) {
 	det.SetExamConfigProvider(func() detection.ExamConfig {
 		return detection.ExamConfig{StabilityDurationSec: 1, StabilityIntervalMs: 300, ProbeURL: "https://example.com/generate_204", ProbeTimeoutSec: 5}
 	})
+	// 多地域段也注入假测速器(不触真实网络),逐区返回固定结果。
+	det.SetRegionSpeedProbeFactory(func(*subscription.Node) (detection.RegionSpeedProbe, error) {
+		return func(_ context.Context, r detection.Region) detection.RegionResult {
+			return detection.RegionResult{Code: r.Code, Name: r.Name, TTFBms: 42, DownMbps: 18.5}
+		}, nil
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/nodes/exam/stream?node_key="+node.NodeKey(), nil)
 	w := httptest.NewRecorder()
@@ -62,22 +68,42 @@ func TestHandleNodeExamStream_EventSequence(t *testing.T) {
 		t.Fatalf("frames = %d, want >=3 (samples + section_done + done)", len(frames))
 	}
 
-	// 序列断言:先 N 个 sample,再 section_done,最后 done。
-	var sampleCount, sectionDoneAt, doneAt = 0, -1, -1
+	// 序列断言:稳定性 sample(N) -> 稳定性 section_done(metrics)
+	//         -> 多地域 region 行(逐区) -> 多地域 section_done(region_speed) -> done。
+	var sampleCount, regionRowCount = 0, 0
+	var stabilityDoneAt, firstRegionAt, regionDoneAt, doneAt = -1, -1, -1, -1
 	for i, f := range frames {
 		switch f["phase"] {
 		case "sample":
-			if sectionDoneAt != -1 {
-				t.Errorf("sample frame appeared after section_done (index %d)", i)
+			if stabilityDoneAt != -1 {
+				t.Errorf("stability sample appeared after its section_done (index %d)", i)
 			}
 			if f["section"] != "stability" {
 				t.Errorf("sample[%d] section = %v, want stability", i, f["section"])
 			}
 			sampleCount++
+		case "region":
+			if firstRegionAt == -1 {
+				firstRegionAt = i
+			}
+			if f["section"] != "region_speed" || f["region"] == nil {
+				t.Errorf("region[%d] frame malformed: %v", i, f)
+			}
+			regionRowCount++
 		case "section_done":
-			sectionDoneAt = i
-			if _, ok := f["metrics"]; !ok {
-				t.Errorf("section_done frame missing metrics")
+			switch f["section"] {
+			case "stability":
+				stabilityDoneAt = i
+				if _, ok := f["metrics"]; !ok {
+					t.Errorf("stability section_done missing metrics")
+				}
+			case "region_speed":
+				regionDoneAt = i
+				if _, ok := f["region_speed"]; !ok {
+					t.Errorf("region_speed section_done missing region_speed metrics")
+				}
+			default:
+				t.Errorf("unexpected section_done section %v", f["section"])
 			}
 		case "done":
 			doneAt = i
@@ -87,11 +113,16 @@ func TestHandleNodeExamStream_EventSequence(t *testing.T) {
 	if sampleCount != 3 {
 		t.Errorf("sample frames = %d, want 3", sampleCount)
 	}
-	if sectionDoneAt == -1 || doneAt == -1 {
-		t.Fatalf("missing section_done(%d) or done(%d)", sectionDoneAt, doneAt)
+	if regionRowCount == 0 {
+		t.Error("no region row frames emitted")
 	}
-	if !(sectionDoneAt < doneAt) {
-		t.Errorf("order wrong: section_done at %d, done at %d (want section_done first)", sectionDoneAt, doneAt)
+	if stabilityDoneAt == -1 || firstRegionAt == -1 || regionDoneAt == -1 || doneAt == -1 {
+		t.Fatalf("missing key frames: stabilityDone=%d firstRegion=%d regionDone=%d done=%d",
+			stabilityDoneAt, firstRegionAt, regionDoneAt, doneAt)
+	}
+	if !(stabilityDoneAt < firstRegionAt && firstRegionAt < regionDoneAt && regionDoneAt < doneAt) {
+		t.Errorf("order wrong: stabilityDone=%d firstRegion=%d regionDone=%d done=%d",
+			stabilityDoneAt, firstRegionAt, regionDoneAt, doneAt)
 	}
 	if doneAt != len(frames)-1 {
 		t.Errorf("done at %d, want last frame (%d)", doneAt, len(frames)-1)

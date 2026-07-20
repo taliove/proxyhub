@@ -48,21 +48,23 @@ func (c ExamConfig) stabilitySampleCount() int {
 	return n
 }
 
-// ExamReport 体检报告。当前仅稳定性段;speed/unlock 段为后续票据预留。
+// ExamReport 体检报告。稳定性段 + 多地域测速段;unlock 段为后续票据预留。
 type ExamReport struct {
-	Stability *StabilityMetrics `json:"stability,omitempty"`
-	// Speed  *SpeedMetrics  (后续票据)
+	Stability   *StabilityMetrics   `json:"stability,omitempty"`
+	RegionSpeed *RegionSpeedMetrics `json:"region_speed,omitempty"`
 	// Unlock *UnlockResult  (后续票据)
 }
 
-// ExamEvent 体检 SSE 事件(分段推送:sample / section_done / done / error)。
+// ExamEvent 体检 SSE 事件(分段推送:sample / region / section_done / done / error)。
 type ExamEvent struct {
-	Phase   string            `json:"phase"`
-	Section string            `json:"section,omitempty"`
-	Sample  *StabilitySample  `json:"sample,omitempty"`
-	Metrics *StabilityMetrics `json:"metrics,omitempty"`
-	Report  *ExamReport       `json:"report,omitempty"`
-	Error   string            `json:"error,omitempty"`
+	Phase       string              `json:"phase"`
+	Section     string              `json:"section,omitempty"`
+	Sample      *StabilitySample    `json:"sample,omitempty"`
+	Metrics     *StabilityMetrics   `json:"metrics,omitempty"`
+	Region      *RegionResult       `json:"region,omitempty"`
+	RegionSpeed *RegionSpeedMetrics `json:"region_speed,omitempty"`
+	Report      *ExamReport         `json:"report,omitempty"`
+	Error       string              `json:"error,omitempty"`
 }
 
 // examStage 体检中的一个段:串行运行,独占会话(采样期间无并发段)。
@@ -121,9 +123,17 @@ func (d *Detector) ExamStream(ctx context.Context, node *subscription.Node, emit
 		return ExamReport{}
 	}
 
-	orch := &ExamOrchestrator{stages: []examStage{
-		stabilityStage(cfg, realClock(), probe),
-	}}
+	stages := []examStage{stabilityStage(cfg, realClock(), probe)}
+
+	// 多地域测速段:独立节点会话串行测 8 区(解锁段位置保留,后续票据)。
+	// 探测器工厂失败时走降级段(逐区 error 行),不静默跳过、也不发全局 error 打断前端。
+	if rprobe, rerr := d.regionSpeedProbeFactory(node); rerr == nil {
+		stages = append(stages, regionSpeedStage(examRegions, rprobe))
+	} else {
+		stages = append(stages, regionSpeedErrorStage(examRegions, rerr))
+	}
+
+	orch := &ExamOrchestrator{stages: stages}
 	return orch.Run(ctx, emit)
 }
 
