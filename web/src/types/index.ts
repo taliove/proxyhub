@@ -46,6 +46,8 @@ export interface UnlockResult {
   error?: string
   down_mbps?: number
   up_mbps?: number
+  level?: string // 解锁级别:full/originals_only/blocked(仅专用解锁判定填充)
+  region?: string // 命中区域国家码(如 US/HK),空则不展示
 }
 
 // 节点分页查询响应（见 ADR 0013）
