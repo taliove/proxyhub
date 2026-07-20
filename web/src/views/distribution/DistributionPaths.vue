@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div style="margin-bottom: 16px">
+    <div class="toolbar">
       <el-button type="primary" @click="handleCreate">新建路径</el-button>
     </div>
 
@@ -8,38 +8,31 @@
       <el-empty v-if="paths.length === 0" description="暂无分发路径" />
 
       <el-row v-else :gutter="16">
-        <el-col
-          v-for="path in paths"
-          :key="path.id"
-          :xs="24"
-          :sm="12"
-          :lg="8"
-          style="margin-bottom: 16px"
-        >
+        <el-col v-for="path in paths" :key="path.id" :xs="24" :sm="12" :lg="8" class="path-col">
           <el-card shadow="hover">
             <template #header>
-              <div style="display: flex; justify-content: space-between; align-items: center">
-                <span style="font-weight: 600">{{ path.name }}</span>
+              <div class="path-card-header">
+                <span class="path-name">{{ path.name }}</span>
                 <el-switch :model-value="path.enabled" size="small" @change="handleToggle(path)" />
               </div>
             </template>
 
-            <div style="margin-bottom: 8px">
+            <div class="path-field">
               <el-text type="info" size="small">路径:</el-text>
-              <el-text style="margin-left: 8px">{{ path.path }}</el-text>
+              <el-text class="path-field-value">{{ path.path }}</el-text>
             </div>
 
-            <div style="margin-bottom: 8px">
+            <div class="path-field">
               <el-text type="info" size="small">上游节点:</el-text>
-              <el-text style="margin-left: 8px">{{ path.upstream_node_keys.length }} 个</el-text>
+              <el-text class="path-field-value">{{ path.upstream_node_keys.length }} 个</el-text>
             </div>
 
-            <div style="margin-bottom: 8px">
+            <div class="path-field">
               <el-text type="info" size="small">负载策略:</el-text>
-              <el-text style="margin-left: 8px">{{ getLbStrategyLabel(path.lb_strategy) }}</el-text>
+              <el-text class="path-field-value">{{ getLbStrategyLabel(path.lb_strategy) }}</el-text>
             </div>
 
-            <div style="margin-top: 12px; display: flex; gap: 8px">
+            <div class="path-actions">
               <el-button size="small" @click="handleEdit(path)">编辑</el-button>
               <el-button size="small" type="danger" @click="handleDelete(path)">删除</el-button>
             </div>
@@ -64,7 +57,7 @@
         </el-form-item>
 
         <el-form-item label="负载策略" prop="lb_strategy">
-          <el-select v-model="formData.lb_strategy" style="width: 100%">
+          <el-select v-model="formData.lb_strategy" class="full-width">
             <el-option label="随机" value="random" />
             <el-option label="轮询" value="round_robin" />
             <el-option label="最少连接" value="least_conn" />
@@ -149,7 +142,7 @@ const loadPaths = async () => {
   loading.value = true
   try {
     paths.value = await listDistributionPaths()
-  } catch (error) {
+  } catch {
     ElMessage.error('加载路径列表失败')
   } finally {
     loading.value = false
@@ -205,7 +198,7 @@ const handleToggle = async (path: DistributionPath) => {
     await toggleDistributionPath(path.id)
     ElMessage.success(path.enabled ? '已禁用' : '已启用')
     await loadPaths()
-  } catch (error) {
+  } catch {
     ElMessage.error('操作失败')
   }
 }
@@ -228,11 +221,39 @@ onMounted(loadPaths)
 </script>
 
 <style scoped>
+.toolbar {
+  margin-bottom: var(--ph-space-4);
+}
+.full-width {
+  width: 100%;
+}
+.path-col {
+  margin-bottom: var(--ph-space-4);
+}
+.path-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.path-name {
+  font-weight: 600;
+}
+.path-field {
+  margin-bottom: var(--ph-space-2);
+}
+.path-field-value {
+  margin-left: var(--ph-space-2);
+}
+.path-actions {
+  margin-top: var(--ph-space-3);
+  display: flex;
+  gap: var(--ph-space-2);
+}
 .hint {
   display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  margin-top: var(--ph-space-1);
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
   line-height: 1.5;
 }
 </style>

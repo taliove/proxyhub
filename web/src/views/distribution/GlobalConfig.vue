@@ -1,15 +1,9 @@
 <template>
-  <el-form
-    ref="formRef"
-    :model="formData"
-    :rules="rules"
-    label-width="140px"
-    style="max-width: 800px"
-  >
+  <el-form ref="formRef" :model="formData" :rules="rules" label-width="140px" class="config-form">
     <el-alert
       type="info"
       :closable="false"
-      style="margin-bottom: 16px"
+      class="form-alert"
       title="全局配置决定 Xray 监听端口和入站协议。修改后需重启 Xray 才能生效。"
     />
 
@@ -60,7 +54,7 @@
 
     <el-form-item>
       <el-button type="primary" :loading="saving" @click="handleSave">保存配置</el-button>
-      <el-button :loading="restarting" style="margin-left: 12px" @click="handleRestart">
+      <el-button :loading="restarting" class="restart-btn" @click="handleRestart">
         重启 Xray
       </el-button>
     </el-form-item>
@@ -163,11 +157,20 @@ watch(
 </script>
 
 <style scoped>
+.config-form {
+  max-width: 800px;
+}
+.form-alert {
+  margin-bottom: var(--ph-space-4);
+}
+.restart-btn {
+  margin-left: var(--ph-space-3);
+}
 .hint {
   display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  margin-top: var(--ph-space-1);
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
   line-height: 1.5;
 }
 </style>

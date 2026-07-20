@@ -5,7 +5,7 @@
     multiple
     filterable
     placeholder="选择上游节点"
-    style="width: 100%"
+    class="full-width"
     @update:model-value="handleChange"
   >
     <el-option-group label="机场节点">
@@ -16,12 +16,12 @@
         :value="node.key"
         :disabled="!node.available"
       >
-        <div style="display: flex; justify-content: space-between; align-items: center">
+        <div class="opt-row">
           <span>{{ node.name }}</span>
           <div>
             <el-tag v-if="node.available" type="success" size="small">可用</el-tag>
             <el-tag v-else type="info" size="small">不可用</el-tag>
-            <el-text type="info" size="small" style="margin-left: 8px">
+            <el-text type="info" size="small" class="opt-region">
               {{ node.region }}
             </el-text>
           </div>
@@ -37,12 +37,12 @@
         :value="node.key"
         :disabled="!node.available"
       >
-        <div style="display: flex; justify-content: space-between; align-items: center">
+        <div class="opt-row">
           <span>{{ node.name }}</span>
           <div>
             <el-tag v-if="node.available" type="success" size="small">可用</el-tag>
             <el-tag v-else type="info" size="small">不可用</el-tag>
-            <el-text type="info" size="small" style="margin-left: 8px">
+            <el-text type="info" size="small" class="opt-region">
               {{ node.region }}
             </el-text>
           </div>
@@ -65,7 +65,7 @@ interface Node {
   source: string
 }
 
-const props = defineProps<{
+defineProps<{
   // 允许 undefined:父级 formData 为 Partial<DistributionPath>,新建时该字段可能未定义
   modelValue: string[] | undefined
 }>()
@@ -88,9 +88,8 @@ const handleChange = (value: string[]) => {
 const loadNodes = async () => {
   loading.value = true
   try {
-    const data = await client.get<any, Node[]>('/nodes')
-    nodes.value = data
-  } catch (error) {
+    nodes.value = await client.get<unknown, Node[]>('/nodes')
+  } catch {
     ElMessage.error('加载节点列表失败')
   } finally {
     loading.value = false
@@ -99,3 +98,17 @@ const loadNodes = async () => {
 
 onMounted(loadNodes)
 </script>
+
+<style scoped>
+.full-width {
+  width: 100%;
+}
+.opt-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.opt-region {
+  margin-left: var(--ph-space-2);
+}
+</style>

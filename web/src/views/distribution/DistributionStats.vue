@@ -1,13 +1,6 @@
 <template>
   <div>
-    <div
-      style="
-        margin-bottom: 16px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      "
-    >
+    <div class="toolbar">
       <el-radio-group v-model="timeRange" @change="handleTimeRangeChange">
         <el-radio-button label="today">今天</el-radio-button>
         <el-radio-button label="7days">最近7天</el-radio-button>
@@ -22,12 +15,12 @@
         range-separator="至"
         start-placeholder="开始时间"
         end-placeholder="结束时间"
-        style="margin-left: 12px"
+        class="custom-range"
         @change="loadStats"
       />
     </div>
 
-    <el-row :gutter="16" style="margin-bottom: 16px">
+    <el-row :gutter="16" class="summary-row">
       <el-col :xs="24" :sm="8">
         <el-card shadow="hover">
           <el-statistic title="总上传" :value="formatBytes(summary.upload_bytes)" />
@@ -45,9 +38,9 @@
       </el-col>
     </el-row>
 
-    <el-card shadow="hover" style="margin-bottom: 16px">
+    <el-card shadow="hover" class="chart-card">
       <template #header>流量趋势</template>
-      <div ref="chartRef" v-loading="loading" style="height: 400px"></div>
+      <div ref="chartRef" v-loading="loading" class="chart-box"></div>
     </el-card>
 
     <el-card shadow="hover">
@@ -57,7 +50,7 @@
         <el-table-column label="上传" min-width="120">
           <template #default="{ row }">
             {{ formatBytes(row.upload_bytes) }}
-            <el-text type="info" size="small" style="margin-left: 8px">
+            <el-text type="info" size="small" class="pct">
               {{ ((row.upload_bytes / summary.upload_bytes) * 100).toFixed(1) }}%
             </el-text>
           </template>
@@ -65,7 +58,7 @@
         <el-table-column label="下载" min-width="120">
           <template #default="{ row }">
             {{ formatBytes(row.download_bytes) }}
-            <el-text type="info" size="small" style="margin-left: 8px">
+            <el-text type="info" size="small" class="pct">
               {{ ((row.download_bytes / summary.download_bytes) * 100).toFixed(1) }}%
             </el-text>
           </template>
@@ -73,7 +66,7 @@
         <el-table-column label="连接数" width="100">
           <template #default="{ row }">
             {{ row.connections }}
-            <el-text type="info" size="small" style="margin-left: 8px">
+            <el-text type="info" size="small" class="pct">
               {{ ((row.connections / summary.connections) * 100).toFixed(1) }}%
             </el-text>
           </template>
@@ -180,7 +173,7 @@ const loadStats = async () => {
     const params = getTimeRangeParams()
     stats.value = await getDistributionStats(params)
     updateChart()
-  } catch (error) {
+  } catch {
     ElMessage.error('加载统计数据失败')
   } finally {
     loading.value = false
@@ -193,6 +186,11 @@ const updateChart = () => {
   if (!chartInstance) {
     chartInstance = echarts.init(chartRef.value)
   }
+
+  // 图表配色取自设计令牌(随亮/暗主题变化):上传=主色靛蓝,下载=成功绿
+  const rootStyle = getComputedStyle(document.documentElement)
+  const uploadColor = rootStyle.getPropertyValue('--ph-color-primary').trim() || '#4f46e5'
+  const downloadColor = rootStyle.getPropertyValue('--ph-success').trim() || '#059669'
 
   // Group stats by timestamp
   const timeMap = new Map<string, { upload: number; download: number }>()
@@ -254,7 +252,7 @@ const updateChart = () => {
         smooth: true,
         data: uploadData,
         itemStyle: {
-          color: '#409EFF'
+          color: uploadColor
         }
       },
       {
@@ -263,7 +261,7 @@ const updateChart = () => {
         smooth: true,
         data: downloadData,
         itemStyle: {
-          color: '#67C23A'
+          color: downloadColor
         }
       }
     ]
@@ -289,3 +287,27 @@ onUnmounted(() => {
   chartInstance?.dispose()
 })
 </script>
+
+<style scoped>
+.toolbar {
+  margin-bottom: var(--ph-space-4);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.custom-range {
+  margin-left: var(--ph-space-3);
+}
+.summary-row {
+  margin-bottom: var(--ph-space-4);
+}
+.chart-card {
+  margin-bottom: var(--ph-space-4);
+}
+.chart-box {
+  height: 400px;
+}
+.pct {
+  margin-left: var(--ph-space-2);
+}
+</style>

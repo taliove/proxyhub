@@ -9,7 +9,7 @@
         <AirportNodesTab />
       </el-tab-pane>
       <el-tab-pane label="自建节点" name="self">
-        <SelfNodesContent />
+        <SelfNodesTab />
       </el-tab-pane>
       <el-tab-pane label="分发节点" name="distribution">
         <DistributionNodesTab />
@@ -21,8 +21,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import SelfNodesContent from '../SelfNodes.vue'
-import DistributionNodesTab from '@/components/DistributionNodesTab.vue'
+import SelfNodesTab from './components/SelfNodesTab.vue'
+import DistributionNodesTab from './components/DistributionNodesTab.vue'
 import AirportNodesTab from './components/AirportNodesTab.vue'
 
 const router = useRouter()
