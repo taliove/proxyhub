@@ -52,6 +52,9 @@
   --ph-text-lg: 18px;
   --ph-text-xl: 20px;
   --ph-text-2xl: 24px;
+  /* display 档:仪表盘/实时数值等主视觉大数字,非标题不用 */
+  --ph-text-display-sm: 28px;
+  --ph-text-display: 32px;
 
   /* 圆角刻度(主题无关,语义层直接复用同名令牌) */
   --ph-radius-sm: 4px;

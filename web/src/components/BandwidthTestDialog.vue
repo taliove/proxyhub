@@ -291,7 +291,7 @@ defineExpose({ open })
   margin-bottom: var(--ph-space-1);
 }
 .bw-live-value {
-  font-size: 28px;
+  font-size: var(--ph-text-display-sm);
   font-weight: 700;
   color: var(--ph-color-primary);
   display: inline-block;
@@ -330,7 +330,7 @@ defineExpose({ open })
   margin-bottom: var(--ph-space-2);
 }
 .bw-card-value {
-  font-size: 32px;
+  font-size: var(--ph-text-display);
   font-weight: 700;
   line-height: 1;
   color: var(--ph-color-primary);

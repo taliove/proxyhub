@@ -101,7 +101,7 @@ onMounted(async () => {
   margin-bottom: var(--ph-space-2);
 }
 .stat-value {
-  font-size: 32px;
+  font-size: var(--ph-text-display);
   font-weight: 700;
   line-height: 1.1;
   color: var(--ph-text-primary);

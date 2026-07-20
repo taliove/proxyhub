@@ -18,9 +18,10 @@ export default tseslint.config(
       }
     },
     rules: {
-      // 设计规范门禁(docs/design-frontend.md):静态内联 style 与超长文件,Phase 1-2 以 warn 起步
-      'vue/no-static-inline-styles': 'warn',
-      'max-lines': ['warn', 400]
+      // 设计规范门禁(docs/design-frontend.md):静态内联 style 与超长文件。
+      // Phase 3 已收网(2026-07):存量清零,升 error,新增违规硬阻塞 make check
+      'vue/no-static-inline-styles': 'error',
+      'max-lines': ['error', 400]
     }
   },
   {

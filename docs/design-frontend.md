@@ -118,7 +118,7 @@ ep-theme.css    Element Plus 映射("EP 怎么穿这套衣服")
 | space-7 | 48px | 大区块分隔 |
 | space-8 | 64px | 页面级留白 |
 
-**字号**:text-xs 12px / text-sm 13px / text-base 14px(正文基准)/ text-md 16px / text-lg 18px / text-xl 20px / text-2xl 24px。表格内次要信息用 text-sm。
+**字号**:text-xs 12px / text-sm 13px / text-base 14px(正文基准)/ text-md 16px / text-lg 18px / text-xl 20px / text-2xl 24px;**display 档** display-sm 28px / display 32px 仅用于仪表盘统计、实时数值等主视觉大数字,标题与普通文本禁用。表格内次要信息用 text-sm。
 
 **圆角**:radius-sm 4px(控件)/ radius 6px(默认)/ radius-lg 8px(卡片)/ radius-xl 12px(抽屉、浮层)/ radius-full 999px(标签、胶囊)。卡片(`el-card`)统一用 radius-lg,不用 radius。
 
@@ -215,12 +215,19 @@ views/<page>/
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| Phase 0 | 本文档 + ADR 0014 | 评审通过 |
-| Phase 1 | 基建:tokens/semantics/ep-theme 三层落地、暗色归位、ESLint+Prettier+make lint-frontend 接入 | 全站观感切换为靛蓝体系,暗色正常 |
-| Phase 2 | 逐页整改,Nodes 先行(代码最重、模式最全),按列表页/详情模式套骨架,清零内联 style | 每页:内联 style 为 0、view ≤400 行、过 lint warn |
-| Phase 3 | 收网:lint 规则 warn 升 error | `make check` 对新增违规硬阻塞 |
+| Phase 0 | 本文档 + ADR 0014 | 评审通过(已完成,2026-07) |
+| Phase 1 | 基建:tokens/semantics/ep-theme 三层落地、暗色归位、ESLint+Prettier+make lint-frontend 接入 | 全站观感切换为靛蓝体系,暗色正常(已完成) |
+| Phase 2 | 逐页整改,Nodes 先行(代码最重、模式最全),按列表页/详情模式套骨架,清零内联 style | 每页:内联 style 为 0、view ≤400 行、过 lint warn(已完成:全仓静态内联 style 清零,目录制页面 nodes/ 与 refresh-log/ 为样板) |
+| Phase 3 | 收网:lint 规则 warn 升 error | `make check` 对新增违规硬阻塞(已完成:`vue/no-static-inline-styles` 与 `max-lines` 已升 error) |
 
 各阶段对应 ticket 见 `.scratch/frontend-design-system/issues/`(过程稿,落地后随 .scratch 消亡;持久知识以本文档与 ADR 0014 为准)。
+
+### 整改期偏差记录(2026-07 收网时补记)
+
+1. **ep-theme.css 必须有暗色块**:见"第三层"节的例外说明,整改期实测确认。
+2. **display 字号档为整改期新增**:原刻度上限 24px 不够主视觉大数字,补 display-sm/display 两档;页面一律消费令牌,不写 px 字面量。
+3. **装配层 150 行是软指引**:refresh-log/index.vue 260 行,超出部分是页面核心的轮询状态机,抽离只会造出一次性 composable;硬线仍是单文件 400 行(max-lines error)。
+4. **剩余 warn 归属**:收网后全仓仍有少量 `@typescript-eslint/no-explicit-any` warn,集中在 API 层(`api/distribution*.ts`、`composables/useNodeTest.ts`),属类型收紧的后续工作,不在本规范门禁范围。
 
 ## 与其他模块的边界
 
