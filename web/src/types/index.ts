@@ -203,7 +203,9 @@ export interface ExamHistoryEntry {
 
 // 深度体检 SSE 事件帧
 export interface ExamEvent {
-  phase: 'sample' | 'region' | 'unlock' | 'section_done' | 'done' | 'error'
+  phase: 'sample' | 'region' | 'unlock' | 'section_done' | 'done' | 'error' | 'cancelled'
+  // seq 顶层单调序号:附加已有任务时服务端先回放(带 seq)再直播,前端凭此去重实现无感续传。
+  seq?: number
   section?: string
   sample?: ExamStabilitySample
   metrics?: ExamStabilityMetrics
