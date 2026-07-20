@@ -38,12 +38,6 @@ type NodeSource interface {
 	UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool
 }
 
-// DistributionManager 流量分发管理器接口
-type DistributionManager interface {
-	Reload(ctx context.Context, nodes []*subscription.Node) error
-	IsRunning() bool
-}
-
 // Server HTTP 服务
 type Server struct {
 	cfg              *config.Config
@@ -54,12 +48,11 @@ type Server struct {
 	logger           *slog.Logger
 	detectionService *DetectionService
 	geo              *geoip.Resolver
-	distributionMgr  DistributionManager
 	examJobs         *detection.ExamJobManager
 }
 
 // New 创建 HTTP 服务
-func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, logger *slog.Logger, detectionService *DetectionService, geo *geoip.Resolver, distributionMgr DistributionManager) *Server {
+func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, logger *slog.Logger, detectionService *DetectionService, geo *geoip.Resolver) *Server {
 	s := &Server{
 		cfg:              cfg,
 		st:               st,
@@ -69,7 +62,6 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		logger:           logger,
 		detectionService: detectionService,
 		geo:              geo,
-		distributionMgr:  distributionMgr,
 	}
 
 	// 体检任务管理器:runner 复用 detectionService.ExamStream(逻辑零改动),
@@ -208,27 +200,6 @@ func (s *Server) Handler() http.Handler {
 	// 访问统计（全局汇总 + 拉取趋势）
 	mux.HandleFunc("GET /api/stats/global", s.requireAuth(s.handleGlobalStats))
 	mux.HandleFunc("GET /api/stats/trend", s.requireAuth(s.handlePullTrend))
-
-	// 流量分发
-	mux.HandleFunc("GET /api/distribution/config", s.requireAuth(s.handleGetDistributionConfig))
-	mux.HandleFunc("PUT /api/distribution/config", s.requireAuth(s.handleUpdateDistributionConfig))
-	mux.HandleFunc("GET /api/distribution/paths", s.requireAuth(s.handleListDistributionPaths))
-	mux.HandleFunc("GET /api/distribution/paths/{id}", s.requireAuth(s.handleGetDistributionPath))
-	mux.HandleFunc("POST /api/distribution/paths", s.requireAuth(s.handleCreateDistributionPath))
-	mux.HandleFunc("PUT /api/distribution/paths/{id}", s.requireAuth(s.handleUpdateDistributionPath))
-	mux.HandleFunc("DELETE /api/distribution/paths/{id}", s.requireAuth(s.handleDeleteDistributionPath))
-	mux.HandleFunc("POST /api/distribution/paths/{id}/toggle", s.requireAuth(s.handleToggleDistributionPath))
-	mux.HandleFunc("GET /api/distribution/stats", s.requireAuth(s.handleGetDistributionStats))
-	mux.HandleFunc("POST /api/distribution/xray/restart", s.requireAuth(s.handleRestartXray))
-	mux.HandleFunc("GET /api/distribution/xray/status", s.requireAuth(s.handleXrayStatus))
-
-	// 流量分发节点管理
-	mux.HandleFunc("GET /api/distribution/nodes", s.requireAuth(s.handleListDistributionNodes))
-	mux.HandleFunc("GET /api/distribution/nodes/{id}", s.requireAuth(s.handleGetDistributionNode))
-	mux.HandleFunc("POST /api/distribution/nodes", s.requireAuth(s.handleCreateDistributionNode))
-	mux.HandleFunc("PUT /api/distribution/nodes/{id}", s.requireAuth(s.handleUpdateDistributionNode))
-	mux.HandleFunc("DELETE /api/distribution/nodes/{id}", s.requireAuth(s.handleDeleteDistributionNode))
-	mux.HandleFunc("POST /api/distribution/nodes/{id}/toggle", s.requireAuth(s.handleToggleDistributionNode))
 
 	// 订阅拉取端点（随机 Path + Token，公开访问）
 	mux.HandleFunc("GET /sub/{path}", s.handleSubscription)

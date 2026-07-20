@@ -54,12 +54,6 @@ type Node struct {
 	BandwidthDownMbps float64   `json:"bandwidth_down_mbps,omitempty"`
 	BandwidthUpMbps   float64   `json:"bandwidth_up_mbps,omitempty"`
 	BandwidthCheck    time.Time `json:"bandwidth_check,omitempty"`
-
-	// 分发节点字段
-	IsDistribution     bool     `json:"is_distribution,omitempty"`      // 是否为分发节点
-	UpstreamNodeKeys   []string `json:"upstream_node_keys,omitempty"`   // 上游节点键列表
-	LBStrategy         string   `json:"lb_strategy,omitempty"`          // 负载均衡策略
-	DistributionPath   string   `json:"distribution_path,omitempty"`    // 分发路径
 }
 
 // NodeKey 返回节点的唯一标识（用于去重与屏蔽名单）。

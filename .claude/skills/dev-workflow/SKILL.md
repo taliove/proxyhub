@@ -50,7 +50,7 @@ make dev-backend    # 后端开发(config.example.yaml,storage 指向 var/data/d
 - **迭代回路**(边改边看):后端一个实例(`make start`)+ `make dev-frontend`,前端改动 HMR 秒级生效,不用 build 不用重启;改后端则 `make restart`。
 - **验证回路**(验收嵌入产物):`make build && make restart`——go:embed 决定了 dev server 验证不了最终二进制里的前端,这一步不可省。
 
-重启验证三件套:`curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/` 返回 200;`var/xray/xray_config.json` 已重新生成;日志无新增 ERROR(已知:`enabled_nodes: 0` 时 distribution 起不来是既有功能 bug,不算新问题)。
+重启验证:`curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/` 返回 200;日志(`var/log/`)无新增 ERROR。
 
 ## 4. 测试(唯一入口:make)
 

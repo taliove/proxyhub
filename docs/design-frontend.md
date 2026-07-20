@@ -227,10 +227,9 @@ views/<page>/
 1. **ep-theme.css 必须有暗色块**:见"第三层"节的例外说明,整改期实测确认。
 2. **display 字号档为整改期新增**:原刻度上限 24px 不够主视觉大数字,补 display-sm/display 两档;页面一律消费令牌,不写 px 字面量。
 3. **装配层 150 行是软指引**:refresh-log/index.vue 260 行,超出部分是页面核心的轮询状态机,抽离只会造出一次性 composable;硬线仍是单文件 400 行(max-lines error)。
-4. **剩余 warn 归属**:收网后全仓仍有少量 `@typescript-eslint/no-explicit-any` warn,集中在 API 层(`api/distribution*.ts`、`composables/useNodeTest.ts`),属类型收紧的后续工作,不在本规范门禁范围。
+4. **剩余 warn 归属**:收网后全仓仍有少量 `@typescript-eslint/no-explicit-any` warn,集中在 API 层(如 `composables/useNodeTest.ts`),属类型收紧的后续工作,不在本规范门禁范围。
 
 ## 与其他模块的边界
 
 - 后端 API 形态不在本规范范围;列表页筛选/分页参数契约见 [ADR 0013](./adr/0013-node-management-pagination.md)。
-- 流量分发页的领域设计(字段、流程)见 [design-distribution-frontend.md](./design-distribution-frontend.md),本规范只约束其观感与代码组织,Phase 2 整改时不改其领域行为。
 - 术语(机场/节点/订阅地址/屏蔽等)以 [CONTEXT.md](../CONTEXT.md) 为准,界面文案不得另造词。

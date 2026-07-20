@@ -26,9 +26,8 @@ actual code, not the commit message's claims.
 - Runtime paths: default file paths must land under `var/` (data/log/xray),
   build artifacts under `dist/`. Any default path resolving to the
   repository root is a finding. Writers must `MkdirAll` their parents.
-- Xray inbounds: must set `listen: 127.0.0.1`. There are TWO config
-  generators (`internal/xray/config.go`, `internal/distribution/routing.go`)
-  — check both, always.
+- Xray inbounds: must set `listen: 127.0.0.1`. The config generator lives
+  at `internal/xray/config.go` (asserted in `internal/xray/xray_test.go`).
 - TLS verification: no `InsecureSkipVerify`, no `--insecure`, no disabled
   certificate checks.
 - Docs: no process artifacts (plans/summaries/merge analyses/dated
