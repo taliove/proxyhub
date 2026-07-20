@@ -8,14 +8,14 @@ import (
 
 // 带宽测试配置 settings 键
 const (
-	settingBandwidthDownURL        = "bandwidth_down_url"
-	settingBandwidthUpURL          = "bandwidth_up_url"
-	settingBandwidthUpBytes        = "bandwidth_up_bytes"
-	settingBandwidthTestDuration   = "bandwidth_test_duration_sec"
-	settingBandwidthTimeoutSec     = "bandwidth_timeout_sec"
-	settingBandwidthDirTimeoutSec  = "bandwidth_dir_timeout_sec"
-	settingBandwidthMinDownMbps    = "bandwidth_min_down_mbps"
-	settingBandwidthMinUpMbps      = "bandwidth_min_up_mbps"
+	settingBandwidthDownURL       = "bandwidth_down_url"
+	settingBandwidthUpURL         = "bandwidth_up_url"
+	settingBandwidthUpBytes       = "bandwidth_up_bytes"
+	settingBandwidthTestDuration  = "bandwidth_test_duration_sec"
+	settingBandwidthTimeoutSec    = "bandwidth_timeout_sec"
+	settingBandwidthDirTimeoutSec = "bandwidth_dir_timeout_sec"
+	settingBandwidthMinDownMbps   = "bandwidth_min_down_mbps"
+	settingBandwidthMinUpMbps     = "bandwidth_min_up_mbps"
 )
 
 // GetBandwidthConfig 读取带宽测试配置，未设置的项用默认值兜底（fail-open）。

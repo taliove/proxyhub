@@ -223,7 +223,7 @@ func TestSubscription_WhitelistThenBlacklistThenBlock(t *testing.T) {
 	}
 	st.SaveSystemSettings(map[string]string{
 		"filter_whitelist": "优选,冷门", // 两个机场节点都命中白名单
-		"filter_keywords":  "冷门",     // 黑名单排掉日本冷门
+		"filter_keywords":  "冷门",    // 黑名单排掉日本冷门
 	})
 	st.BlockNode("1.1.1.1:8388") // 屏蔽香港优选
 	ep, _ := st.CreateEndpoint("dev")

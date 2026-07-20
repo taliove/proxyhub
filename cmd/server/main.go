@@ -20,6 +20,7 @@ import (
 	"github.com/taliove/proxyhub/internal/jobs"
 	"github.com/taliove/proxyhub/internal/server"
 	"github.com/taliove/proxyhub/internal/store"
+	"github.com/taliove/proxyhub/internal/subscription"
 )
 
 func main() {
@@ -83,14 +84,15 @@ func run(configPath string) error {
 	// 定期清理：审计日志保留 90 天、健康历史保留 30 天，避免数据库无限增长
 	go runMaintenance(ctx, st, logger)
 
-	// 初始化检测服务
-	detectionSvc := initDetectionService(cfg, st, agg, logger)
+	// 初始化检测服务(单节点透传 + jobs 运行时批量检测)
+	detectionSvc, detectionJobs := initDetectionService(cfg, st, agg, logger)
 
 	// 初始化通用任务运行时(jobs + scheduler)
-	jobManager, scheduler := initJobsRuntime(st, logger)
+	_, scheduler := initJobsRuntime(st, logger)
 
 	// HTTP 服务（SPA + API + 订阅端点）
 	srv := server.New(cfg, st, agg, WebFS, logger, detectionSvc, resolver)
+	srv.SetDetectionJobs(detectionJobs)
 	srv.RecoverJobs()            // 重启恢复:遗留 running 体检任务标记 interrupted
 	go srv.StartExamSweeper(ctx) // 后台清扫过期(超过 TTL)的体检任务
 
@@ -182,8 +184,8 @@ func newLogger(cfg config.LogConfig) *slog.Logger {
 	return slog.New(handler)
 }
 
-// initDetectionService 初始化节点解锁检测服务
-func initDetectionService(cfg *config.Config, st *store.Store, nodes server.NodeSource, logger *slog.Logger) *server.DetectionService {
+// initDetectionService 初始化节点解锁检测服务(单节点透传 + jobs 运行时批量检测)
+func initDetectionService(cfg *config.Config, st *store.Store, nodes server.NodeSource, logger *slog.Logger) (*server.DetectionService, *server.DetectionServiceJobs) {
 	// 导入 detection 包
 	// 创建 detector 实例
 	detector := detection.NewDetector(
@@ -196,6 +198,27 @@ func initDetectionService(cfg *config.Config, st *store.Store, nodes server.Node
 	// 注入体检配置提供函数（每场深度体检实时从 settings 读取，缺省用默认值）
 	detector.SetExamConfigProvider(st.GetExamConfig)
 
+	// 批量检测任务(jobs 运行时):游标续跑,每节点结果即时落库 + 标签重算。
+	detectNode := func(ctx context.Context, n *subscription.Node, targets []detection.Target) []detection.Result {
+		return detector.DetectAll(ctx, []*subscription.Node{n}, targets)[n.NodeKey()]
+	}
+	saveRetag := func(n *subscription.Node, results []detection.Result) {
+		server.SaveAndRetag(st, logger, n, results)
+	}
+	batchDetectionMgr := detection.NewBatchDetectionManager(
+		st.Jobs(),
+		nodes.Nodes,
+		st.GetDetectionTargets,
+		detectNode,
+		saveRetag,
+		jobs.WithErrorHandler(func(err error) {
+			logger.Warn("batch detection job persistence", "error", err)
+		}),
+	)
+	detectionJobs := server.NewDetectionServiceJobs(
+		batchDetectionMgr, detector, st, logger, nodes.Nodes, st.GetDetectionTargets,
+	)
+
 	// 创建检测服务
 	return server.NewDetectionService(
 		detector,
@@ -203,7 +226,7 @@ func initDetectionService(cfg *config.Config, st *store.Store, nodes server.Node
 		logger,
 		nodes.Nodes,            // 获取节点池的函数
 		st.GetDetectionTargets, // 获取检测目标的函数
-	)
+	), detectionJobs
 }
 
 // initJobsRuntime 初始化通用任务运行时:Manager + 注册 kinds + Scheduler。

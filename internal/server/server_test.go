@@ -23,8 +23,8 @@ import (
 
 // fakeNodes 实现 NodeSource
 type fakeNodes struct {
-	nodes      []*subscription.Node
-	refreshErr error // TriggerRefresh 返回的错误（模拟刷新进行中等场景）
+	nodes       []*subscription.Node
+	refreshErr  error // TriggerRefresh 返回的错误（模拟刷新进行中等场景）
 	lastTrigger string
 }
 

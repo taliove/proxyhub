@@ -29,13 +29,13 @@ func (s *Store) RecordPull(rec PullRecord) error {
 
 // IPStat 按 IP 聚合的拉取统计
 type IPStat struct {
-	IP        string    `json:"ip"`
-	Count     int       `json:"count"`
-	LastPull  time.Time `json:"last_pull"`
-	Country   string    `json:"country"`
-	Region    string    `json:"region"`
-	City      string    `json:"city"`
-	ISP       string    `json:"isp"`
+	IP       string    `json:"ip"`
+	Count    int       `json:"count"`
+	LastPull time.Time `json:"last_pull"`
+	Country  string    `json:"country"`
+	Region   string    `json:"region"`
+	City     string    `json:"city"`
+	ISP      string    `json:"isp"`
 }
 
 // EndpointStats 某个订阅地址的统计（按 IP 分组，附带地理信息）

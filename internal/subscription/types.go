@@ -23,7 +23,7 @@ type Node struct {
 	Cipher   string `json:"cipher,omitempty"`
 
 	// 网络配置
-	Network         string `json:"network,omitempty"`           // tcp, ws, grpc
+	Network         string `json:"network,omitempty"` // tcp, ws, grpc
 	TLS             bool   `json:"tls,omitempty"`
 	SNI             string `json:"sni,omitempty"`               // TLS SNI / servername（anytls 等依赖）
 	Insecure        bool   `json:"insecure,omitempty"`          // 跳过证书校验（对应订阅里的 insecure=1）

@@ -20,20 +20,20 @@ type Airport struct {
 
 // SelfHostedNode 自建节点
 type SelfHostedNode struct {
-	ID               int64  `json:"id"`
-	Name             string `json:"name"`
-	Protocol         string `json:"protocol"`
-	Server           string `json:"server"`
-	Port             int    `json:"port"`
-	UUID             string `json:"uuid"`
-	Password         string `json:"password"`
-	Cipher           string `json:"cipher"`
-	AlterID          int    `json:"alter_id"`
-	Network          string `json:"network"`
-	TLS              bool   `json:"tls"`
-	RegionCode       string `json:"region_code"`
-	GrpcServiceName  string `json:"grpc_service_name"`
-	Enabled          bool   `json:"enabled"`
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	Protocol        string `json:"protocol"`
+	Server          string `json:"server"`
+	Port            int    `json:"port"`
+	UUID            string `json:"uuid"`
+	Password        string `json:"password"`
+	Cipher          string `json:"cipher"`
+	AlterID         int    `json:"alter_id"`
+	Network         string `json:"network"`
+	TLS             bool   `json:"tls"`
+	RegionCode      string `json:"region_code"`
+	GrpcServiceName string `json:"grpc_service_name"`
+	Enabled         bool   `json:"enabled"`
 }
 
 // ToNode 把自建节点转换为聚合/订阅使用的 subscription.Node。

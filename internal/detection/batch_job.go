@@ -17,22 +17,22 @@ type batchDetectionParams struct {
 
 // batchDetectionEvent 批量检测事件(SSE 推送格式)。
 type batchDetectionEvent struct {
-	Phase     string `json:"phase"`      // start/node_done/done/cancelled
-	Total     int    `json:"total"`      // 总节点数(phase=start时有效)
-	Completed int    `json:"completed"`  // 已完成节点数(phase=node_done时递增)
-	NodeKey   string `json:"node_key"`   // 当前节点key(phase=node_done时有效)
-	NodeName  string `json:"node_name"`  // 当前节点名称(phase=node_done时有效)
-	Available bool   `json:"available"`  // 节点是否可用(phase=node_done时有效)
-	Error     string `json:"error"`      // 错误信息(phase=node_done失败时有效)
+	Phase     string `json:"phase"`     // start/node_done/done/cancelled
+	Total     int    `json:"total"`     // 总节点数(phase=start时有效)
+	Completed int    `json:"completed"` // 已完成节点数(phase=node_done时递增)
+	NodeKey   string `json:"node_key"`  // 当前节点key(phase=node_done时有效)
+	NodeName  string `json:"node_name"` // 当前节点名称(phase=node_done时有效)
+	Available bool   `json:"available"` // 节点是否可用(phase=node_done时有效)
+	Error     string `json:"error"`     // 错误信息(phase=node_done失败时有效)
 }
 
 // batchDetectionKind 批量检测任务 kind 实现:按游标逐节点检测,
 // 每节点结果即时落 node_health 并重算标签,支持重启续跑。
 type batchDetectionKind struct {
-	getNodes   func() []*subscription.Node        // 获取内存节点池
-	getTargets func() ([]Target, error)           // 获取检测目标配置
+	getNodes   func() []*subscription.Node                                  // 获取内存节点池
+	getTargets func() ([]Target, error)                                     // 获取检测目标配置
 	detectNode func(context.Context, *subscription.Node, []Target) []Result // 单节点检测实现
-	saveRetag  func(*subscription.Node, []Result) // 保存结果并重算标签
+	saveRetag  func(*subscription.Node, []Result)                           // 保存结果并重算标签
 }
 
 func (k *batchDetectionKind) Name() string {

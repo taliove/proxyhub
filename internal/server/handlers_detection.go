@@ -12,9 +12,9 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
-// handleTriggerDetection 启动检测任务
+// handleTriggerDetection 启动检测任务(jobs 运行时)
 func (s *Server) handleTriggerDetection(w http.ResponseWriter, r *http.Request) {
-	if s.detectionService == nil {
+	if s.detectionJobs == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": "detection service not initialized",
@@ -29,7 +29,7 @@ func (s *Server) handleTriggerDetection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := s.detectionService.TriggerDetection(r.Context(), req); err != nil {
+	if err := s.detectionJobs.TriggerDetection(r.Context(), req); err != nil {
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
@@ -41,7 +41,7 @@ func (s *Server) handleTriggerDetection(w http.ResponseWriter, r *http.Request) 
 
 // handleCancelDetection 取消当前检测
 func (s *Server) handleCancelDetection(w http.ResponseWriter, r *http.Request) {
-	if s.detectionService == nil {
+	if s.detectionJobs == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": "detection service not initialized",
@@ -49,7 +49,7 @@ func (s *Server) handleCancelDetection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.detectionService.CancelDetection(); err != nil {
+	if err := s.detectionJobs.CancelDetection(); err != nil {
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
@@ -61,7 +61,7 @@ func (s *Server) handleCancelDetection(w http.ResponseWriter, r *http.Request) {
 
 // handleDetectionStatus 查询检测进度
 func (s *Server) handleDetectionStatus(w http.ResponseWriter, r *http.Request) {
-	if s.detectionService == nil {
+	if s.detectionJobs == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": "detection service not initialized",
@@ -69,7 +69,7 @@ func (s *Server) handleDetectionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := s.detectionService.GetStatus()
+	status := s.detectionJobs.GetStatus()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
 }

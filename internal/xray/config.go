@@ -13,13 +13,13 @@ import (
 
 // Config represents Xray v1.8.0 JSON configuration
 type Config struct {
-	Log       *LogConfig       `json:"log,omitempty"`
-	Inbounds  []*Inbound       `json:"inbounds"`
-	Outbounds []*Outbound      `json:"outbounds"`
-	Routing   *RoutingConfig   `json:"routing"`
-	Stats     *StatsConfig     `json:"stats,omitempty"`
-	API       *APIConfig       `json:"api,omitempty"`
-	Policy    *PolicyConfig    `json:"policy,omitempty"`
+	Log       *LogConfig     `json:"log,omitempty"`
+	Inbounds  []*Inbound     `json:"inbounds"`
+	Outbounds []*Outbound    `json:"outbounds"`
+	Routing   *RoutingConfig `json:"routing"`
+	Stats     *StatsConfig   `json:"stats,omitempty"`
+	API       *APIConfig     `json:"api,omitempty"`
+	Policy    *PolicyConfig  `json:"policy,omitempty"`
 }
 
 // LogConfig configures Xray logging
@@ -29,37 +29,37 @@ type LogConfig struct {
 
 // Inbound defines an inbound proxy
 type Inbound struct {
-	Tag      string                 `json:"tag"`
-	Listen   string                 `json:"listen,omitempty"`
-	Port     int                    `json:"port"`
-	Protocol string                 `json:"protocol"`
-	Settings map[string]interface{} `json:"settings"`
-	StreamSettings *StreamSettings   `json:"streamSettings,omitempty"`
+	Tag            string                 `json:"tag"`
+	Listen         string                 `json:"listen,omitempty"`
+	Port           int                    `json:"port"`
+	Protocol       string                 `json:"protocol"`
+	Settings       map[string]interface{} `json:"settings"`
+	StreamSettings *StreamSettings        `json:"streamSettings,omitempty"`
 }
 
 // Outbound defines an outbound proxy
 type Outbound struct {
-	Tag      string                 `json:"tag"`
-	Protocol string                 `json:"protocol"`
-	Settings map[string]interface{} `json:"settings"`
-	StreamSettings *StreamSettings   `json:"streamSettings,omitempty"`
+	Tag            string                 `json:"tag"`
+	Protocol       string                 `json:"protocol"`
+	Settings       map[string]interface{} `json:"settings"`
+	StreamSettings *StreamSettings        `json:"streamSettings,omitempty"`
 }
 
 // StreamSettings configures network transport
 type StreamSettings struct {
-	Network  string                 `json:"network"`
-	Security string                 `json:"security,omitempty"`
-	TLSSettings *TLSSettings        `json:"tlsSettings,omitempty"`
-	WSSettings  *WSSettings         `json:"wsSettings,omitempty"`
-	GRPCSettings *GRPCSettings      `json:"grpcSettings,omitempty"`
-	TCPSettings *TCPSettings        `json:"tcpSettings,omitempty"`
+	Network      string        `json:"network"`
+	Security     string        `json:"security,omitempty"`
+	TLSSettings  *TLSSettings  `json:"tlsSettings,omitempty"`
+	WSSettings   *WSSettings   `json:"wsSettings,omitempty"`
+	GRPCSettings *GRPCSettings `json:"grpcSettings,omitempty"`
+	TCPSettings  *TCPSettings  `json:"tcpSettings,omitempty"`
 }
 
 // TLSSettings configures TLS
 type TLSSettings struct {
-	ServerName   string              `json:"serverName,omitempty"`
-	Certificates []*Certificate      `json:"certificates,omitempty"`
-	Insecure     bool                `json:"allowInsecure,omitempty"`
+	ServerName   string         `json:"serverName,omitempty"`
+	Certificates []*Certificate `json:"certificates,omitempty"`
+	Insecure     bool           `json:"allowInsecure,omitempty"`
 }
 
 // Certificate represents TLS certificate configuration

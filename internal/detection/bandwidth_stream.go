@@ -22,10 +22,10 @@ const bandwidthUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKi
 // 各点均为实测可用的大文件(≥100MB)源,保证快节点也能采样够时长。
 // 注意:某点即使返 200 也可能内容极小(死链占位),由 minValidDownloadBytes 校验拦截并触发回退。
 var downloadFallbackURLs = []string{
-	"https://speed.cloudflare.com/__down?bytes=104857600",          // 100MB
-	"https://speedtest.tokyo2.linode.com/100MB-tokyo2.bin",         // 100MB,支持 range
-	"https://speedtest.singapore.linode.com/100MB-singapore.bin",   // 100MB
-	"https://speedtest.frankfurt.linode.com/100MB-frankfurt.bin",   // 100MB
+	"https://speed.cloudflare.com/__down?bytes=104857600",        // 100MB
+	"https://speedtest.tokyo2.linode.com/100MB-tokyo2.bin",       // 100MB,支持 range
+	"https://speedtest.singapore.linode.com/100MB-singapore.bin", // 100MB
+	"https://speedtest.frankfurt.linode.com/100MB-frankfurt.bin", // 100MB
 }
 
 // minValidDownloadBytes 有效下行的最小字节数:低于此值(且非超时)判为死链/占位响应,触发回退。
@@ -45,10 +45,10 @@ type sampleReader struct {
 	phase    string
 	onSample func(Sample)
 
-	start        time.Time // 该方向开始时间(算 ElapsedMs)
-	windowStart  time.Time // 当前采样窗口起点
-	windowBytes  int64     // 当前采样窗口累计字节
-	totalBytes   int64     // 全程累计字节
+	start       time.Time // 该方向开始时间(算 ElapsedMs)
+	windowStart time.Time // 当前采样窗口起点
+	windowBytes int64     // 当前采样窗口累计字节
+	totalBytes  int64     // 全程累计字节
 }
 
 // newSampleReader 创建采样读取器。start 为该方向起始时刻。

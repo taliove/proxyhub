@@ -156,11 +156,11 @@ func TestClassifyIPv6Egress(t *testing.T) {
 
 func TestParseDNSEgress(t *testing.T) {
 	tests := []struct {
-		name       string
-		body       string
-		wantErr    bool
-		wantIP     string
-		wantGeo    string
+		name    string
+		body    string
+		wantErr bool
+		wantIP  string
+		wantGeo string
 	}{
 		{
 			name:    "success",

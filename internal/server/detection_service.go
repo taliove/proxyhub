@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"sync/atomic"
 	"time"
 
 	"github.com/taliove/proxyhub/internal/detection"
@@ -12,13 +10,12 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
-// DetectionService 检测任务服务(单飞 + 可取消)
+// DetectionService 检测服务(单节点测试/体检透传)。
+// 批量检测已任务化:见 DetectionServiceJobs(jobs 运行时),本结构不再承载批量触发/状态。
 type DetectionService struct {
 	detector   *detection.Detector
 	store      *store.Store
 	logger     *slog.Logger
-	running    atomic.Bool
-	cancel     context.CancelFunc
 	getNodes   func() []*subscription.Node        // 获取内存节点池
 	getTargets func() ([]detection.Target, error) // 获取检测目标配置
 }
@@ -95,101 +92,16 @@ type DetectionStatus struct {
 	StartedAt      time.Time `json:"started_at,omitempty"`
 }
 
-// TriggerDetection 启动检测任务(单飞:同时只能有一个在跑)
-func (ds *DetectionService) TriggerDetection(_ context.Context, scope DetectionScope) error {
-	if !ds.running.CompareAndSwap(false, true) {
-		return fmt.Errorf("detection already running")
-	}
-
-	// 用 context.Background() 而非请求 context:检测是异步后台任务,
-	// HTTP handler 返回后请求 context 会被取消,若基于它会导致所有网络操作立即失败。
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	ds.cancel = cancel
-
-	go func() {
-		defer ds.running.Store(false)
-		defer cancel()
-		ds.runDetection(ctx, scope)
-	}()
-
-	return nil
-}
-
-// CancelDetection 取消当前检测任务
-func (ds *DetectionService) CancelDetection() error {
-	if !ds.running.Load() {
-		return fmt.Errorf("no detection running")
-	}
-	if ds.cancel != nil {
-		ds.cancel()
-	}
-	return nil
-}
-
-// GetStatus 查询当前检测状态
-func (ds *DetectionService) GetStatus() DetectionStatus {
-	// TODO: 实现更细粒度的进度追踪
-	return DetectionStatus{
-		Running: ds.running.Load(),
-	}
-}
-
-// runDetection 执行检测任务(内部实现)
-func (ds *DetectionService) runDetection(ctx context.Context, scope DetectionScope) {
-	// 1. 圈定检测范围
-	allNodes := ds.getNodes()
-	nodesToDetect := ds.selectNodes(allNodes, scope)
-	if len(nodesToDetect) == 0 {
-		return
-	}
-
-	// 2. 获取检测目标
-	targets, err := ds.getTargets()
-	if err != nil || len(targets) == 0 {
-		return
-	}
-
-	// 3. 执行检测
-	resultsMap := ds.detector.DetectAll(ctx, nodesToDetect, targets)
-
-	// 4. 写回结果到节点对象 + node_health
-	nodeMap := make(map[string]*subscription.Node)
-	for _, n := range nodesToDetect {
-		nodeMap[n.NodeKey()] = n
-	}
-
-	for nodeKey, results := range resultsMap {
-		node := nodeMap[nodeKey]
-		if node == nil {
-			continue
-		}
-
-		// 更新节点的 Available/Latency/DetectionLastCheck。
-		// 节点可用性只取通用(连通性)目标的结果;专用解锁目标(如 netflix,当前为骨架/未实现)
-		// 不得决定节点是否可用,否则播种的解锁目标会把所有节点误判为不可用。
-		if len(results) > 0 {
-			if avail, ok := nodeAvailabilityResult(targets, results); ok {
-				node.Available = avail.Available
-				node.Latency = avail.Latency
-			}
-			node.DetectionLastCheck = time.Now()
-		}
-
-		// 写 node_health(多维结果)并按节点增量重算自动标签
-		ds.saveAndRetag(node, results)
-	}
-}
-
-// saveAndRetag 落库单节点检测结果并重算其自动标签。
+// SaveAndRetag 落库单节点检测结果并重算其自动标签。
 // 落库失败则跳过(不中断整体检测,下一轮重试);重算为 best-effort(标签腐化可接受,
-// 见票据 21:晚间定时重算兜底)。DetectionService 无 logger,沿用既有落库失败静默惯例。
-func (ds *DetectionService) saveAndRetag(node *subscription.Node, results []detection.Result) {
-	if err := ds.store.SaveDetectionResults(results, node.Name, node.Source); err != nil {
-		ds.logger.Warn("save detection results failed", "node_key", node.NodeKey(), "error", err)
+// 见票据 21:晚间定时重算兜底)。批量检测 job(batch_detection kind)经此函数落库。
+func SaveAndRetag(st *store.Store, logger *slog.Logger, node *subscription.Node, results []detection.Result) {
+	if err := st.SaveDetectionResults(results, node.Name, node.Source); err != nil {
+		logger.Warn("save detection results failed", "node_key", node.NodeKey(), "error", err)
 		return
 	}
-	if err := ds.store.RecomputeNodeTags(node.NodeKey()); err != nil {
-		ds.logger.Warn("recompute node tags after detection failed", "node_key", node.NodeKey(), "error", err)
+	if err := st.RecomputeNodeTags(node.NodeKey()); err != nil {
+		logger.Warn("recompute node tags after detection failed", "node_key", node.NodeKey(), "error", err)
 	}
 }
 

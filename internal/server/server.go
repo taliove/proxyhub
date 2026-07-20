@@ -47,6 +47,7 @@ type Server struct {
 	sessions         *SessionManager
 	logger           *slog.Logger
 	detectionService *DetectionService
+	detectionJobs    *DetectionServiceJobs
 	geo              *geoip.Resolver
 	examJobs         *detection.ExamJobManager
 	batchExamJobs    *detection.BatchExamJobManager
@@ -124,6 +125,17 @@ func (s *Server) RecoverJobs() {
 			s.logger.Warn("recover interrupted batch exam jobs failed", "error", err)
 		}
 	}
+	if s.detectionJobs != nil {
+		if err := s.detectionJobs.Recover(); err != nil {
+			s.logger.Warn("recover batch detection job failed", "error", err)
+		}
+	}
+}
+
+// SetDetectionJobs 注入基于 jobs 运行时的批量检测服务(main 接线;
+// 批量触发/取消/状态与通用任务 API 走它,旧的 goroutine+轮询机制已退役)。
+func (s *Server) SetDetectionJobs(dj *DetectionServiceJobs) {
+	s.detectionJobs = dj
 }
 
 // examSweepInterval 体检任务 TTL 清扫周期。
@@ -209,6 +221,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/detection/trigger", s.requireAuth(s.handleTriggerDetection))
 	mux.HandleFunc("POST /api/detection/cancel", s.requireAuth(s.handleCancelDetection))
 	mux.HandleFunc("GET /api/detection/status", s.requireAuth(s.handleDetectionStatus))
+
+	// 通用任务 API(任务中心)
+	mux.HandleFunc("GET /api/jobs", s.requireAuth(s.handleListJobs))
+	mux.HandleFunc("GET /api/jobs/{id}", s.requireAuth(s.handleGetJobDetail))
+	mux.HandleFunc("POST /api/jobs/{kind}/{key}/cancel", s.requireAuth(s.handleCancelJob))
 	mux.HandleFunc("POST /api/nodes/test", s.requireAuth(s.handleTestNode))
 	mux.HandleFunc("GET /api/nodes/test/stream", s.requireAuth(s.handleTestNodeStream))
 	mux.HandleFunc("GET /api/nodes/exam/stream", s.requireAuth(s.handleNodeExamStream))

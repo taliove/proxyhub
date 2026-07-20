@@ -14,7 +14,7 @@ type JobInfo struct {
 	Kind      string      `json:"kind"`
 	Key       string      `json:"key"`
 	Status    jobs.Status `json:"status"`
-	Cursor    string      `json:"cursor,omitempty"`    // 游标进度
+	Cursor    string      `json:"cursor,omitempty"` // 游标进度
 	CreatedAt string      `json:"created_at"`
 	UpdatedAt string      `json:"updated_at"`
 }
@@ -80,11 +80,14 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	var cancelled bool
 	switch kind {
 	case "batch_detection":
-		// batch_detection 通过 detectionService 取消(待集成)
-		if s.detectionService != nil {
-			if err := s.detectionService.CancelDetection(); err == nil {
+		if s.detectionJobs != nil {
+			if err := s.detectionJobs.CancelDetection(); err == nil {
 				cancelled = true
 			}
+		}
+	case "batch_exam":
+		if s.batchExamJobs != nil {
+			cancelled = s.batchExamJobs.Cancel(key)
 		}
 	case "exam":
 		if s.examJobs != nil {

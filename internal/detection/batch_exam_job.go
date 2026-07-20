@@ -17,13 +17,13 @@ const batchExamConcurrency = 2
 
 // BatchExamEvent 批量体检事件:进度更新(每节点一行)。
 type BatchExamEvent struct {
-	Phase       string  `json:"phase"`        // "node_start" | "node_done" | "node_error" | "done" | "cancelled"
-	NodeKey     string  `json:"node_key,omitempty"`
-	NodeName    string  `json:"node_name,omitempty"`
-	Current     int     `json:"current,omitempty"`     // 已完成节点数
-	Total       int     `json:"total,omitempty"`       // 总节点数
-	Error       string  `json:"error,omitempty"`       // node_error 时的错误信息
-	Report      *ExamReport `json:"report,omitempty"` // node_done 时的简化报告
+	Phase    string      `json:"phase"` // "node_start" | "node_done" | "node_error" | "done" | "cancelled"
+	NodeKey  string      `json:"node_key,omitempty"`
+	NodeName string      `json:"node_name,omitempty"`
+	Current  int         `json:"current,omitempty"` // 已完成节点数
+	Total    int         `json:"total,omitempty"`   // 总节点数
+	Error    string      `json:"error,omitempty"`   // node_error 时的错误信息
+	Report   *ExamReport `json:"report,omitempty"`  // node_done 时的简化报告
 }
 
 // batchExamParams 批量体检参数:节点 key 列表。凭证不入库,活节点经内存旁路传递。

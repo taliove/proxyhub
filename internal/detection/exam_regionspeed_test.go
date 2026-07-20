@@ -181,7 +181,9 @@ func TestExamStream_StageOrder(t *testing.T) {
 		return EgressProbe{
 			IPv4: func(context.Context) EgressIPv4 { return EgressIPv4{IP: "203.0.113.7", Country: "United States"} },
 			IPv6: func(context.Context) EgressIPv6 { return EgressIPv6{Available: false} },
-			DNS:  func(context.Context) EgressDNS { return EgressDNS{ResolverIP: "198.51.100.9", ResolverGeo: "United States - Example"} },
+			DNS: func(context.Context) EgressDNS {
+				return EgressDNS{ResolverIP: "198.51.100.9", ResolverGeo: "United States - Example"}
+			},
 		}, nil
 	})
 

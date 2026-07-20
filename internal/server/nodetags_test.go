@@ -76,7 +76,7 @@ func TestDetectionService_SaveAndRetag(t *testing.T) {
 		{NodeKey: node.NodeKey(), TargetName: "Netflix", Available: true, Latency: 88, Level: detection.LevelFull},
 		{NodeKey: node.NodeKey(), TargetName: "connectivity", Available: true, Latency: 30},
 	}
-	srv.detectionService.saveAndRetag(node, results)
+	SaveAndRetag(st, srv.logger, node, results)
 
 	got, _ := st.ListNodeTags([]string{node.NodeKey()})
 	if !reflect.DeepEqual(got[node.NodeKey()], []string{"nf-full"}) {

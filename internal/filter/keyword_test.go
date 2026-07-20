@@ -100,8 +100,8 @@ func TestSplitKeywords(t *testing.T) {
 		{"官网", 1},
 		{"官网,剩余流量", 2},
 		{"官网\n剩余流量\n到期", 3},
-		{"官网, 剩余流量\n 到期 ", 3},          // 混合分隔 + 空白
-		{"官网,,剩余流量\n\n", 2},             // 空片段丢弃
+		{"官网, 剩余流量\n 到期 ", 3}, // 混合分隔 + 空白
+		{"官网,,剩余流量\n\n", 2},   // 空片段丢弃
 	}
 	for _, c := range cases {
 		if got := SplitKeywords(c.raw); len(got) != c.want {

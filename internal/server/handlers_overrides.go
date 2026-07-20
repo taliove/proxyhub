@@ -140,9 +140,9 @@ func (s *Server) handleCleanupNodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"success": true,
-		"blocked": blocked,
+		"success":  true,
+		"blocked":  blocked,
 		"disabled": disabled,
-		"deleted": deleted,
+		"deleted":  deleted,
 	})
 }

@@ -43,7 +43,7 @@ func examRegionsWithBaseline() []Region {
 // withRegionRetry 包裹区域探针,叠加单区(含基准)失败重试:任一探测失败(Error 非空)自动重试
 // 至多 examRegionMaxRetries 次,仅返回最后一次结果(重试期间不 emit 中间失败态);ctx 取消则不再重试。
 // 重试在单次探针调用内同步完成,对 runRegionSpeedSampler 透明,不破坏串行独占与单区硬超时
-//(每次 attempt 由 measureRegionSpeed 各自套用 hard 超时)。
+// (每次 attempt 由 measureRegionSpeed 各自套用 hard 超时)。
 func withRegionRetry(probe RegionSpeedProbe) RegionSpeedProbe {
 	return func(ctx context.Context, r Region) RegionResult {
 		return retryResult(ctx, examRegionMaxRetries,

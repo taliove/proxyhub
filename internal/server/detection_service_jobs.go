@@ -166,6 +166,11 @@ type batchDetectionEvent struct {
 	Error     string `json:"error"`
 }
 
+// Recover 恢复重启前未完成的批量检测任务(游标续跑),供 Server.RecoverJobs 调用。
+func (ds *DetectionServiceJobs) Recover() error {
+	return ds.batchMgr.Recover()
+}
+
 // CancelDetection 取消当前批量检测任务。
 func (ds *DetectionServiceJobs) CancelDetection() error {
 	ds.mu.Lock()

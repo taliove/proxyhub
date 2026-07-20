@@ -62,7 +62,7 @@ func TestProbeEgress_ModularOverClient(t *testing.T) {
 // 由 ProbeEgress 内部重试捞回,调用方无需自行包重试(单一事实源在 withEgressRetry)。
 func TestProbeEgress_RetryPreservedInternally(t *testing.T) {
 	tr := &flakyEgressTransport{byHost: map[string]string{
-		"ip-api.com": `{"status":"success","query":"203.0.113.7","country":"United States","countryCode":"US"}`,
+		"ip-api.com":      `{"status":"success","query":"203.0.113.7","country":"United States","countryCode":"US"}`,
 		"api6.ipify.org":  "2001:db8::1",
 		"edns.ip-api.com": `{"dns":{"ip":"198.51.100.9","geo":"United States - Example DNS"}}`,
 	}, failFirstHost: "ip-api.com"}

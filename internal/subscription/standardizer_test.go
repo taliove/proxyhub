@@ -132,12 +132,12 @@ func TestRegionEmoji(t *testing.T) {
 
 func TestExtractKeyName(t *testing.T) {
 	cases := map[string]string{
-		"✨专线-A1":        "专线",
+		"✨专线-A1":           "专线",
 		"🇺🇸 US Premium 01": "US Premium", // 去掉前导旗+空格,取到数字前
-		"香港01":            "香港",
-		"   ":             "",   // 纯空白 → 空
-		"🚀🚀🚀":            "",   // 纯符号 → 空
-		"Node_5":          "Node",
+		"香港01":             "香港",
+		"   ":              "", // 纯空白 → 空
+		"🚀🚀🚀":              "", // 纯符号 → 空
+		"Node_5":           "Node",
 	}
 	for in, want := range cases {
 		if got := extractKeyName(in); got != want {
