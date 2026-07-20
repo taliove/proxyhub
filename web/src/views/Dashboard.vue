@@ -47,7 +47,7 @@ const stats = ref({
 })
 
 onMounted(async () => {
-  const data = await client.get('/dashboard/stats')
+  const data = await client.get<any, typeof stats.value>('/dashboard/stats')
   stats.value = data
 })
 </script>

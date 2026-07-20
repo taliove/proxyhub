@@ -56,9 +56,9 @@ vet: ## go vet 静态检查
 	@echo "🔍 go vet..."
 	go vet ./...
 
-lint-frontend: ## 前端 lint + 格式检查(ESLint warn 不阻塞;Prettier 不贴合即失败)
+lint-frontend: ## 前端 lint + 格式检查(ESLint warn 不阻塞;Prettier 不贴合即失败)+ 类型检查
 	@echo "🔍 前端 lint..."
-	cd web && npm run lint && npm run format:check
+	cd web && npm run lint && npm run format:check && npm run type-check
 
 test-shell: ## 运行安装/运维脚本测试套件(scripts/install/test_*.sh)
 	@echo "🧪 运行 shell 测试套件..."

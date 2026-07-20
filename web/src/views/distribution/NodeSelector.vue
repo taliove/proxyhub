@@ -66,7 +66,8 @@ interface Node {
 }
 
 const props = defineProps<{
-  modelValue: string[]
+  // 允许 undefined:父级 formData 为 Partial<DistributionPath>,新建时该字段可能未定义
+  modelValue: string[] | undefined
 }>()
 
 const emit = defineEmits<{
