@@ -186,6 +186,12 @@ func (d *Detector) tcpQuickCheck(ctx context.Context, node *subscription.Node) b
 
 // detectTarget 通过节点代理访问目标,判定解锁状态
 func (d *Detector) detectTarget(ctx context.Context, proxyAdapter *ProxyAdapter, node *subscription.Node, target Target) Result {
+	// 按 kind 分发:专用 kind(未实现)与未知 kind 在此拦截并明确报错;
+	// generic/空 kind 落到下方通用流程,行为与历史完全一致。
+	if r, handled := dispatchTarget(node, target); handled {
+		return r
+	}
+
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, d.requestTimeout)
 	defer cancel()

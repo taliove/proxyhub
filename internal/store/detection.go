@@ -2,18 +2,35 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/taliove/proxyhub/internal/detection"
 )
 
+// SeedDetectionTargets 首次启动播种默认解锁检测目标。
+// 仅当 detection_targets 设置项不存在时写入,已存在(含用户显式清空为空列表)则原样保留,
+// 绝不覆盖用户已改配置。幂等:每次进程启动调用,重复运行安全。
+// 由应用启动流程(cmd/server)调用,而非 store 打开时——保持裸库"空即空",
+// 播种是"首次启动"的应用层职责。
+func (s *Store) SeedDetectionTargets() error {
+	_, err := s.GetSetting("detection_targets")
+	if err == nil {
+		return nil // 已存在,尊重用户配置
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("check detection_targets: %w", err)
+	}
+	return s.SetDetectionTargets(detection.DefaultUnlockTargets())
+}
+
 // GetDetectionTargets 读取检测目标配置列表
 func (s *Store) GetDetectionTargets() ([]detection.Target, error) {
 	val, err := s.GetSetting("detection_targets")
 	if err != nil {
-		if err == ErrNotFound {
-			// 未配置则返回空列表(迁移会写入默认值,此处仅作降级)
+		if errors.Is(err, ErrNotFound) {
+			// 未配置则返回空列表(默认值由 SeedDetectionTargets 在首次启动写入,此处仅作降级)
 			return []detection.Target{}, nil
 		}
 		return nil, fmt.Errorf("get detection_targets setting: %w", err)
