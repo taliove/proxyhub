@@ -33,6 +33,10 @@ type Detector struct {
 	// regionSpeedProbeFactory 为一次体检构造多地域测速器(默认经 mihomo 会话下载各区 Linode 切片)。
 	// 与稳定性同构:每场体检独立会话,测试可注入假探测器绕过真实网络。
 	regionSpeedProbeFactory func(*subscription.Node) (RegionSpeedProbe, error)
+
+	// unlockProbeFactory 为一次体检构造解锁探测器(默认经 mihomo 会话 + 注册表分发判定 6 个目标)。
+	// 与稳定性/多地域同构:每场体检独立会话,测试可注入假探测器绕过真实网络。
+	unlockProbeFactory func(*subscription.Node) (UnlockProbe, error)
 }
 
 // BandwidthConfig 带宽测试配置(可由 settings 覆盖)
@@ -73,6 +77,7 @@ func NewDetector(nodeConcurrency int, tcpTimeout, requestTimeout time.Duration) 
 	}
 	d.stabilityProbeFactory = d.defaultStabilityProbe
 	d.regionSpeedProbeFactory = d.defaultRegionSpeedProbe
+	d.unlockProbeFactory = d.defaultUnlockProbe
 	return d
 }
 
@@ -94,6 +99,11 @@ func (d *Detector) SetStabilityProbeFactory(factory func(*subscription.Node) (St
 // SetRegionSpeedProbeFactory 覆盖多地域测速器工厂(测试用:注入假探测器绕过真实网络)。
 func (d *Detector) SetRegionSpeedProbeFactory(factory func(*subscription.Node) (RegionSpeedProbe, error)) {
 	d.regionSpeedProbeFactory = factory
+}
+
+// SetUnlockProbeFactory 覆盖解锁探测器工厂(测试用:注入假探测器绕过真实网络)。
+func (d *Detector) SetUnlockProbeFactory(factory func(*subscription.Node) (UnlockProbe, error)) {
+	d.unlockProbeFactory = factory
 }
 
 // resolveBandwidthConfig 取带宽配置:有 provider 用之,否则用默认

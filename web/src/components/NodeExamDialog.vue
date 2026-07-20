@@ -99,8 +99,8 @@
       <div v-else class="exam-region-empty">等待多地域测速…</div>
     </section>
 
-    <!-- 后续段落占位:解锁(后续票据实现) -->
-    <section class="exam-placeholder">后续段落(解锁)将在此展示</section>
+    <!-- 解锁区(第三段):6 个目标并行判定,随 SSE 逐个到达。 -->
+    <UnlockSection :results="unlockResults" :phase-text="unlockPhaseText" />
 
     <template #footer>
       <el-button v-if="!running && done" @click="rerun">重新体检</el-button>
@@ -115,7 +115,8 @@ import type {
   ExamEvent,
   ExamStabilityMetrics,
   ExamStabilitySample,
-  ExamRegionResult
+  ExamRegionResult,
+  ExamUnlockResult
 } from '@/types'
 import {
   scoreColorVar,
@@ -132,6 +133,8 @@ import {
   formatMbps,
   upsertRegionRow
 } from './exam/regionspeed'
+import { upsertUnlockRow } from './exam/unlock'
+import UnlockSection from './exam/UnlockSection.vue'
 
 const SPARK_W = 300
 const SPARK_H = 56
@@ -143,10 +146,12 @@ const nodeName = ref('')
 const phaseText = ref('准备中…')
 const errorText = ref('')
 const regionPhaseText = ref('等待中…')
+const unlockPhaseText = ref('等待中…')
 
 const samples = ref<ExamStabilitySample[]>([])
 const metrics = ref<ExamStabilityMetrics | null>(null)
 const regions = ref<ExamRegionResult[]>([])
+const unlockResults = ref<ExamUnlockResult[]>([])
 
 let payload: { self_node_id?: number; node_key?: string } = {}
 let es: EventSource | null = null
@@ -190,8 +195,10 @@ const reset = () => {
   samples.value = []
   metrics.value = null
   regions.value = []
+  unlockResults.value = []
   errorText.value = ''
   regionPhaseText.value = '等待中…'
+  unlockPhaseText.value = '等待中…'
   done.value = false
 }
 
@@ -223,8 +230,13 @@ const onFrame = (e: MessageEvent) => {
   } else if (frame.phase === 'region' && frame.region) {
     regions.value = upsertRegionRow(regions.value, frame.region)
     regionPhaseText.value = '多地域测速中…'
+  } else if (frame.phase === 'unlock' && frame.unlock_result) {
+    unlockResults.value = upsertUnlockRow(unlockResults.value, frame.unlock_result)
+    unlockPhaseText.value = '解锁检测中…'
   } else if (frame.phase === 'section_done' && frame.section === 'region_speed') {
     regionPhaseText.value = '多地域测速完成'
+  } else if (frame.phase === 'section_done' && frame.section === 'unlock') {
+    unlockPhaseText.value = '解锁检测完成'
   } else if (frame.phase === 'section_done' && frame.metrics) {
     metrics.value = frame.metrics
     phaseText.value = '稳定性完成'
@@ -358,15 +370,6 @@ defineExpose({ open })
 }
 .exam-region-empty {
   padding: var(--ph-space-4);
-  text-align: center;
-  font-size: var(--ph-text-sm);
-  color: var(--ph-text-secondary);
-}
-.exam-placeholder {
-  margin-top: var(--ph-space-4);
-  padding: var(--ph-space-4);
-  border: 1px dashed var(--ph-border-light);
-  border-radius: var(--ph-radius-lg);
   text-align: center;
   font-size: var(--ph-text-sm);
   color: var(--ph-text-secondary);

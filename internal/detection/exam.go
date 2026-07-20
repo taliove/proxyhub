@@ -48,23 +48,25 @@ func (c ExamConfig) stabilitySampleCount() int {
 	return n
 }
 
-// ExamReport 体检报告。稳定性段 + 多地域测速段;unlock 段为后续票据预留。
+// ExamReport 体检报告。稳定性段 + 多地域测速段 + 解锁段。
 type ExamReport struct {
 	Stability   *StabilityMetrics   `json:"stability,omitempty"`
 	RegionSpeed *RegionSpeedMetrics `json:"region_speed,omitempty"`
-	// Unlock *UnlockResult  (后续票据)
+	Unlock      *UnlockMetrics      `json:"unlock,omitempty"`
 }
 
-// ExamEvent 体检 SSE 事件(分段推送:sample / region / section_done / done / error)。
+// ExamEvent 体检 SSE 事件(分段推送:sample / region / unlock / section_done / done / error)。
 type ExamEvent struct {
-	Phase       string              `json:"phase"`
-	Section     string              `json:"section,omitempty"`
-	Sample      *StabilitySample    `json:"sample,omitempty"`
-	Metrics     *StabilityMetrics   `json:"metrics,omitempty"`
-	Region      *RegionResult       `json:"region,omitempty"`
-	RegionSpeed *RegionSpeedMetrics `json:"region_speed,omitempty"`
-	Report      *ExamReport         `json:"report,omitempty"`
-	Error       string              `json:"error,omitempty"`
+	Phase        string              `json:"phase"`
+	Section      string              `json:"section,omitempty"`
+	Sample       *StabilitySample    `json:"sample,omitempty"`
+	Metrics      *StabilityMetrics   `json:"metrics,omitempty"`
+	Region       *RegionResult       `json:"region,omitempty"`
+	RegionSpeed  *RegionSpeedMetrics `json:"region_speed,omitempty"`
+	UnlockResult *Result             `json:"unlock_result,omitempty"`
+	Unlock       *UnlockMetrics      `json:"unlock,omitempty"`
+	Report       *ExamReport         `json:"report,omitempty"`
+	Error        string              `json:"error,omitempty"`
 }
 
 // examStage 体检中的一个段:串行运行,独占会话(采样期间无并发段)。
@@ -131,6 +133,14 @@ func (d *Detector) ExamStream(ctx context.Context, node *subscription.Node, emit
 		stages = append(stages, regionSpeedStage(examRegions, rprobe))
 	} else {
 		stages = append(stages, regionSpeedErrorStage(examRegions, rerr))
+	}
+
+	// 解锁段:独立节点会话并行判定 6 个目标(经注册表分发,复用批量检测判定器)。
+	// 探测器工厂失败时走降级段(逐目标 error 行),与多地域段同构,不静默跳过。
+	if uprobe, uerr := d.unlockProbeFactory(node); uerr == nil {
+		stages = append(stages, unlockStage(DefaultUnlockTargets(), uprobe, unlockSegmentTimeout))
+	} else {
+		stages = append(stages, unlockErrorStage(DefaultUnlockTargets(), uerr))
 	}
 
 	orch := &ExamOrchestrator{stages: stages}
