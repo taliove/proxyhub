@@ -394,3 +394,116 @@ func (s *Server) handleGetExamHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, list)
 }
+
+// handleBatchExam 启动批量体检:node_keys 为空则对全部节点体检。
+func (s *Server) handleBatchExam(w http.ResponseWriter, r *http.Request) {
+	if s.detectionService == nil || s.batchExamJobs == nil {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "detection service not initialized"})
+		return
+	}
+
+	var req struct {
+		NodeKeys []string `json:"node_keys"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+
+	// node_keys 为空时对全部节点体检
+	nodeKeys := req.NodeKeys
+	if len(nodeKeys) == 0 {
+		for _, n := range s.nodes.Nodes() {
+			nodeKeys = append(nodeKeys, n.NodeKey())
+		}
+	}
+
+	// 收集活节点(含凭证)
+	var nodes []*subscription.Node
+	for _, nk := range nodeKeys {
+		for _, n := range s.nodes.Nodes() {
+			if n.NodeKey() == nk {
+				nodes = append(nodes, n)
+				break
+			}
+		}
+	}
+
+	key, err := s.batchExamJobs.Start(nodeKeys, nodes)
+	if err != nil {
+		s.logger.Error("start batch exam failed", "error", err)
+		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "started", "key": key})
+}
+
+// handleBatchExamStream 订阅批量体检任务事件流(SSE):回放 + 直播。
+func (s *Server) handleBatchExamStream(w http.ResponseWriter, r *http.Request) {
+	if s.detectionService == nil || s.batchExamJobs == nil {
+		http.Error(w, "detection service not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	// 任务 key 固定为 "batch_exam"(全局单例)
+	key := "batch_exam"
+
+	sub, err := s.batchExamJobs.Subscribe(key)
+	if err != nil {
+		http.Error(w, "no active batch exam", http.StatusNotFound)
+		return
+	}
+	defer sub.Close()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	writeFrame := func(data []byte) {
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// 回放缓冲事件
+	for _, ev := range sub.Replay {
+		writeFrame(ev.Data)
+	}
+
+	// 转直播
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev, ok := <-sub.Live:
+			if !ok {
+				return
+			}
+			writeFrame(ev.Data)
+		}
+	}
+}
+
+// handleBatchExamCancel 取消批量体检任务。
+func (s *Server) handleBatchExamCancel(w http.ResponseWriter, r *http.Request) {
+	if s.detectionService == nil || s.batchExamJobs == nil {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "detection service not initialized"})
+		return
+	}
+
+	// 任务 key 固定为 "batch_exam"
+	key := "batch_exam"
+
+	if !s.batchExamJobs.Cancel(key) {
+		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": "no active batch exam"})
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "cancelled"})
+}

@@ -49,6 +49,7 @@ type Server struct {
 	detectionService *DetectionService
 	geo              *geoip.Resolver
 	examJobs         *detection.ExamJobManager
+	batchExamJobs    *detection.BatchExamJobManager
 	// self-node region resolution seams: real by default, overridable in tests
 	// to drive the suggest/save paths without touching DNS or the embedded DB.
 	lookupHost    func(host string) ([]string, error)
@@ -82,6 +83,17 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 				logger.Warn("exam job persistence", "error", err)
 			}),
 		)
+
+		// 批量体检任务管理器:精简体检(出网 + 稳定性 + 基准下行),游标续跑,
+		// 每节点完成回调复用 onExamComplete(落历史 + 触发标签重算)。
+		s.batchExamJobs = detection.NewBatchExamJobManager(
+			detectionService.ExamStreamSimplified,
+			s.onExamComplete,
+			detection.WithBatchExamJobStore(st.Jobs()),
+			detection.WithBatchExamErrorHandler(func(err error) {
+				logger.Warn("batch exam job persistence", "error", err)
+			}),
+		)
 	}
 
 	return s
@@ -98,14 +110,19 @@ func (s *Server) onExamComplete(nodeKey string, report detection.ExamReport) {
 	}
 }
 
-// RecoverJobs 重启恢复:把上次进程遗留的 running 体检任务标记 interrupted(单发任务不续跑)。
+// RecoverJobs 重启恢复:把上次进程遗留的 running 任务恢复或标记中断。
+// 单发任务(exam)标记 interrupted,批量任务(batch_exam)从游标续跑。
 // best-effort:失败只记日志。由 main 在对外服务前调用。
 func (s *Server) RecoverJobs() {
-	if s.examJobs == nil {
-		return
+	if s.examJobs != nil {
+		if err := s.examJobs.RecoverInterrupted(); err != nil {
+			s.logger.Warn("recover interrupted exam jobs failed", "error", err)
+		}
 	}
-	if err := s.examJobs.RecoverInterrupted(); err != nil {
-		s.logger.Warn("recover interrupted exam jobs failed", "error", err)
+	if s.batchExamJobs != nil {
+		if err := s.batchExamJobs.RecoverInterrupted(); err != nil {
+			s.logger.Warn("recover interrupted batch exam jobs failed", "error", err)
+		}
 	}
 }
 
@@ -198,6 +215,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/nodes/exam/cancel", s.requireAuth(s.handleNodeExamCancel))
 	mux.HandleFunc("GET /api/nodes/exam/latest", s.requireAuth(s.handleGetExamLatest))
 	mux.HandleFunc("GET /api/nodes/exam/history", s.requireAuth(s.handleGetExamHistory))
+	mux.HandleFunc("POST /api/nodes/exam/batch", s.requireAuth(s.handleBatchExam))
+	mux.HandleFunc("GET /api/nodes/exam/batch/stream", s.requireAuth(s.handleBatchExamStream))
+	mux.HandleFunc("POST /api/nodes/exam/batch/cancel", s.requireAuth(s.handleBatchExamCancel))
 
 	// 节点管理（覆盖层 + 清理）
 	mux.HandleFunc("PUT /api/nodes/override", s.requireAuth(s.handleSetNodeOverride))

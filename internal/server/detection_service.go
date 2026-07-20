@@ -261,3 +261,8 @@ func (ds *DetectionService) TestBandwidthStream(ctx context.Context, node *subsc
 func (ds *DetectionService) ExamStream(ctx context.Context, node *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
 	return ds.detector.ExamStream(ctx, node, emit)
 }
+
+// ExamStreamSimplified 单节点精简体检流式版本(批量体检专用):出网 + 稳定性 + 基准下行。
+func (ds *DetectionService) ExamStreamSimplified(ctx context.Context, node *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
+	return ds.detector.ExamStreamSimplified(ctx, node, emit)
+}
