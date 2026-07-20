@@ -225,6 +225,12 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	if err := s.addColumnIfMissing("endpoints", "name_template", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// 订阅地址的节点范围筛选条件(013_endpoint_conditions.sql)。
+	// 用 addColumnIfMissing(按列存在性幂等)而非 applyMigrationFile:后者以表存在性
+	// 作已应用标记,endpoints 恒存在会被误判为已应用 -> 死迁移(同 011 先例)。
+	if err := s.addColumnIfMissing("endpoints", "conditions", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 
 	// 自建节点缓存的真实地区码(存时解析,见 2026-07-16 设计)
 	if err := s.addColumnIfMissing("self_hosted_nodes", "region_code", "TEXT NOT NULL DEFAULT ''"); err != nil {

@@ -8,6 +8,17 @@ export interface Endpoint {
   // 节点名称标准化按端点覆盖(见 ADR 0012):''=跟随全局, 'on'=强制开, 'off'=强制关
   name_mode: '' | 'on' | 'off'
   name_template: string
+  // 节点范围筛选条件的原始 JSON(见 internal/subfilter.Conditions);''=不筛选=全量
+  conditions: string
+}
+
+// SubscriptionConditions 订阅地址的节点范围筛选条件(与 Go 侧 subfilter.Conditions 对齐)。
+// 机场/地区/关键词各维度跨维度 AND;机场、地区维度内 OR;标签维度内 AND(全含才命中)。
+export interface SubscriptionConditions {
+  airports: string[]
+  regions: string[]
+  tags: string[]
+  keyword: string
 }
 
 export interface Airport {

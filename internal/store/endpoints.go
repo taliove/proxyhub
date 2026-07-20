@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -32,6 +33,10 @@ type Endpoint struct {
 	// NameMode 空=跟随全局,"on"/"off"=强制;NameTemplate 空=用全局模板。
 	NameMode     string `json:"name_mode"`
 	NameTemplate string `json:"name_template"`
+
+	// Conditions 节点范围筛选条件的原始 JSON(见 internal/subfilter.Conditions)。
+	// 空串=不筛选=全量(现状行为)。store 只存原始串,谓词语义由 subfilter 解释。
+	Conditions string `json:"conditions"`
 }
 
 // URL 返回订阅地址的相对路径
@@ -82,21 +87,21 @@ func (s *Store) CreateEndpoint(alias string) (*Endpoint, error) {
 // GetEndpointByID 按 ID 查询
 func (s *Store) GetEndpointByID(id int64) (*Endpoint, error) {
 	return s.scanEndpoint(s.db.QueryRow(
-		`SELECT id, alias, path, token, enabled, created_at, name_mode, name_template FROM endpoints WHERE id = ?`, id,
+		`SELECT id, alias, path, token, enabled, created_at, name_mode, name_template, conditions FROM endpoints WHERE id = ?`, id,
 	))
 }
 
 // GetEndpointByPath 按随机 Path 查询（订阅请求入口用）
 func (s *Store) GetEndpointByPath(path string) (*Endpoint, error) {
 	return s.scanEndpoint(s.db.QueryRow(
-		`SELECT id, alias, path, token, enabled, created_at, name_mode, name_template FROM endpoints WHERE path = ?`, path,
+		`SELECT id, alias, path, token, enabled, created_at, name_mode, name_template, conditions FROM endpoints WHERE path = ?`, path,
 	))
 }
 
 // ListEndpoints 列出所有订阅地址
 func (s *Store) ListEndpoints() ([]*Endpoint, error) {
 	rows, err := s.db.Query(
-		`SELECT id, alias, path, token, enabled, created_at, name_mode, name_template FROM endpoints ORDER BY id`,
+		`SELECT id, alias, path, token, enabled, created_at, name_mode, name_template, conditions FROM endpoints ORDER BY id`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query endpoints: %w", err)
@@ -152,6 +157,20 @@ func (s *Store) UpdateEndpointNameConfig(id int64, mode, template string) error 
 	return checkAffected(res)
 }
 
+// UpdateEndpointConditions 设置订阅地址的节点范围筛选条件(见 internal/subfilter)。
+// conditions 为原始 JSON;空串表示清空(回到全量)。非空时校验为合法 JSON,
+// 在边界处 fail fast,不让脏数据落库(谓词语义解释仍归 subfilter,store 不解释内容)。
+func (s *Store) UpdateEndpointConditions(id int64, conditions string) error {
+	if conditions != "" && !json.Valid([]byte(conditions)) {
+		return fmt.Errorf("invalid conditions json")
+	}
+	res, err := s.db.Exec(`UPDATE endpoints SET conditions = ? WHERE id = ?`, conditions, id)
+	if err != nil {
+		return fmt.Errorf("update endpoint conditions: %w", err)
+	}
+	return checkAffected(res)
+}
+
 // DeleteEndpoint 删除订阅地址
 func (s *Store) DeleteEndpoint(id int64) error {
 	res, err := s.db.Exec(`DELETE FROM endpoints WHERE id = ?`, id)
@@ -181,7 +200,7 @@ func scanEndpointFrom(r rowScanner) (*Endpoint, error) {
 	var ep Endpoint
 	var enabled int
 	if err := r.Scan(&ep.ID, &ep.Alias, &ep.Path, &ep.Token, &enabled, &ep.CreatedAt,
-		&ep.NameMode, &ep.NameTemplate); err != nil {
+		&ep.NameMode, &ep.NameTemplate, &ep.Conditions); err != nil {
 		return nil, err
 	}
 	ep.Enabled = enabled != 0

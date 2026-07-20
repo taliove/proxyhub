@@ -33,6 +33,13 @@
             }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="节点范围" width="100">
+          <template #default="{ row }">
+            <el-tag :type="hasConditions(row.conditions) ? 'warning' : 'info'" size="small">
+              {{ hasConditions(row.conditions) ? '自定义' : '全量' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <!-- 行内操作 <=3:预览 / 统计(详情抽屉);低频与删除收进「更多」下拉 -->
         <el-table-column label="操作" width="220">
           <template #default="{ row }">
@@ -49,6 +56,7 @@
                       {{ row.enabled ? '禁用' : '启用' }}
                     </el-dropdown-item>
                     <el-dropdown-item command="name-config">命名设置</el-dropdown-item>
+                    <el-dropdown-item command="conditions">节点范围</el-dropdown-item>
                     <el-dropdown-item command="delete" divided>
                       <span class="danger-item">删除</span>
                     </el-dropdown-item>
@@ -107,6 +115,13 @@
       </template>
     </el-dialog>
 
+    <!-- 节点范围对话框:配置本订阅地址的动态筛选条件(见 internal/subfilter) -->
+    <EndpointConditionsDialog
+      v-model="conditionsVisible"
+      :endpoint="conditionsEndpoint"
+      @saved="loadEndpoints"
+    />
+
     <!-- 预览对话框:所见即所得,与真实订阅走同一条节点池→关键词过滤→生成链 -->
     <el-dialog v-model="previewVisible" title="订阅预览" width="820px">
       <div class="preview-toolbar">
@@ -159,6 +174,8 @@ import { ArrowDown } from '@element-plus/icons-vue'
 import type { Endpoint } from '@/types'
 import client from '@/api/client'
 import IPStatsTable from '@/components/IPStatsTable.vue'
+import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
+import { hasConditions } from '@/utils/conditions'
 
 const endpoints = ref<Endpoint[]>([])
 const loading = ref(false)
@@ -176,10 +193,11 @@ const openStats = (row: Endpoint) => {
   statsVisible.value = true
 }
 
-// 行内「更多」下拉命令:启用/禁用、命名设置、删除
+// 行内「更多」下拉命令:启用/禁用、命名设置、节点范围、删除
 const onRowCommand = (cmd: string, row: Endpoint) => {
   if (cmd === 'toggle') toggleEndpoint(row)
   else if (cmd === 'name-config') openNameConfig(row)
+  else if (cmd === 'conditions') openConditions(row)
   else if (cmd === 'delete') deleteEndpoint(row)
 }
 
@@ -244,6 +262,15 @@ const saveNameConfig = async () => {
   ElMessage.success('命名设置已保存')
   nameConfigVisible.value = false
   loadEndpoints()
+}
+
+// 节点范围:配置本订阅地址的动态筛选条件(见 internal/subfilter)。对话框逻辑收敛在子组件。
+const conditionsVisible = ref(false)
+const conditionsEndpoint = ref<Endpoint | null>(null)
+
+const openConditions = (row: Endpoint) => {
+  conditionsEndpoint.value = row
+  conditionsVisible.value = true
 }
 
 // 预览:随时查看某订阅地址当前会下发的订阅内容与节点清单,不产生拉取统计

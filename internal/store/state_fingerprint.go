@@ -231,10 +231,10 @@ func loadSettingRecords(db *sql.DB, key []byte) ([]RecordFingerprint, error) {
 	return records, rows.Err()
 }
 
-// loadEndpointRecords endpoints: 身份=path;覆盖 alias/enabled/name_mode/name_template。
+// loadEndpointRecords endpoints: 身份=path;覆盖 alias/enabled/name_mode/name_template/conditions。
 // token 是订阅凭证(机密),不读取、不进入摘要。
 func loadEndpointRecords(db *sql.DB, key []byte) ([]RecordFingerprint, error) {
-	rows, err := db.Query(`SELECT path, alias, enabled, name_mode, name_template FROM endpoints`)
+	rows, err := db.Query(`SELECT path, alias, enabled, name_mode, name_template, conditions FROM endpoints`)
 	if err != nil {
 		return nil, fmt.Errorf("查询 endpoints: %w", err)
 	}
@@ -242,9 +242,9 @@ func loadEndpointRecords(db *sql.DB, key []byte) ([]RecordFingerprint, error) {
 
 	var records []RecordFingerprint
 	for rows.Next() {
-		var path, alias, nameMode, nameTemplate string
+		var path, alias, nameMode, nameTemplate, conditions string
 		var enabled int
-		if err := rows.Scan(&path, &alias, &enabled, &nameMode, &nameTemplate); err != nil {
+		if err := rows.Scan(&path, &alias, &enabled, &nameMode, &nameTemplate, &conditions); err != nil {
 			return nil, fmt.Errorf("扫描 endpoints: %w", err)
 		}
 		records = append(records, RecordFingerprint{
@@ -253,7 +253,8 @@ func loadEndpointRecords(db *sql.DB, key []byte) ([]RecordFingerprint, error) {
 				"alias="+alias,
 				"enabled="+strconv.Itoa(enabled),
 				"name_mode="+nameMode,
-				"name_template="+nameTemplate),
+				"name_template="+nameTemplate,
+				"conditions="+conditions),
 		})
 	}
 	return records, rows.Err()
