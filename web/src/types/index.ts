@@ -186,11 +186,48 @@ export interface ExamUnlockMetrics {
   results: ExamUnlockResult[]
 }
 
-// 深度体检报告(稳定性段 + 多地域测速段 + 解锁段)
+// 深度体检 - IPv4 出口信息(成功含地址/地区/ASN/标记,失败仅 error)
+export interface ExamEgressIPv4 {
+  ip?: string
+  country?: string
+  country_code?: string
+  region?: string
+  city?: string
+  asn?: string
+  org?: string
+  proxy: boolean // 疑似代理/VPN 出口
+  hosting: boolean // 机房/数据中心 IP(非住宅)
+  error?: string
+}
+
+// 深度体检 - IPv6 出口信息(available 有出口给地址;不可达 available=false 且无 error;解析失败带 error)
+export interface ExamEgressIPv6 {
+  available: boolean
+  address?: string
+  error?: string
+}
+
+// 深度体检 - 出口 DNS 信息(解析器 IP/归属地,leak 为疑似 DNS 泄露)
+export interface ExamEgressDNS {
+  resolver_ip?: string
+  resolver_geo?: string
+  leak: boolean
+  error?: string
+}
+
+// 深度体检 - 出网信息段聚合结果(IPv4/IPv6/DNS 各一份)
+export interface ExamEgressMetrics {
+  ipv4?: ExamEgressIPv4
+  ipv6?: ExamEgressIPv6
+  dns?: ExamEgressDNS
+}
+
+// 深度体检报告(稳定性段 + 多地域测速段 + 解锁段 + 出网信息段)
 export interface ExamReport {
   stability?: ExamStabilityMetrics
   region_speed?: ExamRegionSpeedMetrics
   unlock?: ExamUnlockMetrics
+  egress?: ExamEgressMetrics
 }
 
 // 深度体检历史记录(后端 store.ExamHistoryEntry;report 已从 JSON 解析)
@@ -203,7 +240,7 @@ export interface ExamHistoryEntry {
 
 // 深度体检 SSE 事件帧
 export interface ExamEvent {
-  phase: 'sample' | 'region' | 'unlock' | 'section_done' | 'done' | 'error' | 'cancelled'
+  phase: 'sample' | 'region' | 'unlock' | 'egress' | 'section_done' | 'done' | 'error' | 'cancelled'
   // seq 顶层单调序号:附加已有任务时服务端先回放(带 seq)再直播,前端凭此去重实现无感续传。
   seq?: number
   section?: string
@@ -213,6 +250,7 @@ export interface ExamEvent {
   region_speed?: ExamRegionSpeedMetrics
   unlock_result?: ExamUnlockResult
   unlock?: ExamUnlockMetrics
+  egress?: ExamEgressMetrics
   report?: ExamReport
   error?: string
 }

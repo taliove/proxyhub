@@ -61,6 +61,18 @@ func TestHandleNodeExamStream_EventSequence(t *testing.T) {
 			return detection.Result{TargetName: target.Name, Available: true, Level: detection.LevelFull, Region: "US"}
 		}, nil
 	})
+	// 出网信息段注入假探测器(不触真实网络):IPv4/IPv6/DNS 各返回固定结果。
+	det.SetEgressProbeFactory(func(*subscription.Node) (detection.EgressProbe, error) {
+		return detection.EgressProbe{
+			IPv4: func(context.Context) detection.EgressIPv4 {
+				return detection.EgressIPv4{IP: "203.0.113.7", Country: "United States", CountryCode: "US", Hosting: true}
+			},
+			IPv6: func(context.Context) detection.EgressIPv6 { return detection.EgressIPv6{Available: false} },
+			DNS: func(context.Context) detection.EgressDNS {
+				return detection.EgressDNS{ResolverIP: "198.51.100.9", ResolverGeo: "United States - Example DNS"}
+			},
+		}, nil
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/nodes/exam/stream?node_key="+node.NodeKey(), nil)
 	w := httptest.NewRecorder()
@@ -76,10 +88,14 @@ func TestHandleNodeExamStream_EventSequence(t *testing.T) {
 
 	// 序列断言:稳定性 sample(N) -> 稳定性 section_done(metrics)
 	//         -> 多地域 region 行(逐区) -> 多地域 section_done(region_speed)
-	//         -> 解锁 unlock 行(逐个) -> 解锁 section_done(unlock) -> done。
-	var sampleCount, regionRowCount, unlockRowCount = 0, 0, 0
+	//         -> 第三段:解锁 unlock 行 + 出网 egress 行(两路并行,交错到达)
+	//            -> 各自 section_done(unlock / egress) -> done。
+	// 第三段两路并发:不断言解锁与出网之间的先后,只断言各路的 section_done 在本路所有行之后,
+	// 且两路都落在多地域 section_done 之后、done 之前。
+	var sampleCount, regionRowCount, unlockRowCount, egressRowCount = 0, 0, 0, 0
 	var stabilityDoneAt, firstRegionAt, regionDoneAt = -1, -1, -1
-	var firstUnlockAt, unlockDoneAt, doneAt = -1, -1, -1
+	var firstUnlockAt, unlockDoneAt = -1, -1
+	var firstEgressAt, egressDoneAt, doneAt = -1, -1, -1
 	for i, f := range frames {
 		switch f["phase"] {
 		case "sample":
@@ -106,6 +122,14 @@ func TestHandleNodeExamStream_EventSequence(t *testing.T) {
 				t.Errorf("unlock[%d] frame malformed: %v", i, f)
 			}
 			unlockRowCount++
+		case "egress":
+			if firstEgressAt == -1 {
+				firstEgressAt = i
+			}
+			if f["section"] != "egress" || f["egress"] == nil {
+				t.Errorf("egress[%d] frame malformed: %v", i, f)
+			}
+			egressRowCount++
 		case "section_done":
 			switch f["section"] {
 			case "stability":
@@ -122,6 +146,11 @@ func TestHandleNodeExamStream_EventSequence(t *testing.T) {
 				unlockDoneAt = i
 				if _, ok := f["unlock"]; !ok {
 					t.Errorf("unlock section_done missing unlock metrics")
+				}
+			case "egress":
+				egressDoneAt = i
+				if _, ok := f["egress"]; !ok {
+					t.Errorf("egress section_done missing egress metrics")
 				}
 			default:
 				t.Errorf("unexpected section_done section %v", f["section"])
@@ -140,16 +169,27 @@ func TestHandleNodeExamStream_EventSequence(t *testing.T) {
 	if unlockRowCount != len(detection.DefaultUnlockTargets()) {
 		t.Errorf("unlock row frames = %d, want %d", unlockRowCount, len(detection.DefaultUnlockTargets()))
 	}
-	if stabilityDoneAt == -1 || firstRegionAt == -1 || regionDoneAt == -1 ||
-		firstUnlockAt == -1 || unlockDoneAt == -1 || doneAt == -1 {
-		t.Fatalf("missing key frames: stabilityDone=%d firstRegion=%d regionDone=%d firstUnlock=%d unlockDone=%d done=%d",
-			stabilityDoneAt, firstRegionAt, regionDoneAt, firstUnlockAt, unlockDoneAt, doneAt)
+	if egressRowCount != 3 {
+		t.Errorf("egress row frames = %d, want 3 (ipv4/ipv6/dns)", egressRowCount)
 	}
-	// 三段严格有序,且解锁 section_done 在所有 unlock 行之后。
-	if !(stabilityDoneAt < firstRegionAt && firstRegionAt < regionDoneAt &&
-		regionDoneAt < firstUnlockAt && firstUnlockAt < unlockDoneAt && unlockDoneAt < doneAt) {
-		t.Errorf("order wrong: stabilityDone=%d firstRegion=%d regionDone=%d firstUnlock=%d unlockDone=%d done=%d",
-			stabilityDoneAt, firstRegionAt, regionDoneAt, firstUnlockAt, unlockDoneAt, doneAt)
+	if stabilityDoneAt == -1 || firstRegionAt == -1 || regionDoneAt == -1 ||
+		firstUnlockAt == -1 || unlockDoneAt == -1 || firstEgressAt == -1 || egressDoneAt == -1 || doneAt == -1 {
+		t.Fatalf("missing key frames: stabilityDone=%d firstRegion=%d regionDone=%d firstUnlock=%d unlockDone=%d firstEgress=%d egressDone=%d done=%d",
+			stabilityDoneAt, firstRegionAt, regionDoneAt, firstUnlockAt, unlockDoneAt, firstEgressAt, egressDoneAt, doneAt)
+	}
+	// 前两段严格有序;第三段两路(解锁/出网)均在多地域 section_done 之后、done 之前,
+	// 且各路 section_done 在本路首行之后。两路之间不做先后断言(并发)。
+	if !(stabilityDoneAt < firstRegionAt && firstRegionAt < regionDoneAt) {
+		t.Errorf("stability/region order wrong: stabilityDone=%d firstRegion=%d regionDone=%d",
+			stabilityDoneAt, firstRegionAt, regionDoneAt)
+	}
+	if !(regionDoneAt < firstUnlockAt && firstUnlockAt < unlockDoneAt && unlockDoneAt < doneAt) {
+		t.Errorf("unlock order wrong: regionDone=%d firstUnlock=%d unlockDone=%d done=%d",
+			regionDoneAt, firstUnlockAt, unlockDoneAt, doneAt)
+	}
+	if !(regionDoneAt < firstEgressAt && firstEgressAt < egressDoneAt && egressDoneAt < doneAt) {
+		t.Errorf("egress order wrong: regionDone=%d firstEgress=%d egressDone=%d done=%d",
+			regionDoneAt, firstEgressAt, egressDoneAt, doneAt)
 	}
 	if doneAt != len(frames)-1 {
 		t.Errorf("done at %d, want last frame (%d)", doneAt, len(frames)-1)

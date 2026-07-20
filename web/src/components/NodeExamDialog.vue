@@ -32,6 +32,7 @@
     />
     <RegionSpeedSection :regions="regions" :sub-text="regionPhaseText" />
     <UnlockSection :results="unlockResults" :phase-text="unlockPhaseText" />
+    <EgressSection :egress="egress" :sub-text="egressPhaseText" />
 
     <!-- 底部滚动日志:最近 ~8 条人类可读行,从各类帧生成。 -->
     <div v-if="logLines.length" class="exam-log">
@@ -53,10 +54,12 @@ import type {
   ExamStabilityMetrics,
   ExamStabilitySample,
   ExamRegionResult,
-  ExamUnlockResult
+  ExamUnlockResult,
+  ExamEgressMetrics
 } from '@/types'
 import { upsertRegionRow } from './exam/regionspeed'
 import { upsertUnlockRow } from './exam/unlock'
+import { mergeEgress } from './exam/egress'
 import { examProgressPercent, examSegmentCounter } from './exam/progress'
 import { examLogLine, appendExamLog } from './exam/examlog'
 import { ExamStream } from './exam/examstream'
@@ -64,6 +67,7 @@ import type { ExamStreamStatus, EventSourceLike } from './exam/examstream'
 import StabilitySection from './exam/StabilitySection.vue'
 import RegionSpeedSection from './exam/RegionSpeedSection.vue'
 import UnlockSection from './exam/UnlockSection.vue'
+import EgressSection from './exam/EgressSection.vue'
 
 const visible = ref(false)
 const nodeName = ref('')
@@ -74,6 +78,7 @@ const samples = ref<ExamStabilitySample[]>([])
 const metrics = ref<ExamStabilityMetrics | null>(null)
 const regions = ref<ExamRegionResult[]>([])
 const unlockResults = ref<ExamUnlockResult[]>([])
+const egress = ref<ExamEgressMetrics | null>(null)
 const logLines = ref<string[]>([])
 const currentRegionName = ref('')
 const currentUnlockName = ref('')
@@ -154,6 +159,11 @@ const unlockPhaseText = computed(() => {
   if (unlockResults.value.length === 0) return '等待中…'
   return unlockResults.value.length >= 6 ? '解锁检测完成' : '解锁检测中…'
 })
+const egressPhaseText = computed(() => {
+  if (egress.value === null) return '等待中…'
+  const e = egress.value
+  return e.ipv4 && e.ipv6 && e.dns ? '出网信息探测完成' : '出网信息探测中…'
+})
 
 const open = (p: { self_node_id?: number; node_key?: string }, name: string) => {
   payload = p
@@ -168,6 +178,7 @@ const reset = () => {
   metrics.value = null
   regions.value = []
   unlockResults.value = []
+  egress.value = null
   logLines.value = []
   currentRegionName.value = ''
   currentUnlockName.value = ''
@@ -211,6 +222,12 @@ const onFrame = (frame: ExamEvent) => {
   } else if (frame.phase === 'unlock' && frame.unlock_result) {
     unlockResults.value = upsertUnlockRow(unlockResults.value, frame.unlock_result)
     currentUnlockName.value = frame.unlock_result.target_name
+  } else if (frame.phase === 'egress' && frame.egress) {
+    // 逐条到达:按子项不可变叠加(IPv4/IPv6/DNS 各带一类)。
+    egress.value = mergeEgress(egress.value, frame.egress)
+  } else if (frame.phase === 'section_done' && frame.section === 'egress' && frame.egress) {
+    // 段末权威覆盖(含 DNS 泄露判定)。
+    egress.value = frame.egress
   } else if (frame.phase === 'section_done' && frame.metrics) {
     metrics.value = frame.metrics
   }

@@ -48,11 +48,12 @@ func (c ExamConfig) stabilitySampleCount() int {
 	return n
 }
 
-// ExamReport 体检报告。稳定性段 + 多地域测速段 + 解锁段。
+// ExamReport 体检报告。稳定性段 + 多地域测速段 + 解锁段 + 出网信息段。
 type ExamReport struct {
 	Stability   *StabilityMetrics   `json:"stability,omitempty"`
 	RegionSpeed *RegionSpeedMetrics `json:"region_speed,omitempty"`
 	Unlock      *UnlockMetrics      `json:"unlock,omitempty"`
+	Egress      *EgressMetrics      `json:"egress,omitempty"`
 }
 
 // ExamEvent 体检 SSE 事件(分段推送:sample / region / unlock / section_done / done / error)。
@@ -65,6 +66,7 @@ type ExamEvent struct {
 	RegionSpeed  *RegionSpeedMetrics `json:"region_speed,omitempty"`
 	UnlockResult *Result             `json:"unlock_result,omitempty"`
 	Unlock       *UnlockMetrics      `json:"unlock,omitempty"`
+	Egress       *EgressMetrics      `json:"egress,omitempty"`
 	Report       *ExamReport         `json:"report,omitempty"`
 	Error        string              `json:"error,omitempty"`
 }
@@ -135,13 +137,21 @@ func (d *Detector) ExamStream(ctx context.Context, node *subscription.Node, emit
 		stages = append(stages, regionSpeedErrorStage(examRegions, rerr))
 	}
 
-	// 解锁段:独立节点会话并行判定 6 个目标(经注册表分发,复用批量检测判定器)。
-	// 探测器工厂失败时走降级段(逐目标 error 行),与多地域段同构,不静默跳过。
+	// 第三段:解锁判定(6 目标)与出网信息探测(IPv4/IPv6/DNS)同段并行,皆为小请求。
+	// 各自独立节点会话;工厂失败时走各自降级段(逐项 error 行),与前两段同构,不静默跳过。
+	// 合成一个并发段并入编排:从编排器看仍是稳定性段之后的单个串行段,不破坏稳定性段独占。
+	var third []examStage
 	if uprobe, uerr := d.unlockProbeFactory(node); uerr == nil {
-		stages = append(stages, unlockStage(DefaultUnlockTargets(), uprobe, unlockSegmentTimeout))
+		third = append(third, unlockStage(DefaultUnlockTargets(), uprobe, unlockSegmentTimeout))
 	} else {
-		stages = append(stages, unlockErrorStage(DefaultUnlockTargets(), uerr))
+		third = append(third, unlockErrorStage(DefaultUnlockTargets(), uerr))
 	}
+	if eprobe, eerr := d.egressProbeFactory(node); eerr == nil {
+		third = append(third, egressStage(eprobe, egressSegmentTimeout))
+	} else {
+		third = append(third, egressErrorStage(eerr))
+	}
+	stages = append(stages, concurrentStages("unlock_egress", third...))
 
 	orch := &ExamOrchestrator{stages: stages}
 	return orch.Run(ctx, emit)
