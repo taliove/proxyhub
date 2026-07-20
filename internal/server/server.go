@@ -75,17 +75,21 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 	// 体检任务管理器:runner 复用 detectionService.ExamStream(逻辑零改动),
 	// 自然完成回调把落历史从 handler 搬进任务生命周期(与连接无关)。
 	if detectionService != nil {
-		s.examJobs = detection.NewExamJobManager(
-			detectionService.ExamStream,
-			func(nodeKey string, report detection.ExamReport) {
-				if err := st.SaveExamHistory(nodeKey, report); err != nil {
-					logger.Warn("save exam history failed", "error", err)
-				}
-			},
-		)
+		s.examJobs = detection.NewExamJobManager(detectionService.ExamStream, s.onExamComplete)
 	}
 
 	return s
+}
+
+// onExamComplete 体检自然完成的收口:落历史 + 按该节点重算自动标签。
+// 两步均为 best-effort:任一失败只记日志,不影响体检结果本身(下一场体检会再算)。
+func (s *Server) onExamComplete(nodeKey string, report detection.ExamReport) {
+	if err := s.st.SaveExamHistory(nodeKey, report); err != nil {
+		s.logger.Warn("save exam history failed", "error", err)
+	}
+	if err := s.st.RecomputeNodeTags(nodeKey); err != nil {
+		s.logger.Warn("recompute node tags after exam failed", "error", err)
+	}
 }
 
 // examSweepInterval 体检任务 TTL 清扫周期。
@@ -649,11 +653,14 @@ type nodeView struct {
 	// 带宽测试结果（最近一次）
 	BandwidthDownMbps float64 `json:"bandwidth_down_mbps,omitempty"`
 	BandwidthUpMbps   float64 `json:"bandwidth_up_mbps,omitempty"`
+	// 自动标签(从测试结果派生:解锁/出网/质量),无标签时省略
+	Tags []string `json:"tags,omitempty"`
 }
 
 // toNodeViews 把节点池转换为对外视图列表。blocked 为屏蔽名单，用于标记每个节点是否已被屏蔽。
 // unlockResults 为每个节点的多维检测结果(可为 nil,表示不附带)。
-func toNodeViews(nodes []*subscription.Node, blocked map[string]bool, unlockResults map[string][]store.DetectionResultView) []nodeView {
+// nodeTags 为每个节点的自动标签(可为 nil,表示不附带)。
+func toNodeViews(nodes []*subscription.Node, blocked map[string]bool, unlockResults map[string][]store.DetectionResultView, nodeTags map[string][]string) []nodeView {
 	views := make([]nodeView, 0, len(nodes))
 	for _, n := range nodes {
 		key := n.NodeKey()
@@ -664,6 +671,10 @@ func toNodeViews(nodes []*subscription.Node, blocked map[string]bool, unlockResu
 			NodeKey: key, Blocked: blocked[key], Stale: n.Stale,
 			BandwidthDownMbps: n.BandwidthDownMbps,
 			BandwidthUpMbps:   n.BandwidthUpMbps,
+		}
+		// 附加自动标签(无记录时留空,JSON omitempty 省略)
+		if nodeTags != nil {
+			view.Tags = nodeTags[key]
 		}
 		// 附加多维检测结果
 		if unlockResults != nil {
@@ -723,9 +734,16 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		unlockResults = nil // 降级:不附带检测结果,节点仍正常展示
 	}
 
+	// 查当前页节点的自动标签(降级为空:不附带标签,节点仍正常展示)
+	nodeTags, err := s.st.ListNodeTags(pageKeys)
+	if err != nil {
+		s.logger.Warn("get node tags failed", "error", err)
+		nodeTags = nil
+	}
+
 	writeJSON(w, map[string]any{
 		"last_update": s.nodes.LastUpdate(),
-		"nodes":       toNodeViews(res.Nodes, blocked, unlockResults),
+		"nodes":       toNodeViews(res.Nodes, blocked, unlockResults, nodeTags),
 		"total":       res.Total,
 		"page":        res.Page,
 		"page_size":   res.PageSize,
@@ -1039,7 +1057,7 @@ func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
 		"format": format,
 		"count":  len(nodes),
 		// 预览展示的是已过滤后的节点，均未被屏蔽，故传空屏蔽集;预览不附带检测结果
-		"nodes":   toNodeViews(nodes, nil, nil),
+		"nodes":   toNodeViews(nodes, nil, nil, nil),
 		"content": content,
 	})
 }

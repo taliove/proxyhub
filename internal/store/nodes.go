@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 
 	"github.com/taliove/proxyhub/internal/subscription"
@@ -22,7 +23,10 @@ func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
 	}
 
 	if len(nodes) == 0 {
-		// 空池：全标记 stale 即可，提交事务
+		// 空池：全标记 stale，清理所有死节点标签后提交
+		if err := pruneStaleNodeTags(tx); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 
@@ -77,8 +81,23 @@ func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
 		}
 	}
 
+	// 清理死节点标签:本轮消失(仍 stale=1)的节点标签失去意义,随刷新删除。
+	if err := pruneStaleNodeTags(tx); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit node pool: %w", err)
+	}
+	return nil
+}
+
+// pruneStaleNodeTags 删除当前所有 stale 节点的自动标签(在 SaveNodePool 事务内调用)。
+func pruneStaleNodeTags(tx *sql.Tx) error {
+	if _, err := tx.Exec(
+		`DELETE FROM node_tags WHERE node_key IN (SELECT node_key FROM nodes WHERE stale = 1)`,
+	); err != nil {
+		return fmt.Errorf("prune stale node tags: %w", err)
 	}
 	return nil
 }

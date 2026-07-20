@@ -77,6 +77,7 @@ func newTestServer(t *testing.T, nodes []*subscription.Node) (*Server, *store.St
 	detectionService := NewDetectionService(
 		detector,
 		st,
+		logger,
 		fakeNodeSource.Nodes,
 		st.GetDetectionTargets,
 	)

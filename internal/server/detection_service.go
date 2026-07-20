@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 type DetectionService struct {
 	detector   *detection.Detector
 	store      *store.Store
+	logger     *slog.Logger
 	running    atomic.Bool
 	cancel     context.CancelFunc
 	getNodes   func() []*subscription.Node        // 获取内存节点池
@@ -25,12 +27,17 @@ type DetectionService struct {
 func NewDetectionService(
 	detector *detection.Detector,
 	st *store.Store,
+	logger *slog.Logger,
 	getNodes func() []*subscription.Node,
 	getTargets func() ([]detection.Target, error),
 ) *DetectionService {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &DetectionService{
 		detector:   detector,
 		store:      st,
+		logger:     logger,
 		getNodes:   getNodes,
 		getTargets: getTargets,
 	}
@@ -168,11 +175,21 @@ func (ds *DetectionService) runDetection(ctx context.Context, scope DetectionSco
 			node.DetectionLastCheck = time.Now()
 		}
 
-		// 写 node_health(多维结果)
-		if err := ds.store.SaveDetectionResults(results, node.Name, node.Source); err != nil {
-			// 记录错误但继续(不因单个节点失败而中断)
-			continue
-		}
+		// 写 node_health(多维结果)并按节点增量重算自动标签
+		ds.saveAndRetag(node, results)
+	}
+}
+
+// saveAndRetag 落库单节点检测结果并重算其自动标签。
+// 落库失败则跳过(不中断整体检测,下一轮重试);重算为 best-effort(标签腐化可接受,
+// 见票据 21:晚间定时重算兜底)。DetectionService 无 logger,沿用既有落库失败静默惯例。
+func (ds *DetectionService) saveAndRetag(node *subscription.Node, results []detection.Result) {
+	if err := ds.store.SaveDetectionResults(results, node.Name, node.Source); err != nil {
+		ds.logger.Warn("save detection results failed", "node_key", node.NodeKey(), "error", err)
+		return
+	}
+	if err := ds.store.RecomputeNodeTags(node.NodeKey()); err != nil {
+		ds.logger.Warn("recompute node tags after detection failed", "node_key", node.NodeKey(), "error", err)
 	}
 }
 

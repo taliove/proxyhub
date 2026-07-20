@@ -274,6 +274,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 节点自动标签表（012_node_tags.sql）
+	if err := s.applyMigrationFile("012_node_tags.sql"); err != nil {
+		return err
+	}
+
 	// 初始化地区识别规则表
 	return s.InitRegionRules()
 }
@@ -392,6 +397,17 @@ CREATE TABLE IF NOT EXISTS exam_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_exam_history_node ON exam_history(node_key, id DESC);
+`
+	case "012_node_tags.sql":
+		checkTable = "node_tags"
+		migrationSQL = `
+CREATE TABLE IF NOT EXISTS node_tags (
+    node_key TEXT NOT NULL,
+    tag      TEXT NOT NULL,
+    PRIMARY KEY (node_key, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_tags_tag ON node_tags(tag);
 `
 	default:
 		return fmt.Errorf("unknown migration file: %s", filename)
