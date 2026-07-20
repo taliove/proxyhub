@@ -220,3 +220,8 @@ func (ds *DetectionService) TestNode(ctx context.Context, node *subscription.Nod
 func (ds *DetectionService) TestBandwidthStream(ctx context.Context, node *subscription.Node, onSample func(detection.Sample)) detection.TestResult {
 	return ds.detector.TestBandwidthStream(ctx, node, onSample)
 }
+
+// ExamStream 单节点深度体检流式版本:各段串行执行,实时推送事件。
+func (ds *DetectionService) ExamStream(ctx context.Context, node *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
+	return ds.detector.ExamStream(ctx, node, emit)
+}

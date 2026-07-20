@@ -117,6 +117,7 @@
                   <el-dropdown-item command="quick">快测</el-dropdown-item>
                   <el-dropdown-item command="real">真实检测</el-dropdown-item>
                   <el-dropdown-item command="bandwidth">带宽测试</el-dropdown-item>
+                  <el-dropdown-item command="exam" divided>深度体检</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -144,7 +145,7 @@ import { ArrowDown } from '@element-plus/icons-vue'
 import type { Node } from '@/types'
 import { isSelfHosted, unlockSummary } from '../utils'
 
-export type TestCommand = 'quick' | 'real' | 'bandwidth'
+export type TestCommand = 'quick' | 'real' | 'bandwidth' | 'exam'
 export interface SortChange {
   prop: string
   order: string | null

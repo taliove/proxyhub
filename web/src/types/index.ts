@@ -132,3 +132,39 @@ export interface BandwidthSample {
   mbps: number
   elapsed_ms: number
 }
+
+// 深度体检 - 稳定性采样点
+export interface ExamStabilitySample {
+  seq: number
+  elapsed_ms: number
+  latency_ms: number
+  ok: boolean
+}
+
+// 深度体检 - 稳定性段聚合指标
+export interface ExamStabilityMetrics {
+  total: number
+  succeeded: number
+  loss_rate: number // 0..1
+  mean_ms: number
+  median_ms: number
+  p95_ms: number
+  p99_ms: number
+  jitter_ms: number
+  score: number // 0..100
+}
+
+// 深度体检报告(当前仅稳定性段;speed/unlock 为后续段预留)
+export interface ExamReport {
+  stability?: ExamStabilityMetrics
+}
+
+// 深度体检 SSE 事件帧
+export interface ExamEvent {
+  phase: 'sample' | 'section_done' | 'done' | 'error'
+  section?: string
+  sample?: ExamStabilitySample
+  metrics?: ExamStabilityMetrics
+  report?: ExamReport
+  error?: string
+}

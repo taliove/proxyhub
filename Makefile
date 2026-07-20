@@ -1,4 +1,4 @@
-.PHONY: help build build-frontend build-backend build-all clean test test-all test-v test-cover vet lint-frontend test-shell check dev-frontend dev-backend start stop restart status install
+.PHONY: help build build-frontend build-backend build-all clean test test-all test-v test-cover vet lint-frontend test-frontend test-shell check dev-frontend dev-backend start stop restart status install
 
 BINARY_NAME=proxyhub
 VERSION?=dev
@@ -59,6 +59,10 @@ vet: ## go vet 静态检查
 lint-frontend: ## 前端 lint + 格式检查(ESLint warn 不阻塞;Prettier 不贴合即失败)+ 类型检查
 	@echo "🔍 前端 lint..."
 	cd web && npm run lint && npm run format:check && npm run type-check
+
+test-frontend: ## 前端单元测试(vitest,纯逻辑)
+	@echo "🧪 前端单元测试..."
+	cd web && npm run test
 
 test-shell: ## 运行安装/运维脚本测试套件(scripts/install/test_*.sh)
 	@echo "🧪 运行 shell 测试套件..."
