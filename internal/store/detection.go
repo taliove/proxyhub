@@ -61,6 +61,9 @@ type DetectionResultView struct {
 	CheckedAt  time.Time `json:"checked_at"`
 	DownMbps   float64   `json:"down_mbps,omitempty"`
 	UpMbps     float64   `json:"up_mbps,omitempty"`
+	// Level/Region 仅专用解锁判定填充;generic/error 结果留空,序列化省略。
+	Level  string `json:"level,omitempty"`  // 解锁级别:full/originals_only/blocked
+	Region string `json:"region,omitempty"` // 命中区域国家码(如 US/HK)
 }
 
 // GetLatestDetectionResults 查询给定节点的最新多维检测结果。
@@ -82,7 +85,7 @@ func (s *Store) GetLatestDetectionResults(nodeKeys []string) (map[string][]Detec
 
 	// 取每个 (node_key, target_name) 组合最新的一条记录
 	query := fmt.Sprintf(`
-		SELECT nh.node_key, nh.target_name, nh.available, nh.latency_ms, nh.error, nh.checked_at, nh.down_mbps, nh.up_mbps
+		SELECT nh.node_key, nh.target_name, nh.available, nh.latency_ms, nh.error, nh.checked_at, nh.down_mbps, nh.up_mbps, nh.level, nh.region
 		FROM node_health nh
 		INNER JOIN (
 			SELECT node_key, target_name, MAX(checked_at) AS max_checked
@@ -109,7 +112,7 @@ func (s *Store) GetLatestDetectionResults(nodeKeys []string) (map[string][]Detec
 			availInt   int
 			checkedStr string
 		)
-		if err := rows.Scan(&nodeKey, &view.TargetName, &availInt, &view.Latency, &view.Error, &checkedStr, &view.DownMbps, &view.UpMbps); err != nil {
+		if err := rows.Scan(&nodeKey, &view.TargetName, &availInt, &view.Latency, &view.Error, &checkedStr, &view.DownMbps, &view.UpMbps, &view.Level, &view.Region); err != nil {
 			return nil, fmt.Errorf("scan detection result: %w", err)
 		}
 		view.Available = availInt == 1
@@ -149,8 +152,8 @@ func (s *Store) SaveDetectionResults(results []detection.Result, nodeName, nodeS
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
-		INSERT INTO node_health (node_key, name, source, target_name, available, latency_ms, checked_at, error, down_mbps, up_mbps)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO node_health (node_key, name, source, target_name, available, latency_ms, checked_at, error, down_mbps, up_mbps, level, region)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare statement: %w", err)
@@ -172,8 +175,10 @@ func (s *Store) SaveDetectionResults(results []detection.Result, nodeName, nodeS
 			r.Latency,
 			now,
 			r.Error,
-			0.0, // down_mbps (批量检测暂不含带宽)
-			0.0, // up_mbps
+			0.0,      // down_mbps (批量检测暂不含带宽)
+			0.0,      // up_mbps
+			r.Level,  // 专用解锁级别(generic/error 为空)
+			r.Region, // 命中区域国家码(generic/error 为空)
 		)
 		if err != nil {
 			return fmt.Errorf("insert detection result: %w", err)
