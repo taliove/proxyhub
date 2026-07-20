@@ -249,6 +249,16 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// node_health 解锁级别/命中区域列（011_node_health_unlock.sql）。
+	// 用 addColumnIfMissing（按列存在性幂等）而非 applyMigrationFile：
+	// 后者以表存在性作已应用标记，node_health 恒存在会被误判为已应用 -> 死迁移。
+	if err := s.addColumnIfMissing("node_health", "level", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("node_health", "region", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+
 	// 流量分发表（008_distribution.sql）
 	if err := s.applyMigrationFile("008_distribution.sql"); err != nil {
 		return err

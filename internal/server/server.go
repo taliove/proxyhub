@@ -583,6 +583,9 @@ type unlockResultView struct {
 	Error     string  `json:"error,omitempty"`
 	DownMbps  float64 `json:"down_mbps,omitempty"`
 	UpMbps    float64 `json:"up_mbps,omitempty"`
+	// Level/Region 仅专用解锁判定填充;generic/error 结果留空,序列化省略。
+	Level  string `json:"level,omitempty"`  // 解锁级别:full/originals_only/blocked
+	Region string `json:"region,omitempty"` // 命中区域国家码(如 US/HK)
 }
 
 // nodeView 是节点对外暴露的只读视图（隐藏协议密钥等敏感字段）
@@ -634,6 +637,8 @@ func toNodeViews(nodes []*subscription.Node, blocked map[string]bool, unlockResu
 						Error:     r.Error,
 						DownMbps:  r.DownMbps,
 						UpMbps:    r.UpMbps,
+						Level:     r.Level,
+						Region:    r.Region,
 					}
 					// 有 connectivity 检测结果时,以它为准更新可用性与延迟显示
 					// (统一数据源到 node_health,避免标准化 clone 导致的内存写回丢失)
