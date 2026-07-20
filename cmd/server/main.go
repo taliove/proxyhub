@@ -97,6 +97,7 @@ func run(configPath string) error {
 
 	// HTTP 服务（SPA + API + 订阅端点）
 	srv := server.New(cfg, st, agg, WebFS, logger, detectionSvc, resolver, distributionMgr)
+	go srv.StartExamSweeper(ctx) // 后台清扫过期(超过 TTL)的体检任务
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	httpServer := &http.Server{
 		Addr:         addr,
