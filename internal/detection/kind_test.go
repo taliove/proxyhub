@@ -1,7 +1,9 @@
 package detection
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -55,47 +57,43 @@ func TestResolveKind(t *testing.T) {
 	}
 }
 
-// TestDispatchTarget_Generic generic/空 kind 不被 dispatch 拦截,交回通用流程。
-func TestDispatchTarget_Generic(t *testing.T) {
-	node := &subscription.Node{Server: "example.com", Port: 443}
-	for _, k := range []Kind{"", KindGeneric} {
-		if _, handled := dispatchTarget(node, Target{Name: "connectivity", Kind: k}); handled {
-			t.Errorf("dispatchTarget kind=%q handled=true, want false (generic must fall through)", k)
+// TestSpecializedChecker_NotImplemented 未注册的专用 kind 返回"未实现"错误(由 02-04 逐个注册填充)。
+func TestSpecializedChecker_NotImplemented(t *testing.T) {
+	for _, k := range []Kind{KindNetflix, KindYouTubePremium, KindDisneyPlus, KindOpenAI, KindClaude, KindGemini} {
+		if _, ok := unlockCheckers[k]; ok {
+			continue // 已注册的 kind 跳过(后续票据落地后此测试自然收窄)
+		}
+		if _, err := specializedChecker(k); err == nil || !strings.Contains(err.Error(), "not implemented") {
+			t.Errorf("specializedChecker(%q) error = %v, want it to mention 'not implemented'", k, err)
 		}
 	}
 }
 
-// TestDispatchTarget_SpecializedNotImplemented 专用 kind 返回未实现错误(骨架,由 02-04 填充)。
-func TestDispatchTarget_SpecializedNotImplemented(t *testing.T) {
-	node := &subscription.Node{Server: "example.com", Port: 443}
-	res, handled := dispatchTarget(node, Target{Name: "Netflix", Kind: KindNetflix})
-	if !handled {
-		t.Fatal("dispatchTarget(netflix) handled=false, want true")
-	}
-	if res.Available {
-		t.Error("specialized skeleton result Available=true, want false")
-	}
-	if res.NodeKey != node.NodeKey() || res.TargetName != "Netflix" {
-		t.Errorf("result identity mismatch: %+v", res)
-	}
-	if !strings.Contains(res.Error, "not implemented") {
-		t.Errorf("error = %q, want it to mention 'not implemented'", res.Error)
-	}
-}
+// TestRegisterUnlockChecker_Panics 对未知/generic kind 注册或重复注册必须 panic(编程错误,立即暴露)。
+func TestRegisterUnlockChecker_Panics(t *testing.T) {
+	noop := func(context.Context, *http.Client, *subscription.Node, Target) Result { return Result{} }
 
-// TestDispatchTarget_UnknownKind 未知 kind 明确报错,不得静默按 generic 处理。
-func TestDispatchTarget_UnknownKind(t *testing.T) {
-	node := &subscription.Node{Server: "example.com", Port: 443}
-	res, handled := dispatchTarget(node, Target{Name: "Bogus", Kind: "spotify"})
-	if !handled {
-		t.Fatal("dispatchTarget(unknown) handled=false, want true (must not fall through to generic)")
+	mustPanic := func(name string, f func()) {
+		t.Helper()
+		defer func() {
+			if recover() == nil {
+				t.Errorf("%s expected panic, got none", name)
+			}
+		}()
+		f()
 	}
-	if res.Available {
-		t.Error("unknown kind result Available=true, want false")
+
+	mustPanic("unknown kind", func() { RegisterUnlockChecker("spotify", noop) })
+	mustPanic("generic kind", func() { RegisterUnlockChecker(KindGeneric, noop) })
+
+	// 重复注册:注册一次后再次注册同一 kind 必须 panic;测试后清理,不污染注册表。
+	const k = KindNetflix
+	if _, ok := unlockCheckers[k]; ok {
+		t.Skipf("kind %q already registered by an init (post-02), duplicate case covered by init-time panic", k)
 	}
-	if !strings.Contains(res.Error, "unknown") {
-		t.Errorf("error = %q, want it to mention 'unknown'", res.Error)
-	}
+	RegisterUnlockChecker(k, noop)
+	defer delete(unlockCheckers, k)
+	mustPanic("duplicate kind", func() { RegisterUnlockChecker(k, noop) })
 }
 
 // TestGenericTargetJSON_NoKindField 回归:generic(空 kind)Target 序列化不出现 kind 字段,API 响应零变化。

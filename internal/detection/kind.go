@@ -1,7 +1,9 @@
 package detection
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/taliove/proxyhub/internal/subscription"
 )
@@ -25,31 +27,44 @@ func (t Target) resolveKind() (Kind, error) {
 	}
 }
 
-// dispatchTarget 按 kind 分发检测:
-//   - generic/空 kind:返回 handled=false,交回调用方走通用状态码/关键字判定流程(行为零变化);
-//   - 专用 kind:返回 handled=true 的"未实现"骨架结果,由 02-04 票据填充真实判定;
-//   - 未知 kind:返回 handled=true 的明确错误结果,拒绝静默降级为 generic。
-//
-// 返回 handled=false 时第一个返回值为零值,调用方须忽略它。
-func dispatchTarget(node *subscription.Node, target Target) (Result, bool) {
-	base := Result{
+// UnlockChecker 专用解锁判定函数(02-04 票据逐个实现)。
+// client 已配置为经被测节点代理、超时由调用方设定;实现方填充完整 Result
+// (含 Available/Level/Region/Latency/Error),NodeKey/TargetName 由实现方按 node/target 填。
+type UnlockChecker func(ctx context.Context, client *http.Client, node *subscription.Node, target Target) Result
+
+// unlockCheckers 专用 kind -> 判定器注册表。
+// 各 unlock_*.go 在 init 中注册自己,新增判定器只加新文件、不改共享代码。
+var unlockCheckers = map[Kind]UnlockChecker{}
+
+// RegisterUnlockChecker 注册专用判定器。
+// 对未知 kind 注册或重复注册直接 panic:这是编程错误,必须在启动/测试时立刻暴露。
+func RegisterUnlockChecker(kind Kind, c UnlockChecker) {
+	if _, err := (Target{Kind: kind}).resolveKind(); err != nil || kind == KindGeneric {
+		panic(fmt.Sprintf("register unlock checker for invalid kind %q", kind))
+	}
+	if _, dup := unlockCheckers[kind]; dup {
+		panic(fmt.Sprintf("duplicate unlock checker for kind %q", kind))
+	}
+	unlockCheckers[kind] = c
+}
+
+// specializedChecker 取专用 kind 的判定器;未注册(尚未实现)返回明确错误。
+func specializedChecker(kind Kind) (UnlockChecker, error) {
+	c, ok := unlockCheckers[kind]
+	if !ok {
+		return nil, fmt.Errorf("unlock detection for kind %q not implemented", kind)
+	}
+	return c, nil
+}
+
+// targetErrorResult 构造携带明确错误信息的判定结果(未知 kind / 未实现等框架级失败)。
+func targetErrorResult(node *subscription.Node, target Target, msg string) Result {
+	return Result{
 		NodeKey:    node.NodeKey(),
 		TargetName: target.Name,
 		Available:  false,
+		Error:      msg,
 	}
-
-	kind, err := target.resolveKind()
-	if err != nil {
-		base.Error = err.Error()
-		return base, true
-	}
-	if kind == KindGeneric {
-		return Result{}, false
-	}
-
-	// 专用 kind 骨架:判定逻辑尚未实现(02-04)。
-	base.Error = fmt.Sprintf("unlock detection for kind %q not implemented", kind)
-	return base, true
 }
 
 // DefaultUnlockTargets 首次启动播种的六个解锁检测目标(每种专用 kind 一个)。

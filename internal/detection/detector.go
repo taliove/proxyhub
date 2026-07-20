@@ -205,10 +205,24 @@ func (d *Detector) tcpQuickCheck(ctx context.Context, node *subscription.Node) b
 
 // detectTarget 通过节点代理访问目标,判定解锁状态
 func (d *Detector) detectTarget(ctx context.Context, proxyAdapter *ProxyAdapter, node *subscription.Node, target Target) Result {
-	// 按 kind 分发:专用 kind(未实现)与未知 kind 在此拦截并明确报错;
-	// generic/空 kind 落到下方通用流程,行为与历史完全一致。
-	if r, handled := dispatchTarget(node, target); handled {
-		return r
+	// 按 kind 分发:未知 kind 与未注册的专用 kind 在此拦截并明确报错(拒绝静默降级);
+	// 已注册专用 kind 走对应 UnlockChecker;generic/空 kind 落到下方通用流程,行为与历史完全一致。
+	kind, err := target.resolveKind()
+	if err != nil {
+		return targetErrorResult(node, target, err.Error())
+	}
+	if kind != KindGeneric {
+		checker, err := specializedChecker(kind)
+		if err != nil {
+			return targetErrorResult(node, target, err.Error())
+		}
+		ctx, cancel := context.WithTimeout(ctx, d.requestTimeout)
+		defer cancel()
+		client := &http.Client{
+			Transport: &http.Transport{DialContext: proxyAdapter.DialContext},
+			Timeout:   d.requestTimeout,
+		}
+		return checker(ctx, client, node, target)
 	}
 
 	start := time.Now()
