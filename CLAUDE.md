@@ -90,11 +90,12 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 | 前端 lint(ESLint + Prettier + 类型检查) | `make lint-frontend` |
 | 签入前聚合检查 | `make check`(= vet + test + test-shell + lint-frontend) |
 | 前端/后端开发服务器 | `make dev-frontend` / `make dev-backend` |
+| 服务运行生命周期(幂等) | `make start` / `make stop` / `make restart` / `make status` |
 | 多平台发布 | `make build-all` |
 
 唯一豁免:定向调试允许 `go test ./internal/<pkg>/ -run <TestName>`(纯读操作,不落盘)。
 
-构建顺序不可逆:`make build` → `./start.sh` 重启(日志在 `var/log/`)。改前端不重启 = 没生效。日常开发范式见 `.claude/skills/dev-workflow`。
+构建顺序不可逆:`make build` → `make restart` 重启(日志在 `var/log/`)。改前端不重启 = 没生效。运行生命周期只有 make 一个入口;`./start.sh` 是 `make restart` 的兼容壳。日常开发范式见 `.claude/skills/dev-workflow`。
 
 ## 6. 测试门槛
 

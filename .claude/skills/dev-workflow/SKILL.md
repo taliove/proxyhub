@@ -35,11 +35,20 @@ make build-frontend # 只改了 web/(注意:go:embed,改前端后必须 make bui
 ## 3. 运行与调试
 
 ```bash
-./start.sh          # 后台启动 dist/proxyhub,日志 var/log/proxyhub.log,pid 同目录
+make restart        # 重启服务(停旧启新,幂等;日志 var/log/proxyhub.log,pid 同目录)
+make start          # 后台启动(已在运行会提示,不会起第二个实例)
+make stop           # 停止
+make status         # 状态
 tail -f var/log/proxyhub.log
-make dev-frontend   # 前端热更新开发(vite dev server)
+make dev-frontend   # 前端热更新开发(vite dev server,HMR,代理 /api 与 /sub 到 8080)
 make dev-backend    # 后端开发(config.example.yaml,storage 指向 var/data/data.db)
 ```
+
+运行生命周期只有 make 一个入口;`./start.sh` 是 `make restart` 的兼容壳,新代码/文档一律写 make。
+
+两条开发回路,按目的选:
+- **迭代回路**(边改边看):后端一个实例(`make start`)+ `make dev-frontend`,前端改动 HMR 秒级生效,不用 build 不用重启;改后端则 `make restart`。
+- **验证回路**(验收嵌入产物):`make build && make restart`——go:embed 决定了 dev server 验证不了最终二进制里的前端,这一步不可省。
 
 重启验证三件套:`curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/` 返回 200;`var/xray/xray_config.json` 已重新生成;日志无新增 ERROR(已知:`enabled_nodes: 0` 时 distribution 起不来是既有功能 bug,不算新问题)。
 
@@ -52,7 +61,7 @@ make lint-frontend # 前端 ESLint + Prettier(改前端必跑,warn 不阻塞,格
 make check        # 签入前聚合:vet + test + test-shell + lint-frontend
 ```
 
-前端开发循环:改前端 → `make lint-frontend` → `make build` → `./start.sh` 重启。
+前端开发循环:改前端 → `make lint-frontend` → `make build` → `make restart`(或走迭代回路免 build,见 §3)。
 
 唯一豁免:定向调试允许 `go test ./internal/<pkg>/ -run <TestName>`(纯读操作,不落盘)。
 

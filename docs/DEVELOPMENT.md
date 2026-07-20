@@ -42,11 +42,12 @@ make build         # 完整构建(前端 + 后端,产物在 dist/)
 make build-all     # 多平台构建
 make test          # Go 测试(隔离 3 处既有失败)
 make test-shell    # 安装/运维脚本测试套件
-make check         # 签入前聚合检查(vet + test + test-shell)
+make check         # 签入前聚合检查(vet + test + test-shell + lint-frontend)
+make restart       # 重启本地服务(start/stop/status 同族)
 make clean         # 清理产物
 ```
 
-**注意**:前端经 `go:embed` 编入二进制。改了前端必须跑 `make build`(而非只 build-backend),再 `./start.sh` 重启才生效。
+**注意**:前端经 `go:embed` 编入二进制。改了前端必须跑 `make build`(而非只 build-backend),再 `make restart` 重启才生效。服务的启动/停止/重启/状态统一走 `make start|stop|restart|status`(幂等,pid 文件驱动)。
 
 ## 项目结构速览
 

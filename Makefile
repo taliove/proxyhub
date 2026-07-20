@@ -1,4 +1,4 @@
-.PHONY: help build build-frontend build-backend build-all clean test test-all test-v test-cover vet lint-frontend test-shell check dev-frontend dev-backend install
+.PHONY: help build build-frontend build-backend build-all clean test test-all test-v test-cover vet lint-frontend test-shell check dev-frontend dev-backend start stop restart status install
 
 BINARY_NAME=proxyhub
 VERSION?=dev
@@ -77,6 +77,45 @@ dev-frontend: ## 前端开发服务器
 
 dev-backend: ## 后端开发服务器
 	go run ./cmd/server -config config.example.yaml
+
+# 运行生命周期:pid 文件驱动,幂等。restart = 停旧启新,不存在"第二个实例绑端口失败"
+PID_FILE=var/log/proxyhub.pid
+LOG_FILE=var/log/proxyhub.log
+
+start: ## 后台启动服务(已在运行则提示)
+	@if [ -f $(PID_FILE) ] && kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
+		echo "⚠️  已在运行 (PID: $$(cat $(PID_FILE))),如需重启用 make restart"; \
+	else \
+		mkdir -p var/log; \
+		rm -f $(PID_FILE); \
+		./dist/$(BINARY_NAME) > $(LOG_FILE) 2>&1 & \
+		echo $$! > $(PID_FILE); \
+		sleep 2; \
+		if kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
+			echo "✅ 已启动 (PID: $$(cat $(PID_FILE))),访问 http://localhost:8080,日志 $(LOG_FILE)"; \
+		else \
+			rm -f $(PID_FILE); \
+			echo "❌ 启动失败,查看日志: cat $(LOG_FILE)"; exit 1; \
+		fi \
+	fi
+
+stop: ## 停止服务(未在运行则空操作)
+	@if [ -f $(PID_FILE) ] && kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
+		kill $$(cat $(PID_FILE)); \
+		echo "✅ 已停止 (PID: $$(cat $(PID_FILE)))"; \
+	else \
+		echo "未在运行"; \
+	fi
+	@rm -f $(PID_FILE)
+
+restart: stop start ## 重启服务(停旧启新,幂等)
+
+status: ## 查看服务状态
+	@if [ -f $(PID_FILE) ] && kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
+		echo "运行中 (PID: $$(cat $(PID_FILE)),http://localhost:8080)"; \
+	else \
+		echo "未在运行"; \
+	fi
 
 clean: ## 清理构建产物
 	rm -rf dist/*
