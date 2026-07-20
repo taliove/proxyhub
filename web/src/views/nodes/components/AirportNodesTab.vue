@@ -33,6 +33,7 @@
       :page="pagination.page"
       :page-size="pagination.pageSize"
       :total="pagination.total"
+      :exam-summaries="examSummaries"
       @selection-change="onSelectionChange"
       @sort-change="onSortChange"
       @page-change="onPageChange"
@@ -50,6 +51,7 @@
       :node="detailNode"
       :detecting="detecting"
       @detect="detectOne"
+      @exam="openExam"
     />
     <NodeOverrideDialog ref="overrideDialog" :regions="regions" @saved="load" />
     <SourceBlockDialog ref="sourceBlockDialog" :sources="airportSources" @done="load" />
@@ -83,6 +85,7 @@ import { useNodeFilters } from '../composables/useNodeFilters'
 import { useNodeList } from '../composables/useNodeList'
 import { useNodeDetection, type DetectionScope } from '../composables/useNodeDetection'
 import { useNodeBatch } from '../composables/useNodeBatch'
+import { useExamSummaries } from '../composables/useExamSummaries'
 import { formatTime } from '../utils'
 
 const router = useRouter()
@@ -113,6 +116,8 @@ const {
   unblockSelected
 } = useNodeBatch(load)
 const { testing, testNode } = useNodeTest()
+// 节点行体检摘要徽标:随当前页节点整批拉取“最近一次体检”。
+const { summaries: examSummaries } = useExamSummaries(nodes)
 
 // 解锁检测(全部/筛选结果/选中/单节点)
 const detect = (scope: DetectionScope) => trigger(scope, load)
@@ -155,6 +160,9 @@ const openDetail = (row: Node) => {
   detailNode.value = row
   detailVisible.value = true
 }
+// 抽屉空历史引导 -> 直接对该节点开跑深度体检
+const openExam = (node: Node) =>
+  examDialog.value?.open({ node_key: node.node_key }, node.display_name || node.name)
 const overrideDialog = ref<InstanceType<typeof NodeOverrideDialog> | null>(null)
 const openOverride = (row: Node) => overrideDialog.value?.open(row)
 const editSelfNode = () => router.push({ path: '/nodes', query: { tab: 'self' } })

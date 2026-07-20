@@ -1,0 +1,186 @@
+<template>
+  <div class="exam-timeline">
+    <div class="exam-timeline-head">
+      <span class="drawer-section-title">体检历史</span>
+      <span v-if="items.length" class="muted">共 {{ items.length }} 次</span>
+    </div>
+
+    <div v-if="loading" class="exam-timeline-hint">加载中…</div>
+
+    <!-- 空历史引导态:引导用户去跑一次深度体检 -->
+    <div v-else-if="items.length === 0" class="exam-timeline-empty">
+      <div class="muted">尚未体检。深度体检会采样稳定性、多地域测速与流媒体/AI 解锁。</div>
+      <el-button type="primary" size="small" @click="emit('exam')">去跑一次深度体检</el-button>
+    </div>
+
+    <template v-else>
+      <ul class="exam-timeline-list">
+        <li v-for="item in visibleItems" :key="item.id" class="exam-timeline-item">
+          <button
+            type="button"
+            class="exam-timeline-row"
+            :class="{ 'is-open': item.id === selectedId }"
+            @click="toggle(item.id)"
+          >
+            <span class="exam-timeline-time">{{ item.relative }}</span>
+            <el-tag v-if="item.scoreLevel" :type="tagType(item.scoreLevel)" size="small">
+              稳定性 {{ item.score }}
+            </el-tag>
+            <el-tag v-else size="small" type="info">稳定性 —</el-tag>
+            <span v-if="item.unlockSummary" class="exam-timeline-unlock">{{
+              item.unlockSummary
+            }}</span>
+            <el-icon class="exam-timeline-caret" :class="{ 'is-open': item.id === selectedId }">
+              <ArrowRight />
+            </el-icon>
+          </button>
+
+          <!-- 点开渲染完整三段报告卡(复用实时体检同款段组件) -->
+          <ExamReportCard
+            v-if="item.id === selectedId && selectedReport"
+            :report="selectedReport"
+            class="exam-timeline-report"
+          />
+        </li>
+      </ul>
+
+      <!-- 按需加载:历史上限 50 条,首屏只渲染一批,其余点开加载 -->
+      <div v-if="hasMore" class="exam-timeline-more">
+        <el-button link type="primary" size="small" @click="showMore">
+          加载更多({{ items.length - visibleCount }})
+        </el-button>
+      </div>
+    </template>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { ArrowRight } from '@element-plus/icons-vue'
+import type { ExamHistoryEntry } from '@/types'
+import { buildTimelineItems, type ExamTimelineItem } from './examhistory'
+import type { ScoreLevel } from './stability'
+import ExamReportCard from './ExamReportCard.vue'
+
+const PAGE = 10
+
+const props = withDefaults(
+  defineProps<{
+    entries: ExamHistoryEntry[]
+    loading?: boolean
+  }>(),
+  { loading: false }
+)
+
+const emit = defineEmits<{ (e: 'exam'): void }>()
+
+const items = computed<ExamTimelineItem[]>(() => buildTimelineItems(props.entries))
+const visibleCount = ref(PAGE)
+const visibleItems = computed(() => items.value.slice(0, visibleCount.value))
+const hasMore = computed(() => items.value.length > visibleCount.value)
+
+const selectedId = ref<number | null>(null)
+const selectedReport = computed(
+  () => props.entries.find((e) => e.id === selectedId.value)?.report ?? null
+)
+
+// 数据换节点/刷新时,重置展开与分页,避免残留上一个节点的选中态。
+watch(
+  () => props.entries,
+  () => {
+    selectedId.value = null
+    visibleCount.value = PAGE
+  }
+)
+
+const toggle = (id: number) => {
+  selectedId.value = selectedId.value === id ? null : id
+}
+const showMore = () => {
+  visibleCount.value += PAGE
+}
+
+const tagType = (level: ScoreLevel): 'success' | 'warning' | 'danger' => {
+  if (level === 'good') return 'success'
+  if (level === 'fair') return 'warning'
+  return 'danger'
+}
+</script>
+
+<style scoped>
+.exam-timeline-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--ph-space-2);
+}
+.drawer-section-title {
+  font-weight: 600;
+}
+.muted {
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-sm);
+}
+.exam-timeline-hint {
+  padding: var(--ph-space-4);
+  text-align: center;
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-sm);
+}
+.exam-timeline-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ph-space-3);
+  padding: var(--ph-space-4);
+  background: var(--ph-bg-hover);
+  border-radius: var(--ph-radius-lg);
+}
+.exam-timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.exam-timeline-item {
+  border-bottom: 1px solid var(--ph-border-light);
+}
+.exam-timeline-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-3);
+  width: 100%;
+  padding: var(--ph-space-3) var(--ph-space-1);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.exam-timeline-row:hover {
+  background: var(--ph-bg-hover);
+}
+.exam-timeline-time {
+  min-width: 72px;
+  font-size: var(--ph-text-sm);
+}
+.exam-timeline-unlock {
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
+}
+.exam-timeline-caret {
+  margin-left: auto;
+  transition: transform 0.15s ease;
+  color: var(--ph-text-secondary);
+}
+.exam-timeline-caret.is-open {
+  transform: rotate(90deg);
+}
+.exam-timeline-report {
+  margin: 0 0 var(--ph-space-3);
+}
+.exam-timeline-more {
+  margin-top: var(--ph-space-2);
+  text-align: center;
+}
+</style>
