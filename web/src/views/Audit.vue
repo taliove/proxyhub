@@ -3,15 +3,15 @@
     <!-- 审计事件流水 -->
     <el-card>
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center">
+        <div class="card-header">
           <span>安全审计</span>
-          <div style="display: flex; gap: 8px">
+          <div class="filter-bar">
             <el-select
               v-model="filterTypes"
               multiple
               collapse-tags
               placeholder="事件类型"
-              style="width: 220px"
+              class="ctl-types"
               @change="reload"
             >
               <el-option label="登录成功" value="login_success" />
@@ -22,11 +22,11 @@
             <el-input
               v-model="filterIP"
               placeholder="按 IP 搜索"
-              style="width: 160px"
+              class="ctl-ip"
               clearable
               @change="reload"
             />
-            <el-select v-model="timeRange" style="width: 120px" @change="reload">
+            <el-select v-model="timeRange" class="ctl-range" @change="reload">
               <el-option label="最近 24h" value="24h" />
               <el-option label="最近 7 天" value="7d" />
               <el-option label="最近 30 天" value="30d" />
@@ -52,7 +52,7 @@
         <el-table-column prop="detail" label="详情" show-overflow-tooltip />
       </el-table>
 
-      <div style="margin-top: 12px; text-align: right">
+      <div class="pager">
         <el-pagination
           layout="total, prev, pager, next"
           :total="total"
@@ -64,9 +64,9 @@
     </el-card>
 
     <!-- 当前封禁 IP -->
-    <el-card style="margin-top: 20px">
+    <el-card class="banned-card">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center">
+        <div class="card-header">
           <span>当前封禁 IP</span>
           <el-button link @click="loadBanned">刷新</el-button>
         </div>
@@ -135,7 +135,7 @@ const load = async () => {
     params.set('time_range', timeRange.value)
     params.set('limit', String(pageSize))
     params.set('offset', String((page.value - 1) * pageSize))
-    const data = await client.get<any, { events: AuditEvent[]; total: number }>(
+    const data = await client.get<unknown, { events: AuditEvent[]; total: number }>(
       `/audit/events?${params}`
     )
     events.value = data.events || []
@@ -158,7 +158,7 @@ const onPageChange = (p: number) => {
 const loadBanned = async () => {
   bannedLoading.value = true
   try {
-    const data = await client.get<any, { banned: BannedIP[] }>('/audit/banned')
+    const data = await client.get<unknown, { banned: BannedIP[] }>('/audit/banned')
     banned.value = data.banned || []
   } finally {
     bannedLoading.value = false
@@ -192,3 +192,31 @@ onMounted(() => {
   loadBanned()
 })
 </script>
+
+<style scoped>
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.filter-bar {
+  display: flex;
+  gap: var(--ph-space-2);
+}
+.ctl-types {
+  width: 220px;
+}
+.ctl-ip {
+  width: 160px;
+}
+.ctl-range {
+  width: 120px;
+}
+.pager {
+  margin-top: var(--ph-space-3);
+  text-align: right;
+}
+.banned-card {
+  margin-top: var(--ph-space-5);
+}
+</style>

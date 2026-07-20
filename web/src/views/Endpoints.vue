@@ -2,20 +2,13 @@
   <div>
     <el-card>
       <template #header>
-        <div style="display: flex; justify-content: space-between">
+        <div class="card-header">
           <span>订阅地址管理</span>
           <el-button type="primary" @click="dialogVisible = true">新建订阅地址</el-button>
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="endpoints" row-key="id" :expand-row-keys="expandedRows">
-        <el-table-column type="expand">
-          <template #default="{ row }">
-            <div style="padding: 12px 24px">
-              <IPStatsTable :endpoint-id="row.id" />
-            </div>
-          </template>
-        </el-table-column>
+      <el-table v-loading="loading" :data="endpoints" row-key="id">
         <el-table-column prop="alias" label="别名" />
         <el-table-column label="订阅 URL">
           <template #default="{ row }">
@@ -40,21 +33,38 @@
             }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260">
+        <!-- 行内操作 <=3:预览 / 统计(详情抽屉);低频与删除收进「更多」下拉 -->
+        <el-table-column label="操作" width="220">
           <template #default="{ row }">
-            <el-button link @click="toggleEndpoint(row)">
-              {{ row.enabled ? '禁用' : '启用' }}
-            </el-button>
-            <el-button link type="primary" @click="openNameConfig(row)">命名设置</el-button>
-            <el-button link type="primary" @click="previewEndpoint(row)">预览</el-button>
-            <el-button link type="primary" @click="toggleStats(row)">
-              {{ isExpanded(row) ? '收起统计' : '统计' }}
-            </el-button>
-            <el-button link type="danger" @click="deleteEndpoint(row)">删除</el-button>
+            <span class="row-ops">
+              <el-button link type="primary" @click="previewEndpoint(row)">预览</el-button>
+              <el-button link type="primary" @click="openStats(row)">统计</el-button>
+              <el-dropdown trigger="click" @command="(cmd: string) => onRowCommand(cmd, row)">
+                <el-button link type="primary">
+                  更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="toggle">
+                      {{ row.enabled ? '禁用' : '启用' }}
+                    </el-dropdown-item>
+                    <el-dropdown-item command="name-config">命名设置</el-dropdown-item>
+                    <el-dropdown-item command="delete" divided>
+                      <span class="danger-item">删除</span>
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </span>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 访问统计详情:右侧抽屉展示某订阅地址的 IP 拉取明细 -->
+    <el-drawer v-model="statsVisible" :title="`访问统计 - ${statsAlias}`" size="640px">
+      <IPStatsTable v-if="statsEndpointId" :endpoint-id="statsEndpointId" />
+    </el-drawer>
 
     <!-- 创建对话框 -->
     <el-dialog v-model="dialogVisible" title="新建订阅地址" width="500px">
@@ -145,6 +155,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
 import type { Endpoint } from '@/types'
 import client from '@/api/client'
 import IPStatsTable from '@/components/IPStatsTable.vue'
@@ -153,18 +164,23 @@ const endpoints = ref<Endpoint[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
 const form = ref({ alias: '' })
-// 展开的统计行（el-table row-key 为 id，用字符串数组控制展开）
-const expandedRows = ref<string[]>([])
 
-const isExpanded = (row: Endpoint) => expandedRows.value.includes(String(row.id))
+// 访问统计进右侧抽屉(详情容器唯一入口),替代原 el-table expand 展开行
+const statsVisible = ref(false)
+const statsEndpointId = ref<number | null>(null)
+const statsAlias = ref('')
 
-const toggleStats = (row: Endpoint) => {
-  const key = String(row.id)
-  if (expandedRows.value.includes(key)) {
-    expandedRows.value = expandedRows.value.filter((k) => k !== key)
-  } else {
-    expandedRows.value = [...expandedRows.value, key]
-  }
+const openStats = (row: Endpoint) => {
+  statsEndpointId.value = row.id
+  statsAlias.value = row.alias
+  statsVisible.value = true
+}
+
+// 行内「更多」下拉命令:启用/禁用、命名设置、删除
+const onRowCommand = (cmd: string, row: Endpoint) => {
+  if (cmd === 'toggle') toggleEndpoint(row)
+  else if (cmd === 'name-config') openNameConfig(row)
+  else if (cmd === 'delete') deleteEndpoint(row)
 }
 
 const loadEndpoints = async () => {
@@ -235,7 +251,16 @@ const previewVisible = ref(false)
 const previewLoading = ref(false)
 const previewFormat = ref<'clash' | 'v2ray'>('clash')
 const previewEndpointId = ref<number | null>(null)
-const preview = ref<{ count: number; content: string; nodes: any[] }>({
+interface PreviewNode {
+  name: string
+  display_name?: string
+  region?: string
+  latency?: number
+  source?: string
+  available: boolean
+}
+
+const preview = ref<{ count: number; content: string; nodes: PreviewNode[] }>({
   count: 0,
   content: '',
   nodes: []
@@ -269,23 +294,36 @@ onMounted(loadEndpoints)
 </script>
 
 <style scoped>
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.row-ops {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+}
+.danger-item {
+  color: var(--ph-danger);
+}
 .preview-toolbar {
   display: flex;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: var(--ph-space-3);
 }
 .preview-hint {
-  margin-left: 12px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  margin-left: var(--ph-space-3);
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
 }
 .preview-content {
-  margin-top: 12px;
+  margin-top: var(--ph-space-3);
 }
 .cfg-hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
   line-height: 1.5;
-  margin-top: 4px;
+  margin-top: var(--ph-space-1);
 }
 </style>

@@ -2,9 +2,9 @@
   <div>
     <el-card>
       <template #header>
-        <div style="display: flex; justify-content: space-between">
+        <div class="card-header">
           <span>机场管理</span>
-          <div>
+          <div class="header-actions">
             <el-button type="success" :loading="refreshing" @click="refreshNodes">
               <el-icon><Refresh /></el-icon> 立即刷新节点
             </el-button>
@@ -121,8 +121,8 @@ const refreshNodes = async () => {
   try {
     await client.post('/aggregator/refresh')
     ElMessage.success('节点刷新任务已启动，请稍后查看节点状态')
-  } catch (error: any) {
-    if (error?.response?.status === 409) {
+  } catch (error) {
+    if ((error as { response?: { status?: number } })?.response?.status === 409) {
       ElMessage.warning('已有刷新任务在进行中，请稍候再试')
     } else {
       ElMessage.error('刷新失败')
@@ -149,10 +149,19 @@ onMounted(loadAirports)
 </script>
 
 <style scoped>
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.header-actions {
+  display: flex;
+  gap: var(--ph-space-2);
+}
 .form-hint {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-xs);
   line-height: 1.5;
-  margin-top: 4px;
+  margin-top: var(--ph-space-1);
 }
 </style>

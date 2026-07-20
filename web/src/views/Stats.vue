@@ -14,9 +14,9 @@
     </el-row>
 
     <!-- 趋势图 -->
-    <el-card style="margin-top: 20px">
+    <el-card class="section-card">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center">
+        <div class="card-header">
           <span>拉取趋势</span>
           <el-radio-group v-model="trendDays" size="small" @change="loadTrend">
             <el-radio-button :value="7">最近 7 天</el-radio-button>
@@ -24,16 +24,16 @@
           </el-radio-group>
         </div>
       </template>
-      <v-chart v-if="hasTrend" :option="chartOption" style="height: 360px" autoresize />
+      <v-chart v-if="hasTrend" :option="chartOption" class="trend-chart" autoresize />
       <el-empty v-else description="暂无拉取数据" :image-size="80" />
     </el-card>
 
     <!-- 按订阅地址查看 IP 明细 -->
-    <el-card style="margin-top: 20px">
+    <el-card class="section-card">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center">
+        <div class="card-header">
           <span>订阅地址访问明细</span>
-          <el-select v-model="selectedEndpoint" placeholder="选择订阅地址" style="width: 220px">
+          <el-select v-model="selectedEndpoint" placeholder="选择订阅地址" class="ctl-endpoint">
             <el-option v-for="ep in endpoints" :key="ep.id" :label="ep.alias" :value="ep.id" />
           </el-select>
         </div>
@@ -72,6 +72,20 @@ const selectedEndpoint = ref<number | null>(null)
 
 const hasTrend = computed(() => trend.value.length > 0)
 
+// 图表配色取自设计令牌(随亮/暗主题变化),不硬编码色值;多订阅地址按序循环取色
+const chartPalette = (): string[] => {
+  const s = getComputedStyle(document.documentElement)
+  const read = (name: string, fallback: string) => s.getPropertyValue(name).trim() || fallback
+  return [
+    read('--ph-color-primary', '#4f46e5'),
+    read('--ph-success', '#059669'),
+    read('--ph-warning', '#d97706'),
+    read('--ph-danger', '#dc2626'),
+    read('--ph-info', '#475569'),
+    read('--ph-indigo-400', '#818cf8')
+  ]
+}
+
 // 把扁平的 trend 点按订阅地址分线，日期为 x 轴
 const chartOption = computed(() => {
   const dates = [...new Set(trend.value.map((p) => p.date))].sort()
@@ -88,6 +102,7 @@ const chartOption = computed(() => {
     data: dates.map((d) => dateMap.get(d) || 0)
   }))
   return {
+    color: chartPalette(),
     tooltip: { trigger: 'axis' },
     legend: { data: [...byAlias.keys()] },
     grid: { left: 40, right: 20, top: 40, bottom: 30 },
@@ -102,7 +117,7 @@ const loadGlobal = async () => {
 }
 
 const loadTrend = async () => {
-  const data = await client.get<any, { trend: TrendPoint[] }>(
+  const data = await client.get<unknown, { trend: TrendPoint[] }>(
     `/stats/trend?days=${trendDays.value}`
   )
   trend.value = data.trend || []
@@ -121,3 +136,20 @@ onMounted(() => {
   loadEndpoints()
 })
 </script>
+
+<style scoped>
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.section-card {
+  margin-top: var(--ph-space-5);
+}
+.trend-chart {
+  height: 360px;
+}
+.ctl-endpoint {
+  width: 220px;
+}
+</style>

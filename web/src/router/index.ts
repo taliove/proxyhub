@@ -63,7 +63,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'refresh-log',
         name: 'RefreshLog',
-        component: () => import('@/views/RefreshLog.vue'),
+        component: () => import('@/views/refresh-log/index.vue'),
         meta: { title: '同步日志', icon: 'Refresh' }
       },
       {

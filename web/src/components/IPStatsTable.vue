@@ -35,7 +35,7 @@ const load = async () => {
   if (!props.endpointId) return
   loading.value = true
   try {
-    const data = await client.get<any, IPStat[]>(`/endpoints/${props.endpointId}/stats`)
+    const data = await client.get<unknown, IPStat[]>(`/endpoints/${props.endpointId}/stats`)
     stats.value = data || []
   } finally {
     loading.value = false
