@@ -83,7 +83,7 @@ func run(configPath string) error {
 	go runMaintenance(ctx, st, logger)
 
 	// 初始化检测服务
-	detectionSvc := initDetectionService(cfg, st, agg)
+	detectionSvc := initDetectionService(cfg, st, agg, logger)
 
 	// HTTP 服务（SPA + API + 订阅端点）
 	srv := server.New(cfg, st, agg, WebFS, logger, detectionSvc, resolver)
@@ -175,7 +175,7 @@ func newLogger(cfg config.LogConfig) *slog.Logger {
 }
 
 // initDetectionService 初始化节点解锁检测服务
-func initDetectionService(cfg *config.Config, st *store.Store, nodes server.NodeSource) *server.DetectionService {
+func initDetectionService(cfg *config.Config, st *store.Store, nodes server.NodeSource, logger *slog.Logger) *server.DetectionService {
 	// 导入 detection 包
 	// 创建 detector 实例
 	detector := detection.NewDetector(
@@ -192,6 +192,7 @@ func initDetectionService(cfg *config.Config, st *store.Store, nodes server.Node
 	return server.NewDetectionService(
 		detector,
 		st,
+		logger,
 		nodes.Nodes,            // 获取节点池的函数
 		st.GetDetectionTargets, // 获取检测目标的函数
 	)
