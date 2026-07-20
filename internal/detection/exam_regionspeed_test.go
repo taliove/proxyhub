@@ -156,7 +156,9 @@ func TestRegionSpeedStage_EmitsRowsThenMetrics(t *testing.T) {
 	}
 }
 
-func TestExamStream_StabilityThenRegionOrder(t *testing.T) {
+// TestExamStream_StageOrder 校验新段序:出网 -> 稳定性 -> 多地域 -> 解锁,全部串行。
+// 出网段前置且跑完才进稳定性采样(采样独占不破坏)。四类探测器均注入假实现,保持快速确定、不触网。
+func TestExamStream_StageOrder(t *testing.T) {
 	node := &subscription.Node{Name: "n", Server: "example.com", Port: 443, Type: "vmess"}
 	d := NewDetector(1, time.Second, time.Second)
 	d.SetExamConfigProvider(func() ExamConfig {
@@ -170,14 +172,34 @@ func TestExamStream_StabilityThenRegionOrder(t *testing.T) {
 			return RegionResult{Code: r.Code, Name: r.Name, TTFBms: 40, DownMbps: 20}
 		}, nil
 	})
+	d.SetUnlockProbeFactory(func(*subscription.Node) (UnlockProbe, error) {
+		return func(_ context.Context, target Target) Result {
+			return Result{TargetName: target.Name, Available: true, Level: LevelFull, Region: "US"}
+		}, nil
+	})
+	d.SetEgressProbeFactory(func(*subscription.Node) (EgressProbe, error) {
+		return EgressProbe{
+			IPv4: func(context.Context) EgressIPv4 { return EgressIPv4{IP: "203.0.113.7", Country: "United States"} },
+			IPv6: func(context.Context) EgressIPv6 { return EgressIPv6{Available: false} },
+			DNS:  func(context.Context) EgressDNS { return EgressDNS{ResolverIP: "198.51.100.9", ResolverGeo: "United States - Example"} },
+		}, nil
+	})
 
 	var phases []string
-	var stabilityDoneAt, firstRegionAt, regionDoneAt, doneAt = -1, -1, -1, -1
+	egressDoneAt, firstSampleAt, stabilityDoneAt := -1, -1, -1
+	firstRegionAt, regionDoneAt := -1, -1
+	firstUnlockAt, unlockDoneAt, doneAt := -1, -1, -1
 	var firstRegionName string
 	report := d.ExamStream(context.Background(), node, func(e ExamEvent) {
 		i := len(phases)
 		phases = append(phases, e.Phase+"/"+e.Section)
 		switch {
+		case e.Phase == "section_done" && e.Section == "egress":
+			egressDoneAt = i
+		case e.Phase == "sample":
+			if firstSampleAt == -1 {
+				firstSampleAt = i
+			}
 		case e.Phase == "section_done" && e.Section == "stability":
 			stabilityDoneAt = i
 		case e.Phase == "region":
@@ -187,22 +209,37 @@ func TestExamStream_StabilityThenRegionOrder(t *testing.T) {
 			}
 		case e.Phase == "section_done" && e.Section == "region_speed":
 			regionDoneAt = i
+		case e.Phase == "unlock":
+			if firstUnlockAt == -1 {
+				firstUnlockAt = i
+			}
+		case e.Phase == "section_done" && e.Section == "unlock":
+			unlockDoneAt = i
 		case e.Phase == "done":
 			doneAt = i
 		}
 	})
 
-	if stabilityDoneAt == -1 || firstRegionAt == -1 || regionDoneAt == -1 || doneAt == -1 {
+	if egressDoneAt == -1 || firstSampleAt == -1 || stabilityDoneAt == -1 || firstRegionAt == -1 ||
+		regionDoneAt == -1 || firstUnlockAt == -1 || unlockDoneAt == -1 || doneAt == -1 {
 		t.Fatalf("missing key events: %v", phases)
 	}
-	if !(stabilityDoneAt < firstRegionAt && firstRegionAt < regionDoneAt && regionDoneAt < doneAt) {
-		t.Errorf("order wrong: stabilityDone=%d firstRegion=%d regionDone=%d done=%d (%v)",
-			stabilityDoneAt, firstRegionAt, regionDoneAt, doneAt, phases)
+	// 出网段独占:其 section_done 在稳定性首个采样之前(跑完才进采样)。
+	if egressDoneAt >= firstSampleAt {
+		t.Errorf("egress must finish before stability sampling: egressDone=%d firstSample=%d (%v)",
+			egressDoneAt, firstSampleAt, phases)
+	}
+	// 全序:出网 -> 稳定性 -> 多地域 -> 解锁 -> done。
+	if !(firstSampleAt < stabilityDoneAt && stabilityDoneAt < firstRegionAt &&
+		firstRegionAt < regionDoneAt && regionDoneAt < firstUnlockAt &&
+		firstUnlockAt < unlockDoneAt && unlockDoneAt < doneAt) {
+		t.Errorf("stage order wrong: egressDone=%d firstSample=%d stabilityDone=%d firstRegion=%d regionDone=%d firstUnlock=%d unlockDone=%d done=%d (%v)",
+			egressDoneAt, firstSampleAt, stabilityDoneAt, firstRegionAt, regionDoneAt, firstUnlockAt, unlockDoneAt, doneAt, phases)
 	}
 	if firstRegionName != "基准" {
 		t.Errorf("first region row = %q, want 基准 (baseline is the first multi-region row)", firstRegionName)
 	}
-	if report.Stability == nil || report.RegionSpeed == nil {
+	if report.Egress == nil || report.Stability == nil || report.RegionSpeed == nil || report.Unlock == nil {
 		t.Errorf("report missing sections: %+v", report)
 	}
 	// 基准行 + 8 区 = len(examRegions)+1。

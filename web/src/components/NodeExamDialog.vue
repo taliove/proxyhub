@@ -53,7 +53,7 @@ import type {
 import { upsertRegionRow } from './exam/regionspeed'
 import { upsertUnlockRow } from './exam/unlock'
 import { mergeEgress } from './exam/egress'
-import { regionSectionComplete } from './exam/examrows'
+import { regionSectionComplete, egressSectionComplete } from './exam/examrows'
 import { ExamStream } from './exam/examstream'
 import type { ExamStreamStatus, EventSourceLike } from './exam/examstream'
 import ExamReportLayout from './exam/ExamReportLayout.vue'
@@ -82,14 +82,17 @@ const terminal = computed(
   () => status.value === 'done' || status.value === 'cancelled' || status.value === 'error'
 )
 
-// 段进行中判定(驱动各段首个 waiting 行的高亮转移):
-// - 稳定性收尾(metrics 到达)后多地域段开测,8 固定区域全到达即收尾(基准可缺席不阻塞);
-// - 多地域收尾后解锁与出网并行开测。
+// 段进行中判定(驱动各段首个 waiting 行的高亮转移),新段序:出网 -> 稳定性 -> 多地域 -> 解锁。
+// - 出网段前置:开检即进行中,3 类(ipv4/ipv6/dns)全到达即收尾;
+// - 出网收尾后稳定性采样(metrics 到达即收尾);
+// - 稳定性收尾后多地域段开测,8 固定区域全到达即收尾(基准可缺席不阻塞);
+// - 多地域收尾后解锁段开测。
+const egressComplete = computed(() => egressSectionComplete(egress.value))
+const egressActive = computed(() => running.value && !egressComplete.value)
 const stabilityDone = computed(() => metrics.value !== null)
 const regionsComplete = computed(() => regionSectionComplete(regions.value))
 const regionActive = computed(() => running.value && stabilityDone.value && !regionsComplete.value)
 const unlockActive = computed(() => running.value && regionsComplete.value)
-const egressActive = computed(() => running.value && regionsComplete.value)
 
 // 三态标签:完成/已取消/连接失败(终态)与连接中/体检中/重连中(运行态)互斥可区分。
 const statusTag = computed<{
