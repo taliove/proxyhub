@@ -374,7 +374,7 @@ docker run -d \
 ## 🎓 常见问题
 
 ### Q: 如何重置管理员密码？
-A: 生产环境使用 `proxyhubctl restore` 恢复备份。开发环境可删除 `data.db` 重新初始化。
+A: 生产环境使用 `proxyhubctl restore` 恢复备份。开发环境可删除 `var/data/data.db` 重新初始化。
 
 ### Q: 支持哪些代理协议？
 A: VMess、VLess、Trojan、Shadowsocks（通过内嵌 Xray-core 支持）。

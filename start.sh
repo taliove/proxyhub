@@ -1,7 +1,7 @@
 #!/bin/bash
-# ProxyHub 快速启动脚本
+# ProxyHub 快速启动脚本(运行态统一写入 var/,见 CLAUDE.md 目录范式)
 
-LOG_DIR="./logs"
+LOG_DIR="./var/log"
 LOG_FILE="$LOG_DIR/proxyhub.log"
 mkdir -p "$LOG_DIR"
 

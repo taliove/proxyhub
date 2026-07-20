@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -81,8 +82,8 @@ func run(configPath string) error {
 	// 初始化检测服务
 	detectionSvc := initDetectionService(cfg, st, agg)
 
-	// 初始化流量分发管理器
-	distributionMgr := distribution.NewManager(st, "xray", "xray_config.json", logger)
+	// 初始化流量分发管理器(xray 运行态配置写入 var/xray/,不污染仓库根目录)
+	distributionMgr := distribution.NewManager(st, "xray", filepath.Join("var", "xray", "xray_config.json"), logger)
 	go func() {
 		if err := distributionMgr.Start(ctx); err != nil {
 			logger.Error("distribution manager start failed", "error", err)

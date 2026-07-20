@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/taliove/proxyhub/internal/store"
@@ -185,7 +186,9 @@ func (l *loggerAdapter) Error(msg string, args ...interface{}) {
 	l.logger.Error(msg, args...)
 }
 
-// writeXrayConfig writes Xray config to file
+// writeXrayConfig writes Xray config to file, creating the parent
+// directory if needed (runtime state lives under var/, which may not
+// exist on a fresh checkout).
 func writeXrayConfig(path string, config *XrayConfig) error {
 	if config == nil {
 		return errors.New("xray config is nil")
@@ -194,6 +197,12 @@ func writeXrayConfig(path string, config *XrayConfig) error {
 	jsonData, err := config.ToJSON()
 	if err != nil {
 		return fmt.Errorf("convert config to JSON: %w", err)
+	}
+
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return fmt.Errorf("create config directory: %w", err)
+		}
 	}
 
 	file, err := os.Create(path)

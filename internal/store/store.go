@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -16,6 +18,14 @@ type Store struct {
 
 // Open 打开（或创建）数据库文件并执行迁移
 func Open(path string) (*Store, error) {
+	// Ensure the parent directory exists: local runtime state lives under
+	// var/, which is gitignored and may not exist on a fresh checkout.
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return nil, fmt.Errorf("create database directory: %w", err)
+		}
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

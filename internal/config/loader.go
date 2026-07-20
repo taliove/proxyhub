@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -29,7 +30,9 @@ func Load(path string) (*Config, error) {
 
 func applyDefaults(cfg *Config) {
 	if cfg.Storage.Path == "" {
-		cfg.Storage.Path = "data.db"
+		// Local runtime state belongs under var/ (gitignored); never
+		// default to the repository root.
+		cfg.Storage.Path = filepath.Join("var", "data", "data.db")
 	}
 	if cfg.HealthCheck.Concurrent <= 0 {
 		cfg.HealthCheck.Concurrent = 30

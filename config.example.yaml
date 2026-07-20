@@ -3,7 +3,8 @@ server:
   port: 8080
 
 storage:
-  path: "data.db"
+  # 本地运行态统一放 var/(已 gitignore),不要指向仓库根目录
+  path: "var/data/data.db"
 
 log:
   level: "info"
