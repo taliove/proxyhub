@@ -45,7 +45,14 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  Fold, Expand, Moon, Sunny, FullScreen, User, ArrowDown, SwitchButton
+  Fold,
+  Expand,
+  Moon,
+  Sunny,
+  FullScreen,
+  User,
+  ArrowDown,
+  SwitchButton
 } from '@element-plus/icons-vue'
 import { useLayoutStore } from '@/stores/layout'
 import { useAuthStore } from '@/stores/auth'
@@ -106,7 +113,9 @@ async function onCommand(command: string): Promise<void> {
   color: var(--ph-text-regular);
   padding: 6px;
   border-radius: var(--ph-radius-sm);
-  transition: background-color var(--ph-transition), color var(--ph-transition);
+  transition:
+    background-color var(--ph-transition),
+    color var(--ph-transition);
 }
 
 .ph-navbar__toggle:hover,

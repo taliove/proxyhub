@@ -3,22 +3,27 @@
     <el-alert
       type="info"
       :closable="false"
-      style="margin-bottom: 12px;"
+      style="margin-bottom: 12px"
       title="分发节点通过负载均衡将流量分配到多个上游节点，提供高可用性和流量分发能力。"
     />
 
-    <div style="margin-bottom: 12px;">
+    <div style="margin-bottom: 12px">
       <el-button type="primary" @click="openCreateDialog">新建分发节点</el-button>
     </div>
 
-    <el-table :data="nodes" v-loading="loading" row-key="id">
+    <el-table v-loading="loading" :data="nodes" row-key="id">
       <el-table-column type="expand">
         <template #default="{ row }">
-          <div style="padding: 12px 48px;">
-            <div style="margin-bottom: 8px;">
+          <div style="padding: 12px 48px">
+            <div style="margin-bottom: 8px">
               <strong>上游节点 ({{ row.upstream_node_keys?.length || 0 }})</strong>
             </div>
-            <el-table :data="getUpstreamNodesDisplay(row)" size="small" border style="max-width: 800px;">
+            <el-table
+              :data="getUpstreamNodesDisplay(row)"
+              size="small"
+              border
+              style="max-width: 800px"
+            >
               <el-table-column prop="name" label="节点名称" min-width="180" show-overflow-tooltip />
               <el-table-column prop="region" label="地区" width="90" />
               <el-table-column prop="type" label="类型" width="90" />
@@ -29,8 +34,8 @@
       </el-table-column>
       <el-table-column label="名称" min-width="160">
         <template #default="{ row }">
-          <span style="display: flex; align-items: center; gap: 6px;">
-            <span style="font-size: 16px;">🔄</span>
+          <span style="display: flex; align-items: center; gap: 6px">
+            <span style="font-size: 16px">🔄</span>
             <span>{{ row.name }}</span>
           </span>
         </template>
@@ -48,7 +53,7 @@
       </el-table-column>
       <el-table-column label="流量统计" width="150">
         <template #default="{ row }">
-          <div style="font-size: 12px;">
+          <div style="font-size: 12px">
             <div>↓ {{ formatBytes(row.total_download) }}</div>
             <div>↑ {{ formatBytes(row.total_upload) }}</div>
           </div>
@@ -76,7 +81,11 @@
     </el-table>
 
     <!-- 创建/编辑对话框 -->
-    <el-dialog v-model="dialogVisible" :title="editMode ? '编辑分发节点' : '新建分发节点'" width="600px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="editMode ? '编辑分发节点' : '新建分发节点'"
+      width="600px"
+    >
       <el-form :model="form" label-width="120px">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" placeholder="例如：香港分发" />
@@ -84,15 +93,15 @@
         <el-form-item label="分发路径" required>
           <el-input v-model="form.path" placeholder="例如：/hk-dist">
             <template #prepend>
-              <el-button @click="autoGeneratePath" :disabled="!form.name">自动生成</el-button>
+              <el-button :disabled="!form.name" @click="autoGeneratePath">自动生成</el-button>
             </template>
           </el-input>
-          <div style="font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px;">
+          <div style="font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px">
             路径必须以 / 开头，用于订阅分发
           </div>
         </el-form-item>
         <el-form-item label="负载均衡策略" required>
-          <el-select v-model="form.lb_strategy" style="width: 100%;">
+          <el-select v-model="form.lb_strategy" style="width: 100%">
             <el-option label="随机 (random)" value="random" />
             <el-option label="轮询 (round_robin)" value="round_robin" />
             <el-option label="最少连接 (least_conn)" value="least_conn" />
@@ -104,14 +113,10 @@
             multiple
             filterable
             placeholder="选择上游节点"
-            style="width: 100%;"
+            style="width: 100%"
             :loading="loadingNodes"
           >
-            <el-option-group
-              v-for="group in groupedNodes"
-              :key="group.label"
-              :label="group.label"
-            >
+            <el-option-group v-for="group in groupedNodes" :key="group.label" :label="group.label">
               <el-option
                 v-for="node in group.nodes"
                 :key="node.node_key"
@@ -120,13 +125,13 @@
                 :disabled="!node.available"
               >
                 <span>{{ node.display_name || node.name }}</span>
-                <span style="color: var(--el-text-color-secondary); margin-left: 8px;">
+                <span style="color: var(--el-text-color-secondary); margin-left: 8px">
                   {{ node.region }} · {{ node.type }}
                 </span>
               </el-option>
             </el-option-group>
           </el-select>
-          <div style="font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px;">
+          <div style="font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px">
             已选择 {{ form.upstream_node_keys.length }} 个节点
           </div>
         </el-form-item>
@@ -136,7 +141,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitForm" :loading="submitting" :disabled="submitting">
+        <el-button type="primary" :loading="submitting" :disabled="submitting" @click="submitForm">
           {{ editMode ? '保存' : '创建' }}
         </el-button>
       </template>
@@ -202,12 +207,12 @@ const groupedNodes = computed(() => {
   const bySource = new Map<string, Node[]>()
 
   // Filter out existing distribution nodes (they can't be upstream for another distribution)
-  const availableNodes = allNodes.value.filter(n => {
+  const availableNodes = allNodes.value.filter((n) => {
     // Exclude nodes that are already distribution nodes
     return n.source !== 'distribution'
   })
 
-  availableNodes.forEach(node => {
+  availableNodes.forEach((node) => {
     const source = node.source === 'self-hosted' ? '自建' : node.source
     if (!bySource.has(source)) {
       bySource.set(source, [])
@@ -222,7 +227,7 @@ const groupedNodes = computed(() => {
     return a.localeCompare(b)
   })
 
-  sortedSources.forEach(source => {
+  sortedSources.forEach((source) => {
     groups.push({
       label: source,
       nodes: bySource.get(source)!
@@ -238,8 +243,8 @@ const getUpstreamNodesDisplay = (row: DistributionNode) => {
     return []
   }
   return allNodes.value
-    .filter(n => row.upstream_node_keys.includes(n.node_key))
-    .map(n => ({
+    .filter((n) => row.upstream_node_keys.includes(n.node_key))
+    .map((n) => ({
       name: n.display_name || n.name,
       region: n.region,
       type: n.type,
@@ -253,10 +258,12 @@ const autoGeneratePath = () => {
     return
   }
   // Generate path from name: remove spaces, convert to lowercase, add / prefix
-  const path = '/' + form.value.name
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9-]/g, '')
+  const path =
+    '/' +
+    form.value.name
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '')
   form.value.path = path
 }
 

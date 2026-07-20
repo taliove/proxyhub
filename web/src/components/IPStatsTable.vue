@@ -1,5 +1,5 @@
 <template>
-  <el-table :data="stats" v-loading="loading" size="small">
+  <el-table v-loading="loading" :data="stats" size="small">
     <el-table-column prop="ip" label="IP" width="150" />
     <el-table-column prop="count" label="拉取次数" width="100" />
     <el-table-column label="最后拉取" width="180">

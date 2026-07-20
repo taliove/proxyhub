@@ -8,16 +8,19 @@
       <el-empty v-if="paths.length === 0" description="暂无分发路径" />
 
       <el-row v-else :gutter="16">
-        <el-col v-for="path in paths" :key="path.id" :xs="24" :sm="12" :lg="8" style="margin-bottom: 16px">
+        <el-col
+          v-for="path in paths"
+          :key="path.id"
+          :xs="24"
+          :sm="12"
+          :lg="8"
+          style="margin-bottom: 16px"
+        >
           <el-card shadow="hover">
             <template #header>
               <div style="display: flex; justify-content: space-between; align-items: center">
                 <span style="font-weight: 600">{{ path.name }}</span>
-                <el-switch
-                  :model-value="path.enabled"
-                  @change="handleToggle(path)"
-                  size="small"
-                />
+                <el-switch :model-value="path.enabled" size="small" @change="handleToggle(path)" />
               </div>
             </template>
 
@@ -45,17 +48,8 @@
       </el-row>
     </div>
 
-    <el-dialog
-      v-model="dialogVisible"
-      :title="isEdit ? '编辑路径' : '新建路径'"
-      width="600px"
-    >
-      <el-form
-        ref="formRef"
-        :model="formData"
-        :rules="rules"
-        label-width="120px"
-      >
+    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑路径' : '新建路径'" width="600px">
+      <el-form ref="formRef" :model="formData" :rules="rules" label-width="120px">
         <el-form-item label="路径名称" prop="name">
           <el-input v-model="formData.name" placeholder="例如: 香港专线" />
         </el-form-item>
@@ -84,7 +78,7 @@
 
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit" :loading="submitting">
+        <el-button type="primary" :loading="submitting" @click="handleSubmit">
           {{ isEdit ? '保存' : '创建' }}
         </el-button>
       </template>
@@ -218,11 +212,7 @@ const handleToggle = async (path: DistributionPath) => {
 
 const handleDelete = async (path: DistributionPath) => {
   try {
-    await ElMessageBox.confirm(
-      `确定删除路径「${path.name}」？`,
-      '确认删除',
-      { type: 'warning' }
-    )
+    await ElMessageBox.confirm(`确定删除路径「${path.name}」？`, '确认删除', { type: 'warning' })
 
     await deleteDistributionPath(path.id)
     ElMessage.success('已删除')

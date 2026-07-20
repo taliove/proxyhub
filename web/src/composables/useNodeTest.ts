@@ -9,7 +9,7 @@ export type TestMode = 'quick' | 'real'
 
 const MODE_LABELS: Record<TestMode, string> = {
   quick: '快测',
-  real: '真实检测',
+  real: '真实检测'
 }
 
 export function useNodeTest() {

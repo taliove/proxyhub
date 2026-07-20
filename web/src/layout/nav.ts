@@ -7,7 +7,7 @@ export interface NavItem {
   path: string
   title: string
   icon: string
-  divider?: boolean  // 在此项前显示分隔线
+  divider?: boolean // 在此项前显示分隔线
 }
 
 // 子路由 path 归一化为绝对路径('' → '/')
@@ -25,6 +25,6 @@ export function getMenuItems(router: Router): NavItem[] {
       path: toAbsolutePath(c.path),
       title: c.meta!.title as string,
       icon: (c.meta!.icon as string) || 'Menu',
-      divider: Boolean(c.meta!.divider)  // 从路由 meta 读取分隔线标记
+      divider: Boolean(c.meta!.divider) // 从路由 meta 读取分隔线标记
     }))
 }

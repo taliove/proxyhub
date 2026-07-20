@@ -23,7 +23,7 @@
       </el-col>
     </el-row>
 
-    <el-card style="margin-top: 20px;">
+    <el-card style="margin-top: 20px">
       <template #header>系统状态</template>
       <el-descriptions :column="2">
         <el-descriptions-item label="最近更新">{{ stats.lastUpdate }}</el-descriptions-item>

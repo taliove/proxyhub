@@ -38,11 +38,16 @@ export const getDistributionNode = async (id: number): Promise<DistributionNode>
   return await client.get<any, DistributionNode>(`/distribution/paths/${id}`)
 }
 
-export const createDistributionNode = async (data: CreateDistributionNodeRequest): Promise<DistributionNode> => {
+export const createDistributionNode = async (
+  data: CreateDistributionNodeRequest
+): Promise<DistributionNode> => {
   return await client.post<any, DistributionNode>('/distribution/paths', data)
 }
 
-export const updateDistributionNode = async (id: number, data: UpdateDistributionNodeRequest): Promise<void> => {
+export const updateDistributionNode = async (
+  id: number,
+  data: UpdateDistributionNodeRequest
+): Promise<void> => {
   await client.put(`/distribution/paths/${id}`, data)
 }
 
@@ -50,6 +55,11 @@ export const deleteDistributionNode = async (id: number): Promise<void> => {
   await client.delete(`/distribution/paths/${id}`)
 }
 
-export const toggleDistributionNode = async (id: number): Promise<{ ok: boolean; enabled: boolean }> => {
-  return await client.post<any, { ok: boolean; enabled: boolean }>(`/distribution/paths/${id}/toggle`, {})
+export const toggleDistributionNode = async (
+  id: number
+): Promise<{ ok: boolean; enabled: boolean }> => {
+  return await client.post<any, { ok: boolean; enabled: boolean }>(
+    `/distribution/paths/${id}/toggle`,
+    {}
+  )
 }

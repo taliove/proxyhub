@@ -14,9 +14,9 @@
     </el-row>
 
     <!-- 趋势图 -->
-    <el-card style="margin-top: 20px;">
+    <el-card style="margin-top: 20px">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; justify-content: space-between; align-items: center">
           <span>拉取趋势</span>
           <el-radio-group v-model="trendDays" size="small" @change="loadTrend">
             <el-radio-button :value="7">最近 7 天</el-radio-button>
@@ -24,16 +24,16 @@
           </el-radio-group>
         </div>
       </template>
-      <v-chart v-if="hasTrend" :option="chartOption" style="height: 360px;" autoresize />
+      <v-chart v-if="hasTrend" :option="chartOption" style="height: 360px" autoresize />
       <el-empty v-else description="暂无拉取数据" :image-size="80" />
     </el-card>
 
     <!-- 按订阅地址查看 IP 明细 -->
-    <el-card style="margin-top: 20px;">
+    <el-card style="margin-top: 20px">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; justify-content: space-between; align-items: center">
           <span>订阅地址访问明细</span>
-          <el-select v-model="selectedEndpoint" placeholder="选择订阅地址" style="width: 220px;">
+          <el-select v-model="selectedEndpoint" placeholder="选择订阅地址" style="width: 220px">
             <el-option v-for="ep in endpoints" :key="ep.id" :label="ep.alias" :value="ep.id" />
           </el-select>
         </div>
@@ -102,7 +102,9 @@ const loadGlobal = async () => {
 }
 
 const loadTrend = async () => {
-  const data = await client.get<any, { trend: TrendPoint[] }>(`/stats/trend?days=${trendDays.value}`)
+  const data = await client.get<any, { trend: TrendPoint[] }>(
+    `/stats/trend?days=${trendDays.value}`
+  )
   trend.value = data.trend || []
 }
 

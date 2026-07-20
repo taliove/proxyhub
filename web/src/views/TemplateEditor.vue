@@ -5,13 +5,13 @@
         <div>
           <span class="title">配置模板</span>
           <span class="subtitle">
-            订阅生成的 Clash 配置骨架（hosts / dns / proxy-groups / rules）。
-            用 <code>{{ placeholder }}</code> 占位当前聚合的所有节点，生成订阅时自动展开。
+            订阅生成的 Clash 配置骨架（hosts / dns / proxy-groups / rules）。 用
+            <code>{{ placeholder }}</code> 占位当前聚合的所有节点，生成订阅时自动展开。
           </span>
         </div>
         <div class="actions">
-          <el-button @click="handleReset" :disabled="saving">恢复默认</el-button>
-          <el-button type="primary" @click="handleSave" :loading="saving">保存</el-button>
+          <el-button :disabled="saving" @click="handleReset">恢复默认</el-button>
+          <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
         </div>
       </div>
     </template>
@@ -22,8 +22,8 @@
       type="error"
       show-icon
       :closable="true"
+      style="margin-bottom: 12px"
       @close="errorMsg = ''"
-      style="margin-bottom: 12px;"
     />
 
     <div ref="editorEl" class="editor"></div>
@@ -80,11 +80,11 @@ async function handleSave() {
 
 async function handleReset() {
   try {
-    await ElMessageBox.confirm(
-      '确定恢复为默认模板吗？当前的自定义内容将被覆盖。',
-      '恢复默认模板',
-      { type: 'warning', confirmButtonText: '恢复默认', cancelButtonText: '取消' }
-    )
+    await ElMessageBox.confirm('确定恢复为默认模板吗？当前的自定义内容将被覆盖。', '恢复默认模板', {
+      type: 'warning',
+      confirmButtonText: '恢复默认',
+      cancelButtonText: '取消'
+    })
   } catch {
     return // 用户取消
   }

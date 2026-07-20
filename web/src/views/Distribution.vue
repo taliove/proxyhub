@@ -1,15 +1,15 @@
 <template>
   <el-card>
     <template #header>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div style="display: flex; justify-content: space-between; align-items: center">
         <span>流量分发</span>
         <div>
           <el-switch
             v-model="globalEnabled"
             active-text="启用"
             inactive-text="禁用"
-            @change="handleGlobalToggle"
             style="margin-right: 12px"
+            @change="handleGlobalToggle"
           />
           <el-tag :type="xrayStatus.running ? 'success' : 'danger'" size="large">
             Xray {{ xrayStatus.running ? '运行中' : '未运行' }}
@@ -37,7 +37,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getDistributionConfig, updateDistributionConfig, getXrayStatus, type DistributionConfig, type XrayStatus } from '@/api/distribution'
+import {
+  getDistributionConfig,
+  updateDistributionConfig,
+  getXrayStatus,
+  type DistributionConfig,
+  type XrayStatus
+} from '@/api/distribution'
 import GlobalConfig from './distribution/GlobalConfig.vue'
 import DistributionPaths from './distribution/DistributionPaths.vue'
 import DistributionStats from './distribution/DistributionStats.vue'

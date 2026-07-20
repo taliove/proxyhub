@@ -37,7 +37,7 @@ export interface Node {
   stale: boolean // 机场订阅中已消失的节点
   unlock_results?: Record<string, UnlockResult> // 多维解锁检测结果
   bandwidth_down_mbps?: number // 最近一次带宽测试下行
-  bandwidth_up_mbps?: number   // 最近一次带宽测试上行
+  bandwidth_up_mbps?: number // 最近一次带宽测试上行
 }
 
 export interface UnlockResult {
@@ -66,7 +66,7 @@ export interface RegionOption {
 export interface SelfNode {
   id: number
   name: string
-  protocol: string   // ss | trojan | vmess | vless
+  protocol: string // ss | trojan | vmess | vless
   server: string
   port: number
   uuid: string
@@ -94,8 +94,8 @@ export interface SystemSettings {
 
 export interface RefreshRun {
   id: number
-  trigger: string       // manual | scheduled | startup
-  status: string        // running | success | partial | failed
+  trigger: string // manual | scheduled | startup
+  status: string // running | success | partial | failed
   total_nodes: number
   available_nodes: number
   final_nodes: number
@@ -107,10 +107,10 @@ export interface RefreshRun {
 export interface RefreshEvent {
   id: number
   run_id: number
-  level: string         // info | warn | error
-  stage: string         // fetch | check | filter | done
+  level: string // info | warn | error
+  stage: string // fetch | check | filter | done
   message: string
-  data: string          // JSON 字符串，可能为空
+  data: string // JSON 字符串，可能为空
   created_at: string
 }
 

@@ -2,7 +2,7 @@
   <div>
     <el-card>
       <template #header>
-        <div style="display: flex; justify-content: space-between;">
+        <div style="display: flex; justify-content: space-between">
           <span>自建节点</span>
           <div>
             <el-button @click="openImportDialog">一键导入</el-button>
@@ -14,11 +14,11 @@
       <el-alert
         type="info"
         :closable="false"
-        style="margin-bottom: 12px;"
+        style="margin-bottom: 12px"
         title="自建节点作为 FailBack 常驻注入订阅，豁免关键词/白名单/屏蔽等所有过滤。"
       />
 
-      <el-table :data="nodes" v-loading="loading">
+      <el-table v-loading="loading" :data="nodes">
         <el-table-column prop="name" label="名称" show-overflow-tooltip />
         <el-table-column prop="protocol" label="协议" width="90" />
         <el-table-column prop="server" label="服务器" show-overflow-tooltip />
@@ -33,9 +33,13 @@
         <el-table-column label="操作" width="360">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
-            <el-button-group size="small" style="margin: 0 8px;">
-              <el-button :disabled="testing" @click="testNode({ self_node_id: row.id }, 'quick')">快测</el-button>
-              <el-button :disabled="testing" @click="testNode({ self_node_id: row.id }, 'real')">真实</el-button>
+            <el-button-group size="small" style="margin: 0 8px">
+              <el-button :disabled="testing" @click="testNode({ self_node_id: row.id }, 'quick')"
+                >快测</el-button
+              >
+              <el-button :disabled="testing" @click="testNode({ self_node_id: row.id }, 'real')"
+                >真实</el-button
+              >
               <el-button type="success" @click="onTestCommand(row, 'bandwidth')">带宽</el-button>
             </el-button-group>
             <el-button link @click="toggleNode(row)">{{ row.enabled ? '禁用' : '启用' }}</el-button>
@@ -45,13 +49,17 @@
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="editMode ? '编辑自建节点' : '添加自建节点'" width="600px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="editMode ? '编辑自建节点' : '添加自建节点'"
+      width="600px"
+    >
       <el-form :model="form" label-width="100px">
         <el-form-item label="名称">
           <el-input v-model="form.name" placeholder="例如：自建香港" />
         </el-form-item>
         <el-form-item label="协议">
-          <el-select v-model="form.protocol" style="width: 100%;">
+          <el-select v-model="form.protocol" style="width: 100%">
             <el-option label="Shadowsocks (ss)" value="ss" />
             <el-option label="Trojan" value="trojan" />
             <el-option label="VMess" value="vmess" />
@@ -79,7 +87,7 @@
           <el-input-number v-model="form.alter_id" :min="0" />
         </el-form-item>
         <el-form-item v-if="show('network')" label="传输">
-          <el-select v-model="form.network" style="width: 100%;">
+          <el-select v-model="form.network" style="width: 100%">
             <el-option label="tcp" value="tcp" />
             <el-option label="ws" value="ws" />
             <el-option label="grpc" value="grpc" />
@@ -94,7 +102,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitForm" :loading="submitting" :disabled="submitting">
+        <el-button type="primary" :loading="submitting" :disabled="submitting" @click="submitForm">
           {{ editMode ? '保存' : '添加' }}
         </el-button>
       </template>
@@ -102,7 +110,7 @@
 
     <!-- 一键导入对话框 -->
     <el-dialog v-model="importDialogVisible" title="一键导入节点" width="600px">
-      <el-alert type="info" :closable="false" style="margin-bottom: 16px;">
+      <el-alert type="info" :closable="false" style="margin-bottom: 16px">
         支持导入 vless://、vmess://、ss://、trojan:// 格式的节点链接
       </el-alert>
       <el-input
@@ -153,9 +161,18 @@ const PROTOCOL_FIELDS: Record<string, string[]> = {
 }
 
 const emptyForm = (): Omit<SelfNode, 'id'> => ({
-  name: '', protocol: 'ss', server: '', port: 443,
-  uuid: '', password: '', cipher: '', alter_id: 0, network: 'tcp', tls: false,
-  grpc_service_name: '', enabled: true
+  name: '',
+  protocol: 'ss',
+  server: '',
+  port: 443,
+  uuid: '',
+  password: '',
+  cipher: '',
+  alter_id: 0,
+  network: 'tcp',
+  tls: false,
+  grpc_service_name: '',
+  enabled: true
 })
 
 const nodes = ref<SelfNode[]>([])
@@ -171,8 +188,10 @@ const submitting = ref(false)
 const show = (field: string) => {
   // grpc_service_name 仅在 network=grpc 时显示
   if (field === 'grpc_service_name') {
-    return form.value.network === 'grpc' &&
-           (form.value.protocol === 'vmess' || form.value.protocol === 'vless')
+    return (
+      form.value.network === 'grpc' &&
+      (form.value.protocol === 'vmess' || form.value.protocol === 'vless')
+    )
   }
   return (PROTOCOL_FIELDS[form.value.protocol] || []).includes(field)
 }

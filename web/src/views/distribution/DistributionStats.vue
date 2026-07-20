@@ -1,6 +1,13 @@
 <template>
   <div>
-    <div style="margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center">
+    <div
+      style="
+        margin-bottom: 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      "
+    >
       <el-radio-group v-model="timeRange" @change="handleTimeRangeChange">
         <el-radio-button label="today">今天</el-radio-button>
         <el-radio-button label="7days">最近7天</el-radio-button>
@@ -15,8 +22,8 @@
         range-separator="至"
         start-placeholder="开始时间"
         end-placeholder="结束时间"
-        @change="loadStats"
         style="margin-left: 12px"
+        @change="loadStats"
       />
     </div>
 
@@ -40,12 +47,12 @@
 
     <el-card shadow="hover" style="margin-bottom: 16px">
       <template #header>流量趋势</template>
-      <div ref="chartRef" style="height: 400px" v-loading="loading"></div>
+      <div ref="chartRef" v-loading="loading" style="height: 400px"></div>
     </el-card>
 
     <el-card shadow="hover">
       <template #header>路径流量明细</template>
-      <el-table :data="pathStats" v-loading="loading" border>
+      <el-table v-loading="loading" :data="pathStats" border>
         <el-table-column prop="path_name" label="路径名称" min-width="120" />
         <el-table-column label="上传" min-width="120">
           <template #default="{ row }">
@@ -97,7 +104,7 @@ const summary = computed(() => {
     connections: 0
   }
 
-  stats.value.forEach(stat => {
+  stats.value.forEach((stat) => {
     total.upload_bytes += stat.upload_bytes
     total.download_bytes += stat.download_bytes
     total.connections += stat.connections
@@ -109,7 +116,7 @@ const summary = computed(() => {
 const pathStats = computed(() => {
   const pathMap = new Map<number, DistributionStat>()
 
-  stats.value.forEach(stat => {
+  stats.value.forEach((stat) => {
     if (!pathMap.has(stat.path_id)) {
       pathMap.set(stat.path_id, {
         path_id: stat.path_id,
@@ -190,7 +197,7 @@ const updateChart = () => {
   // Group stats by timestamp
   const timeMap = new Map<string, { upload: number; download: number }>()
 
-  stats.value.forEach(stat => {
+  stats.value.forEach((stat) => {
     const time = new Date(stat.timestamp).toISOString()
     if (!timeMap.has(time)) {
       timeMap.set(time, { upload: 0, download: 0 })
@@ -201,14 +208,16 @@ const updateChart = () => {
   })
 
   const sortedTimes = Array.from(timeMap.keys()).sort()
-  const uploadData = sortedTimes.map(time => timeMap.get(time)!.upload / 1024 / 1024) // Convert to MB
-  const downloadData = sortedTimes.map(time => timeMap.get(time)!.download / 1024 / 1024) // Convert to MB
-  const timeLabels = sortedTimes.map(time => new Date(time).toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  }))
+  const uploadData = sortedTimes.map((time) => timeMap.get(time)!.upload / 1024 / 1024) // Convert to MB
+  const downloadData = sortedTimes.map((time) => timeMap.get(time)!.download / 1024 / 1024) // Convert to MB
+  const timeLabels = sortedTimes.map((time) =>
+    new Date(time).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  )
 
   const option: EChartsOption = {
     tooltip: {

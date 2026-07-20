@@ -18,17 +18,27 @@
         <!-- 步骤 1: 管理员账户 -->
         <div v-if="step === 0">
           <el-form :model="form" label-width="120px">
-            <el-alert type="warning" :closable="false" style="margin-bottom: 20px;">
+            <el-alert type="warning" :closable="false" style="margin-bottom: 20px">
               为安全起见，禁止使用 "admin" 作为用户名
             </el-alert>
             <el-form-item label="用户名">
               <el-input v-model="form.username" placeholder="请输入用户名（非 admin）" />
             </el-form-item>
             <el-form-item label="密码">
-              <el-input v-model="form.password" type="password" placeholder="至少 8 位" show-password />
+              <el-input
+                v-model="form.password"
+                type="password"
+                placeholder="至少 8 位"
+                show-password
+              />
             </el-form-item>
             <el-form-item label="确认密码">
-              <el-input v-model="form.confirmPassword" type="password" placeholder="再次输入密码" show-password />
+              <el-input
+                v-model="form.confirmPassword"
+                type="password"
+                placeholder="再次输入密码"
+                show-password
+              />
             </el-form-item>
           </el-form>
         </div>

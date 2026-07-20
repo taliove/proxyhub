@@ -59,8 +59,8 @@
     </template>
 
     <el-form-item>
-      <el-button type="primary" @click="handleSave" :loading="saving">保存配置</el-button>
-      <el-button @click="handleRestart" :loading="restarting" style="margin-left: 12px">
+      <el-button type="primary" :loading="saving" @click="handleSave">保存配置</el-button>
+      <el-button :loading="restarting" style="margin-left: 12px" @click="handleRestart">
         重启 Xray
       </el-button>
     </el-form-item>
@@ -108,12 +108,8 @@ const rules: FormRules = {
       trigger: 'blur'
     }
   ],
-  cert_path: [
-    { required: true, message: '请输入证书路径', trigger: 'blur' }
-  ],
-  key_path: [
-    { required: true, message: '请输入密钥路径', trigger: 'blur' }
-  ]
+  cert_path: [{ required: true, message: '请输入证书路径', trigger: 'blur' }],
+  key_path: [{ required: true, message: '请输入密钥路径', trigger: 'blur' }]
 }
 
 const generateUUID = () => {
@@ -140,11 +136,9 @@ const handleSave = async () => {
 
 const handleRestart = async () => {
   try {
-    await ElMessageBox.confirm(
-      '重启 Xray 会短暂中断流量分发服务,确定继续？',
-      '确认重启',
-      { type: 'warning' }
-    )
+    await ElMessageBox.confirm('重启 Xray 会短暂中断流量分发服务,确定继续？', '确认重启', {
+      type: 'warning'
+    })
 
     restarting.value = true
     await restartXray()
@@ -159,9 +153,13 @@ const handleRestart = async () => {
   }
 }
 
-watch(() => props.config, (newConfig) => {
-  formData.value = { ...newConfig }
-}, { deep: true })
+watch(
+  () => props.config,
+  (newConfig) => {
+    formData.value = { ...newConfig }
+  },
+  { deep: true }
+)
 </script>
 
 <style scoped>

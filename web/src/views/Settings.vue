@@ -39,7 +39,8 @@
               inactive-value="false"
             />
             <span class="hint">
-              关闭后仅「手动刷新」会拉取机场。注意:关闭并重启后节点池为空,订阅将暂时返回 503,需手动刷新一次(见 ADR 0004)。
+              关闭后仅「手动刷新」会拉取机场。注意:关闭并重启后节点池为空,订阅将暂时返回
+              503,需手动刷新一次(见 ADR 0004)。
             </span>
           </el-form-item>
 
@@ -56,16 +57,18 @@
               inactive-value="false"
             />
             <span class="hint">
-              开启后,订阅生成时把机场原名统一为标准格式(如 🇭🇰 香港 JS-01);关闭则保留机场原名。机场简称在「机场管理」中配置。
+              开启后,订阅生成时把机场原名统一为标准格式(如 🇭🇰 香港
+              JS-01);关闭则保留机场原名。机场简称在「机场管理」中配置。
             </span>
           </el-form-item>
-          <el-form-item label="名称模板" v-if="settings.standardize_names === 'true'">
+          <el-form-item v-if="settings.standardize_names === 'true'" label="名称模板">
             <el-input
               v-model="settings.name_template"
               placeholder="{emoji} {region} {source_abbr}-{index}"
             />
             <span class="hint">
-              可用变量:{emoji}(国旗) {region}(地区中文) {region_code}(地区代码) {source}(机场全名) {source_abbr}(机场简称) {index}(序号) {original_name}(原名)。留空用默认模板。
+              可用变量:{emoji}(国旗) {region}(地区中文) {region_code}(地区代码) {source}(机场全名)
+              {source_abbr}(机场简称) {index}(序号) {original_name}(原名)。留空用默认模板。
             </span>
           </el-form-item>
 
@@ -76,7 +79,10 @@
               :rows="3"
               placeholder="留空则不启用。非空时,只保留名称命中任一关键词的机场节点(自建节点豁免)。多个关键词用逗号或换行分隔,如:香港,新加坡,美国,日本"
             />
-            <span class="hint">地区白名单优先(按地区代码精确筛选),关键词白名单次之(字符串匹配)。子串匹配、不区分大小写(见 ADR 0009)。</span>
+            <span class="hint"
+              >地区白名单优先(按地区代码精确筛选),关键词白名单次之(字符串匹配)。子串匹配、不区分大小写(见
+              ADR 0009)。</span
+            >
           </el-form-item>
           <el-form-item label="订阅关键词过滤">
             <el-input
@@ -85,7 +91,9 @@
               :rows="4"
               placeholder="名称命中任一关键词的机场节点将在订阅生成时被剔除(自建节点豁免)。多个关键词用逗号或换行分隔,如:剩余流量,官网,到期"
             />
-            <span class="hint">子串匹配、不区分大小写;改动即时对下一次订阅生效,无需刷新(见 ADR 0005)。</span>
+            <span class="hint"
+              >子串匹配、不区分大小写;改动即时对下一次订阅生效,无需刷新(见 ADR 0005)。</span
+            >
           </el-form-item>
           <el-form-item>
             <el-button type="primary" @click="saveSettings">保存</el-button>
@@ -111,7 +119,10 @@
             </template>
           </el-form-item>
           <el-form-item label="下行探测 URL">
-            <el-input v-model="settings.bandwidth_down_url" placeholder="https://speed.cloudflare.com/__down?bytes=1073741824" />
+            <el-input
+              v-model="settings.bandwidth_down_url"
+              placeholder="https://speed.cloudflare.com/__down?bytes=1073741824"
+            />
             <template #extra>
               <span style="font-size: 12px; color: var(--el-text-color-secondary)">
                 下行数据上限由 URL 的 bytes= 参数控制(默认 1GB);读完仍未到时长会自动续传
@@ -119,7 +130,10 @@
             </template>
           </el-form-item>
           <el-form-item label="上行探测 URL">
-            <el-input v-model="settings.bandwidth_up_url" placeholder="https://speed.cloudflare.com/__up" />
+            <el-input
+              v-model="settings.bandwidth_up_url"
+              placeholder="https://speed.cloudflare.com/__up"
+            />
           </el-form-item>
           <el-form-item label="上行数据上限(字节)">
             <el-input v-model="settings.bandwidth_up_bytes" placeholder="1073741824 (1GB)" />
@@ -189,7 +203,9 @@
           </el-table-column>
           <el-table-column label="操作" width="100">
             <template #default="{ $index }">
-              <el-button type="danger" size="small" link @click="removeTarget($index)">删除</el-button>
+              <el-button type="danger" size="small" link @click="removeTarget($index)"
+                >删除</el-button
+              >
             </template>
           </el-table-column>
         </el-table>
@@ -255,9 +271,7 @@ onMounted(async () => {
 const saveSettings = async () => {
   // 后端 /settings 解码为 map[string]string,数字/布尔值会导致 400。
   // 统一序列化为字符串,兼容 el-input-number(数字)与 el-switch(字符串)取值。
-  const payload = Object.fromEntries(
-    Object.entries(settings.value).map(([k, v]) => [k, String(v)])
-  )
+  const payload = Object.fromEntries(Object.entries(settings.value).map(([k, v]) => [k, String(v)]))
   await client.post('/settings', payload)
   ElMessage.success('保存成功')
 }
@@ -269,7 +283,7 @@ const loadTargets = async () => {
     ...t,
     headers: t.headers || {},
     expect_status_str: (t.expect_status || []).join(','),
-    response_excludes_str: (t.response_excludes || []).join(','),
+    response_excludes_str: (t.response_excludes || []).join(',')
   }))
 }
 
@@ -288,7 +302,7 @@ const saveTargets = async () => {
     response_excludes: (t.response_excludes_str || '')
       .split(',')
       .map((s) => s.trim())
-      .filter((s) => s),
+      .filter((s) => s)
   }))
   await client.put('/settings/detection-targets', payload)
   ElMessage.success('保存成功')
@@ -305,7 +319,7 @@ const addTarget = () => {
     response_contains: [],
     response_excludes: [],
     expect_status_str: '200',
-    response_excludes_str: '',
+    response_excludes_str: ''
   })
 }
 

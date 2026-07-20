@@ -20,7 +20,7 @@
         </el-checkbox-group>
       </div>
 
-      <div class="stats" v-if="nodeStats">
+      <div v-if="nodeStats" class="stats">
         <p>
           <strong>当前节点池：</strong>
           <span v-for="(count, region) in nodeStats" :key="region" class="stat-item">
@@ -32,7 +32,7 @@
         </p>
       </div>
 
-      <el-button type="primary" @click="save" :loading="saving">保存</el-button>
+      <el-button type="primary" :loading="saving" @click="save">保存</el-button>
     </div>
   </div>
 </template>
@@ -54,7 +54,7 @@ const selectedRegions = ref<string[]>([])
 const nodeStats = ref<Record<string, number> | null>(null)
 
 const getRegionName = (code: string) => {
-  const region = availableRegions.value.find(r => r.Code === code)
+  const region = availableRegions.value.find((r) => r.Code === code)
   return region ? region.Name : code
 }
 
@@ -71,16 +71,16 @@ const loadData = async () => {
   loading.value = true
   try {
     // 加载可用地区列表（注意：axios 拦截器返回 response.data，所以这里直接是数据对象）
-    const regionsData = await client.get('/api/settings/regions') as any
+    const regionsData = (await client.get('/api/settings/regions')) as any
     availableRegions.value = regionsData.regions || []
 
     // 加载当前白名单配置
-    const whitelistData = await client.get('/api/settings/region-whitelist') as any
+    const whitelistData = (await client.get('/api/settings/region-whitelist')) as any
     selectedRegions.value = whitelistData.whitelist || []
 
     // 加载节点池统计
     try {
-      const statsData = await client.get('/api/stats/global') as any
+      const statsData = (await client.get('/api/stats/global')) as any
       nodeStats.value = statsData.byRegion || {}
     } catch (e) {
       console.warn('failed to load node stats:', e)

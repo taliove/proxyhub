@@ -2,16 +2,16 @@
   <div>
     <el-card>
       <template #header>
-        <div style="display: flex; justify-content: space-between;">
+        <div style="display: flex; justify-content: space-between">
           <span>订阅地址管理</span>
           <el-button type="primary" @click="dialogVisible = true">新建订阅地址</el-button>
         </div>
       </template>
 
-      <el-table :data="endpoints" v-loading="loading" row-key="id" :expand-row-keys="expandedRows">
+      <el-table v-loading="loading" :data="endpoints" row-key="id" :expand-row-keys="expandedRows">
         <el-table-column type="expand">
           <template #default="{ row }">
-            <div style="padding: 12px 24px;">
+            <div style="padding: 12px 24px">
               <IPStatsTable :endpoint-id="row.id" />
             </div>
           </template>
@@ -35,7 +35,9 @@
         </el-table-column>
         <el-table-column label="命名" width="110">
           <template #default="{ row }">
-            <el-tag :type="nameModeTag(row.name_mode)" size="small">{{ nameModeLabel(row.name_mode) }}</el-tag>
+            <el-tag :type="nameModeTag(row.name_mode)" size="small">{{
+              nameModeLabel(row.name_mode)
+            }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="260">
@@ -78,13 +80,14 @@
           </el-radio-group>
           <div class="cfg-hint">「跟随全局」时使用「系统设置 → 订阅设置」里的开关。</div>
         </el-form-item>
-        <el-form-item label="名称模板" v-if="nameConfigForm.name_mode !== 'off'">
+        <el-form-item v-if="nameConfigForm.name_mode !== 'off'" label="名称模板">
           <el-input
             v-model="nameConfigForm.name_template"
             placeholder="留空则用全局模板,如 {emoji} {region} {source_abbr}-{index}"
           />
           <div class="cfg-hint">
-            变量:{emoji} {region} {region_code} {source} {source_abbr} {index} {original_name}。仅本订阅地址生效。
+            变量:{emoji} {region} {region_code} {source} {source_abbr} {index}
+            {original_name}。仅本订阅地址生效。
           </div>
         </el-form-item>
       </el-form>
@@ -106,7 +109,7 @@
         </span>
       </div>
 
-      <el-table :data="preview.nodes" height="260" v-loading="previewLoading" size="small">
+      <el-table v-loading="previewLoading" :data="preview.nodes" height="260" size="small">
         <el-table-column label="名称" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">{{ row.display_name || row.name }}</template>
         </el-table-column>
@@ -132,7 +135,7 @@
       />
 
       <template #footer>
-        <el-button @click="copyPreview" :disabled="!preview.content">复制内容</el-button>
+        <el-button :disabled="!preview.content" @click="copyPreview">复制内容</el-button>
         <el-button type="primary" @click="previewVisible = false">关闭</el-button>
       </template>
     </el-dialog>

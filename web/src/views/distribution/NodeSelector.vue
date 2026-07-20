@@ -1,12 +1,12 @@
 <template>
   <el-select
+    v-loading="loading"
     :model-value="modelValue"
-    @update:model-value="handleChange"
     multiple
     filterable
     placeholder="选择上游节点"
     style="width: 100%"
-    v-loading="loading"
+    @update:model-value="handleChange"
   >
     <el-option-group label="机场节点">
       <el-option
@@ -76,13 +76,9 @@ const emit = defineEmits<{
 const nodes = ref<Node[]>([])
 const loading = ref(false)
 
-const airportNodes = computed(() =>
-  nodes.value.filter(n => n.source !== 'self')
-)
+const airportNodes = computed(() => nodes.value.filter((n) => n.source !== 'self'))
 
-const selfNodes = computed(() =>
-  nodes.value.filter(n => n.source === 'self')
-)
+const selfNodes = computed(() => nodes.value.filter((n) => n.source === 'self'))
 
 const handleChange = (value: string[]) => {
   emit('update:modelValue', value)

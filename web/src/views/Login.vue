@@ -9,7 +9,12 @@
     </div>
 
     <!-- 主题切换 -->
-    <button class="login__theme" type="button" :title="isDark ? '切换浅色' : '切换深色'" @click="layout.toggleDark()">
+    <button
+      class="login__theme"
+      type="button"
+      :title="isDark ? '切换浅色' : '切换深色'"
+      @click="layout.toggleDark()"
+    >
       <el-icon :size="18"><Moon v-if="!isDark" /><Sunny v-else /></el-icon>
     </button>
 
@@ -24,10 +29,24 @@
         </div>
       </div>
 
-      <el-form ref="formRef" :model="form" :rules="rules" class="login__form" @submit.prevent="handleLogin">
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        class="login__form"
+        @submit.prevent="handleLogin"
+      >
         <el-form-item prop="username">
-          <el-input v-model="form.username" placeholder="用户名" size="large" autocomplete="username" clearable>
-            <template #prefix><el-icon><User /></el-icon></template>
+          <el-input
+            v-model="form.username"
+            placeholder="用户名"
+            size="large"
+            autocomplete="username"
+            clearable
+          >
+            <template #prefix
+              ><el-icon><User /></el-icon
+            ></template>
           </el-input>
         </el-form-item>
         <el-form-item prop="password">
@@ -40,10 +59,18 @@
             show-password
             @keyup.enter="handleLogin"
           >
-            <template #prefix><el-icon><Lock /></el-icon></template>
+            <template #prefix
+              ><el-icon><Lock /></el-icon
+            ></template>
           </el-input>
         </el-form-item>
-        <el-button type="primary" native-type="submit" :loading="loading" class="login__submit" size="large">
+        <el-button
+          type="primary"
+          native-type="submit"
+          :loading="loading"
+          class="login__submit"
+          size="large"
+        >
           {{ loading ? '登录中…' : '登 录' }}
         </el-button>
       </el-form>
@@ -137,45 +164,65 @@ const handleLogin = async () => {
   will-change: transform;
 }
 .blob--1 {
-  width: 460px; height: 460px;
-  top: -120px; left: -100px;
+  width: 460px;
+  height: 460px;
+  top: -120px;
+  left: -100px;
   background: radial-gradient(circle, var(--el-color-primary, #409eff), transparent 70%);
   animation: drift 18s ease-in-out infinite;
 }
 .blob--2 {
-  width: 380px; height: 380px;
-  bottom: -140px; right: -80px;
+  width: 380px;
+  height: 380px;
+  bottom: -140px;
+  right: -80px;
   background: radial-gradient(circle, #a855f7, transparent 70%);
   animation: drift 22s ease-in-out infinite reverse;
 }
 .blob--3 {
-  width: 300px; height: 300px;
-  top: 40%; right: 18%;
+  width: 300px;
+  height: 300px;
+  top: 40%;
+  right: 18%;
   background: radial-gradient(circle, #22d3ee, transparent 70%);
   animation: drift 26s ease-in-out infinite;
   opacity: 0.35;
 }
 
 @keyframes drift {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(40px, -30px) scale(1.08); }
-  66% { transform: translate(-30px, 24px) scale(0.94); }
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(40px, -30px) scale(1.08);
+  }
+  66% {
+    transform: translate(-30px, 24px) scale(0.94);
+  }
 }
 
 /* ---------- 主题切换 ---------- */
 .login__theme {
   position: absolute;
-  top: 20px; right: 20px;
+  top: 20px;
+  right: 20px;
   z-index: 2;
-  width: 40px; height: 40px;
-  display: flex; align-items: center; justify-content: center;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--ph-border);
   border-radius: var(--ph-radius);
   background: var(--ph-bg-surface);
   color: var(--ph-text-regular);
   cursor: pointer;
   box-shadow: var(--ph-shadow-sm);
-  transition: color var(--ph-transition), border-color var(--ph-transition), transform var(--ph-transition);
+  transition:
+    color var(--ph-transition),
+    border-color var(--ph-transition),
+    transform var(--ph-transition);
 }
 .login__theme:hover {
   color: var(--ph-primary);
@@ -199,8 +246,14 @@ const handleLogin = async () => {
 }
 
 @keyframes rise {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ---------- 品牌 ---------- */
@@ -212,8 +265,11 @@ const handleLogin = async () => {
 }
 .brand__logo {
   flex: none;
-  width: 52px; height: 52px;
-  display: flex; align-items: center; justify-content: center;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   box-shadow: 0 6px 16px color-mix(in srgb, var(--el-color-primary, #409eff) 40%, transparent);
   border-radius: 14px;
 }
@@ -260,10 +316,15 @@ const handleLogin = async () => {
 }
 
 @media (max-width: 480px) {
-  .login__card { padding: 32px 22px 22px; }
+  .login__card {
+    padding: 32px 22px 22px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .blob, .login__card { animation: none; }
+  .blob,
+  .login__card {
+    animation: none;
+  }
 }
 </style>

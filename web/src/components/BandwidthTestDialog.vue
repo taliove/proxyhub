@@ -10,7 +10,7 @@
   >
     <!-- 测试中：实时曲线 + 跳动数字 -->
     <div v-if="running" class="bw-testing">
-      <v-chart :option="chartOption" autoresize style="height: 240px; margin-bottom: 16px;" />
+      <v-chart :option="chartOption" autoresize style="height: 240px; margin-bottom: 16px" />
 
       <div class="bw-live">
         <div class="bw-live-item">
@@ -30,7 +30,7 @@
 
     <!-- 结果：定格曲线 + 大数字卡片 -->
     <div v-else-if="result" class="bw-result">
-      <v-chart :option="chartOption" autoresize style="height: 240px; margin-bottom: 16px;" />
+      <v-chart :option="chartOption" autoresize style="height: 240px; margin-bottom: 16px" />
 
       <div class="bw-cards">
         <div class="bw-card">
@@ -98,8 +98,8 @@ const liveDown = ref(0)
 const liveUp = ref(0)
 
 // echarts 数据点 {x:秒, y:Mbps}
-const downSamples = ref<{x: number; y: number}[]>([])
-const upSamples = ref<{x: number; y: number}[]>([])
+const downSamples = ref<{ x: number; y: number }[]>([])
+const upSamples = ref<{ x: number; y: number }[]>([])
 
 let currentPayload: { self_node_id?: number; node_key?: string } = {}
 let es: EventSource | null = null
@@ -139,7 +139,7 @@ const chartOption = computed(() => ({
       showSymbol: false,
       areaStyle: { opacity: 0.08 },
       // 前置 (0,0):测速从 0 起爬升,曲线从原点开始(否则从首个采样点 ~0.5s 起步)
-      data: downSamples.value.length ? [[0, 0], ...downSamples.value.map(p => [p.x, p.y])] : []
+      data: downSamples.value.length ? [[0, 0], ...downSamples.value.map((p) => [p.x, p.y])] : []
     },
     {
       name: '上行',
@@ -147,7 +147,7 @@ const chartOption = computed(() => ({
       smooth: true,
       showSymbol: false,
       areaStyle: { opacity: 0.08 },
-      data: upSamples.value.length ? [[0, 0], ...upSamples.value.map(p => [p.x, p.y])] : []
+      data: upSamples.value.length ? [[0, 0], ...upSamples.value.map((p) => [p.x, p.y])] : []
     }
   ]
 }))

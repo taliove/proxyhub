@@ -2,10 +2,10 @@
   <div>
     <el-card>
       <template #header>
-        <div style="display: flex; justify-content: space-between;">
+        <div style="display: flex; justify-content: space-between">
           <span>机场管理</span>
           <div>
-            <el-button type="success" @click="refreshNodes" :loading="refreshing">
+            <el-button type="success" :loading="refreshing" @click="refreshNodes">
               <el-icon><Refresh /></el-icon> 立即刷新节点
             </el-button>
             <el-button type="primary" @click="openAddDialog">添加机场</el-button>
@@ -13,7 +13,7 @@
         </div>
       </template>
 
-      <el-table :data="airports" v-loading="loading">
+      <el-table v-loading="loading" :data="airports">
         <el-table-column prop="name" label="名称" />
         <el-table-column label="简称" width="110">
           <template #default="{ row }">
@@ -50,8 +50,14 @@
           <el-input v-model="form.url" placeholder="https://..." />
         </el-form-item>
         <el-form-item label="简称">
-          <el-input v-model="form.abbr" placeholder="留空则自动生成(如 极速机场 → JS)" maxlength="16" />
-          <div class="form-hint">用于节点名称标准化(如 🇭🇰 香港 JS-01),留空按拼音/字母首字母自动生成</div>
+          <el-input
+            v-model="form.abbr"
+            placeholder="留空则自动生成(如 极速机场 → JS)"
+            maxlength="16"
+          />
+          <div class="form-hint">
+            用于节点名称标准化(如 🇭🇰 香港 JS-01),留空按拼音/字母首字母自动生成
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
