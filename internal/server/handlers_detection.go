@@ -303,3 +303,52 @@ func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+// resolveExamNodeKey 从 query 解析体检历史的 node_key:显式 node_key 优先,
+// 否则用 self_node_id 解析出对应节点的 NodeKey(节点已不在池中则返回空)。
+func (s *Server) resolveExamNodeKey(r *http.Request) string {
+	q := r.URL.Query()
+	if nk := q.Get("node_key"); nk != "" {
+		return nk
+	}
+	if v := q.Get("self_node_id"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+			if node := s.resolveTestNode(id, ""); node != nil {
+				return node.NodeKey()
+			}
+		}
+	}
+	return ""
+}
+
+// handleGetExamLatest 查询某节点最近一次深度体检报告。无历史返回 JSON null(200),不报错。
+func (s *Server) handleGetExamLatest(w http.ResponseWriter, r *http.Request) {
+	nodeKey := s.resolveExamNodeKey(r)
+	if nodeKey == "" {
+		http.Error(w, "missing node_key or self_node_id", http.StatusBadRequest)
+		return
+	}
+	entry, err := s.st.LatestExamHistory(nodeKey)
+	if err != nil {
+		s.logger.Error("get latest exam history failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, entry) // entry 可能为 nil -> null,前端据此判定"暂无体检"
+}
+
+// handleGetExamHistory 查询某节点深度体检历史(时间倒序)。无历史返回空数组(200),不报错。
+func (s *Server) handleGetExamHistory(w http.ResponseWriter, r *http.Request) {
+	nodeKey := s.resolveExamNodeKey(r)
+	if nodeKey == "" {
+		http.Error(w, "missing node_key or self_node_id", http.StatusBadRequest)
+		return
+	}
+	list, err := s.st.ListExamHistory(nodeKey)
+	if err != nil {
+		s.logger.Error("list exam history failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, list)
+}

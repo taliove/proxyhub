@@ -132,6 +132,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/nodes/test", s.requireAuth(s.handleTestNode))
 	mux.HandleFunc("GET /api/nodes/test/stream", s.requireAuth(s.handleTestNodeStream))
 	mux.HandleFunc("GET /api/nodes/exam/stream", s.requireAuth(s.handleNodeExamStream))
+	mux.HandleFunc("GET /api/nodes/exam/latest", s.requireAuth(s.handleGetExamLatest))
+	mux.HandleFunc("GET /api/nodes/exam/history", s.requireAuth(s.handleGetExamHistory))
 
 	// 节点管理（覆盖层 + 清理）
 	mux.HandleFunc("PUT /api/nodes/override", s.requireAuth(s.handleSetNodeOverride))
