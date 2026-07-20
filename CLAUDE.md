@@ -36,7 +36,7 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 ```
 
 **铁律**:
-- 仓库根只放入口与控制文件(`Makefile`、`install.sh`、`start.sh`、`Dockerfile`、`go.mod`、`config.example.yaml`、`*.md`)。任何新文件出现在根目录都要先回答"为什么它属于根"。
+- 仓库根只放入口与控制文件(`Makefile`、`install.sh`、`Dockerfile`、`go.mod`、`config.example.yaml`、`*.md`)。任何新文件出现在根目录都要先回答"为什么它属于根"。
 - 写文件先想归属:编译产物→`dist/`,运行态→`var/`,测试临时→`.test/` 或 `testdata/`,源码→按领域归位。
 - 代码里**禁止**把默认路径指向仓库根(如 `data.db`、`xray_config.json`);默认路径必须落在 `var/` 下,且写入方负责 `MkdirAll`(见 `store.Open`、`writeXrayConfig`)。
 - 生产环境路径(`/var/lib/proxyhub`、`/etc/proxyhub`、`/usr/local/bin`)只属于 `install.sh`/`proxyhubctl` 的领域,与开发布局互不污染。
@@ -95,7 +95,7 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 
 唯一豁免:定向调试允许 `go test ./internal/<pkg>/ -run <TestName>`(纯读操作,不落盘)。
 
-构建顺序不可逆:`make build` → `make restart` 重启(日志在 `var/log/`)。改前端不重启 = 没生效。运行生命周期只有 make 一个入口;`./start.sh` 是 `make restart` 的兼容壳。日常开发范式见 `.claude/skills/dev-workflow`。
+构建顺序不可逆:`make build` → `make restart` 重启(日志在 `var/log/`)。改前端不重启 = 没生效。运行生命周期只有 make 一个入口(`make start|stop|restart|status`)。日常开发范式见 `.claude/skills/dev-workflow`。
 
 ## 6. 测试门槛
 

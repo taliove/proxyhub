@@ -44,7 +44,7 @@ make dev-frontend   # 前端热更新开发(vite dev server,HMR,代理 /api 与 
 make dev-backend    # 后端开发(config.example.yaml,storage 指向 var/data/data.db)
 ```
 
-运行生命周期只有 make 一个入口;`./start.sh` 是 `make restart` 的兼容壳,新代码/文档一律写 make。
+运行生命周期只有 make 一个入口(`start.sh` 已退役删除,勿再引用)。
 
 两条开发回路,按目的选:
 - **迭代回路**(边改边看):后端一个实例(`make start`)+ `make dev-frontend`,前端改动 HMR 秒级生效,不用 build 不用重启;改后端则 `make restart`。
