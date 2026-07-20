@@ -76,7 +76,7 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/self-nodes',
-    redirect: '/nodes?tab=self'
+    redirect: '/nodes?source=self-hosted'
   }
 ]
 

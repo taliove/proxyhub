@@ -5,65 +5,74 @@
       :data="nodes"
       row-key="node_key"
       :row-class-name="rowClassName"
-      @selection-change="(rows: Node[]) => emit('selection-change', rows)"
+      @selection-change="(rows: UnifiedNode[]) => emit('selection-change', rows)"
       @sort-change="(payload: SortChange) => emit('sort-change', payload)"
       @row-click="onRowClick"
     >
       <el-table-column type="selection" width="48" :selectable="isSelectable" />
+
+      <!-- 名称:标准名优先,原始名副标题;状态(屏蔽/下架/禁用/不可用)降为名称旁小标签 -->
+      <el-table-column prop="name" label="名称" min-width="180" sortable="custom">
+        <template #default="{ row }">
+          <div class="name-cell">
+            <span class="name-primary">{{ nameCell(row).primary }}</span>
+            <span v-if="nameCell(row).secondary" class="name-secondary">
+              {{ nameCell(row).secondary }}
+            </span>
+            <span v-if="stateTags(row).length" class="state-tags">
+              <el-tag
+                v-for="s in stateTags(row)"
+                :key="s.label"
+                :type="s.tone"
+                size="small"
+                effect="plain"
+              >
+                {{ s.label }}
+              </el-tag>
+            </span>
+          </div>
+        </template>
+      </el-table-column>
+
+      <!-- 来源:自建/机场;来源筛选在工具栏 -->
       <el-table-column
-        prop="name"
-        label="原始名称"
-        min-width="160"
-        show-overflow-tooltip
+        prop="source"
+        label="来源"
+        min-width="120"
         sortable="custom"
-      />
-      <el-table-column prop="display_name" label="标准名称" min-width="160" show-overflow-tooltip>
+        show-overflow-tooltip
+      >
         <template #default="{ row }">
-          <span v-if="row.display_name">{{ row.display_name }}</span>
-          <span v-else class="muted">—</span>
+          <el-tag v-if="isSelfHosted(row)" size="small" type="warning" effect="plain">自建</el-tag>
+          <span v-else>{{ row.source }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="type" label="类型" width="90" />
-      <el-table-column prop="region" label="地区" width="90" sortable="custom" />
-      <el-table-column prop="latency" label="延迟" width="100" sortable="custom">
-        <template #default="{ row }">{{ row.latency }}ms</template>
+
+      <el-table-column prop="type" label="类型" width="88" />
+      <el-table-column prop="region" label="地区" width="80" sortable="custom">
+        <template #default="{ row }">{{ row.region || '—' }}</template>
       </el-table-column>
-      <el-table-column label="状态" width="110">
-        <template #default="{ row }">
-          <el-tag v-if="row.stale" type="info" size="small" title="机场订阅中已消失,不再下发">
-            已下架
-          </el-tag>
-          <el-tag v-else :type="row.available ? 'success' : 'danger'" size="small">
-            {{ row.available ? '可用' : '不可用' }}
-          </el-tag>
-        </template>
+      <el-table-column prop="latency" label="延迟" width="90" sortable="custom">
+        <template #default="{ row }">{{ latencyText(row) }}</template>
       </el-table-column>
-      <!-- 带宽列:展示最近一次带宽测试结果 -->
-      <el-table-column label="带宽" width="130">
-        <template #default="{ row }">
-          <span v-if="row.bandwidth_down_mbps || row.bandwidth_up_mbps" class="bw-text">
-            ↓{{ (row.bandwidth_down_mbps || 0).toFixed(1) }} / ↑{{
-              (row.bandwidth_up_mbps || 0).toFixed(1)
-            }}
-          </span>
-          <span v-else class="muted">—</span>
-        </template>
-      </el-table-column>
-      <!-- 体检摘要:最近一次深度体检的稳定性分 + 相对时间;无历史不占位 -->
-      <el-table-column label="体检" width="150">
+
+      <!-- 稳定性:最近一次体检的稳定性分 + 语义色;无历史不占位 -->
+      <el-table-column label="稳定性" width="96">
         <template #default="{ row }">
           <el-tag
             v-if="badgeFor(row)"
             size="small"
             :type="badgeTagType(badgeFor(row)!.level)"
-            class="exam-badge"
             :title="badgeFor(row)!.text"
           >
-            稳定性 {{ badgeFor(row)!.score }} · {{ badgeFor(row)!.relative }}
+            {{ badgeFor(row)!.score }}
           </el-tag>
+          <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="解锁" width="100">
+
+      <!-- 解锁:通过数摘要,悬浮展开各目标三档语义色 -->
+      <el-table-column label="解锁" width="88">
         <template #default="{ row }">
           <el-popover v-if="hasUnlock(row)" placement="left" width="300" trigger="hover">
             <template #reference>
@@ -83,7 +92,6 @@
                     >
                       {{ item.region }}
                     </el-tag>
-                    <!-- 通用探测保持既有 ✓/✗;解锁目标用三档语义色 + 文案 -->
                     <el-tag
                       v-if="isGenericVariant(item.display.variant)"
                       :type="item.display.tagType"
@@ -111,24 +119,60 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column
-        prop="source"
-        label="来源"
-        min-width="120"
-        show-overflow-tooltip
-        sortable="custom"
-      />
-      <!-- 行内操作 ≤3:编辑 / 屏蔽切换;点击行本身打开详情抽屉 -->
+
+      <!-- 出网:体检出口国家码 + 泄露/代理警示 -->
+      <el-table-column label="出网" width="96">
+        <template #default="{ row }">
+          <span v-if="egressFor(row)" class="egress-cell">
+            <span v-if="egressFor(row)!.code" class="egress-code">{{ egressFor(row)!.code }}</span>
+            <span v-else class="muted">?</span>
+            <el-tooltip
+              v-if="egressFor(row)!.warn"
+              placement="top"
+              :content="egressFor(row)!.reasons.join(' / ')"
+            >
+              <el-icon class="egress-warn"><WarningFilled /></el-icon>
+            </el-tooltip>
+          </span>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
+
+      <!-- 标签:自动标签(票据 21 前无数据,走空态) -->
+      <el-table-column label="标签" min-width="120">
+        <template #default="{ row }">
+          <span v-if="tagsDisplay(row).length" class="tag-cell">
+            <el-tag v-for="t in tagsDisplay(row)" :key="t" size="small" effect="plain">{{
+              t
+            }}</el-tag>
+          </span>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
+
+      <!-- 体检时间:最近一次体检相对时间 -->
+      <el-table-column label="体检时间" width="110">
+        <template #default="{ row }">
+          <span v-if="badgeFor(row) || summaryFor(row)" class="muted">
+            {{ summaryFor(row)?.relative || '—' }}
+          </span>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
+
+      <!-- 操作:自建走 编辑/启停/删除;机场走 编辑/屏蔽;点击行打开详情抽屉 -->
       <el-table-column label="操作" width="180">
         <template #default="{ row }">
           <span class="row-ops" @click.stop>
             <template v-if="isSelfHosted(row)">
-              <el-tag type="info" size="small">自建</el-tag>
-              <el-button link type="primary" @click="emit('edit-self')">编辑</el-button>
+              <el-button link type="primary" @click="emit('edit-self', row)">编辑</el-button>
+              <el-button link @click="emit('toggle-self', row)">
+                {{ row.enabled === false ? '启用' : '禁用' }}
+              </el-button>
+              <el-button link type="danger" @click="emit('delete-self', row)">删除</el-button>
             </template>
             <template v-else>
               <el-button link type="primary" @click="emit('edit-override', row)">编辑</el-button>
-              <el-tag v-if="row.blocked" type="warning" size="small">已屏蔽</el-tag>
               <el-button v-if="row.blocked" link type="warning" @click="emit('unblock', row)">
                 取消屏蔽
               </el-button>
@@ -137,8 +181,9 @@
           </span>
         </template>
       </el-table-column>
+
       <!-- 测试列独立(所有节点均可测试,包括自建) -->
-      <el-table-column label="测试" width="200" fixed="right">
+      <el-table-column label="测试" width="120" fixed="right">
         <template #default="{ row }">
           <span class="row-ops" @click.stop>
             <el-dropdown
@@ -179,12 +224,12 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown } from '@element-plus/icons-vue'
-import type { Node } from '@/types'
-import type { ExamBadge } from '@/components/exam/examhistory'
+import { ArrowDown, WarningFilled } from '@element-plus/icons-vue'
 import type { ScoreLevel } from '@/components/exam/stability'
 import { isSelfHosted } from '../utils'
 import { isGenericVariant, unlockDisplayRows, unlockSummary } from '../unlock'
+import { latencyText, nameCell, stateTags, tagsDisplay, type NodeExamSummary } from '../nodecells'
+import type { UnifiedNode } from '../selfmerge'
 
 export type TestCommand = 'quick' | 'real' | 'bandwidth' | 'exam'
 export interface SortChange {
@@ -194,19 +239,22 @@ export interface SortChange {
 
 const props = withDefaults(
   defineProps<{
-    nodes: Node[]
+    nodes: UnifiedNode[]
     loading: boolean
     testing: boolean
     page: number
     pageSize: number
     total: number
-    // node_key -> 最近一次体检摘要;缺省即无历史(不渲染徽标)
-    examSummaries?: Record<string, ExamBadge | undefined>
+    // node_key -> 最近一次体检派生摘要;缺省即无历史(不渲染)
+    examSummaries?: Record<string, NodeExamSummary | undefined>
   }>(),
   { examSummaries: () => ({}) }
 )
 
-const badgeFor = (row: Node): ExamBadge | undefined => props.examSummaries[row.node_key]
+const summaryFor = (row: UnifiedNode): NodeExamSummary | undefined =>
+  props.examSummaries[row.node_key]
+const badgeFor = (row: UnifiedNode) => summaryFor(row)?.badge ?? undefined
+const egressFor = (row: UnifiedNode) => summaryFor(row)?.egress ?? undefined
 
 const badgeTagType = (level: ScoreLevel): 'success' | 'warning' | 'danger' => {
   if (level === 'good') return 'success'
@@ -215,27 +263,31 @@ const badgeTagType = (level: ScoreLevel): 'success' | 'warning' | 'danger' => {
 }
 
 const emit = defineEmits<{
-  (e: 'selection-change', rows: Node[]): void
+  (e: 'selection-change', rows: UnifiedNode[]): void
   (e: 'sort-change', payload: SortChange): void
   (e: 'page-change', page: number): void
   (e: 'size-change', size: number): void
-  (e: 'view', row: Node): void
-  (e: 'edit-override', row: Node): void
-  (e: 'edit-self'): void
-  (e: 'block', row: Node): void
-  (e: 'unblock', row: Node): void
-  (e: 'test', row: Node, mode: TestCommand): void
+  (e: 'view', row: UnifiedNode): void
+  (e: 'edit-override', row: UnifiedNode): void
+  (e: 'edit-self', row: UnifiedNode): void
+  (e: 'toggle-self', row: UnifiedNode): void
+  (e: 'delete-self', row: UnifiedNode): void
+  (e: 'block', row: UnifiedNode): void
+  (e: 'unblock', row: UnifiedNode): void
+  (e: 'test', row: UnifiedNode, mode: TestCommand): void
 }>()
 
-const isSelectable = (row: Node) => !isSelfHosted(row)
+// 自建节点豁免屏蔽,不可勾选进批量操作
+const isSelectable = (row: UnifiedNode) => !isSelfHosted(row)
 
-// stale 节点行置灰(机场订阅中已消失,保留待清理)
-const rowClassName = ({ row }: { row: Node }) => (row.stale ? 'stale-row' : '')
+// stale / 禁用节点行置灰
+const rowClassName = ({ row }: { row: UnifiedNode }) =>
+  row.stale || row.enabled === false ? 'stale-row' : ''
 
-const hasUnlock = (row: Node) => !!row.unlock_results && Object.keys(row.unlock_results).length > 0
+const hasUnlock = (row: UnifiedNode) =>
+  !!row.unlock_results && Object.keys(row.unlock_results).length > 0
 
-// 行点击打开详情;选择列的点击(勾选)不算
-const onRowClick = (row: Node, column: { type?: string } | null) => {
+const onRowClick = (row: UnifiedNode, column: { type?: string } | null) => {
   if (column?.type === 'selection') return
   emit('view', row)
 }
@@ -254,9 +306,40 @@ const onRowClick = (row: Node, column: { type?: string } | null) => {
 .error-text {
   color: var(--ph-danger);
 }
-.bw-text {
+.name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.name-primary {
+  font-weight: 500;
+}
+.name-secondary {
   font-size: var(--ph-text-xs);
-  color: var(--ph-success);
+  color: var(--ph-text-secondary);
+}
+.state-tags {
+  display: inline-flex;
+  gap: var(--ph-space-1);
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.tag-cell {
+  display: inline-flex;
+  gap: var(--ph-space-1);
+  flex-wrap: wrap;
+}
+.egress-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ph-space-1);
+}
+.egress-code {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+}
+.egress-warn {
+  color: var(--ph-warning);
 }
 .unlock-tag {
   cursor: pointer;
@@ -298,7 +381,6 @@ const onRowClick = (row: Node, column: { type?: string } | null) => {
   align-items: center;
   gap: var(--ph-space-1);
 }
-/* stale 节点行置灰 */
 :deep(.stale-row) {
   opacity: 0.55;
 }
