@@ -29,11 +29,14 @@ RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 
 COPY --from=backend-builder /app/proxyhub .
-COPY config.example.yaml /app/config.yaml
+# 容器配置由 config.example.yaml 派生(单一事实源):容器内必须监听
+# 0.0.0.0 才能对外服务,数据库落在 /data 卷以便持久化。
+COPY config.example.yaml /tmp/config.example.yaml
+RUN sed -e 's/host: "127.0.0.1"/host: "0.0.0.0"/' \
+        -e 's|path: "var/data/data.db"|path: "/data/data.db"|' \
+        /tmp/config.example.yaml > /app/config.yaml && rm /tmp/config.example.yaml
 
-# 数据库落在 /data，便于挂载持久化
 RUN mkdir -p /data
-ENV PROXYHUB_DATA=/data
 
 EXPOSE 8080
 

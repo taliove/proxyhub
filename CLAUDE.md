@@ -96,5 +96,10 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 - 日常开发(编译/运行/测试/目录归属):`.claude/skills/dev-workflow`
 - 签入前:`.claude/skills/pre-commit`
 - 推送前:`.claude/skills/pre-push`
+- 发布(版本纪律/演练/tag/验证):`.claude/skills/release`
 
 Skills 是流程,不是建议——逐条执行,不允许跳项。
+
+## 9. 发布
+
+GitHub Actions tag 触发自动发布(`.github/workflows/release.yml`):validate → test → package(矩阵 tarball + SHA256SUMS + attest)→ docker(GHCR)。版本唯一事实源是 `VERSION` 文件,tag 必须等于 `v$(cat VERSION)`。制品命名契约 `proxyhub_<version>_<os>_<arch>.tar.gz`(下划线)由 `scripts/release/package.sh` 生产、`install.sh` 与 `proxyhubctl update` 消费,**三处必须同步**。全流程见 release skill。

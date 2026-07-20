@@ -668,7 +668,8 @@ cmd_update() {
     os_arch=$(_detect_os_arch) || return 1
     os="${os_arch% *}"
     arch="${os_arch#* }"
-    local asset="proxyhub-${target#v}-${os}-${arch}.tar.gz"
+    # Asset naming must match scripts/release/package.sh (underscores).
+    local asset="proxyhub_${target#v}_${os}_${arch}.tar.gz"
     local base="https://github.com/${repo}/releases/download/${target}"
 
     local workdir

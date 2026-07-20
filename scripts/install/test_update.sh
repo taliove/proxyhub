@@ -79,7 +79,7 @@ if [[ "$*" == *"SHA256SUMS"* ]]; then
     # Find output file.
     for arg in "$@"; do
         if [[ "$prev_arg" == "-o" ]]; then
-            echo "fakehash  proxyhub-1.1.0-linux-amd64.tar.gz" > "$arg"
+            echo "fakehash  proxyhub_1.1.0_linux_amd64.tar.gz" > "$arg"
             exit 0
         fi
         prev_arg="$arg"

@@ -73,10 +73,10 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Vet
-        run: go vet ./...
+        run: make vet
 
       - name: Test
-        run: go test ./...
+        run: make test
 
   package:
     name: Build matrix + publish release assets
