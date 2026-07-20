@@ -178,6 +178,13 @@
               <el-input v-model="row.name" size="small" />
             </template>
           </el-table-column>
+          <el-table-column prop="kind" label="类型" width="130">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.kind && row.kind !== 'generic' ? 'warning' : 'info'">
+                {{ row.kind && row.kind !== 'generic' ? row.kind : 'generic' }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column prop="url" label="URL" min-width="200">
             <template #default="{ row }">
               <el-input v-model="row.url" size="small" />
@@ -249,6 +256,9 @@ const settings = ref({
 // 检测目标配置
 interface DetectionTarget {
   name: string
+  // 检测类型:空/generic=通用判定,其余(netflix 等)=专用解锁判定。
+  // UI 只读展示并原样回传,避免保存时丢失播种目标的 kind。
+  kind?: string
   url: string
   method: string
   headers: Record<string, string>
@@ -291,6 +301,8 @@ const saveTargets = async () => {
   // 转换字符串回数组
   const payload = detectionTargets.value.map((t) => ({
     name: t.name,
+    // 原样回传 kind(专用解锁目标),缺省交由后端按 generic 处理
+    ...(t.kind ? { kind: t.kind } : {}),
     url: t.url,
     method: t.method,
     headers: t.headers || {},

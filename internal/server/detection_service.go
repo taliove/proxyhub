@@ -13,11 +13,11 @@ import (
 
 // DetectionService 检测任务服务(单飞 + 可取消)
 type DetectionService struct {
-	detector  *detection.Detector
-	store     *store.Store
-	running   atomic.Bool
-	cancel    context.CancelFunc
-	getNodes  func() []*subscription.Node // 获取内存节点池
+	detector   *detection.Detector
+	store      *store.Store
+	running    atomic.Bool
+	cancel     context.CancelFunc
+	getNodes   func() []*subscription.Node        // 获取内存节点池
 	getTargets func() ([]detection.Target, error) // 获取检测目标配置
 }
 
@@ -38,7 +38,7 @@ func NewDetectionService(
 
 // DetectionScope 检测范围
 type DetectionScope struct {
-	Type     string           `json:"type"` // "all" / "query" / "selected"
+	Type     string           `json:"type"`                // "all" / "query" / "selected"
 	Query    *DetectionFilter `json:"query,omitempty"`     // type=query 时的筛选条件
 	NodeKeys []string         `json:"node_keys,omitempty"` // type=selected 时的节点列表
 }
@@ -81,11 +81,11 @@ func (f *DetectionFilter) toNodeQuery() NodeQuery {
 
 // DetectionStatus 检测进度状态
 type DetectionStatus struct {
-	Running       bool      `json:"running"`
-	TotalNodes    int       `json:"total_nodes"`
-	CompletedNodes int      `json:"completed_nodes"`
-	CurrentNode   string    `json:"current_node,omitempty"`
-	StartedAt     time.Time `json:"started_at,omitempty"`
+	Running        bool      `json:"running"`
+	TotalNodes     int       `json:"total_nodes"`
+	CompletedNodes int       `json:"completed_nodes"`
+	CurrentNode    string    `json:"current_node,omitempty"`
+	StartedAt      time.Time `json:"started_at,omitempty"`
 }
 
 // TriggerDetection 启动检测任务(单飞:同时只能有一个在跑)
@@ -157,11 +157,14 @@ func (ds *DetectionService) runDetection(ctx context.Context, scope DetectionSco
 			continue
 		}
 
-		// 更新节点的 Available/Latency/DetectionLastCheck
-		// Available = 第一个目标(connectivity)的结果,或任一目标通过
+		// 更新节点的 Available/Latency/DetectionLastCheck。
+		// 节点可用性只取通用(连通性)目标的结果;专用解锁目标(如 netflix,当前为骨架/未实现)
+		// 不得决定节点是否可用,否则播种的解锁目标会把所有节点误判为不可用。
 		if len(results) > 0 {
-			node.Available = results[0].Available // 用第一个目标(connectivity)
-			node.Latency = results[0].Latency
+			if avail, ok := nodeAvailabilityResult(targets, results); ok {
+				node.Available = avail.Available
+				node.Latency = avail.Latency
+			}
 			node.DetectionLastCheck = time.Now()
 		}
 
@@ -171,6 +174,22 @@ func (ds *DetectionService) runDetection(ctx context.Context, scope DetectionSco
 			continue
 		}
 	}
+}
+
+// nodeAvailabilityResult 从检测结果中选出决定节点可用性的那一条:对应第一个通用(generic)目标。
+// results 与 targets 按下标一一对应(detectNode 按 targets 顺序构造)。
+// 没有通用目标时返回 ok=false,调用方据此保留既有可用性,不让专用解锁目标篡改节点可用性。
+func nodeAvailabilityResult(targets []detection.Target, results []detection.Result) (detection.Result, bool) {
+	for i, t := range targets {
+		if !t.IsGeneric() {
+			continue
+		}
+		if i < len(results) {
+			return results[i], true
+		}
+		return detection.Result{}, false
+	}
+	return detection.Result{}, false
 }
 
 // selectNodes 根据 scope 圈定待检测节点
@@ -186,7 +205,7 @@ func (ds *DetectionService) selectNodes(allNodes []*subscription.Node, scope Det
 		// 复用 NodeQuery 筛选逻辑(去掉分页,取全部匹配)
 		query := scope.Query.toNodeQuery()
 		query.Page = 1
-		query.PageSize = len(allNodes) + 1 // 一页装下全部,等效不分页
+		query.PageSize = len(allNodes) + 1         // 一页装下全部,等效不分页
 		result := QueryNodes(allNodes, nil, query) // blocked map 传 nil(检测不关心屏蔽状态)
 		return result.Nodes
 

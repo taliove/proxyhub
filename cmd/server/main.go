@@ -65,6 +65,11 @@ func run(configPath string) error {
 		return fmt.Errorf("检查初始化状态: %w", err)
 	}
 
+	// 首次启动播种默认解锁检测目标（仅当 detection_targets 不存在,不覆盖用户配置）
+	if err := st.SeedDetectionTargets(); err != nil {
+		return fmt.Errorf("播种检测目标: %w", err)
+	}
+
 	// 告警器从数据库设置动态读取 webhook（无需重启即可修改）
 	alerter := alert.NewAlerter(st)
 
@@ -183,7 +188,7 @@ func initDetectionService(cfg *config.Config, st *store.Store, nodes server.Node
 	// 导入 detection 包
 	// 创建 detector 实例
 	detector := detection.NewDetector(
-		20,        // 节点并发数
+		20,             // 节点并发数
 		5*time.Second,  // TCP 快筛超时
 		12*time.Second, // 真实代理请求超时
 	)
@@ -194,7 +199,7 @@ func initDetectionService(cfg *config.Config, st *store.Store, nodes server.Node
 	return server.NewDetectionService(
 		detector,
 		st,
-		nodes.Nodes, // 获取节点池的函数
+		nodes.Nodes,            // 获取节点池的函数
 		st.GetDetectionTargets, // 获取检测目标的函数
 	)
 }
