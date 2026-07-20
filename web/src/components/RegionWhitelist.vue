@@ -47,6 +47,14 @@ interface Region {
   Name: string
 }
 
+// 从未知错误对象里提取可展示的文案：优先后端 body，其次 message，最后字符串化
+const errorMessage = (err: unknown): string => {
+  const e = err as { response?: { data?: unknown }; message?: string }
+  const body = e?.response?.data
+  if (typeof body === 'string') return body
+  return e?.message || String(err)
+}
+
 const loading = ref(true)
 const saving = ref(false)
 const availableRegions = ref<Region[]>([])
@@ -71,23 +79,27 @@ const loadData = async () => {
   loading.value = true
   try {
     // 加载可用地区列表（注意：axios 拦截器返回 response.data，所以这里直接是数据对象）
-    const regionsData = (await client.get('/api/settings/regions')) as any
+    const regionsData = await client.get<unknown, { regions?: Region[] }>('/api/settings/regions')
     availableRegions.value = regionsData.regions || []
 
     // 加载当前白名单配置
-    const whitelistData = (await client.get('/api/settings/region-whitelist')) as any
+    const whitelistData = await client.get<unknown, { whitelist?: string[] }>(
+      '/api/settings/region-whitelist'
+    )
     selectedRegions.value = whitelistData.whitelist || []
 
     // 加载节点池统计
     try {
-      const statsData = (await client.get('/api/stats/global')) as any
+      const statsData = await client.get<unknown, { byRegion?: Record<string, number> }>(
+        '/api/stats/global'
+      )
       nodeStats.value = statsData.byRegion || {}
     } catch (e) {
       console.warn('failed to load node stats:', e)
     }
-  } catch (error: any) {
+  } catch (error) {
     console.error('[RegionWhitelist] loadData error:', error)
-    ElMessage.error('加载失败: ' + (error.response?.data || error.message || String(error)))
+    ElMessage.error('加载失败: ' + errorMessage(error))
   } finally {
     loading.value = false
   }
@@ -100,8 +112,8 @@ const save = async () => {
       whitelist: selectedRegions.value
     })
     ElMessage.success('保存成功')
-  } catch (error: any) {
-    ElMessage.error('保存失败: ' + (error.message || String(error)))
+  } catch (error) {
+    ElMessage.error('保存失败: ' + errorMessage(error))
   } finally {
     saving.value = false
   }
@@ -112,45 +124,45 @@ onMounted(loadData)
 
 <style scoped>
 .region-whitelist-section {
-  margin-top: 20px;
-  padding: 20px;
-  border: 1px solid #eee;
-  border-radius: 4px;
+  margin-top: var(--ph-space-5);
+  padding: var(--ph-space-5);
+  border: 1px solid var(--ph-border);
+  border-radius: var(--ph-radius);
 }
 
 .hint {
-  color: #666;
-  font-size: 14px;
-  margin-bottom: 16px;
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-base);
+  margin-bottom: var(--ph-space-4);
 }
 
 .loading {
   text-align: center;
-  padding: 20px;
-  color: #999;
+  padding: var(--ph-space-5);
+  color: var(--ph-text-placeholder);
 }
 
 .region-grid {
-  margin-bottom: 20px;
+  margin-bottom: var(--ph-space-5);
 }
 
 .region-checkbox {
   display: inline-block;
-  margin-right: 20px;
-  margin-bottom: 10px;
+  margin-right: var(--ph-space-5);
+  margin-bottom: var(--ph-space-2);
 }
 
 .stats {
-  background: #f9f9f9;
-  padding: 12px;
-  border-radius: 4px;
-  margin-bottom: 16px;
-  font-size: 14px;
+  background: var(--ph-bg-hover);
+  padding: var(--ph-space-3);
+  border-radius: var(--ph-radius);
+  margin-bottom: var(--ph-space-4);
+  font-size: var(--ph-text-base);
 }
 
 .stat-item {
   display: inline-block;
-  margin-right: 12px;
-  color: #409eff;
+  margin-right: var(--ph-space-3);
+  color: var(--ph-color-primary);
 }
 </style>

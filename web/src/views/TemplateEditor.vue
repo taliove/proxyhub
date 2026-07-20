@@ -18,11 +18,11 @@
 
     <el-alert
       v-if="errorMsg"
+      class="editor-alert"
       :title="errorMsg"
       type="error"
       show-icon
       :closable="true"
-      style="margin-bottom: 12px"
       @close="errorMsg = ''"
     />
 
@@ -31,12 +31,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, shallowRef } from 'vue'
+import { ref, onMounted, onBeforeUnmount, shallowRef, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 // 仅按需引入 Monaco 核心 API + YAML 语言高亮，避免打包全部语言导致体积暴涨。
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
+import { useLayoutStore } from '@/stores/layout'
+
+const layout = useLayoutStore()
+const { isDark } = storeToRefs(layout)
+// Monaco 主题跟随全局明暗态：亮='vs'，暗='vs-dark'
+const monacoTheme = () => (isDark.value ? 'vs-dark' : 'vs')
 
 const editorEl = ref<HTMLElement | null>(null)
 const editor = shallowRef<monaco.editor.IStandaloneCodeEditor | null>(null)
@@ -50,7 +57,7 @@ const placeholder = '{{nodes}}'
 async function loadTemplate() {
   loading.value = true
   try {
-    const data = await client.get<any, { template: string }>('/settings/template')
+    const data = await client.get<unknown, { template: string }>('/settings/template')
     editor.value?.setValue(data.template ?? '')
   } catch {
     errorMsg.value = '加载模板失败'
@@ -70,9 +77,10 @@ async function handleSave() {
   try {
     await client.put('/settings/template', { template })
     ElMessage.success('模板已保存，订阅立即生效')
-  } catch (e: any) {
+  } catch (e) {
     // 后端对 YAML 格式错误返回 400 + { error }
-    errorMsg.value = e?.response?.data?.error || '保存失败'
+    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    errorMsg.value = detail || '保存失败'
   } finally {
     saving.value = false
   }
@@ -106,7 +114,7 @@ onMounted(async () => {
     editor.value = monaco.editor.create(editorEl.value, {
       value: '',
       language: 'yaml',
-      theme: 'vs',
+      theme: monacoTheme(),
       automaticLayout: true,
       minimap: { enabled: true },
       scrollBeyondLastLine: false,
@@ -115,6 +123,11 @@ onMounted(async () => {
     })
   }
   await loadTemplate()
+})
+
+// 全局明暗切换时同步 Monaco 主题（编辑器实例是全局单例主题，setTheme 即时生效）
+watch(isDark, () => {
+  monaco.editor.setTheme(monacoTheme())
 })
 
 onBeforeUnmount(() => {
@@ -127,29 +140,32 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 16px;
+  gap: var(--ph-space-4);
 }
 .title {
-  font-size: 16px;
+  font-size: var(--ph-text-md);
   font-weight: 600;
-  margin-right: 12px;
+  margin-right: var(--ph-space-3);
 }
 .subtitle {
-  font-size: 12px;
-  color: #909399;
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
 }
 .subtitle code {
-  background: #f0f2f5;
-  padding: 1px 4px;
-  border-radius: 3px;
+  background: var(--ph-bg-hover);
+  padding: 1px var(--ph-space-1);
+  border-radius: var(--ph-radius-sm);
 }
 .actions {
   flex-shrink: 0;
 }
+.editor-alert {
+  margin-bottom: var(--ph-space-3);
+}
 .editor {
   height: calc(100vh - 260px);
   min-height: 400px;
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
+  border: 1px solid var(--ph-border);
+  border-radius: var(--ph-radius-sm);
 }
 </style>

@@ -18,7 +18,7 @@
         <!-- 步骤 1: 管理员账户 -->
         <div v-if="step === 0">
           <el-form :model="form" label-width="120px">
-            <el-alert type="warning" :closable="false" style="margin-bottom: 20px">
+            <el-alert type="warning" :closable="false" class="step-alert">
               为安全起见，禁止使用 "admin" 作为用户名
             </el-alert>
             <el-form-item label="用户名">
@@ -122,7 +122,7 @@ const nextStep = async () => {
       })
       step.value++
       setTimeout(() => router.push('/login'), 2000)
-    } catch (error) {
+    } catch {
       ElMessage.error('初始化失败')
     }
   }
@@ -135,7 +135,7 @@ const nextStep = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: var(--ph-space-5);
   background: var(--ph-bg-page);
 }
 
@@ -150,7 +150,7 @@ const nextStep = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--ph-space-2);
 }
 
 .card-header img {
@@ -160,22 +160,27 @@ const nextStep = async () => {
 
 .card-header h1 {
   margin: 0;
+  font-size: var(--ph-text-xl);
   color: var(--ph-primary);
 }
 
+.step-alert {
+  margin-bottom: var(--ph-space-5);
+}
+
 .step-content {
-  margin: 40px 0;
+  margin: var(--ph-space-7) 0;
   min-height: 300px;
 }
 
 .step-actions {
   text-align: center;
-  margin-top: 30px;
+  margin-top: var(--ph-space-6);
 }
 
 .form-tip {
-  margin-left: 10px;
+  margin-left: var(--ph-space-2);
   color: var(--ph-text-secondary);
-  font-size: 12px;
+  font-size: var(--ph-text-xs);
 }
 </style>

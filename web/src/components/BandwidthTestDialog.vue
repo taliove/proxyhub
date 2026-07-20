@@ -10,7 +10,7 @@
   >
     <!-- 测试中：实时曲线 + 跳动数字 -->
     <div v-if="running" class="bw-testing">
-      <v-chart :option="chartOption" autoresize style="height: 240px; margin-bottom: 16px" />
+      <v-chart :option="chartOption" autoresize class="bw-chart" />
 
       <div class="bw-live">
         <div class="bw-live-item">
@@ -30,7 +30,7 @@
 
     <!-- 结果：定格曲线 + 大数字卡片 -->
     <div v-else-if="result" class="bw-result">
-      <v-chart :option="chartOption" autoresize style="height: 240px; margin-bottom: 16px" />
+      <v-chart :option="chartOption" autoresize class="bw-chart" />
 
       <div class="bw-cards">
         <div class="bw-card">
@@ -64,7 +64,7 @@
         type="error"
         :closable="false"
         :title="result.error"
-        style="margin-top: 12px"
+        class="bw-error"
       />
     </div>
 
@@ -107,8 +107,20 @@ let finished = false // 防 onerror 误报
 
 const fmt = (v?: number) => (v ?? 0).toFixed(1)
 
+// 图表配色取自设计令牌(随亮/暗主题变化):下行=主色靛蓝,上行=成功绿。
+// visible 进入依赖:每次打开对话框重算,确保切主题后重开取到新令牌值。
+const chartColors = computed(() => {
+  void visible.value
+  const rootStyle = getComputedStyle(document.documentElement)
+  return {
+    down: rootStyle.getPropertyValue('--ph-color-primary').trim() || '#4f46e5',
+    up: rootStyle.getPropertyValue('--ph-success').trim() || '#059669'
+  }
+})
+
 // echarts option（双曲线:下行/上行）
 const chartOption = computed(() => ({
+  color: [chartColors.value.down, chartColors.value.up],
   tooltip: {
     trigger: 'axis',
     valueFormatter: (v: number) => `${(v ?? 0).toFixed(1)} Mbps`
@@ -253,87 +265,94 @@ defineExpose({ open })
 </script>
 
 <style scoped>
+.bw-chart {
+  height: 240px;
+  margin-bottom: var(--ph-space-4);
+}
+.bw-error {
+  margin-top: var(--ph-space-3);
+}
 .bw-testing {
-  padding: 8px 0;
+  padding: var(--ph-space-2) 0;
 }
 .bw-live {
   display: flex;
-  gap: 24px;
+  gap: var(--ph-space-5);
   justify-content: center;
-  margin-bottom: 12px;
+  margin-bottom: var(--ph-space-3);
 }
 .bw-live-item {
   text-align: center;
 }
 .bw-live-label {
   display: block;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  margin-bottom: 4px;
+  font-size: var(--ph-text-sm);
+  color: var(--ph-text-secondary);
+  margin-bottom: var(--ph-space-1);
 }
 .bw-live-value {
   font-size: 28px;
   font-weight: 700;
-  color: var(--el-color-primary);
+  color: var(--ph-color-primary);
   display: inline-block;
   min-width: 60px;
 }
 .bw-live-unit {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin-left: 4px;
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
+  margin-left: var(--ph-space-1);
 }
 .bw-phase {
   text-align: center;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  margin-top: 8px;
+  font-size: var(--ph-text-sm);
+  color: var(--ph-text-secondary);
+  margin-top: var(--ph-space-2);
 }
 .bw-result {
-  padding: 8px 0;
+  padding: var(--ph-space-2) 0;
 }
 .bw-cards {
   display: flex;
-  gap: 16px;
+  gap: var(--ph-space-4);
   justify-content: center;
 }
 .bw-card {
   flex: 1;
   text-align: center;
-  padding: 20px 8px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  background: var(--el-fill-color-light);
+  padding: var(--ph-space-5) var(--ph-space-2);
+  border: 1px solid var(--ph-border-light);
+  border-radius: var(--ph-radius-lg);
+  background: var(--ph-bg-hover);
 }
 .bw-card-label {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  margin-bottom: 8px;
+  font-size: var(--ph-text-sm);
+  color: var(--ph-text-secondary);
+  margin-bottom: var(--ph-space-2);
 }
 .bw-card-value {
   font-size: 32px;
   font-weight: 700;
   line-height: 1;
-  color: var(--el-color-primary);
+  color: var(--ph-color-primary);
 }
 .bw-card-unit {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin-top: 4px;
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
+  margin-top: var(--ph-space-1);
 }
 .bw-meta {
-  margin-top: 20px;
+  margin-top: var(--ph-space-5);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--ph-space-3);
 }
 .bw-threshold {
-  font-size: 12px;
+  font-size: var(--ph-text-xs);
   opacity: 0.85;
 }
 .bw-elapsed {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
+  font-size: var(--ph-text-sm);
+  color: var(--ph-text-secondary);
 }
 </style>

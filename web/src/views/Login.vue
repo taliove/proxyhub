@@ -168,7 +168,7 @@ const handleLogin = async () => {
   height: 460px;
   top: -120px;
   left: -100px;
-  background: radial-gradient(circle, var(--el-color-primary, #409eff), transparent 70%);
+  background: radial-gradient(circle, var(--ph-color-primary), transparent 70%);
   animation: drift 18s ease-in-out infinite;
 }
 .blob--2 {
@@ -176,17 +176,18 @@ const handleLogin = async () => {
   height: 380px;
   bottom: -140px;
   right: -80px;
-  background: radial-gradient(circle, #a855f7, transparent 70%);
+  background: radial-gradient(circle, var(--ph-color-primary-hover), transparent 70%);
   animation: drift 22s ease-in-out infinite reverse;
+  opacity: 0.35;
 }
 .blob--3 {
   width: 300px;
   height: 300px;
   top: 40%;
   right: 18%;
-  background: radial-gradient(circle, #22d3ee, transparent 70%);
+  background: radial-gradient(circle, var(--ph-color-primary-active), transparent 70%);
   animation: drift 26s ease-in-out infinite;
-  opacity: 0.35;
+  opacity: 0.25;
 }
 
 @keyframes drift {
@@ -270,7 +271,7 @@ const handleLogin = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--el-color-primary, #409eff) 40%, transparent);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--ph-color-primary) 40%, transparent);
   border-radius: 14px;
 }
 .brand__logo img {

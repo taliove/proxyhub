@@ -3,7 +3,7 @@
     <template #header>系统设置</template>
     <el-tabs>
       <el-tab-pane label="安全设置">
-        <el-form :model="settings" label-width="180px">
+        <el-form :model="settings" label-width="180px" class="settings-form">
           <el-form-item label="登录失败封禁阈值">
             <el-input-number v-model="settings.ban_threshold" :min="3" :max="10" />
           </el-form-item>
@@ -17,7 +17,7 @@
       </el-tab-pane>
 
       <el-tab-pane label="告警设置">
-        <el-form :model="settings" label-width="180px">
+        <el-form :model="settings" label-width="180px" class="settings-form">
           <el-form-item label="飞书 Webhook">
             <el-input v-model="settings.feishu_webhook" placeholder="https://..." />
           </el-form-item>
@@ -31,7 +31,7 @@
       </el-tab-pane>
 
       <el-tab-pane label="订阅设置">
-        <el-form :model="settings" label-width="180px">
+        <el-form :model="settings" label-width="180px" class="settings-form">
           <el-form-item label="定时刷新机场">
             <el-switch
               v-model="settings.scheduled_refresh_enabled"
@@ -103,17 +103,17 @@
 
       <!-- 带宽测试配置 -->
       <el-tab-pane label="带宽测试配置">
-        <el-form label-width="180px" style="max-width: 680px">
+        <el-form label-width="180px" class="settings-form">
           <el-alert
             type="info"
             :closable="false"
-            style="margin-bottom: 16px"
+            class="settings-alert"
             title="采用固定时长测速:下行、上行各跑满「测速时长」(默认 10s),两条曲线等长。数据量仅作上限,须足够大以免快节点提前传完。留空用系统默认值。"
           />
           <el-form-item label="测速时长(秒/方向)">
             <el-input v-model="settings.bandwidth_test_duration_sec" placeholder="10" />
             <template #extra>
-              <span style="font-size: 12px; color: var(--el-text-color-secondary)">
+              <span class="form-extra">
                 下行/上行各自跑满这个时长,速率 = 该时长内传输字节 / 时长。两个方向相同 → 曲线等长
               </span>
             </template>
@@ -124,7 +124,7 @@
               placeholder="https://speed.cloudflare.com/__down?bytes=1073741824"
             />
             <template #extra>
-              <span style="font-size: 12px; color: var(--el-text-color-secondary)">
+              <span class="form-extra">
                 下行数据上限由 URL 的 bytes= 参数控制(默认 1GB);读完仍未到时长会自动续传
               </span>
             </template>
@@ -138,7 +138,7 @@
           <el-form-item label="上行数据上限(字节)">
             <el-input v-model="settings.bandwidth_up_bytes" placeholder="1073741824 (1GB)" />
             <template #extra>
-              <span style="font-size: 12px; color: var(--el-text-color-secondary)">
+              <span class="form-extra">
                 上行在测速时长内持续发送的数据上限;到时长即停(通常用不满)
               </span>
             </template>
@@ -146,7 +146,7 @@
           <el-form-item label="单方向硬超时(秒)">
             <el-input v-model="settings.bandwidth_dir_timeout_sec" placeholder="20" />
             <template #extra>
-              <span style="font-size: 12px; color: var(--el-text-color-secondary)">
+              <span class="form-extra">
                 防链路卡死的硬上限;正常应先到「测速时长」自然结束,此值仅兜底(应大于测速时长)
               </span>
             </template>
@@ -168,7 +168,7 @@
 
       <!-- 检测目标配置 -->
       <el-tab-pane label="检测目标配置">
-        <div style="margin-bottom: 16px">
+        <div class="target-toolbar">
           <el-button type="primary" @click="addTarget">添加目标</el-button>
           <el-button @click="loadTargets">刷新</el-button>
         </div>
@@ -209,7 +209,7 @@
             </template>
           </el-table-column>
         </el-table>
-        <div style="margin-top: 16px">
+        <div class="target-actions">
           <el-button type="primary" @click="saveTargets">保存配置</el-button>
         </div>
       </el-tab-pane>
@@ -277,7 +277,7 @@ const saveSettings = async () => {
 }
 
 const loadTargets = async () => {
-  const data = await client.get<any, DetectionTarget[]>('/settings/detection-targets')
+  const data = await client.get<unknown, DetectionTarget[]>('/settings/detection-targets')
   // 转换数组为字符串(便于编辑)
   detectionTargets.value = data.map((t: DetectionTarget) => ({
     ...t,
@@ -329,11 +329,30 @@ const removeTarget = (index: number) => {
 </script>
 
 <style scoped>
+/* 表单测量宽度收敛：长表单不铺满整页，控件对齐更利于扫读 */
+.settings-form {
+  max-width: 680px;
+}
+.settings-alert {
+  margin-bottom: var(--ph-space-4);
+}
 .hint {
   display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+  margin-top: var(--ph-space-1);
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
   line-height: 1.5;
+}
+.form-extra {
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
+}
+.target-toolbar {
+  display: flex;
+  gap: var(--ph-space-2);
+  margin-bottom: var(--ph-space-4);
+}
+.target-actions {
+  margin-top: var(--ph-space-4);
 }
 </style>
