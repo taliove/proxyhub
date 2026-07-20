@@ -251,10 +251,12 @@ func (s *Server) handleTestNodeStream(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleNodeExamStream 单节点深度体检流式端点(SSE):各段串行,实时推送 sample/section_done/done。
-// 与 handleTestNodeStream 同风格(EventSource 只能 GET+query)。本段只跑稳定性,后续段预留。
+// handleNodeExamStream 单节点深度体检流式端点(SSE):任务化模型。
+// 该节点无进行中任务则启动、有则附加;附加先回放缓冲事件(带序号)再转直播。
+// 连接断开(r.Context() 取消)只结束本次 SSE,任务仍在后台跑,可重连续传。
+// 落历史由任务生命周期负责(见 ExamJobManager),此处不再落盘。
 func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
-	if s.detectionService == nil {
+	if s.detectionService == nil || s.examJobs == nil {
 		http.Error(w, "detection service not initialized", http.StatusServiceUnavailable)
 		return
 	}
@@ -287,21 +289,55 @@ func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	emit := func(evt detection.ExamEvent) {
-		b, _ := json.Marshal(evt)
+	writeFrame := func(f detection.ExamFrame) {
+		b, _ := json.Marshal(f)
 		fmt.Fprintf(w, "data: %s\n\n", b)
 		flusher.Flush()
 	}
 
-	report := s.detectionService.ExamStream(r.Context(), node, emit)
+	sub := s.examJobs.Open(node.NodeKey(), node)
+	defer sub.Close()
 
-	// 体检"成功完成"才落历史。语义钉死:中途失败(建会话失败 -> report.Stability==nil)
-	// 或被取消(ctx.Err()!=nil)一律不落盘,只有完整跑完稳定性段的报告入库。
-	if r.Context().Err() == nil && report.Stability != nil {
-		if err := s.st.SaveExamHistory(node.NodeKey(), report); err != nil {
-			s.logger.Warn("save exam history failed", "error", err)
+	// 先回放缓冲事件(附加语义),再转直播。
+	for _, f := range sub.Replay {
+		writeFrame(f)
+	}
+
+	for {
+		select {
+		case <-r.Context().Done():
+			// 连接断开:结束本次 SSE,任务继续在后台运行。
+			return
+		case f, ok := <-sub.Live:
+			if !ok {
+				// 任务收口,通道关闭。
+				return
+			}
+			writeFrame(f)
 		}
 	}
+}
+
+// handleNodeExamCancel 取消某节点的进行中体检任务:取消任务 ctx、推 cancelled 事件、不落历史。
+// 无进行中任务返回 409。
+func (s *Server) handleNodeExamCancel(w http.ResponseWriter, r *http.Request) {
+	if s.detectionService == nil || s.examJobs == nil {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "detection service not initialized"})
+		return
+	}
+
+	nodeKey := s.resolveExamNodeKey(r)
+	if nodeKey == "" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "missing node_key or self_node_id"})
+		return
+	}
+
+	if !s.examJobs.Cancel(nodeKey) {
+		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": "no active exam"})
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "cancelled"})
 }
 
 // resolveExamNodeKey 从 query 解析体检历史的 node_key:显式 node_key 优先,

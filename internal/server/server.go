@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/taliove/proxyhub/internal/config"
+	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/filter"
 	"github.com/taliove/proxyhub/internal/generator"
 	"github.com/taliove/proxyhub/internal/geoip"
@@ -54,11 +55,12 @@ type Server struct {
 	detectionService *DetectionService
 	geo              *geoip.Resolver
 	distributionMgr  DistributionManager
+	examJobs         *detection.ExamJobManager
 }
 
 // New 创建 HTTP 服务
 func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, logger *slog.Logger, detectionService *DetectionService, geo *geoip.Resolver, distributionMgr DistributionManager) *Server {
-	return &Server{
+	s := &Server{
 		cfg:              cfg,
 		st:               st,
 		nodes:            nodes,
@@ -68,6 +70,42 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		detectionService: detectionService,
 		geo:              geo,
 		distributionMgr:  distributionMgr,
+	}
+
+	// 体检任务管理器:runner 复用 detectionService.ExamStream(逻辑零改动),
+	// 自然完成回调把落历史从 handler 搬进任务生命周期(与连接无关)。
+	if detectionService != nil {
+		s.examJobs = detection.NewExamJobManager(
+			detectionService.ExamStream,
+			func(nodeKey string, report detection.ExamReport) {
+				if err := st.SaveExamHistory(nodeKey, report); err != nil {
+					logger.Warn("save exam history failed", "error", err)
+				}
+			},
+		)
+	}
+
+	return s
+}
+
+// examSweepInterval 体检任务 TTL 清扫周期。
+const examSweepInterval = time.Minute
+
+// StartExamSweeper 周期清扫超过 TTL 的已完成体检任务,随 ctx 结束退出。
+// 由 main 在应用根 context 下后台启动;测试不启用,避免 goroutine 泄漏与时钟竞态。
+func (s *Server) StartExamSweeper(ctx context.Context) {
+	if s.examJobs == nil {
+		return
+	}
+	ticker := time.NewTicker(examSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.examJobs.SweepExpired()
+		}
 	}
 }
 
@@ -132,6 +170,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/nodes/test", s.requireAuth(s.handleTestNode))
 	mux.HandleFunc("GET /api/nodes/test/stream", s.requireAuth(s.handleTestNodeStream))
 	mux.HandleFunc("GET /api/nodes/exam/stream", s.requireAuth(s.handleNodeExamStream))
+	mux.HandleFunc("POST /api/nodes/exam/cancel", s.requireAuth(s.handleNodeExamCancel))
 	mux.HandleFunc("GET /api/nodes/exam/latest", s.requireAuth(s.handleGetExamLatest))
 	mux.HandleFunc("GET /api/nodes/exam/history", s.requireAuth(s.handleGetExamHistory))
 
