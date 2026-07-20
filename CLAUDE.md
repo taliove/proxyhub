@@ -49,7 +49,7 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 |---|---|---|---|---|
 | 术语表 | `CONTEXT.md`(根目录) | 所有人 | 领域术语严格定义 | CONTEXT.md |
 | 用户向文档 | 大写文件名 `*.md` | 部署/使用本系统的人 | 怎么操作:安装、备份、FAQ、安全模型 | DEPLOY.md、SECURITY.md、FAQ.md |
-| 设计文档 | `design-*.md` | 开发者 | 是什么、怎么运作,随代码演进 | design-distribution-model.md |
+| 设计文档 | `design-*.md` | 开发者 | 是什么、怎么运作,随代码演进 | design-node-exam.md |
 | 决策记录 | `docs/adr/NNNN-*.md` | 开发者 | 为什么这么做,不可变,只追加新 ADR | adr/0003-*.md |
 | 开发者入口 | `docs/DEVELOPMENT.md` | 开发者 | 环境搭建与开发循环,规则一律链回 CLAUDE.md | DEVELOPMENT.md |
 | README | `README.md`(根目录) | 最终用户 | 最小上手信息,细节一律链出 | README.md |
@@ -105,7 +105,7 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 
 ## 7. 安全红线
 
-- Xray 任何入站必须 `listen: 127.0.0.1`(`internal/xray/config.go` 与 `internal/distribution/routing.go` 两处生成器,改一必查二,有测试断言)
+- Xray 任何入站必须 `listen: 127.0.0.1`(生成器 `internal/xray/config.go`,有测试断言 `internal/xray/xray_test.go`)
 - 不禁用 TLS 验证(无 `InsecureSkipVerify`、无 `--insecure`)
 - 管理面只走 Site Path + loopback;订阅地址 = 随机 path + token,公开但不可枚举
 - 签入前必过 `gitleaks`(配置见 `.gitleaks.toml`)

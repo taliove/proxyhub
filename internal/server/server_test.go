@@ -81,7 +81,7 @@ func newTestServer(t *testing.T, nodes []*subscription.Node) (*Server, *store.St
 		st.GetDetectionTargets,
 	)
 
-	srv := New(cfg, st, fakeNodeSource, emptyFS, logger, detectionService, geo, nil)
+	srv := New(cfg, st, fakeNodeSource, emptyFS, logger, detectionService, geo)
 	return srv, st
 }
 

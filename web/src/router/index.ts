@@ -49,12 +49,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '订阅模板', icon: 'Document' }
       },
       {
-        path: 'distribution',
-        name: 'Distribution',
-        component: () => import('@/views/Distribution.vue'),
-        meta: { title: '流量分发', icon: 'Share' }
-      },
-      {
         path: 'stats',
         name: 'Stats',
         component: () => import('@/views/Stats.vue'),

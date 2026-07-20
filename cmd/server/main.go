@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/taliove/proxyhub/internal/alert"
 	"github.com/taliove/proxyhub/internal/config"
 	"github.com/taliove/proxyhub/internal/detection"
-	"github.com/taliove/proxyhub/internal/distribution"
 	"github.com/taliove/proxyhub/internal/geoip"
 	"github.com/taliove/proxyhub/internal/server"
 	"github.com/taliove/proxyhub/internal/store"
@@ -87,16 +85,8 @@ func run(configPath string) error {
 	// 初始化检测服务
 	detectionSvc := initDetectionService(cfg, st, agg)
 
-	// 初始化流量分发管理器(xray 运行态配置写入 var/xray/,不污染仓库根目录)
-	distributionMgr := distribution.NewManager(st, "xray", filepath.Join("var", "xray", "xray_config.json"), logger)
-	go func() {
-		if err := distributionMgr.Start(ctx); err != nil {
-			logger.Error("distribution manager start failed", "error", err)
-		}
-	}()
-
 	// HTTP 服务（SPA + API + 订阅端点）
-	srv := server.New(cfg, st, agg, WebFS, logger, detectionSvc, resolver, distributionMgr)
+	srv := server.New(cfg, st, agg, WebFS, logger, detectionSvc, resolver)
 	go srv.StartExamSweeper(ctx) // 后台清扫过期(超过 TTL)的体检任务
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	httpServer := &http.Server{

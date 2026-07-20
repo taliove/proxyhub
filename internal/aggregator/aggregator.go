@@ -109,42 +109,11 @@ func (a *Aggregator) restoreNodePool() {
 	a.logger.Info("node pool restored from snapshot", "count", len(nodes))
 }
 
-// Nodes 返回当前可用节点（含自建节点、分发节点）
+// Nodes 返回当前可用节点（含自建节点）
 func (a *Aggregator) Nodes() []*subscription.Node {
 	a.mu.RLock()
-	poolNodes := a.nodes
-	a.mu.RUnlock()
-
-	// 检查分发节点是否启用
-	distCfg, err := a.st.GetDistributionConfig()
-	if err != nil {
-		a.logger.Warn("get distribution config failed", "error", err)
-		return poolNodes
-	}
-
-	if !distCfg.Enabled {
-		return poolNodes
-	}
-
-	// 获取分发路径
-	distPaths, err := a.st.ListDistributionPaths()
-	if err != nil {
-		a.logger.Warn("list distribution paths failed", "error", err)
-		return poolNodes
-	}
-
-	// 生成分发节点
-	distNodes := generateDistributionNodes(distCfg, distPaths)
-	if len(distNodes) == 0 {
-		return poolNodes
-	}
-
-	// 合并节点池
-	result := make([]*subscription.Node, 0, len(poolNodes)+len(distNodes))
-	result = append(result, poolNodes...)
-	result = append(result, distNodes...)
-
-	return result
+	defer a.mu.RUnlock()
+	return a.nodes
 }
 
 // LastUpdate 返回最近一次成功更新时间

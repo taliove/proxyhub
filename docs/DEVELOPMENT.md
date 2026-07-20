@@ -68,5 +68,4 @@ var/             本地运行态(gitignored):data/ 数据库、log/ 日志、xra
 - **[CLAUDE.md](../CLAUDE.md)** — 工程宪法(必读)
 - **[CONTEXT.md](../CONTEXT.md)** — 领域术语表(机场/订阅地址/节点/聚合/刷新)
 - **[架构决策记录](adr/)** — 为什么这么设计
-- **[流量分发架构](design-distribution-architecture.md)** / **[模型](design-distribution-model.md)** / **[前端](design-distribution-frontend.md)** — 分发功能设计文档
 - **[生产部署指南](DEPLOY.md)** — 运维视角的部署流程

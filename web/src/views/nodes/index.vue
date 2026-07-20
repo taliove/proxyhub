@@ -11,9 +11,6 @@
       <el-tab-pane label="自建节点" name="self">
         <SelfNodesTab />
       </el-tab-pane>
-      <el-tab-pane label="分发节点" name="distribution">
-        <DistributionNodesTab />
-      </el-tab-pane>
     </el-tabs>
   </el-card>
 </template>
@@ -22,16 +19,15 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import SelfNodesTab from './components/SelfNodesTab.vue'
-import DistributionNodesTab from './components/DistributionNodesTab.vue'
 import AirportNodesTab from './components/AirportNodesTab.vue'
 
 const router = useRouter()
 const route = useRoute()
 
 // Tab 管理(URL query 同步)
-const activeTab = ref<'airport' | 'self' | 'distribution'>('airport')
+const activeTab = ref<'airport' | 'self'>('airport')
 const handleTabChange = (tab: string) => {
-  const validTab = tab === 'self' ? 'self' : tab === 'distribution' ? 'distribution' : 'airport'
+  const validTab = tab === 'self' ? 'self' : 'airport'
   activeTab.value = validTab
   router.push({ query: { tab: validTab === 'airport' ? undefined : validTab } })
 }
@@ -39,7 +35,6 @@ const handleTabChange = (tab: string) => {
 onMounted(() => {
   const tabParam = route.query.tab
   if (tabParam === 'self') activeTab.value = 'self'
-  else if (tabParam === 'distribution') activeTab.value = 'distribution'
   else if (tabParam && tabParam !== 'airport') router.replace({ query: { tab: undefined } })
 })
 </script>
