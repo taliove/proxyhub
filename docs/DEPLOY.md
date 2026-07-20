@@ -11,6 +11,16 @@ ProxyHub 现已内嵌 Xray-core，无需单独下载或配置 Xray。单二进�
 - **systemd**: 必需（用于服务管理）
 - **网络**: 出站 HTTPS 连接（用于下载和健康检查）
 
+### 资源占用参考
+
+容量规划参考值（单实例、常规节点规模）:
+
+- **内存**: 50-128MB（闲置 / 健康检查期间）
+- **CPU**: 1-5%（闲置）,10-20%（健康检查期间）
+- **磁盘**: 二进制约 20MB（含前端 + Xray-core),数据库随节点与统计数据增长
+- **并发健康检查**: 默认 30 个节点（可配置）
+- **检查间隔**: 默认 15 分钟（可配置）
+
 ### 域名与 DNS
 - 一个指向服务器的域名（如 `proxy.example.com`）
 - DNS A/AAAA 记录已生效（安装前验证）
@@ -332,69 +342,8 @@ ProxyHub 支持飞书 Webhook 告警:
 
 ## 常见问题
 
-### Q: 忘记管理员密码怎么办？
-
-A: 安装器生成的密码保存在 `/root/.proxyhub-install-info`（仅包含账户名，不含密码）。如果丢失，需要重置:
-
-```bash
-# 方案1: 恢复备份
-proxyhubctl restore /var/lib/proxyhub/backups/latest-backup.tar.gz.enc --yes
-
-# 方案2: 手动重置（需停止服务并修改数据库）
-systemctl stop proxyhub
-sqlite3 /var/lib/proxyhub/data.db "UPDATE settings SET value='<new-bcrypt-hash>' WHERE key='admin_password';"
-systemctl start proxyhub
-```
-
-### Q: 如何更换域名？
-
-A: 需要更新 Caddy 配置和 DNS:
-
-```bash
-# 1. 编辑 Caddy 配置
-vim /etc/caddy/conf.d/proxyhub.caddy
-# 修改 proxy.example.com 为新域名
-
-# 2. 重载 Caddy
-systemctl reload caddy
-
-# 3. 更新 DNS A/AAAA 记录指向服务器 IP
-```
-
-### Q: 订阅地址拉取失败 "no available nodes"
-
-A: 等待首次健康检查完成（启动后 15 分钟内）。查看日志:
-```bash
-proxyhubctl logs --lines 100 | grep health
-```
-
-### Q: 内嵌 Xray 如何更新？
-
-A: Xray-core 内嵌在 ProxyHub 二进制中。运行 `proxyhubctl update` 会同时更新 ProxyHub 和 Xray-core。无需单独更新 Xray。
-
-### Q: 如何自定义 Xray 配置？
-
-A: `/etc/proxyhub/xray_config.json` 是 Xray 健康检查的配置文件。**不建议手动修改**，ProxyHub 会自动管理。如需调整健康检查行为，编辑 `/etc/proxyhub/config.yaml` 中的 `health_check` 部分。
-
-### Q: 端口冲突怎么办？
-
-A: ProxyHub 监听 `127.0.0.1:8080`（环回地址）。如果冲突，编辑 `/etc/proxyhub/config.yaml`:
-```yaml
-server:
-  listen: "127.0.0.1:8081"  # 修改端口
-```
-
-同时更新 Caddy 配置 `/etc/caddy/conf.d/proxyhub.caddy` 中的 `reverse_proxy` 目标端口。
+详见 [FAQ.md](FAQ.md)。
 
 ## 安全加固
 
 详见 [SECURITY.md](./SECURITY.md)。
-
-## 技术支持
-
-遇到问题请提供:
-1. 完整日志（`proxyhubctl logs --lines 500`）
-2. 系统信息（`proxyhubctl show-info`）
-3. 错误截图或描述
-
-GitHub Issues: https://github.com/taliove/proxyhub/issues

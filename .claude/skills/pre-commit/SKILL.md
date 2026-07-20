@@ -15,12 +15,18 @@ git diff --cached --stat
 ```
 
 逐项确认暂存内容,出现以下任何东西立即移出(并视情况加进 `.gitignore`):
-- 过程产物:合并分析、实施计划/总结/验证报告、AI 会话笔记、`.scratch/`
+- 过程产物:合并分析、实施计划/总结/验证报告、AI 会话笔记、`.scratch/`、`spec-*.md`(功能工作稿,归 `.scratch/spec/`,禁止进 `docs/`)
 - 死备份:`*_old.*`、`*_backup.*`
 - 运行时产物:`*.db`、`*.log`、`xray_config.json`、`config.yaml`、`dist/`、二进制
 - 大文件:任何 >500KB 的非资源文件都要质疑
 
 判断标准:这个文件对"下一个人理解系统"有帮助吗?
+
+### 文档机械检查(docs/ 或 README.md 变更时)
+
+- `docs/` 下出现 `spec-*.md` -> 拦截,移去 `.scratch/spec/`(政策见 CLAUDE.md §3)
+- `docs/` 新增文件不符合命名约定(用户向=大写、设计向=`design-*`、决策=`adr/NNNN-*`)-> 拦截,按 doc-writing skill 决策树归位
+- `README.md` 出现白名单外段落(技术栈/项目结构/make 命令/架构图等开发者内容)-> 警告,移去 `docs/DEVELOPMENT.md`;白名单见 CLAUDE.md §3
 
 ## 2. 泄密扫描
 

@@ -10,7 +10,7 @@
 **永不签入**:
 - 运行时产物:`var/` 下的一切、`*.db`、`*.log`、`xray_config.json`、`config.yaml`、`dist/`、二进制
 - 凭证:任何真实节点密码/UUID/token/订阅 URL —— 测试 fixture 一律用 `example.com` + 全零 UUID
-- 过程产物:合并分析、实施计划/总结/验证报告、AI 会话工作笔记、`.scratch/`、`.superpowers/`
+- 过程产物:合并分析、实施计划/总结/验证报告、AI 会话工作笔记、`.scratch/`、`.superpowers/`、spec-*.md(功能工作稿,归属 `.scratch/spec/`,见 §3)
 - 死备份:`*_old.*`、`*_backup.*`、注释掉的死代码文件
 - 依赖目录:`node_modules/`、`vendor/`
 
@@ -43,14 +43,31 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 
 ## 3. 文档政策
 
+### 分类法(命名即受众)
+
+| 类别 | 命名约定 | 受众 | 内容 | 例子 |
+|---|---|---|---|---|
+| 术语表 | `CONTEXT.md`(根目录) | 所有人 | 领域术语严格定义 | CONTEXT.md |
+| 用户向文档 | 大写文件名 `*.md` | 部署/使用本系统的人 | 怎么操作:安装、备份、FAQ、安全模型 | DEPLOY.md、SECURITY.md、FAQ.md |
+| 设计文档 | `design-*.md` | 开发者 | 是什么、怎么运作,随代码演进 | design-distribution-model.md |
+| 决策记录 | `docs/adr/NNNN-*.md` | 开发者 | 为什么这么做,不可变,只追加新 ADR | adr/0003-*.md |
+| 开发者入口 | `docs/DEVELOPMENT.md` | 开发者 | 环境搭建与开发循环,规则一律链回 CLAUDE.md | DEVELOPMENT.md |
+| README | `README.md`(根目录) | 最终用户 | 最小上手信息,细节一律链出 | README.md |
+
+### 留 / 删
+
 | 留 | 删 |
 |---|---|
 | 术语表(CONTEXT.md) | 过程记录(计划/总结/验证/合并分析) |
 | ADR(docs/adr/,为什么这么做) | AI 工作流产物(plans/superpowers) |
-| 设计文档(架构/模型/规格) | 带日期的里程碑文档 |
-| 运维文档(DEPLOY/SECURITY/ACCEPTANCE) | 旧版本死备份 |
+| 设计文档(design-*,架构/模型) | 带日期的里程碑文档 |
+| 用户向文档(DEPLOY/SECURITY/FAQ) | 旧版本死备份 |
 
-文档过期即删,不留"考古层"。
+**spec-\*.md 是过程产物**:功能开发的工作稿,归属 `.scratch/spec/`,**禁止签入 `docs/`**。功能落地时,spec 中未被 ADR/design 覆盖的持久知识必须蒸馏(决策进 ADR,模型进 design-*,步骤与截图丢弃),原稿随 `.scratch/` 消亡。
+
+**README 段落白名单**:定位/badges、核心特性、快速开始、生产部署、常见问题(精选+链出)、安全(一段话+链出)、文档、贡献、License。新增段落必须回答"为什么是用户上手必需";开发者内容(技术栈/项目结构/make 命令)归 docs/DEVELOPMENT.md。
+
+文档过期即删,不留"考古层"。文档语言:全中文(commit message 按 §4 用英文,与文档语言是两回事)。
 
 ## 4. 提交规范
 
@@ -97,6 +114,7 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 - 签入前:`.claude/skills/pre-commit`(Go 改动会 dispatch go-reviewer)
 - 推送前:`.claude/skills/pre-push`
 - 发布(版本纪律/演练/tag/验证):`.claude/skills/release`
+- 写文档(决策树/放置命名/模板/spec 蒸馏/README 守卫):`.claude/skills/doc-writing`
 - Go 语义评审:`.claude/agents/go-reviewer`(独立上下文,专挑机械门禁抓不住的毛病;它只评审,不写码)
 
 Skills 是流程,不是建议——逐条执行,不允许跳项。
