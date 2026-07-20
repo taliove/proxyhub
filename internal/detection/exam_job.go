@@ -2,26 +2,28 @@ package detection
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/taliove/proxyhub/internal/jobs"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
 // 体检任务化:把深度体检从"绑死在 SSE 请求"改为服务端后台任务。
-// 任务持有自己的 context(不从 r.Context() 派生),连接断开不杀任务;
-// SSE 端点变为"无任务则启动、有任务则附加",附加先回放缓冲事件再转直播。
+// 本文件是通用任务运行时(internal/jobs)之上的薄适配:机制(单实例、环形缓冲、
+// 附加回放、取消、TTL、自带 ctx、终态持久化)全部下沉到 jobs.Manager,此处只
+// 保留体检特有的对外形态(ExamFrame 帧协议、ExamRunner 注入、落 exam_history)。
 const (
-	// examBufferCap 每个任务事件环形缓冲上限(>=500):附加时回放最近这么多帧。
-	// 单次体检事件量(~50)远小于此,实际不会丢;溢出时丢最旧帧。
-	examBufferCap = 512
-	// examResultTTL 任务结束后结果保留时长,供迟到附加回放,过期清理。
-	examResultTTL = 5 * time.Minute
-	// examPhaseCancelled 取消任务时推送的终止帧 phase(区别于自然完成的 done)。
+	// examPhaseCancelled 取消任务时补发的终止帧 phase(区别于自然完成的 done)。
 	examPhaseCancelled = "cancelled"
+	// examLiveBuffer 附加 SSE 直播通道缓冲(与 jobs 默认环形缓冲同量级)。
+	examLiveBuffer = 512
 )
 
-// ExamFrame 一帧体检事件:内嵌现状 ExamEvent(字段保持顶层不变),外加 Seq 供前端去重。
+// ExamFrame 一帧体检事件:内嵌 ExamEvent(字段保持顶层不变),外加 Seq 供前端去重。
+// 帧协议对前端零改动:JSON 形如 {"seq":N, ...ExamEvent 字段}。
 type ExamFrame struct {
 	Seq int `json:"seq"`
 	ExamEvent
@@ -31,157 +33,92 @@ type ExamFrame struct {
 // *Detector.ExamStream 的签名与此一致,可直接作为生产实现注入。
 type ExamRunner func(ctx context.Context, node *subscription.Node, emit func(ExamEvent)) ExamReport
 
-// examJob 单节点体检任务:自带 context、环形事件缓冲、订阅者列表。
-type examJob struct {
-	nodeKey string
-	node    *subscription.Node
-
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	mu          sync.Mutex
-	buffer      []ExamFrame          // 环形事件缓冲(容量 examBufferCap)
-	nextSeq     int                  // 单调递增序号
-	subscribers map[int]chan ExamFrame // 订阅者:id -> 直播通道
-	nextSubID   int
-	cancelled   bool      // 已请求取消(取消后抑制 runner 后续事件)
-	done        bool      // 任务已收口(finalize 后为真)
-	finishedAt  time.Time // 收口时刻,用于 TTL
+// examParams 体检任务的持久化参数。只存 node_key —— 节点会话凭证(UUID/密码)
+// 绝不进 jobs 表(安全红线:凭证不入库);活节点经内存旁路传递(见 examKind.nodes)。
+type examParams struct {
+	NodeKey string `json:"node_key"`
 }
 
-// pushLocked 分配序号、写入缓冲并广播给当前订阅者(调用方持有 j.mu)。
-// 在锁内做非阻塞发送:通道有缓冲(examBufferCap),正常读者不会满;满则丢弃该帧,
-// 仅当丢弃帧仍在环形缓冲(最近 examBufferCap 帧)内时可由重连回放找回,超出即永久丢失
-// —— 深度体检事件量(~50)远小于缓冲容量,实际不会触发。
-// 持锁发送与订阅/退订/收口互斥,杜绝向已关闭通道发送。
-func (j *examJob) pushLocked(e ExamEvent) {
-	frame := ExamFrame{Seq: j.nextSeq, ExamEvent: e}
-	j.nextSeq++
-	j.appendBuffer(frame)
-	for _, ch := range j.subscribers {
-		select {
-		case ch <- frame:
-		default:
+// examKind 把体检实现为一个 jobs.Kind。单发任务(不可续跑):进程重启时中断标记 interrupted。
+// 同一 kind 实例被多节点并发复用,故活节点存于按 key 索引的 sync.Map,而非实例字段。
+type examKind struct {
+	run        ExamRunner
+	onComplete func(nodeKey string, report ExamReport)
+	onErr      func(error)
+	nodes      sync.Map // nodeKey -> *subscription.Node(活节点,含凭证,仅内存)
+}
+
+func (k *examKind) Name() string    { return "exam" }
+func (k *examKind) Resumable() bool { return false }
+
+// CancelEvent 取消时补发的终止帧载荷({"phase":"cancelled"}),由 jobs 运行时在
+// finalize 中原子补发,保持 SSE cancelled 语义不变。
+func (k *examKind) CancelEvent() (json.RawMessage, bool) {
+	b, err := json.Marshal(ExamEvent{Phase: examPhaseCancelled})
+	if err != nil {
+		if k.onErr != nil {
+			k.onErr(fmt.Errorf("exam: marshal cancel event: %w", err))
 		}
+		return nil, false
 	}
+	return b, true
 }
 
-// emit 供 runner 使用:取消后抑制一切事件(含编排器在取消路径上仍会推的 done),
-// 检查与推送在同一把锁下完成,避免抑制窗口漏帧;cancelled 终止帧由 runJob 单独补发。
-func (j *examJob) emit(e ExamEvent) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.cancelled {
+// examResult 包装体检结果,承载 report(OnComplete 要用)经 Run 返回值传递给 hook。
+type examResult struct {
+	nodeKey string
+	report  ExamReport
+}
+
+func (e examResult) Error() string {
+	return fmt.Sprintf("exam(%s): report ready", e.nodeKey)
+}
+
+// Run 跑一场体检:解析出活节点 -> 运行 runner(逐事件转 JSON emit)-> 返回包装的 report。
+// 落历史决策在 OnComplete hook,读 finalize 后的权威 cancelled 状态,消除取消到达时刻竞态。
+func (k *examKind) Run(ctx context.Context, params json.RawMessage, _ string, emit func(json.RawMessage), _ func(string)) error {
+	var p examParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return fmt.Errorf("exam: bad params: %w", err)
+	}
+	v, ok := k.nodes.LoadAndDelete(p.NodeKey)
+	if !ok {
+		return fmt.Errorf("exam: no live node for key %q", p.NodeKey)
+	}
+	node := v.(*subscription.Node)
+
+	report := k.run(ctx, node, func(e ExamEvent) {
+		b, err := json.Marshal(e)
+		if err != nil {
+			if k.onErr != nil {
+				k.onErr(fmt.Errorf("exam: marshal event: %w", err))
+			}
+			return
+		}
+		emit(b)
+	})
+
+	// 返回包装的 report(自然完成标记):OnComplete 取出并落历史。
+	// 建会话失败等(report.Stability=nil)也到此,OnComplete 据此不落历史。
+	return examResult{nodeKey: node.NodeKey(), report: report}
+}
+
+// OnComplete 自然完成 hook(finalize 之后,已读权威 cancelled):取出 report,有稳定性段才落历史。
+// 取消到达时刻无歧义:cancelled=true 时 runJob 不调此方法,与旧 finalize 原子决策语义等价。
+func (k *examKind) OnComplete(key string, runErr error) {
+	res, ok := runErr.(examResult)
+	if !ok {
+		// Run 返回的不是 examResult(编程错误,理论不达)。
+		if k.onErr != nil {
+			k.onErr(fmt.Errorf("exam: OnComplete called with non-examResult error: %T", runErr))
+		}
 		return
 	}
-	j.pushLocked(e)
-}
-
-// appendBuffer 追加一帧,超过容量则丢弃最旧帧(调用方持锁)。
-func (j *examJob) appendBuffer(f ExamFrame) {
-	if len(j.buffer) >= examBufferCap {
-		copy(j.buffer, j.buffer[1:])
-		j.buffer = j.buffer[:len(j.buffer)-1]
+	if res.report.Stability == nil {
+		return
 	}
-	j.buffer = append(j.buffer, f)
-}
-
-// subscribe 附加一个订阅者:原子地快照当前缓冲(replay)并注册直播通道(live)。
-// 二者在同一把锁下取得,保证任一帧要么在 replay、要么在 live,不重不漏。
-// 任务已收口时返回全量 replay 与一个已关闭的通道(读者回放完即结束),unsub 为空操作。
-func (j *examJob) subscribe() (replay []ExamFrame, live <-chan ExamFrame, unsub func()) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-
-	snapshot := make([]ExamFrame, len(j.buffer))
-	copy(snapshot, j.buffer)
-
-	if j.done {
-		ch := make(chan ExamFrame)
-		close(ch)
-		return snapshot, ch, func() {}
-	}
-
-	ch := make(chan ExamFrame, examBufferCap)
-	id := j.nextSubID
-	j.nextSubID++
-	j.subscribers[id] = ch
-
-	var once sync.Once
-	return snapshot, ch, func() {
-		once.Do(func() {
-			j.mu.Lock()
-			defer j.mu.Unlock()
-			if c, ok := j.subscribers[id]; ok {
-				delete(j.subscribers, id)
-				close(c)
-			}
-		})
-	}
-}
-
-// isDone 报告任务是否已收口(供 manager 在 m.mu 下安全查询)。
-func (j *examJob) isDone() bool {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	return j.done
-}
-
-// requestCancel 请求取消:任务已收口返回 false(无可取消);否则置位并取消 ctx。
-func (j *examJob) requestCancel() bool {
-	j.mu.Lock()
-	if j.done {
-		j.mu.Unlock()
-		return false
-	}
-	already := j.cancelled
-	j.cancelled = true
-	j.mu.Unlock()
-	if !already {
-		j.cancel()
-	}
-	return true
-}
-
-// finalize 收口任务(单锁原子):读取最终取消状态,取消则补发 cancelled 终止帧,
-// 再记录完成时刻、置 done,关闭并清空仍在册的订阅通道(读者回放/直播后结束),返回是否取消。
-// 把"取消判定 + cancelled 帧 + done"放进同一把锁,消除取消与完成之间的落历史竞态:
-// 落历史是否发生完全由本方法返回值决定,与 Cancel 的到达时刻无歧义。
-func (j *examJob) finalize(now time.Time) (cancelled bool) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	cancelled = j.cancelled
-	if cancelled {
-		j.pushLocked(ExamEvent{Phase: examPhaseCancelled})
-	}
-	j.done = true
-	j.finishedAt = now
-	for id, ch := range j.subscribers {
-		close(ch)
-		delete(j.subscribers, id)
-	}
-	return cancelled
-}
-
-// ExamJobManager 按节点单实例管理体检任务:重复启动附加到现有任务而非另起。
-type ExamJobManager struct {
-	run        ExamRunner
-	onComplete func(nodeKey string, report ExamReport) // 自然完成回调(落历史);失败/取消不调用
-	ttl        time.Duration
-	now        func() time.Time // 可注入时钟(TTL 虚拟时钟测试)
-
-	mu   sync.Mutex
-	jobs map[string]*examJob
-}
-
-// NewExamJobManager 构造任务管理器。onComplete 可为 nil(不落历史)。
-func NewExamJobManager(run ExamRunner, onComplete func(nodeKey string, report ExamReport)) *ExamJobManager {
-	return &ExamJobManager{
-		run:        run,
-		onComplete: onComplete,
-		ttl:        examResultTTL,
-		now:        time.Now,
-		jobs:       make(map[string]*examJob),
+	if k.onComplete != nil {
+		k.onComplete(res.nodeKey, res.report)
 	}
 }
 
@@ -190,11 +127,102 @@ func NewExamJobManager(run ExamRunner, onComplete func(nodeKey string, report Ex
 type ExamSubscription struct {
 	Replay []ExamFrame
 	Live   <-chan ExamFrame
-	unsub  func()
+
+	closeOnce sync.Once
+	done      chan struct{}
+	inner     *jobs.Subscription
 }
 
 // Close 退订本次附加(幂等)。
-func (s *ExamSubscription) Close() { s.unsub() }
+func (s *ExamSubscription) Close() {
+	s.closeOnce.Do(func() {
+		close(s.done)
+		s.inner.Close()
+	})
+}
+
+// newExamSubscription 把通用订阅(jobs.Event)适配为体检订阅(ExamFrame):
+// Replay 直接转换;Live 起一个转换 goroutine,读通用直播、转帧、转发,并在
+// Close 或上游关闭时收尾,避免读者停读导致的阻塞。
+func newExamSubscription(inner *jobs.Subscription) *ExamSubscription {
+	replay := make([]ExamFrame, 0, len(inner.Replay))
+	for _, ev := range inner.Replay {
+		replay = append(replay, toExamFrame(ev))
+	}
+
+	out := make(chan ExamFrame, examLiveBuffer)
+	done := make(chan struct{})
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case ev, ok := <-inner.Live:
+				if !ok {
+					return
+				}
+				select {
+				case out <- toExamFrame(ev):
+				case <-done:
+					return
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	return &ExamSubscription{Replay: replay, Live: out, done: done, inner: inner}
+}
+
+// toExamFrame 通用事件 -> 体检帧:Data 是 marshal 后的 ExamEvent,反解并附上 Seq。
+func toExamFrame(ev jobs.Event) ExamFrame {
+	var e ExamEvent
+	// Data 由 examKind.Run emit 刚 marshal,结构必定匹配,反解不会错;万一错了记日志,返回零帧。
+	_ = json.Unmarshal(ev.Data, &e)
+	return ExamFrame{Seq: ev.Seq, ExamEvent: e}
+}
+
+// ExamJobManager 按节点单实例管理体检任务:重复启动附加到现有任务而非另起。
+// 内部是注册了 exam kind 的 jobs.Manager。
+type ExamJobManager struct {
+	mgr  *jobs.Manager
+	kind *examKind
+}
+
+// ExamJobOption 配置体检任务管理器。
+type ExamJobOption func(*examJobConfig)
+
+type examJobConfig struct {
+	store *jobs.Store
+	onErr func(error)
+}
+
+// WithExamJobStore 注入 jobs 表存储:体检任务生命周期(running/终态/重启 interrupted)持久化。
+func WithExamJobStore(st *jobs.Store) ExamJobOption {
+	return func(c *examJobConfig) { c.store = st }
+}
+
+// WithExamErrorHandler 注入持久化错误回调(接到日志,避免静默吞错)。
+func WithExamErrorHandler(h func(error)) ExamJobOption {
+	return func(c *examJobConfig) { c.onErr = h }
+}
+
+// NewExamJobManager 构造体检任务管理器。onComplete 可为 nil(不落历史)。
+func NewExamJobManager(run ExamRunner, onComplete func(nodeKey string, report ExamReport), opts ...ExamJobOption) *ExamJobManager {
+	cfg := examJobConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	k := &examKind{run: run, onComplete: onComplete, onErr: cfg.onErr}
+
+	mopts := []jobs.Option{jobs.WithBufferCap(examLiveBuffer), jobs.WithTTL(5 * time.Minute)}
+	if cfg.onErr != nil {
+		mopts = append(mopts, jobs.WithErrorHandler(cfg.onErr))
+	}
+	mgr := jobs.NewManager(cfg.store, mopts...)
+	mgr.Register(k)
+	return &ExamJobManager{mgr: mgr, kind: k}
+}
 
 // Open 启动或附加该节点的体检任务,并返回一次订阅(回放 + 直播)。供 SSE handler 使用。
 func (m *ExamJobManager) Open(nodeKey string, node *subscription.Node) *ExamSubscription {
@@ -208,79 +236,46 @@ func (m *ExamJobManager) OpenForce(nodeKey string, node *subscription.Node) *Exa
 }
 
 func (m *ExamJobManager) open(nodeKey string, node *subscription.Node, force bool) *ExamSubscription {
-	j := m.startOrAttach(nodeKey, node, force)
-	replay, live, unsub := j.subscribe()
-	return &ExamSubscription{Replay: replay, Live: live, unsub: unsub}
-}
-
-// startOrAttach 该节点无任务(或已过期)则启动新任务,否则返回现有任务(启动或附加)。
-// force 仅对"已收口"的旧任务生效:丢弃并重开;进行中的任务不受 force 影响。
-func (m *ExamJobManager) startOrAttach(nodeKey string, node *subscription.Node, force bool) *examJob {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.sweepLocked(m.now())
-
-	if j, ok := m.jobs[nodeKey]; ok {
-		if force && j.isDone() {
-			delete(m.jobs, nodeKey) // 已收口的旧任务,强制重开
-		} else {
-			return j
-		}
+	// 活节点存内存旁路(凭证不进 params_json)。只在启动新任务时 Store(被 Run LoadAndDelete 消费);
+	// 附加到既有任务(已在跑/已收口回放)不 Store,避免凭证对象留存超出任务生命周期(M2 修复)。
+	params, err := json.Marshal(examParams{NodeKey: nodeKey})
+	if err != nil && m.kind.onErr != nil {
+		m.kind.onErr(fmt.Errorf("exam: marshal params: %w", err))
 	}
 
-	// 任务自带 context.Background() 派生的 ctx —— 绝不从请求 ctx 派生,连接断开不杀任务。
-	ctx, cancel := context.WithCancel(context.Background())
-	j := &examJob{
-		nodeKey:     nodeKey,
-		node:        node,
-		ctx:         ctx,
-		cancel:      cancel,
-		subscribers: make(map[int]chan ExamFrame),
+	var inner *jobs.Subscription
+	if force {
+		inner, err = m.mgr.OpenForce(m.kind.Name(), nodeKey, params)
+	} else {
+		inner, err = m.mgr.Open(m.kind.Name(), nodeKey, params)
 	}
-	m.jobs[nodeKey] = j
-	go m.runJob(j)
-	return j
-}
-
-// runJob 任务生命周期:跑体检 -> 收口(取消则补 cancelled 帧)-> 自然完成才落历史。
-func (m *ExamJobManager) runJob(j *examJob) {
-	report := m.run(j.ctx, j.node, j.emit)
-
-	// finalize 原子返回最终取消状态:落历史与否只看它,取消到达时刻不再有歧义。
-	// 落历史语义与既有 handler 一致:自然完成(未取消且跑完稳定性段)才落;失败/取消不落。
-	cancelled := j.finalize(m.now())
-	if !cancelled && report.Stability != nil && m.onComplete != nil {
-		m.onComplete(j.nodeKey, report)
+	if err != nil {
+		// 仅当 kind 未注册才可能到此(编程错误);此处 kind 恒已注册,理论不达。
+		closed := make(chan ExamFrame)
+		close(closed)
+		return &ExamSubscription{Live: closed, done: make(chan struct{}), inner: &jobs.Subscription{}}
 	}
+
+	// 新任务刚启动:将活节点存入旁路(len(Replay)=0 标识"刚起,尚未 emit 首帧")。
+	// 附加到既有任务:Replay 非空,跳过 Store(节点已被首次启动时的 Run 消费,或任务已收口)。
+	if len(inner.Replay) == 0 {
+		m.kind.nodes.Store(nodeKey, node)
+	}
+	return newExamSubscription(inner)
 }
 
 // Cancel 取消该节点任务:无任务或已收口返回 false。
 func (m *ExamJobManager) Cancel(nodeKey string) bool {
-	m.mu.Lock()
-	j, ok := m.jobs[nodeKey]
-	m.mu.Unlock()
-	if !ok {
-		return false
-	}
-	return j.requestCancel()
+	return m.mgr.Cancel(m.kind.Name(), nodeKey)
 }
 
 // SweepExpired 清理超过 TTL 的已完成任务(供后台/测试触发)。
 func (m *ExamJobManager) SweepExpired() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.sweepLocked(m.now())
+	m.mgr.SweepExpired()
 }
 
-// sweepLocked 移除已完成且超过 TTL 的任务(调用方持有 m.mu)。
-func (m *ExamJobManager) sweepLocked(now time.Time) {
-	for key, j := range m.jobs {
-		j.mu.Lock()
-		expired := j.done && now.Sub(j.finishedAt) > m.ttl
-		j.mu.Unlock()
-		if expired {
-			delete(m.jobs, key)
-		}
-	}
+// RecoverInterrupted 重启恢复:体检为单发任务,重启时仍 running 的记录一律标记 interrupted。
+// 由 main 在服务启动前调用(须在管理器构造之后,即 kind 已注册)。
+func (m *ExamJobManager) RecoverInterrupted() error {
+	return m.mgr.Recover()
 }

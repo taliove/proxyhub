@@ -72,8 +72,16 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 
 	// 体检任务管理器:runner 复用 detectionService.ExamStream(逻辑零改动),
 	// 自然完成回调把落历史从 handler 搬进任务生命周期(与连接无关)。
+	// 生命周期落 jobs 表(重启标记 interrupted);持久化错误记日志,不静默吞。
 	if detectionService != nil {
-		s.examJobs = detection.NewExamJobManager(detectionService.ExamStream, s.onExamComplete)
+		s.examJobs = detection.NewExamJobManager(
+			detectionService.ExamStream,
+			s.onExamComplete,
+			detection.WithExamJobStore(st.Jobs()),
+			detection.WithExamErrorHandler(func(err error) {
+				logger.Warn("exam job persistence", "error", err)
+			}),
+		)
 	}
 
 	return s
@@ -87,6 +95,17 @@ func (s *Server) onExamComplete(nodeKey string, report detection.ExamReport) {
 	}
 	if err := s.st.RecomputeNodeTags(nodeKey); err != nil {
 		s.logger.Warn("recompute node tags after exam failed", "error", err)
+	}
+}
+
+// RecoverJobs 重启恢复:把上次进程遗留的 running 体检任务标记 interrupted(单发任务不续跑)。
+// best-effort:失败只记日志。由 main 在对外服务前调用。
+func (s *Server) RecoverJobs() {
+	if s.examJobs == nil {
+		return
+	}
+	if err := s.examJobs.RecoverInterrupted(); err != nil {
+		s.logger.Warn("recover interrupted exam jobs failed", "error", err)
 	}
 }
 

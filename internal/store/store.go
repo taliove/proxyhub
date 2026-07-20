@@ -8,12 +8,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/taliove/proxyhub/internal/jobs"
 	_ "modernc.org/sqlite"
 )
 
 // Store SQLite 存储
 type Store struct {
-	db *sql.DB
+	db        *sql.DB
+	jobsStore *jobs.Store
 }
 
 // Open 打开（或创建）数据库文件并执行迁移
@@ -39,6 +41,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}
+	s.jobsStore = jobs.NewStore(db)
 
 	return s, nil
 }
@@ -285,6 +288,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 通用异步任务运行时表（013_jobs.sql）
+	if err := s.applyMigrationFile("013_jobs.sql"); err != nil {
+		return err
+	}
+
 	// 初始化地区识别规则表
 	return s.InitRegionRules()
 }
@@ -414,6 +422,23 @@ CREATE TABLE IF NOT EXISTS node_tags (
 );
 
 CREATE INDEX IF NOT EXISTS idx_node_tags_tag ON node_tags(tag);
+`
+	case "013_jobs.sql":
+		checkTable = "jobs"
+		migrationSQL = `
+CREATE TABLE IF NOT EXISTS jobs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    params_json TEXT NOT NULL DEFAULT 'null',
+    status      TEXT NOT NULL DEFAULT 'running',
+    cursor      TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_kind_key ON jobs(kind, key, id DESC);
 `
 	default:
 		return fmt.Errorf("unknown migration file: %s", filename)

@@ -87,6 +87,7 @@ func run(configPath string) error {
 
 	// HTTP 服务（SPA + API + 订阅端点）
 	srv := server.New(cfg, st, agg, WebFS, logger, detectionSvc, resolver)
+	srv.RecoverJobs()            // 重启恢复:遗留 running 体检任务标记 interrupted
 	go srv.StartExamSweeper(ctx) // 后台清扫过期(超过 TTL)的体检任务
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	httpServer := &http.Server{
