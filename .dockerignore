@@ -1,0 +1,34 @@
+.git
+.github
+.claude
+.gstack
+.scratch
+.idea
+.vscode
+.env
+.env.*
+
+# Dependencies and frontend build output (rebuilt inside the image)
+node_modules
+web/node_modules
+web/dist
+cmd/server/web
+
+# Build artifacts
+dist
+proxyhub
+server
+.test
+
+# Runtime data
+logs
+*.db
+*.db-*
+*.log
+*.out
+config.yaml
+config/local.yaml
+xray_config.json
+
+# Docs not needed in the build context
+docs

@@ -1,0 +1,175 @@
+# 注意：本文件为内嵌默认模板，修改后需要 go build 重新编译才能生效。
+# 后台管理界面的「配置模板」页面支持热编辑，无需重启。
+
+port: 7890
+socks-port: 7891
+allow-lan: false
+mode: rule
+log-level: info
+external-controller: 127.0.0.1:9090
+
+dns:
+    enable: true
+    ipv6: false
+    listen: 0.0.0.0:53
+    enhanced-mode: fake-ip
+    fake-ip-range: 198.18.0.1/16
+    fake-ip-filter:
+        - '*.lan'
+        - localhost.ptlogin2.qq.com
+    nameserver:
+        - 223.5.5.5
+        - 119.29.29.29
+    fallback:
+        - tls://1.1.1.1:853
+        - tls://8.8.8.8:853
+
+proxy-groups:
+    # 节点选择
+    - name: 🚀 节点选择
+      type: select
+      proxies:
+        - ♻️ 自动选择
+        - 🇭🇰 香港节点
+        - 🇸🇬 新加坡节点
+        - 🇺🇸 美国节点
+        - 🇯🇵 日本节点
+        - 🇹🇼 台湾节点
+        - '{{nodes}}'  # 全部节点手动选择
+
+    # 自动选择（全部节点参与测速）
+    - name: ♻️ 自动选择
+      type: url-test
+      url: http://www.gstatic.com/generate_204
+      interval: 300
+      proxies:
+        - '{{nodes}}'
+
+    # 地区分组（按地区自动测速）
+    - name: 🇭🇰 香港节点
+      type: url-test
+      url: http://www.gstatic.com/generate_204
+      interval: 300
+      proxies:
+        - '{{nodes:region=HK}}'
+
+    - name: 🇸🇬 新加坡节点
+      type: url-test
+      url: http://www.gstatic.com/generate_204
+      interval: 300
+      proxies:
+        - '{{nodes:region=SG}}'
+
+    - name: 🇺🇸 美国节点
+      type: url-test
+      url: http://www.gstatic.com/generate_204
+      interval: 300
+      proxies:
+        - '{{nodes:region=US}}'
+
+    - name: 🇯🇵 日本节点
+      type: url-test
+      url: http://www.gstatic.com/generate_204
+      interval: 300
+      proxies:
+        - '{{nodes:region=JP}}'
+
+    - name: 🇹🇼 台湾节点
+      type: url-test
+      url: http://www.gstatic.com/generate_204
+      interval: 300
+      proxies:
+        - '{{nodes:region=TW}}'
+
+    # 应用分流
+    - name: 🔎 Google
+      type: select
+      proxies:
+        - 🚀 节点选择
+        - ♻️ 自动选择
+        - 🇭🇰 香港节点
+        - 🇸🇬 新加坡节点
+        - 🇺🇸 美国节点
+        - DIRECT
+
+    - name: 🧲 OpenAI
+      type: select
+      proxies:
+        - 🚀 节点选择
+        - 🇺🇸 美国节点
+        - 🇸🇬 新加坡节点
+        - DIRECT
+
+    - name: 🎬 YouTube
+      type: select
+      proxies:
+        - 🚀 节点选择
+        - 🇭🇰 香港节点
+        - 🇸🇬 新加坡节点
+        - 🇺🇸 美国节点
+        - DIRECT
+
+    - name: 🎬 Netflix
+      type: select
+      proxies:
+        - 🚀 节点选择
+        - 🇭🇰 香港节点
+        - 🇸🇬 新加坡节点
+        - 🇺🇸 美国节点
+        - DIRECT
+
+    - name: 📲 Telegram
+      type: select
+      proxies:
+        - 🚀 节点选择
+        - 🇸🇬 新加坡节点
+        - 🇺🇸 美国节点
+        - DIRECT
+
+    - name: 🍎 苹果服务
+      type: select
+      proxies:
+        - DIRECT
+        - 🚀 节点选择
+        - 🇺🇸 美国节点
+
+    - name: 🐟 漏网之鱼
+      type: select
+      proxies:
+        - 🚀 节点选择
+        - DIRECT
+
+rules:
+    # Google
+    - DOMAIN-SUFFIX,google.com,🔎 Google
+    - DOMAIN-SUFFIX,googleapis.com,🔎 Google
+    - DOMAIN-SUFFIX,googleusercontent.com,🔎 Google
+    - DOMAIN-SUFFIX,gstatic.com,🔎 Google
+    - DOMAIN-SUFFIX,youtube.com,🎬 YouTube
+    - DOMAIN-SUFFIX,ytimg.com,🎬 YouTube
+    - DOMAIN-SUFFIX,googlevideo.com,🎬 YouTube
+
+    # OpenAI
+    - DOMAIN-SUFFIX,openai.com,🧲 OpenAI
+    - DOMAIN-SUFFIX,ai.com,🧲 OpenAI
+
+    # Netflix
+    - DOMAIN-SUFFIX,netflix.com,🎬 Netflix
+    - DOMAIN-SUFFIX,nflxvideo.net,🎬 Netflix
+
+    # Telegram
+    - DOMAIN-SUFFIX,telegram.org,📲 Telegram
+    - DOMAIN-SUFFIX,t.me,📲 Telegram
+    - IP-CIDR,91.108.4.0/22,📲 Telegram,no-resolve
+    - IP-CIDR,91.108.56.0/22,📲 Telegram,no-resolve
+    - IP-CIDR,149.154.160.0/20,📲 Telegram,no-resolve
+
+    # Apple
+    - DOMAIN-SUFFIX,apple.com,🍎 苹果服务
+    - DOMAIN-SUFFIX,icloud.com,🍎 苹果服务
+
+    # China
+    - GEOIP,CN,DIRECT
+
+    # Final
+    - MATCH,🐟 漏网之鱼

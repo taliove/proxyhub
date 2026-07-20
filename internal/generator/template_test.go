@@ -1,0 +1,369 @@
+package generator
+
+import (
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/taliove/proxyhub/internal/subscription"
+)
+
+// clashDoc 解析生成的 Clash 配置用于断言。
+type clashDoc struct {
+	Hosts   map[string]string `yaml:"hosts"`
+	DNS     map[string]any    `yaml:"dns"`
+	Proxies []struct {
+		Name   string `yaml:"name"`
+		Type   string `yaml:"type"`
+		Server string `yaml:"server"`
+		Port   int    `yaml:"port"`
+	} `yaml:"proxies"`
+	ProxyGroups []struct {
+		Name    string   `yaml:"name"`
+		Type    string   `yaml:"type"`
+		Proxies []string `yaml:"proxies"`
+	} `yaml:"proxy-groups"`
+	Rules []string `yaml:"rules"`
+}
+
+func parseClash(t *testing.T, data []byte) clashDoc {
+	t.Helper()
+	var doc clashDoc
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("generated config is not valid YAML: %v\n---\n%s", err, data)
+	}
+	return doc
+}
+
+func TestRenderTemplate_Success(t *testing.T) {
+	tmpl := `
+mode: rule
+proxy-groups:
+  - name: 手动切换
+    type: select
+    proxies:
+      - DIRECT
+      - '{{nodes}}'
+rules:
+  - MATCH,手动切换
+`
+	data, err := RenderTemplate(tmpl, sampleNodes())
+	if err != nil {
+		t.Fatalf("RenderTemplate() error = %v", err)
+	}
+	doc := parseClash(t, data)
+
+	// proxies 字段应包含全部 4 个节点的完整配置
+	if len(doc.Proxies) != 4 {
+		t.Errorf("len(proxies) = %d, want 4", len(doc.Proxies))
+	}
+	// 手动切换组应为 DIRECT + 4 个节点名
+	if len(doc.ProxyGroups) != 1 {
+		t.Fatalf("len(proxy-groups) = %d, want 1", len(doc.ProxyGroups))
+	}
+	g := doc.ProxyGroups[0]
+	if len(g.Proxies) != 5 {
+		t.Errorf("group proxies = %d, want 5 (DIRECT + 4 nodes)", len(g.Proxies))
+	}
+	if g.Proxies[0] != "DIRECT" {
+		t.Errorf("group proxies[0] = %q, want DIRECT", g.Proxies[0])
+	}
+}
+
+func TestRenderTemplate_MultiplePlaceholders(t *testing.T) {
+	tmpl := `
+proxy-groups:
+  - name: 手动切换
+    type: select
+    proxies: [DIRECT, '{{nodes}}']
+  - name: 流媒体
+    type: select
+    proxies: ['手动切换', '{{nodes}}']
+rules:
+  - MATCH,手动切换
+`
+	data, err := RenderTemplate(tmpl, sampleNodes())
+	if err != nil {
+		t.Fatalf("RenderTemplate() error = %v", err)
+	}
+	doc := parseClash(t, data)
+
+	if len(doc.ProxyGroups) != 2 {
+		t.Fatalf("len(proxy-groups) = %d, want 2", len(doc.ProxyGroups))
+	}
+	// 组 1：DIRECT + 4 节点
+	if len(doc.ProxyGroups[0].Proxies) != 5 {
+		t.Errorf("group[0] proxies = %d, want 5", len(doc.ProxyGroups[0].Proxies))
+	}
+	// 组 2：手动切换 + 4 节点
+	if len(doc.ProxyGroups[1].Proxies) != 5 {
+		t.Errorf("group[1] proxies = %d, want 5", len(doc.ProxyGroups[1].Proxies))
+	}
+	if doc.ProxyGroups[1].Proxies[0] != "手动切换" {
+		t.Errorf("group[1] proxies[0] = %q, want 手动切换", doc.ProxyGroups[1].Proxies[0])
+	}
+}
+
+func TestRenderTemplate_NoPlaceholder(t *testing.T) {
+	// 没有占位符的模板：proxy-groups 保持原样，但仍动态注入 proxies 字段
+	tmpl := `
+proxy-groups:
+  - name: 直连
+    type: select
+    proxies: [DIRECT]
+rules:
+  - MATCH,直连
+`
+	data, err := RenderTemplate(tmpl, sampleNodes())
+	if err != nil {
+		t.Fatalf("RenderTemplate() error = %v", err)
+	}
+	doc := parseClash(t, data)
+
+	if len(doc.Proxies) != 4 {
+		t.Errorf("len(proxies) = %d, want 4 (nodes always injected)", len(doc.Proxies))
+	}
+	if len(doc.ProxyGroups[0].Proxies) != 1 || doc.ProxyGroups[0].Proxies[0] != "DIRECT" {
+		t.Errorf("group proxies = %v, want [DIRECT]", doc.ProxyGroups[0].Proxies)
+	}
+}
+
+func TestRenderTemplate_EmptyNodes(t *testing.T) {
+	tmpl := `
+proxy-groups:
+  - name: 手动切换
+    type: select
+    proxies: [DIRECT, '{{nodes}}']
+rules:
+  - MATCH,手动切换
+`
+	_, err := RenderTemplate(tmpl, nil)
+	if err == nil {
+		t.Fatal("RenderTemplate(nil nodes) expected error, got nil")
+	}
+}
+
+func TestRenderTemplate_InvalidYAML(t *testing.T) {
+	tmpl := "proxy-groups: [ this is : not valid : yaml"
+	_, err := RenderTemplate(tmpl, sampleNodes())
+	if err == nil {
+		t.Fatal("RenderTemplate(invalid yaml) expected error, got nil")
+	}
+}
+
+func TestRenderTemplate_PreservesOtherFields(t *testing.T) {
+	tmpl := `
+mode: rule
+hosts:
+  example.com: 1.2.3.4
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+proxy-groups:
+  - name: 手动切换
+    type: select
+    proxies: [DIRECT, '{{nodes}}']
+rules:
+  - DOMAIN-SUFFIX,google.com,手动切换
+  - MATCH,DIRECT
+`
+	data, err := RenderTemplate(tmpl, sampleNodes())
+	if err != nil {
+		t.Fatalf("RenderTemplate() error = %v", err)
+	}
+	doc := parseClash(t, data)
+
+	if doc.Hosts["example.com"] != "1.2.3.4" {
+		t.Errorf("hosts not preserved: %v", doc.Hosts)
+	}
+	if doc.DNS["enhanced-mode"] != "fake-ip" {
+		t.Errorf("dns not preserved: %v", doc.DNS)
+	}
+	if len(doc.Rules) != 2 {
+		t.Errorf("len(rules) = %d, want 2", len(doc.Rules))
+	}
+}
+
+func TestRenderTemplate_NodeNamesInProxies(t *testing.T) {
+	// 注入的 proxies 字段里的节点名，必须与展开到组里的节点名一致
+	tmpl := `
+proxy-groups:
+  - name: 手动切换
+    type: select
+    proxies: [DIRECT, '{{nodes}}']
+rules:
+  - MATCH,手动切换
+`
+	nodes := []*subscription.Node{
+		{Name: "重复名", Type: "ss", Server: "a.com", Port: 1, Cipher: "aes-256-gcm", Password: "p"},
+		{Name: "重复名", Type: "ss", Server: "b.com", Port: 2, Cipher: "aes-256-gcm", Password: "p"},
+	}
+	data, err := RenderTemplate(tmpl, nodes)
+	if err != nil {
+		t.Fatalf("RenderTemplate() error = %v", err)
+	}
+	doc := parseClash(t, data)
+
+	// 去重后名称应唯一，且组里的名称与 proxies 里的名称一一对应
+	proxyNames := map[string]bool{}
+	for _, p := range doc.Proxies {
+		if proxyNames[p.Name] {
+			t.Errorf("duplicate proxy name: %s", p.Name)
+		}
+		proxyNames[p.Name] = true
+	}
+	// 组里除 DIRECT 外的名称都应在 proxies 中存在
+	for _, name := range doc.ProxyGroups[0].Proxies {
+		if name == "DIRECT" {
+			continue
+		}
+		if !proxyNames[name] {
+			t.Errorf("group references unknown proxy %q", name)
+		}
+	}
+}
+
+func TestRenderTemplate_PrunesEmptyRegionGroup(t *testing.T) {
+	// 节点池里没有 TW 节点,台湾组展开为空,应被剔除;同时清理引用它的组与规则。
+	tmpl := `
+proxy-groups:
+  - name: 🚀 节点选择
+    type: select
+    proxies: ['🇭🇰 香港节点', '🇹🇼 台湾节点', '{{nodes}}']
+  - name: 🇭🇰 香港节点
+    type: url-test
+    proxies: ['{{nodes:region=HK}}']
+  - name: 🇹🇼 台湾节点
+    type: url-test
+    proxies: ['{{nodes:region=TW}}']
+rules:
+  - DOMAIN-SUFFIX,tw.example.com,🇹🇼 台湾节点
+  - MATCH,🚀 节点选择
+`
+	data, err := RenderTemplate(tmpl, sampleNodes())
+	if err != nil {
+		t.Fatalf("RenderTemplate() error = %v", err)
+	}
+	doc := parseClash(t, data)
+
+	// 台湾组应被删除
+	for _, g := range doc.ProxyGroups {
+		if strings.Contains(g.Name, "台湾") {
+			t.Errorf("empty 台湾 group should be pruned, got %+v", g)
+		}
+		// 存活的组不得再引用已删组
+		for _, p := range g.Proxies {
+			if strings.Contains(p, "台湾") {
+				t.Errorf("group %q still references pruned 台湾 group", g.Name)
+			}
+		}
+		// 存活的组不得为空(否则 Clash 校验失败)
+		if len(g.Proxies) == 0 {
+			t.Errorf("group %q has empty proxies after prune", g.Name)
+		}
+	}
+	// 指向已删组的规则应改写为 DIRECT
+	for _, r := range doc.Rules {
+		if strings.Contains(r, "台湾") {
+			t.Errorf("rule still references pruned group: %q", r)
+		}
+	}
+	// 香港组有节点,应保留
+	var hkKept bool
+	for _, g := range doc.ProxyGroups {
+		if strings.Contains(g.Name, "香港") {
+			hkKept = true
+		}
+	}
+	if !hkKept {
+		t.Error("香港 group with nodes should be kept")
+	}
+}
+
+func TestRenderTemplate_PruneCascades(t *testing.T) {
+	// 中转组只引用台湾组;台湾组空 → 被删 → 中转组也变空 → 也应被删(不动点迭代)。
+	tmpl := `
+proxy-groups:
+  - name: 中转
+    type: select
+    proxies: ['🇹🇼 台湾节点']
+  - name: 🇹🇼 台湾节点
+    type: url-test
+    proxies: ['{{nodes:region=TW}}']
+  - name: 兜底
+    type: select
+    proxies: [DIRECT, '中转']
+rules:
+  - MATCH,兜底
+`
+	data, err := RenderTemplate(tmpl, sampleNodes())
+	if err != nil {
+		t.Fatalf("RenderTemplate() error = %v", err)
+	}
+	doc := parseClash(t, data)
+
+	for _, g := range doc.ProxyGroups {
+		if g.Name == "中转" || strings.Contains(g.Name, "台湾") {
+			t.Errorf("cascaded-empty group %q should be pruned", g.Name)
+		}
+		if len(g.Proxies) == 0 {
+			t.Errorf("group %q empty after prune", g.Name)
+		}
+	}
+	// 兜底组保留(含 DIRECT),对中转的引用被清除
+	var fb *struct {
+		Name    string   `yaml:"name"`
+		Type    string   `yaml:"type"`
+		Proxies []string `yaml:"proxies"`
+	}
+	for i := range doc.ProxyGroups {
+		if doc.ProxyGroups[i].Name == "兜底" {
+			fb = &doc.ProxyGroups[i]
+		}
+	}
+	if fb == nil {
+		t.Fatal("兜底 group should survive")
+	}
+	for _, p := range fb.Proxies {
+		if p == "中转" {
+			t.Errorf("兜底 still references pruned 中转")
+		}
+	}
+}
+
+func TestRenderTemplate_EmptyTemplate(t *testing.T) {
+	_, err := RenderTemplate("", sampleNodes())
+	if err == nil {
+		t.Fatal("RenderTemplate(empty template) expected error, got nil")
+	}
+}
+
+func TestDefaultTemplate_Valid(t *testing.T) {
+	// 内嵌的默认模板必须可被渲染，且产出完整字段
+	data, err := RenderTemplate(DefaultTemplate(), sampleNodes())
+	if err != nil {
+		t.Fatalf("RenderTemplate(DefaultTemplate) error = %v", err)
+	}
+	doc := parseClash(t, data)
+
+	if len(doc.Hosts) == 0 {
+		t.Error("default template produced no hosts")
+	}
+	if len(doc.DNS) == 0 {
+		t.Error("default template produced no dns")
+	}
+	if len(doc.ProxyGroups) < 40 {
+		t.Errorf("default template proxy-groups = %d, want >= 40", len(doc.ProxyGroups))
+	}
+	if len(doc.Rules) < 1000 {
+		t.Errorf("default template rules = %d, want >= 1000", len(doc.Rules))
+	}
+	if len(doc.Proxies) != 4 {
+		t.Errorf("default template proxies = %d, want 4 (injected nodes)", len(doc.Proxies))
+	}
+	// 第一个组（手动切换）应包含全部注入节点
+	if !strings.Contains(doc.ProxyGroups[0].Name, "手动切换") {
+		t.Errorf("first group = %q, want 手动切换", doc.ProxyGroups[0].Name)
+	}
+}

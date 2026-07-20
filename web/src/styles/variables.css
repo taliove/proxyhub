@@ -1,0 +1,39 @@
+/* 设计令牌 — pure-admin 风格,纯 CSS 自定义属性(不依赖 sass) */
+:root {
+  /* 品牌色沿用 Element Plus 主色,便于与组件一致 */
+  --ph-primary: var(--el-color-primary, #409eff);
+
+  /* 布局尺寸 */
+  --ph-sidebar-width: 210px;
+  --ph-sidebar-width-collapsed: 60px;
+  --ph-header-height: 52px;
+  --ph-tags-height: 40px;
+
+  /* 表面/背景层级(浅色) */
+  --ph-bg-page: #f0f2f5;
+  --ph-bg-surface: #ffffff;
+  --ph-bg-sidebar: #ffffff;
+  --ph-bg-hover: #f5f7fa;
+
+  /* 文本 */
+  --ph-text-primary: #303133;
+  --ph-text-regular: #606266;
+  --ph-text-secondary: #909399;
+
+  /* 描边 */
+  --ph-border: #e4e7ed;
+  --ph-border-light: #ebeef5;
+
+  /* 圆角 */
+  --ph-radius-sm: 4px;
+  --ph-radius: 8px;
+  --ph-radius-lg: 12px;
+
+  /* 阴影 */
+  --ph-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --ph-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  --ph-shadow-lg: 0 6px 24px rgba(0, 0, 0, 0.1);
+
+  /* 过渡 */
+  --ph-transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}

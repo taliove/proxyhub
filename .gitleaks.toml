@@ -1,0 +1,16 @@
+title = "ProxyHub repository secret scanning policy"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Xray pin metadata contains only public release asset names and SHA-256 checksums"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''(^|/)scripts/install/xray\.env$''',
+  '''(^|/)test/install/update_test\.sh$''',
+]
+regexes = [
+  '''^XRAY_LINUX_(AMD64|ARM64)_SHA256=[0-9a-f]{64}$''',
+]

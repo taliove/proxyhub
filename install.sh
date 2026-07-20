@@ -1,0 +1,527 @@
+#!/usr/bin/env bash
+# install.sh - ProxyHub one-command production installer. See --help for the
+# full contract. Never modifies DNS, firewalls, or security groups.
+# Tests source this file with PROXYHUB_INSTALL_NO_MAIN=1 and override the seam
+# functions (_curl, _systemctl, _host_os, _dns_resolve, ...); PROXYHUB_ROOT
+# redirects every absolute host path into a scratch directory.
+set -Eeuo pipefail
+
+# Locate and source the shared installer library (ticket 01)
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+_ph_lib=""
+for _ph_lib_candidate in \
+    ${PROXYHUB_ROOT:+"${PROXYHUB_ROOT}/scripts/install/lib.sh"} \
+    "${SCRIPT_DIR}/scripts/install/lib.sh"; do
+    [[ ! -r "$_ph_lib_candidate" ]] || { _ph_lib="$_ph_lib_candidate"; break; }
+done
+[[ -n "$_ph_lib" ]] || {
+    printf '[proxyhub] ERROR: cannot locate scripts/install/lib.sh (run from the repository checkout, or set PROXYHUB_ROOT for tests)\n' >&2
+    exit 1
+}
+# Dynamic source path: shellcheck cannot follow it; lib.sh has its own tests.
+# shellcheck source=scripts/install/lib.sh
+# shellcheck disable=SC1090,SC1091
+source "$_ph_lib"
+unset _ph_lib _ph_lib_candidate
+
+# Constants and mutable globals (initialized for `set -u` sourcing)
+readonly PROXYHUB_DEFAULT_REPO="taliove/proxyhub"
+readonly PROXYHUB_INSTALL_INFO="/root/.proxyhub-install-info"
+readonly PROXYHUB_CADDYFILE="/etc/caddy/Caddyfile"
+readonly PROXYHUB_CADDY_IMPORT_LINE='import /etc/caddy/conf.d/*.caddy'
+readonly PROXYHUB_LOOPBACK_HEALTH_TRIES=15
+readonly PROXYHUB_PUBLIC_HEALTH_TRIES=45
+
+NON_INTERACTIVE=0 DOMAIN="" EMAIL="" VERSION="latest" VERSION_TAG=""
+REPO="$PROXYHUB_DEFAULT_REPO" ARG_SITE_PATH="" SITE_PATH="" SKIP_DNS_CHECK=0
+DETECTED_OS="" DETECTED_ARCH="" ADMIN_USER="" ADMIN_PASSWORD=""
+TIMESTAMP="" WORKDIR="" CADDY_BACKUP=""
+
+# _ph_fail MSG... - print each MSG as an error line and return 1 (guard helper).
+_ph_fail() {
+    local _m
+    for _m in "$@"; do _ph_err "$_m"; done
+    return 1
+}
+# _ph_die2 MSG... - print an error line and exit 2 (usage-error helper).
+_ph_die2() { _ph_err "$@"; exit 2; }
+
+usage() {
+    cat <<'EOF'
+ProxyHub one-command installer (single embedded-Xray binary)
+
+USAGE
+  bash install.sh                                  interactive mode (requires a TTY)
+  bash install.sh --non-interactive --domain example.com [options]
+
+REQUIRED (non-interactive)
+  --domain DOMAIN        Public domain serving the management UI; an A/AAAA
+                         record must point at this host before install.
+
+OPTIONS
+  --non-interactive      Never prompt; fail closed if a required value is missing.
+  --email EMAIL          Optional ACME account email (certificate expiry notices).
+  --version VERSION      "latest" (default) or explicit semver (1.2.3 / v1.2.3).
+                         Pre-releases require an explicit value.
+  --repo OWNER/REPO      GitHub releases source (default: taliove/proxyhub).
+  --site-path PATH       Custom Site Path: 20-64 chars of [A-Za-z0-9_-], >=3
+                         character classes, no reserved words.
+  --skip-dns-check       Skip DNS resolution check (CDN / private networks).
+  -h, --help             Show this help.
+
+BEHAVIOR
+  READ-ONLY host validation (OS: Ubuntu 22.04/24.04, Debian 12/13; amd64/arm64;
+  systemd; root; outbound HTTPS; DNS; TCP 80/443 free or Caddy-owned) - never
+  touches DNS, firewalls, or security groups. Downloads the release tarball +
+  SHA256SUMS over verified HTTPS; checksum verified BEFORE unpacking. Installs
+  the binary, proxyhub user, directories, config.yaml, systemd unit; generates
+  admin credentials passed to `proxyhub init` via stdin (never argv); writes,
+  validates and reloads the Caddy fragment; verifies BOTH the loopback and the
+  https://<domain>/<site-path>/ health endpoints; records the install in
+  root-only (0600) /root/.proxyhub-install-info (never the password). Never
+  installs Caddy from third-party repos (existing Caddy v2 is reused) and never
+  disables HTTPS certificate validation. Re-running on a managed install
+  refuses to duplicate it: use `proxyhubctl update|repair|uninstall`.
+EOF
+}
+
+# Argument parsing (usage errors exit 2)
+_need_value() { (($2 >= 2)) || _ph_die2 "$1 requires a value"; }
+_validate_email() { [[ $1 =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; }
+
+parse_args() {
+    while (($#)); do
+        case $1 in
+            --non-interactive) NON_INTERACTIVE=1; shift ;;
+            --skip-dns-check) SKIP_DNS_CHECK=1; shift ;;
+            --domain) _need_value "$1" $#; DOMAIN=$2; shift 2 ;;
+            --email) _need_value "$1" $#; EMAIL=$2; shift 2 ;;
+            --version) _need_value "$1" $#; VERSION=$2; shift 2 ;;
+            --repo) _need_value "$1" $#; REPO=$2; shift 2 ;;
+            --site-path) _need_value "$1" $#; ARG_SITE_PATH=$2; shift 2 ;;
+            -h|--help) usage; exit 0 ;;
+            --) shift; break ;;
+            *) _ph_die2 "unknown argument: $1 (see --help)" ;;
+        esac
+    done
+    (($# == 0)) || _ph_die2 "unexpected positional arguments: $*"
+
+    # Validate formats immediately - fail closed before touching the host.
+    local bad=0
+    [[ -z $DOMAIN ]] || validate_domain "$DOMAIN" || bad=1
+    [[ -z $ARG_SITE_PATH ]] || validate_site_path "$ARG_SITE_PATH" || bad=1
+    [[ $VERSION == latest ]] || validate_version "$VERSION" || bad=1
+    validate_repo "$REPO" || bad=1
+    if [[ -n $EMAIL ]] && ! _validate_email "$EMAIL"; then
+        _ph_err "invalid email '${EMAIL}'"; bad=1
+    fi
+    ((bad == 0)) || exit 2
+
+    [[ $NON_INTERACTIVE == 0 || -n $DOMAIN ]] ||
+        _ph_die2 "--non-interactive requires --domain (failing closed; the installer never guesses domains or credentials)"
+    [[ $NON_INTERACTIVE == 1 || -t 0 ]] ||
+        _ph_die2 "interactive mode requires a TTY; use --non-interactive --domain DOMAIN for automation (see --help)"
+}
+
+# Idempotency
+_check_existing_install() {
+    local m1 m2
+    m1=$(root_path "$PROXYHUB_INSTALL_INFO")
+    m2=$(root_path "$PROXYHUB_UNIT_PATH")
+    [[ -f $m1 || -f $m2 ]] || return 0
+    _ph_fail "an existing managed ProxyHub installation was detected ($([ -f "$m1" ] && echo "$m1")$([ -f "$m2" ] && echo " $m2"))" \
+        "this installer refuses to duplicate it; use 'proxyhubctl update', 'proxyhubctl repair', or 'proxyhubctl uninstall'"
+}
+
+# Host validation (READ-ONLY: no DNS/firewall/security-group mutation)
+_host_os() { uname -s; }
+_host_arch() { uname -m; }
+
+# _check_os - kernel, arch, and distro must be in the supported matrix.
+_check_os() {
+    local f id version_id
+    case $(_host_os) in
+        Linux) DETECTED_OS=linux ;;
+        *) _ph_fail "unsupported kernel '$(_host_os)': the one-command installer supports Linux only" || return 1 ;;
+    esac
+    case $(_host_arch) in
+        x86_64) DETECTED_ARCH=amd64 ;;
+        aarch64 | arm64) DETECTED_ARCH=arm64 ;;
+        *) _ph_fail "unsupported architecture '$(_host_arch)': supported architectures are amd64 and arm64" || return 1 ;;
+    esac
+    f=$(root_path /etc/os-release)
+    [[ -r $f ]] ||
+        _ph_fail "cannot read /etc/os-release - unsupported host (supported: Ubuntu 22.04/24.04, Debian 12/13)" || return 1
+    id=$(sed -n 's/^ID=//p' "$f" | head -1 | tr -d '"')
+    version_id=$(sed -n 's/^VERSION_ID=//p' "$f" | head -1 | tr -d '"')
+    case "${id}:${version_id}" in
+        ubuntu:22.04 | ubuntu:24.04 | debian:12 | debian:13)
+            _ph_log "host platform supported: ${id} ${version_id} ${DETECTED_OS}/${DETECTED_ARCH}" ;;
+        *) _ph_fail "unsupported OS '${id} ${version_id}': supported systems are Ubuntu 22.04/24.04 and Debian 12/13" || return 1 ;;
+    esac
+}
+
+# _check_caddy - a compatible Caddy must exist, or ports 80/443 must be free.
+_check_caddy() {
+    _is_test_mode && return 0
+    if command -v caddy >/dev/null 2>&1; then
+        _ph_log "existing Caddy found: $(command caddy version 2>/dev/null | head -1)"; return 0
+    fi
+    local conflicts
+    conflicts=$(ss -ltnH 2>/dev/null | awk '{print $4}' | sed -n 's/.*:\(80\|443\)$/\1/p' | sort -u | tr '\n' ' ' || true)
+    [[ -z ${conflicts// /} ]] ||
+        _ph_fail \
+            "TCP port(s) ${conflicts% }already bound by another service; Caddy must own 80/443 for TLS" \
+            "identify the conflict with: ss -ltnp | grep -E ':(80|443) '  then stop or reconfigure it and re-run" || return 1
+    _ph_fail \
+        "Caddy v2 is required but not installed, and this installer never installs Caddy from third-party sources" \
+        "install it from the official Caddy repository: https://caddyserver.com/docs/install#debian-ubuntu-raspbian"
+}
+
+_check_dns() { # DOMAIN
+    if [[ $SKIP_DNS_CHECK == 1 ]]; then
+        _ph_log "DNS check skipped (--skip-dns-check)"; return 0
+    fi
+    _dns_resolve "$1" ||
+        _ph_fail \
+            "DNS does not resolve for '$1'" \
+            "create an A/AAAA record pointing at this host, wait for propagation, and re-run" \
+            "behind a CDN or private network? re-run with --skip-dns-check"
+}
+_dns_resolve() { getent ahosts "$1" >/dev/null 2>&1 || getent hosts "$1" >/dev/null 2>&1; }
+
+# _validate_host_platform - all READ-ONLY host checks. Nothing here may modify
+# DNS records, firewalls, security groups, or routers.
+_validate_host_platform() {
+    _check_os || return 1
+    if ! _is_test_mode; then
+        if [[ ! -d /run/systemd/system ]] || ! command -v systemctl >/dev/null 2>&1; then
+            _ph_fail "systemd is required but not present (PID 1 is not systemd)" || return 1
+        fi
+        ((EUID == 0)) || _ph_fail "the installer must run as root (try: sudo bash install.sh ...)" || return 1
+    fi
+    _curl -fsS --max-time 10 -o /dev/null "https://github.com" ||
+        _ph_fail "outbound HTTPS to github.com failed: the installer must reach GitHub releases (read-only check; nothing was modified)" || return 1
+    _check_caddy || return 1
+}
+
+# Interactive prompts
+# _read_prompt VAR PROMPT - read one line from the operator into VAR.
+_read_prompt() { # VAR PROMPT
+    local _line
+    read -r -p "$2" _line || _ph_fail "input closed" || return 1
+    printf -v "$1" '%s' "$_line"
+}
+
+# _gather_interactive - prompt for missing domain and optional ACME email.
+_gather_interactive() {
+    local input
+    while [[ -z $DOMAIN ]]; do
+        _read_prompt input "Public domain (e.g. proxy.example.com): " || return 1
+        validate_domain "$input" && DOMAIN=$input
+    done
+    [[ -n $EMAIL ]] && return 0
+    read -r -p "ACME account email (optional, Enter to skip): " input || return 0
+    if [[ -n $input ]] && ! _validate_email "$input"; then
+        _ph_err "invalid email '${input}' - continuing without one"; input=""
+    fi
+    EMAIL=$input
+}
+# _obtain_site_path - --site-path wins; otherwise generate a 20-char random
+# path and let interactive operators confirm or replace it.
+_obtain_site_path() {
+    if [[ -n $ARG_SITE_PATH ]]; then
+        validate_site_path "$ARG_SITE_PATH" || return 1
+        SITE_PATH=$ARG_SITE_PATH; return 0
+    fi
+    local generated=""
+    until validate_site_path "$generated" >/dev/null 2>&1; do
+        generated=$(random_token 20) || return 1
+    done
+    [[ $NON_INTERACTIVE == 1 ]] && { SITE_PATH=$generated; return 0; }
+    _ph_log "generated Site Path: ${generated} (management UI: https://${DOMAIN:-<domain>}/${generated}/)"
+    local input
+    while :; do
+        _read_prompt input "Press Enter to accept, or type your own Site Path: " || return 1
+        [[ -z $input ]] && { SITE_PATH=$generated; return 0; }
+        validate_site_path "$input" && { SITE_PATH=$input; return 0; }
+    done
+}
+
+# Credentials (never passed as command-line arguments)
+_generate_credentials() {
+    local suffix
+    suffix=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 8) || true
+    [[ ${#suffix} -eq 8 ]] || _ph_fail "failed to generate a random admin username" || return 1
+    ADMIN_USER="ph${suffix}"
+    ADMIN_PASSWORD=$(random_token 32) || return 1
+    [[ ${#ADMIN_PASSWORD} -ge 24 ]] || _ph_fail "generated admin password is too short"
+}
+
+# Download + verify (HTTPS verification is never disabled)
+_curl() { command curl "$@"; }
+_fetch() { _curl -fsSL --max-time 120 -o "$2" "$1" || _ph_fail "download failed: $1"; }
+
+_resolve_latest_tag() { # REPO -> stdout tag
+    local effective tag
+    effective=$(_curl -fsSIL --max-time 15 -o /dev/null -w '%{url_effective}' \
+        "https://github.com/$1/releases/latest") ||
+        _ph_fail "could not resolve the latest release of $1 (network error, or no stable release published yet)" || return 1
+    tag=${effective##*/}
+    if [[ -z $tag || $tag == latest ]] || ! validate_version "$tag" >/dev/null; then
+        _ph_fail "unexpected latest-release redirect for $1: '${effective}'"
+        return 1
+    fi
+    printf '%s' "$tag"
+}
+
+_download_and_verify() { # WORKDIR
+    local workdir=$1 asset base line_file="${1}/.checksum-line"
+    asset="proxyhub_${VERSION_TAG#v}_${DETECTED_OS}_${DETECTED_ARCH}.tar.gz"
+    base="https://github.com/${REPO}/releases/download/${VERSION_TAG}"
+
+    _ph_log "downloading ${base}/${asset}"
+    _fetch "${base}/SHA256SUMS" "${workdir}/SHA256SUMS" || return 1
+    _fetch "${base}/${asset}" "${workdir}/${asset}" || return 1
+
+    # Extract ONLY the matching checksum line; exactly one entry must exist.
+    grep -F -- "$asset" "${workdir}/SHA256SUMS" | grep -E '^[0-9a-fA-F]{64}[[:space:]]+[^[:space:]]+$' >"$line_file" || true
+    [[ $(wc -l <"$line_file" | tr -d ' ') == 1 ]] ||
+        _ph_fail "SHA256SUMS does not contain exactly one entry for ${asset} - refusing to install" || return 1
+
+    _ph_log "verifying SHA256 checksum of ${asset}"
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "$workdir" && sha256sum -c "$line_file")
+    elif command -v shasum >/dev/null 2>&1; then
+        (cd "$workdir" && shasum -a 256 -c "$line_file")
+    else
+        _ph_fail "neither sha256sum nor shasum is available for checksum verification" || return 1
+    fi || _ph_fail "checksum verification FAILED for ${asset} - the download is corrupt or substituted; refusing to install" || return 1
+
+    mkdir -p "${workdir}/extract"
+    tar -xzf "${workdir}/${asset}" -C "${workdir}/extract" || _ph_fail "failed to unpack ${asset}" || return 1
+    [[ -f "${workdir}/extract/proxyhub" ]] || _ph_fail "${asset} does not contain the proxyhub binary"
+}
+
+# Install steps
+_write_config() {
+    local cfg
+    cfg=$(root_path "${PROXYHUB_CONFIG_DIR}/config.yaml")
+    mkdir -p "$(dirname "$cfg")" || _ph_fail "failed to create $(dirname "$cfg")" || return 1
+    if ! cat >"$cfg" <<EOF
+server:
+  host: "127.0.0.1"
+  port: 8080
+storage:
+  path: "${PROXYHUB_STATE_DIR}/data.db"
+health_check:
+  interval: 15m
+  latency_threshold: 500
+  test_url: "https://www.google.com"
+filter:
+  nodes_per_region: 10
+  deduplicate: true
+EOF
+    then
+        rm -f "$cfg"; _ph_fail "failed to write ${cfg}"; return 1
+    fi
+    chmod 0640 "$cfg" || { rm -f "$cfg"; return 1; }
+    if ! _is_test_mode && ((EUID == 0)) &&
+        ! chown "${PROXYHUB_USER}:${PROXYHUB_GROUP}" "$cfg"; then
+        rm -f "$cfg"; _ph_fail "failed to chown ${cfg}"; return 1
+    fi
+    _ph_log "wrote ${cfg}"
+}
+
+# _run_svc_tool NAME ARGS... - run a system tool; no-op under PROXYHUB_ROOT.
+_run_svc_tool() {
+    local tool=$1
+    shift
+    if _is_test_mode; then
+        _ph_log "test mode: ${tool} $*"; return 0
+    fi
+    command "$tool" "$@"
+}
+_systemctl() { _run_svc_tool systemctl "$@"; }
+_caddy_cli() { _run_svc_tool caddy "$@"; }
+
+# _as_service_user CMD... - run CMD as the low-privilege service user so files
+# it creates (the SQLite database) are owned by proxyhub:proxyhub.
+_as_service_user() {
+    if _is_test_mode; then "$@"; else runuser -u "$PROXYHUB_USER" -- "$@"; fi
+}
+
+# _run_proxyhub_init - the password travels ONLY through the stdin pipe: it
+# never appears in argv, `ps`, shell history, or log files.
+_run_proxyhub_init() {
+    local bin cfg rc=0
+    bin=$(root_path "$PROXYHUB_BINARY")
+    cfg=$(root_path "${PROXYHUB_CONFIG_DIR}/config.yaml")
+    _ph_log "initializing ProxyHub (admin credentials passed via protected stdin channel)"
+    printf '%s\n' "$ADMIN_PASSWORD" | _as_service_user "$bin" init \
+        --config "$cfg" --domain "$DOMAIN" --username "$ADMIN_USER" \
+        --site-path "$SITE_PATH" --password-stdin || rc=$?
+    ((rc == 0)) || _ph_fail "proxyhub init failed (exit ${rc})"
+}
+
+# Caddy integration
+_ensure_caddy_import() {
+    local main
+    main=$(root_path "$PROXYHUB_CADDYFILE")
+    mkdir -p "$(root_path /etc/caddy)" || return 1
+    CADDY_BACKUP=""
+    if [[ ! -f $main ]]; then
+        {
+            [[ -z $EMAIL ]] || printf '{\n\temail %s\n}\n\n' "$EMAIL"
+            printf '%s\n' "$PROXYHUB_CADDY_IMPORT_LINE"
+        } >"$main" || return 1
+        _ph_log "wrote minimal ${main}"; return 0
+    fi
+    CADDY_BACKUP="${main}.proxyhub-bak-${TIMESTAMP}"
+    cp -a "$main" "$CADDY_BACKUP" || { CADDY_BACKUP=""; _ph_fail "failed to back up ${main}"; return 1; }
+    grep -qF "$PROXYHUB_CADDY_IMPORT_LINE" "$main" || {
+        printf '\n%s\n' "$PROXYHUB_CADDY_IMPORT_LINE" >>"$main" || return 1
+        _ph_log "appended conf.d import to ${main} (backup: ${CADDY_BACKUP})"
+    }
+    # Optional ACME account email lives in the global options block; existing
+    # Caddyfiles are reused, so the operator adds it there if missing.
+    if [[ -n $EMAIL ]] && ! grep -Eq '^[[:space:]]*email[[:space:]]' "$main"; then
+        _ph_log "NOTE: add 'email ${EMAIL}' to the global options block in ${main} for ACME expiry notices"
+    fi
+}
+
+_configure_caddy() {
+    local caddy_dir frag hit
+    caddy_dir=$(root_path /etc/caddy)
+    frag=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    if [[ -d $caddy_dir ]]; then
+        hit=$(grep -RIlF -- "$DOMAIN" "$caddy_dir" 2>/dev/null | grep -v "^${frag}$" | head -1 || true)
+        [[ -z $hit ]] ||
+            _ph_fail \
+                "domain '${DOMAIN}' already appears in an existing Caddy config: ${hit}" \
+                "refusing to create a conflicting site block; remove or rename the existing site and re-run" || return 1
+    fi
+    write_caddy_fragment "$DOMAIN" "$SITE_PATH" || return 1
+    _ensure_caddy_import || return 1
+    local rc=0
+    if _is_test_mode; then
+        _ph_log "test mode: caddy fmt/validate/reload"
+    else
+        _caddy_cli fmt --overwrite "$frag" >/dev/null &&
+            _caddy_cli validate --config "$(root_path "$PROXYHUB_CADDYFILE")" &&
+            { _systemctl reload caddy 2>/dev/null || _caddy_cli reload --config "$(root_path "$PROXYHUB_CADDYFILE")"; } || rc=$?
+    fi
+    if ((rc != 0)); then
+        _ph_err "caddy fmt/validate/reload failed - rolled back the Caddy changes (inspect with: journalctl -u caddy -n 50)"
+        rm -f "$frag"
+        [[ -z $CADDY_BACKUP || ! -f $CADDY_BACKUP ]] || cp -a "$CADDY_BACKUP" "$(root_path "$PROXYHUB_CADDYFILE")" || true
+        return 1
+    fi
+    _ph_log "Caddy configured for https://${DOMAIN}/${SITE_PATH}/"
+}
+
+# Health verification
+
+# _verify_url URL TRIES UNIT - poll URL until healthy; UNIT names the systemd
+# unit whose logs diagnose a failure.
+_verify_url() { # URL TRIES UNIT
+    local url=$1 tries=$2 i
+    for ((i = 0; i < tries; i++)); do
+        _curl -fsS --max-time 5 -o /dev/null "$url" && {
+            _ph_log "healthy: $url"
+            return 0
+        }
+        sleep 1
+    done
+    _ph_fail "health check failed: $url" "inspect with: journalctl -u $3 -n 50"
+}
+
+_verify_health() {
+    _verify_url "http://${PROXYHUB_LISTEN_ADDR}/${SITE_PATH}/healthz" "$PROXYHUB_LOOPBACK_HEALTH_TRIES" proxyhub || return 1
+    _verify_url "https://${DOMAIN}/${SITE_PATH}/healthz" "$PROXYHUB_PUBLIC_HEALTH_TRIES" caddy ||
+        _ph_fail "common causes: DNS not pointing at this host, firewall blocking TCP 80/443, or ACME rate limits"
+}
+
+# _write_install_record - record the install (never the password) in the
+# root-only (0600) install-info file, then print the one-time summary.
+_write_install_record() {
+    local rec
+    rec=$(root_path "$PROXYHUB_INSTALL_INFO")
+    mkdir -p "$(dirname "$rec")" || return 1
+    printf '# ProxyHub installation record - managed by install.sh, keep root-only.\nDOMAIN=%s\nSITE_PATH=%s\nREPO=%s\nVERSION=%s\nINSTALLED_AT=%s\nADMIN_USER=%s\nLISTEN_ADDR=%s\n' \
+        "$DOMAIN" "$SITE_PATH" "$REPO" "$VERSION_TAG" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "$ADMIN_USER" "$PROXYHUB_LISTEN_ADDR" >"$rec" ||
+        _ph_fail "failed to write ${rec}" || return 1
+    chmod 0600 "$rec" || _ph_fail "failed to chmod ${rec}" || return 1
+    _ph_log "wrote ${rec} (mode 0600)"
+
+    printf '\n============================================================\n  ProxyHub %s installed\n  Management URL : https://%s/%s/\n  Admin username : %s\n  Admin password : %s\n============================================================\n  Password shown ONCE and NOT stored in %s.\n  Save it in a password manager, then change it after first login.\n  Operations: proxyhubctl status | logs | restart | update\n\n' \
+        "$VERSION_TAG" "$DOMAIN" "$SITE_PATH" "$ADMIN_USER" "$ADMIN_PASSWORD" "$PROXYHUB_INSTALL_INFO"
+}
+
+# Main
+main() {
+    parse_args "$@"
+
+    _check_existing_install || _die "existing managed installation detected - nothing was changed"
+    _validate_host_platform || _die "host validation failed - nothing was changed"
+
+    if [[ $NON_INTERACTIVE == 0 ]]; then
+        _gather_interactive || _die "interactive input failed"
+    fi
+
+    _check_dns "$DOMAIN" || _die "DNS validation failed for '${DOMAIN}'"
+    _obtain_site_path || _die "no valid Site Path available"
+    _generate_credentials || _die "credential generation failed"
+
+    if [[ $VERSION == latest ]]; then
+        VERSION_TAG=$(_resolve_latest_tag "$REPO") || _die "could not resolve the latest stable release of ${REPO}"
+    else
+        VERSION_TAG="v${VERSION#v}"
+    fi
+    _ph_log "installing ProxyHub ${VERSION_TAG} (${DETECTED_OS}/${DETECTED_ARCH}) from ${REPO}"
+
+    TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+    WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-install.XXXXXX") || _die "cannot create a temporary workspace"
+    _download_and_verify "$WORKDIR" || _die "release download or checksum verification failed"
+    if ! mkdir -p "$(dirname "$(root_path "$PROXYHUB_BINARY")")" ||
+        ! install -m 0755 "${WORKDIR}/extract/proxyhub" "$(root_path "$PROXYHUB_BINARY")"; then
+        _die "failed to install $(root_path "$PROXYHUB_BINARY")"
+    fi
+    _ph_log "installed $(root_path "$PROXYHUB_BINARY")"
+    # Install the operator CLI and its helper library next to the binary.
+    # proxyhubctl sources proxyhubctl-lib.sh from its own directory (see the
+    # candidate search in proxyhubctl).
+    if [[ -r "${SCRIPT_DIR}/scripts/install/proxyhubctl" ]]; then
+        install -m 0755 "${SCRIPT_DIR}/scripts/install/proxyhubctl" \
+            "$(root_path /usr/local/bin/proxyhubctl)" ||
+            _die "failed to install $(root_path /usr/local/bin/proxyhubctl)"
+        install -m 0644 "${SCRIPT_DIR}/scripts/install/lib.sh" \
+            "$(root_path /usr/local/bin/proxyhubctl-lib.sh)" ||
+            _die "failed to install $(root_path /usr/local/bin/proxyhubctl-lib.sh)"
+        _ph_log "installed $(root_path /usr/local/bin/proxyhubctl)"
+    else
+        _ph_log "NOTE: scripts/install/proxyhubctl not found in this checkout; skipping operator CLI install"
+    fi
+    if ! ensure_proxyhub_group || ! ensure_proxyhub_user || ! ensure_directories; then
+        _die "failed to create the service identity and directory layout"
+    fi
+    _write_config || _die "failed to write config.yaml"
+    write_proxyhub_unit || _die "failed to write the systemd unit"
+    _run_proxyhub_init || _die "proxyhub init failed"
+    _systemctl daemon-reload || _die "systemctl daemon-reload failed"
+    _systemctl enable --now proxyhub.service ||
+        _die "failed to enable/start proxyhub.service - inspect with: journalctl -u proxyhub -n 50"
+    _configure_caddy || _die "Caddy configuration failed"
+    _verify_health || _die "post-install health verification failed"
+    _write_install_record || _die "failed to write ${PROXYHUB_INSTALL_INFO}"
+
+    unset ADMIN_PASSWORD
+}
+
+if [[ ${PROXYHUB_INSTALL_NO_MAIN:-0} != 1 ]]; then
+    umask 022
+    trap 'rc=$?; trap - EXIT; [[ -z ${WORKDIR:-} || ! -d ${WORKDIR:-} ]] || rm -rf -- "$WORKDIR"; exit "$rc"' EXIT
+    trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+    main "$@"
+fi

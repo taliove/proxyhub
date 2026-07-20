@@ -1,0 +1,26 @@
+server:
+  host: "127.0.0.1"
+  port: 8080
+
+storage:
+  path: "data.db"
+
+log:
+  level: "info"
+  format: "json"
+
+# 健康检查配置
+health_check:
+  interval: 15m
+  latency_threshold: 500
+  test_url: "https://www.google.com"
+  timeout:
+    latency: 5s
+    request: 10s
+  concurrent: 30
+  retry: 2
+
+# 节点过滤配置
+filter:
+  nodes_per_region: 10
+  deduplicate: true

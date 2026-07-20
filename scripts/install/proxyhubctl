@@ -1,0 +1,1182 @@
+#!/usr/bin/env bash
+# proxyhubctl - ProxyHub operator lifecycle CLI.
+#
+# Root-only maintenance tool for status, logs, restart, update, backup,
+# restore. Acquires an exclusive flock to prevent concurrent operations.
+#
+# Usage:
+#   proxyhubctl status
+#   proxyhubctl logs [--follow] [--lines N]
+#   proxyhubctl restart
+#   proxyhubctl show-info
+#   proxyhubctl update [VERSION] [--yes] [--prerelease] [--stable-only]
+#   proxyhubctl backup [--protect]
+#   proxyhubctl restore ARCHIVE [--yes]
+#
+set -Eeuo pipefail
+
+# Source the helper library. Search order mirrors install.sh: the test
+# scratch root first, then the production location next to this script
+# (installed as proxyhubctl-lib.sh), then the repo checkout layout.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_ph_lib=""
+for _ph_lib_candidate in \
+    ${PROXYHUB_ROOT:+"${PROXYHUB_ROOT}/scripts/install/lib.sh"} \
+    "${SCRIPT_DIR}/proxyhubctl-lib.sh" \
+    "${SCRIPT_DIR}/lib.sh"; do
+    [[ ! -r "$_ph_lib_candidate" ]] || { _ph_lib="$_ph_lib_candidate"; break; }
+done
+[[ -n "$_ph_lib" ]] || {
+    printf '[proxyhub] ERROR: cannot locate lib.sh (expected %s)\n' \
+        "${SCRIPT_DIR}/proxyhubctl-lib.sh" >&2
+    exit 1
+}
+# Dynamic source path: shellcheck cannot follow it; lib.sh has its own tests.
+# shellcheck source=lib.sh
+# shellcheck disable=SC1090,SC1091
+source "$_ph_lib"
+unset _ph_lib _ph_lib_candidate
+
+readonly PROXYHUB_INSTALL_INFO="/root/.proxyhub-install-info"
+readonly PROXYHUB_LOCK_FILE="/var/lock/proxyhubctl.lock"
+readonly PROXYHUB_LAST_BACKUP_FILE="/var/lib/proxyhub/.last-backup"
+
+# --------------------------------------------------------------------------
+# Lock helpers
+# --------------------------------------------------------------------------
+
+# acquire_lock - acquire exclusive flock on PROXYHUB_LOCK_FILE.
+acquire_lock() {
+    if _is_test_mode; then
+        _ph_log "test mode: skipping flock"
+        return 0
+    fi
+    local lock_path
+    lock_path=$(root_path "$PROXYHUB_LOCK_FILE")
+    local lock_dir
+    lock_dir=$(dirname "$lock_path")
+    mkdir -p "$lock_dir" || {
+        _ph_err "failed to create lock directory ${lock_dir}"
+        return 1
+    }
+    exec 200>"$lock_path"
+    if ! flock -n 200; then
+        _ph_err "another proxyhubctl operation is in progress"
+        return 1
+    fi
+    return 0
+}
+
+# --------------------------------------------------------------------------
+# Service control
+# --------------------------------------------------------------------------
+
+# service_stop - stop the proxyhub service.
+service_stop() {
+    if _is_test_mode; then
+        _ph_log "test mode: skipping systemctl stop proxyhub.service"
+        return 0
+    fi
+    if ! systemctl stop proxyhub.service; then
+        _ph_err "failed to stop proxyhub.service"
+        return 1
+    fi
+    return 0
+}
+
+# service_start - start the proxyhub service.
+service_start() {
+    if _is_test_mode; then
+        _ph_log "test mode: skipping systemctl start proxyhub.service"
+        return 0
+    fi
+    if ! systemctl start proxyhub.service; then
+        _ph_err "failed to start proxyhub.service"
+        return 1
+    fi
+    return 0
+}
+
+# service_restart - restart the proxyhub service.
+service_restart() {
+    if _is_test_mode; then
+        _ph_log "test mode: skipping systemctl restart proxyhub.service"
+        return 0
+    fi
+    if ! systemctl restart proxyhub.service; then
+        _ph_err "failed to restart proxyhub.service"
+        return 1
+    fi
+    return 0
+}
+
+# --------------------------------------------------------------------------
+# Backup command
+# --------------------------------------------------------------------------
+
+# cmd_backup [--protect] - create a timestamped backup archive.
+cmd_backup() {
+    local protect=0
+    while (( $# > 0 )); do
+        case "$1" in
+            --protect) protect=1; shift ;;
+            *) _ph_err "unknown option: $1"; return 2 ;;
+        esac
+    done
+
+    local timestamp
+    timestamp=$(date +%Y%m%d-%H%M%S)
+    local random_suffix
+    random_suffix=$(random_token 5) || return 1
+    local archive_name="proxyhub-backup-${timestamp}-${random_suffix}.tar.gz"
+    local backup_dir
+    backup_dir=$(root_path "$PROXYHUB_BACKUP_DIR")
+    local archive_path="${backup_dir}/${archive_name}"
+
+    _ph_log "creating backup: ${archive_path}"
+    _ph_log "stopping service for backup"
+    service_stop || return 1
+
+    local auth_key
+    auth_key=$(random_token 64) || {
+        service_start
+        return 1
+    }
+
+    local fingerprint_output
+    local binary_path
+    binary_path=$(root_path "$PROXYHUB_BINARY")
+    if [[ ! -x "$binary_path" ]]; then
+        _ph_err "proxyhub binary not found: ${binary_path}"
+        service_start
+        return 1
+    fi
+    fingerprint_output=$(printf '%s' "$auth_key" | "$binary_path" state-fingerprint --authentication-key-stdin 2>&1) || {
+        _ph_err "fingerprint capture failed"
+        service_start
+        return 1
+    }
+
+    local staging_dir
+    staging_dir=$(mktemp -d) || {
+        _ph_err "failed to create staging directory"
+        service_start
+        return 1
+    }
+    trap 'rm -rf "$staging_dir"; service_start' EXIT
+
+    # Write fingerprint metadata.
+    local meta_file="${staging_dir}/fingerprint.meta"
+    {
+        printf 'auth_key=%s\n' "$auth_key"
+        printf '%s\n' "$fingerprint_output"
+    } > "$meta_file" || {
+        _ph_err "failed to write fingerprint metadata"
+        return 1
+    }
+
+    # Copy state, config, Caddy fragment, install info, binary.
+    local state_dir config_dir caddy_frag install_info
+    state_dir=$(root_path "$PROXYHUB_STATE_DIR")
+    config_dir=$(root_path "$PROXYHUB_CONFIG_DIR")
+    caddy_frag=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    install_info=$(root_path "$PROXYHUB_INSTALL_INFO")
+
+    if [[ -d "$state_dir" ]]; then
+        cp -a "$state_dir" "${staging_dir}/state" || {
+            _ph_err "failed to copy state directory"
+            return 1
+        }
+    fi
+    if [[ -d "$config_dir" ]]; then
+        cp -a "$config_dir" "${staging_dir}/config" || {
+            _ph_err "failed to copy config directory"
+            return 1
+        }
+    fi
+    if [[ -f "$caddy_frag" ]]; then
+        mkdir -p "${staging_dir}/caddy"
+        cp -a "$caddy_frag" "${staging_dir}/caddy/" || {
+            _ph_err "failed to copy Caddy fragment"
+            return 1
+        }
+    fi
+    if [[ -f "$install_info" ]]; then
+        cp -a "$install_info" "${staging_dir}/" || {
+            _ph_err "failed to copy install info"
+            return 1
+        }
+    fi
+    if [[ -f "$binary_path" ]]; then
+        mkdir -p "${staging_dir}/bin"
+        cp -a "$binary_path" "${staging_dir}/bin/" || {
+            _ph_err "failed to copy binary"
+            return 1
+        }
+    fi
+
+    # Create the tarball.
+    if ! tar -czf "$archive_path" -C "$staging_dir" .; then
+        _ph_err "failed to create archive"
+        return 1
+    fi
+
+    # Mark as protected if requested.
+    if (( protect == 1 )); then
+        touch "${archive_path}.protected" || {
+            _ph_err "failed to mark archive as protected"
+            return 1
+        }
+        _ph_log "archive marked as protected"
+    fi
+
+    # Record last backup path.
+    local last_backup_path
+    last_backup_path=$(root_path "$PROXYHUB_LAST_BACKUP_FILE")
+    printf '%s\n' "$archive_path" > "$last_backup_path" || {
+        _ph_err "failed to record last backup path"
+        return 1
+    }
+
+    # Clean up and restart.
+    rm -rf "$staging_dir"
+    trap - EXIT
+    service_start || return 1
+
+    _ph_log "backup complete: ${archive_path}"
+    return 0
+}
+
+# --------------------------------------------------------------------------
+# Restore command
+# --------------------------------------------------------------------------
+
+# cmd_restore ARCHIVE [--yes] - restore from a backup archive.
+cmd_restore() {
+    local archive_path=""
+    local confirmed=0
+    while (( $# > 0 )); do
+        case "$1" in
+            --yes) confirmed=1; shift ;;
+            -*) _ph_err "unknown option: $1"; return 2 ;;
+            *) archive_path="$1"; shift ;;
+        esac
+    done
+
+    if [[ -z "$archive_path" ]]; then
+        _ph_err "usage: proxyhubctl restore ARCHIVE [--yes]"
+        return 2
+    fi
+    if [[ ! -f "$archive_path" ]]; then
+        _ph_err "archive not found: ${archive_path}"
+        return 1
+    fi
+    if (( confirmed == 0 )); then
+        _ph_err "restore requires --yes confirmation"
+        return 2
+    fi
+
+    _ph_log "restoring from: ${archive_path}"
+
+    # Stage extraction.
+    local staging_dir
+    staging_dir=$(mktemp -d) || {
+        _ph_err "failed to create staging directory"
+        return 1
+    }
+    trap 'rm -rf "$staging_dir"' EXIT
+
+    if ! tar -xzf "$archive_path" -C "$staging_dir"; then
+        _ph_err "failed to extract archive"
+        return 1
+    fi
+
+    # Validate archive structure.
+    if [[ ! -f "${staging_dir}/fingerprint.meta" ]]; then
+        _ph_err "archive missing fingerprint.meta"
+        return 1
+    fi
+
+    _ph_log "stopping service for restore"
+    service_stop || return 1
+    trap 'service_start; rm -rf "$staging_dir"' EXIT
+
+    # Create rollback snapshot.
+    local rollback_dir
+    rollback_dir=$(mktemp -d) || {
+        _ph_err "failed to create rollback directory"
+        return 1
+    }
+
+    # Backup current state before replacing.
+    local state_dir config_dir caddy_frag install_info binary_path
+    state_dir=$(root_path "$PROXYHUB_STATE_DIR")
+    config_dir=$(root_path "$PROXYHUB_CONFIG_DIR")
+    caddy_frag=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    install_info=$(root_path "$PROXYHUB_INSTALL_INFO")
+    binary_path=$(root_path "$PROXYHUB_BINARY")
+
+    [[ -d "$state_dir" ]] && cp -a "$state_dir" "${rollback_dir}/state"
+    [[ -d "$config_dir" ]] && cp -a "$config_dir" "${rollback_dir}/config"
+    [[ -f "$caddy_frag" ]] && { mkdir -p "${rollback_dir}/caddy"; cp -a "$caddy_frag" "${rollback_dir}/caddy/"; }
+    [[ -f "$install_info" ]] && cp -a "$install_info" "${rollback_dir}/"
+    [[ -f "$binary_path" ]] && { mkdir -p "${rollback_dir}/bin"; cp -a "$binary_path" "${rollback_dir}/bin/"; }
+
+    # Replace each path transactionally.
+    local failed=0
+    if [[ -d "${staging_dir}/state" ]]; then
+        rm -rf "$state_dir"
+        if ! cp -a "${staging_dir}/state" "$state_dir"; then
+            _ph_err "failed to restore state directory"
+            failed=1
+        fi
+    fi
+    if [[ -d "${staging_dir}/config" ]] && (( failed == 0 )); then
+        rm -rf "$config_dir"
+        if ! cp -a "${staging_dir}/config" "$config_dir"; then
+            _ph_err "failed to restore config directory"
+            failed=1
+        fi
+    fi
+    if [[ -f "${staging_dir}/caddy/proxyhub.caddy" ]] && (( failed == 0 )); then
+        if ! cp -a "${staging_dir}/caddy/proxyhub.caddy" "$caddy_frag"; then
+            _ph_err "failed to restore Caddy fragment"
+            failed=1
+        fi
+    fi
+    if [[ -f "${staging_dir}/.proxyhub-install-info" ]] && (( failed == 0 )); then
+        if ! cp -a "${staging_dir}/.proxyhub-install-info" "$install_info"; then
+            _ph_err "failed to restore install info"
+            failed=1
+        fi
+    fi
+    if [[ -f "${staging_dir}/bin/proxyhub" ]] && (( failed == 0 )); then
+        if ! cp -a "${staging_dir}/bin/proxyhub" "$binary_path"; then
+            _ph_err "failed to restore binary"
+            failed=1
+        fi
+        chmod +x "$binary_path"
+    fi
+
+    # Validate Caddy config.
+    if (( failed == 0 )) && [[ -f "$caddy_frag" ]]; then
+        if ! _is_test_mode; then
+            if ! caddy fmt --overwrite "$caddy_frag" 2>&1; then
+                _ph_err "Caddy format validation failed"
+                failed=1
+            elif ! caddy validate --config /etc/caddy/Caddyfile 2>&1; then
+                _ph_err "Caddy validate failed"
+                failed=1
+            fi
+        fi
+    fi
+
+    # Rollback on failure.
+    if (( failed == 1 )); then
+        _ph_err "restore failed, rolling back"
+        [[ -d "${rollback_dir}/state" ]] && { rm -rf "$state_dir"; cp -a "${rollback_dir}/state" "$state_dir"; }
+        [[ -d "${rollback_dir}/config" ]] && { rm -rf "$config_dir"; cp -a "${rollback_dir}/config" "$config_dir"; }
+        [[ -f "${rollback_dir}/caddy/proxyhub.caddy" ]] && cp -a "${rollback_dir}/caddy/proxyhub.caddy" "$caddy_frag"
+        [[ -f "${rollback_dir}/.proxyhub-install-info" ]] && cp -a "${rollback_dir}/.proxyhub-install-info" "$install_info"
+        [[ -f "${rollback_dir}/bin/proxyhub" ]] && cp -a "${rollback_dir}/bin/proxyhub" "$binary_path"
+
+        local rollback_archive
+        rollback_archive="${backup_dir}/rollback-$(date +%Y%m%d-%H%M%S).tar.gz"
+        tar -czf "$rollback_archive" -C "$rollback_dir" . || true
+        _ph_err "rollback snapshot saved: ${rollback_archive}"
+        rm -rf "$rollback_dir"
+        service_start
+        return 1
+    fi
+
+    # Reload Caddy if not in test mode.
+    if ! _is_test_mode && [[ -f "$caddy_frag" ]]; then
+        if ! systemctl reload caddy.service 2>&1; then
+            _ph_err "Caddy reload failed"
+            failed=1
+        fi
+    fi
+
+    # Restart service and health check.
+    service_start || {
+        _ph_err "failed to start service after restore"
+        return 1
+    }
+
+    # Simple health check: wait for service to be active.
+    if ! _is_test_mode; then
+        sleep 2
+        if ! systemctl is-active --quiet proxyhub.service; then
+            _ph_err "service health check failed"
+            return 1
+        fi
+    fi
+
+    rm -rf "$rollback_dir" "$staging_dir"
+    trap - EXIT
+
+    _ph_log "restore complete"
+    return 0
+}
+
+# --------------------------------------------------------------------------
+# Rotate-path command
+# --------------------------------------------------------------------------
+
+# cmd_rotate_path [PATH] [--yes] - rotate to a new Site Path.
+cmd_rotate_path() {
+    local new_path=""
+    local confirmed=0
+    while (( $# > 0 )); do
+        case "$1" in
+            --yes) confirmed=1; shift ;;
+            -*) _ph_err "unknown option: $1"; return 2 ;;
+            *) new_path="$1"; shift ;;
+        esac
+    done
+
+    if (( confirmed == 0 )); then
+        _ph_err "rotate-path is a high-risk operation requiring --yes confirmation"
+        return 2
+    fi
+
+    # Generate new Site Path if not provided.
+    if [[ -z "$new_path" ]]; then
+        new_path=$(random_token 20) || {
+            _ph_err "failed to generate new Site Path"
+            return 1
+        }
+    fi
+
+    # Validate new Site Path.
+    if ! validate_site_path "$new_path"; then
+        _ph_err "invalid Site Path: ${new_path}"
+        return 1
+    fi
+
+    # Read current install info.
+    local install_info
+    install_info=$(root_path "$PROXYHUB_INSTALL_INFO")
+    if [[ ! -f "$install_info" ]]; then
+        _ph_err "install info not found: ${install_info}"
+        return 1
+    fi
+
+    # Extract current domain and Site Path.
+    local domain old_path
+    domain=$(sed -n 's/^DOMAIN=//p' "$install_info")
+    old_path=$(sed -n 's/^SITE_PATH=//p' "$install_info")
+    if [[ -z "$domain" ]] || [[ -z "$old_path" ]]; then
+        _ph_err "failed to read domain or Site Path from install info"
+        return 1
+    fi
+
+    _ph_log "rotating Site Path from ${old_path} to ${new_path}"
+
+    # Backup current Caddy fragment for rollback.
+    local caddy_frag
+    caddy_frag=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    local rollback_frag="${caddy_frag}.rollback.$$"
+    if [[ -f "$caddy_frag" ]]; then
+        cp -a "$caddy_frag" "$rollback_frag" || {
+            _ph_err "failed to backup Caddy fragment"
+            return 1
+        }
+    fi
+    trap 'rm -f "$rollback_frag"' EXIT
+
+    # Write new Caddy fragment.
+    if ! write_caddy_fragment "$domain" "$new_path"; then
+        _ph_err "failed to write new Caddy fragment"
+        return 1
+    fi
+
+    # Validate and reload Caddy.
+    if ! _is_test_mode; then
+        if ! caddy fmt --overwrite "$caddy_frag" 2>&1; then
+            _ph_err "Caddy format validation failed, rolling back"
+            [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
+            return 1
+        fi
+        if ! caddy validate --config /etc/caddy/Caddyfile 2>&1; then
+            _ph_err "Caddy validate failed, rolling back"
+            [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
+            return 1
+        fi
+        if ! systemctl reload caddy.service 2>&1; then
+            _ph_err "Caddy reload failed, rolling back"
+            [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
+            return 1
+        fi
+        _ph_log "Caddy reloaded successfully"
+    fi
+
+    # Update install info with new Site Path.
+    local tmp_info="${install_info}.tmp.$$"
+    if ! sed "s|^SITE_PATH=.*|SITE_PATH=${new_path}|" "$install_info" > "$tmp_info"; then
+        _ph_err "failed to update install info"
+        [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
+        _is_test_mode || systemctl reload caddy.service 2>&1 || true
+        rm -f "$tmp_info"
+        return 1
+    fi
+    if ! mv "$tmp_info" "$install_info"; then
+        _ph_err "failed to install updated install info"
+        [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
+        _is_test_mode || systemctl reload caddy.service 2>&1 || true
+        rm -f "$tmp_info"
+        return 1
+    fi
+
+    rm -f "$rollback_frag"
+    trap - EXIT
+
+    _ph_log "Site Path rotated successfully"
+    _ph_log "New management URL: https://${domain}/${new_path}/"
+    return 0
+}
+
+# --------------------------------------------------------------------------
+# Update command
+# --------------------------------------------------------------------------
+
+# _capture_state_fingerprint BINARY AUTH_KEY - print the binary's retained-state
+# fingerprint with volatile lines (timestamp) stripped, so two captures are
+# comparable. The auth key travels only through the stdin pipe.
+_capture_state_fingerprint() {
+    local binary="$1"
+    local auth_key="$2"
+    local config_path
+    config_path=$(root_path "${PROXYHUB_CONFIG_DIR}/config.yaml")
+    printf '%s' "$auth_key" | "$binary" state-fingerprint \
+        --authentication-key-stdin --config "$config_path" 2>&1 \
+        | grep -v '^timestamp'
+}
+
+# _read_install_field KEY - read one KEY=value field from the install record.
+_read_install_field() {
+    local install_info
+    install_info=$(root_path "$PROXYHUB_INSTALL_INFO")
+    sed -n "s/^$1=//p" "$install_info" 2>/dev/null | head -1
+}
+
+# _detect_os_arch - print "OS ARCH" for release asset naming.
+_detect_os_arch() {
+    local os arch
+    case "$(uname -s)" in
+        Linux) os=linux ;;
+        Darwin) os=darwin ;;
+        *) _ph_err "unsupported kernel '$(uname -s)'"; return 1 ;;
+    esac
+    case "$(uname -m)" in
+        x86_64) arch=amd64 ;;
+        aarch64 | arm64) arch=arm64 ;;
+        *) _ph_err "unsupported architecture '$(uname -m)'"; return 1 ;;
+    esac
+    printf '%s %s' "$os" "$arch"
+}
+
+# cmd_update [VERSION] [--version VERSION] [--yes] [--prerelease] [--stable-only]
+# Guarded update: backup first, download + SHA256 verify, swap the binary,
+# verify the retained-state fingerprint with the new binary, restart; roll
+# back to the previous binary on any failure after the swap.
+cmd_update() {
+    local target="" confirmed=0 allow_prerelease=0 stable_only=0
+    while (( $# > 0 )); do
+        case "$1" in
+            --yes) confirmed=1; shift ;;
+            --prerelease) allow_prerelease=1; shift ;;
+            --stable-only) stable_only=1; shift ;;
+            --version)
+                (( $# >= 2 )) || { _ph_err "--version requires a value"; return 2; }
+                target="$2"; shift 2 ;;
+            -*) _ph_err "unknown option: $1"; return 2 ;;
+            *) target="$1"; shift ;;
+        esac
+    done
+
+    local install_info
+    install_info=$(root_path "$PROXYHUB_INSTALL_INFO")
+    if [[ ! -f "$install_info" ]]; then
+        _ph_err "install info not found: ${install_info} (not a managed install?)"
+        return 1
+    fi
+    local repo current_version
+    repo=$(_read_install_field REPO)
+    current_version=$(_read_install_field VERSION)
+    repo="${repo:-taliove/proxyhub}"
+    if [[ -z "$current_version" ]]; then
+        _ph_err "failed to read current VERSION from ${install_info}"
+        return 1
+    fi
+
+    # Resolve the target version: explicit argument, or the latest release.
+    local api_prerelease=false
+    if [[ -z "$target" ]]; then
+        local api_json
+        api_json=$(curl -fsSL --max-time 30 \
+            "https://api.github.com/repos/${repo}/releases/latest" 2>&1) || {
+            _ph_err "failed to query latest release for ${repo}"
+            return 1
+        }
+        target=$(printf '%s' "$api_json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+        api_prerelease=$(printf '%s' "$api_json" | sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' | head -1)
+        api_prerelease="${api_prerelease:-false}"
+        if [[ -z "$target" ]]; then
+            _ph_err "could not parse latest release tag for ${repo}"
+            return 1
+        fi
+    fi
+    validate_version "$target" || return 1
+    target="v${target#v}"
+
+    # Prerelease gating: explicit --prerelease required; --stable-only never
+    # allows prereleases (used by the unattended auto-update timer).
+    local is_prerelease=0
+    if [[ "$target" == *-* ]] || [[ "$api_prerelease" == "true" ]]; then
+        is_prerelease=1
+    fi
+    if (( is_prerelease == 1 && stable_only == 1 )); then
+        _ph_err "${target} is a prerelease; --stable-only rejects prereleases"
+        return 2
+    fi
+    if (( is_prerelease == 1 && allow_prerelease == 0 )); then
+        _ph_err "${target} is a prerelease; re-run with --prerelease to install it"
+        return 2
+    fi
+
+    if [[ "$target" == "$current_version" ]]; then
+        _ph_log "already at version ${current_version}; nothing to do"
+        return 0
+    fi
+
+    if (( confirmed == 0 )) && ! _is_test_mode; then
+        _ph_err "update to ${target} requires --yes confirmation"
+        return 2
+    fi
+
+    _ph_log "updating ProxyHub ${current_version} -> ${target}"
+
+    # Backup BEFORE touching anything (also stops/starts the service).
+    _ph_log "creating pre-update backup"
+    if ! cmd_backup; then
+        _ph_err "pre-update backup failed; aborting update"
+        return 1
+    fi
+
+    local os_arch os arch
+    os_arch=$(_detect_os_arch) || return 1
+    os="${os_arch% *}"
+    arch="${os_arch#* }"
+    local asset="proxyhub-${target#v}-${os}-${arch}.tar.gz"
+    local base="https://github.com/${repo}/releases/download/${target}"
+
+    local workdir
+    workdir=$(mktemp -d) || {
+        _ph_err "failed to create update workspace"
+        return 1
+    }
+    trap 'rm -rf "$workdir"' EXIT
+
+    _ph_log "downloading ${base}/${asset}"
+    if ! curl -fsSL --max-time 60 -o "${workdir}/SHA256SUMS" "${base}/SHA256SUMS"; then
+        _ph_err "failed to download SHA256SUMS for ${target}"
+        return 1
+    fi
+    if ! curl -fsSL --max-time 300 -o "${workdir}/${asset}" "${base}/${asset}"; then
+        _ph_err "failed to download ${asset}"
+        return 1
+    fi
+
+    _ph_log "verifying SHA256 checksum of ${asset}"
+    if ! (cd "$workdir" && sha256sum -c SHA256SUMS >/dev/null 2>&1); then
+        _ph_err "checksum verification failed for ${asset}; refusing to update (current installation untouched)"
+        return 1
+    fi
+
+    mkdir -p "${workdir}/extract"
+    if ! tar -xzf "${workdir}/${asset}" -C "${workdir}/extract"; then
+        _ph_err "failed to unpack ${asset}"
+        return 1
+    fi
+    if [[ ! -f "${workdir}/extract/proxyhub" ]]; then
+        _ph_err "${asset} does not contain the proxyhub binary"
+        return 1
+    fi
+    chmod +x "${workdir}/extract/proxyhub"
+
+    # Pre-swap fingerprint: prove the new binary reads the SAME retained state
+    # before it replaces the old one.
+    local binary_path auth_key old_fp new_fp
+    binary_path=$(root_path "$PROXYHUB_BINARY")
+    if [[ ! -x "$binary_path" ]]; then
+        _ph_err "current proxyhub binary not found: ${binary_path}"
+        return 1
+    fi
+    auth_key=$(random_token 64) || return 1
+    old_fp=$(_capture_state_fingerprint "$binary_path" "$auth_key") || {
+        _ph_err "state fingerprint capture failed on current binary"
+        return 1
+    }
+    new_fp=$(_capture_state_fingerprint "${workdir}/extract/proxyhub" "$auth_key") || {
+        _ph_err "state fingerprint capture failed on new binary"
+        return 1
+    }
+    if [[ "$old_fp" != "$new_fp" ]]; then
+        _ph_err "state fingerprint mismatch with new binary; refusing to update (current installation untouched)"
+        return 1
+    fi
+    _ph_log "state fingerprint verified against new binary"
+
+    # Swap the binary, keeping the old one for rollback.
+    cp -a "$binary_path" "${workdir}/proxyhub.old" || {
+        _ph_err "failed to stage current binary for rollback"
+        return 1
+    }
+    _ph_log "stopping service for binary swap"
+    service_stop || return 1
+    trap 'service_start; rm -rf "$workdir"' EXIT
+
+    if ! install -m 0755 "${workdir}/extract/proxyhub" "$binary_path"; then
+        _ph_err "failed to install new binary; restoring previous binary"
+        cp -a "${workdir}/proxyhub.old" "$binary_path" || true
+        service_start
+        return 1
+    fi
+
+    # Post-swap fingerprint: the installed binary must still see the same state.
+    local installed_fp
+    installed_fp=$(_capture_state_fingerprint "$binary_path" "$auth_key") || true
+    if [[ "$installed_fp" != "$old_fp" ]]; then
+        _ph_err "post-update state fingerprint mismatch; rolling back to ${current_version}"
+        cp -a "${workdir}/proxyhub.old" "$binary_path" || true
+        service_start
+        return 1
+    fi
+
+    # Record the new version only after every verification passed.
+    local tmp_info="${install_info}.tmp.$$"
+    if ! sed "s|^VERSION=.*|VERSION=${target}|" "$install_info" > "$tmp_info" ||
+        ! mv "$tmp_info" "$install_info"; then
+        _ph_err "failed to update install record; rolling back to ${current_version}"
+        rm -f "$tmp_info"
+        cp -a "${workdir}/proxyhub.old" "$binary_path" || true
+        service_start
+        return 1
+    fi
+
+    service_start || {
+        _ph_err "failed to start service after update"
+        return 1
+    }
+    if ! _is_test_mode; then
+        sleep 2
+        if ! systemctl is-active --quiet proxyhub.service; then
+            _ph_err "service health check failed after update"
+            return 1
+        fi
+    fi
+
+    rm -rf "$workdir"
+    trap - EXIT
+
+    _ph_log "update complete: ${current_version} -> ${target}"
+    return 0
+}
+
+# --------------------------------------------------------------------------
+# Auto-update commands
+# --------------------------------------------------------------------------
+
+readonly PROXYHUB_AUTO_UPDATE_TIMER="/etc/systemd/system/proxyhub-auto-update.timer"
+readonly PROXYHUB_AUTO_UPDATE_SERVICE="/etc/systemd/system/proxyhub-auto-update.service"
+
+# cmd_enable_auto_update - install and enable the auto-update timer.
+cmd_enable_auto_update() {
+    local timer_path service_path
+    timer_path=$(root_path "$PROXYHUB_AUTO_UPDATE_TIMER")
+    service_path=$(root_path "$PROXYHUB_AUTO_UPDATE_SERVICE")
+
+    # Write the service unit.
+    local tmp_service="${service_path}.tmp.$$"
+    cat > "$tmp_service" <<'EOF'
+[Unit]
+Description=ProxyHub auto-update (stable channel only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/proxyhubctl update --yes --stable-only
+EOF
+    if ! chmod 0644 "$tmp_service"; then
+        _ph_err "failed to chmod service unit"
+        rm -f "$tmp_service"
+        return 1
+    fi
+    if ! mv "$tmp_service" "$service_path"; then
+        _ph_err "failed to install service unit"
+        rm -f "$tmp_service"
+        return 1
+    fi
+    _ph_log "wrote ${service_path}"
+
+    # Write the timer unit (Sunday 03:17).
+    local tmp_timer="${timer_path}.tmp.$$"
+    cat > "$tmp_timer" <<'EOF'
+[Unit]
+Description=Weekly ProxyHub auto-update timer
+Requires=proxyhub-auto-update.service
+
+[Timer]
+OnCalendar=Sun *-*-* 03:17:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+    if ! chmod 0644 "$tmp_timer"; then
+        _ph_err "failed to chmod timer unit"
+        rm -f "$tmp_timer"
+        return 1
+    fi
+    if ! mv "$tmp_timer" "$timer_path"; then
+        _ph_err "failed to install timer unit"
+        rm -f "$tmp_timer"
+        return 1
+    fi
+    _ph_log "wrote ${timer_path}"
+
+    # Enable and start the timer.
+    if ! _is_test_mode; then
+        systemctl daemon-reload || {
+            _ph_err "systemctl daemon-reload failed"
+            return 1
+        }
+        systemctl enable proxyhub-auto-update.timer || {
+            _ph_err "failed to enable timer"
+            return 1
+        }
+        systemctl start proxyhub-auto-update.timer || {
+            _ph_err "failed to start timer"
+            return 1
+        }
+    fi
+
+    _ph_log "auto-update timer enabled (runs weekly on Sunday at 03:17 UTC)"
+    return 0
+}
+
+# cmd_disable_auto_update - disable and remove the auto-update timer.
+cmd_disable_auto_update() {
+    local timer_path service_path
+    timer_path=$(root_path "$PROXYHUB_AUTO_UPDATE_TIMER")
+    service_path=$(root_path "$PROXYHUB_AUTO_UPDATE_SERVICE")
+
+    # Stop and disable the timer.
+    if ! _is_test_mode; then
+        systemctl stop proxyhub-auto-update.timer 2>/dev/null || true
+        systemctl disable proxyhub-auto-update.timer 2>/dev/null || true
+    fi
+
+    # Remove unit files.
+    rm -f "$timer_path" "$service_path"
+    _ph_log "removed auto-update timer and service units"
+
+    if ! _is_test_mode; then
+        systemctl daemon-reload || true
+    fi
+
+    _ph_log "auto-update disabled"
+    return 0
+}
+
+# --------------------------------------------------------------------------
+# Uninstall command
+# --------------------------------------------------------------------------
+
+# cmd_uninstall [--purge] [--yes] - remove ProxyHub installation.
+cmd_uninstall() {
+    local purge=0
+    local confirmed=0
+    while (( $# > 0 )); do
+        case "$1" in
+            --purge) purge=1; shift ;;
+            --yes) confirmed=1; shift ;;
+            *) _ph_err "unknown option: $1"; return 2 ;;
+        esac
+    done
+
+    if (( confirmed == 0 )); then
+        _ph_err "uninstall is a high-risk operation requiring --yes confirmation"
+        return 2
+    fi
+
+    _ph_log "uninstalling ProxyHub"
+
+    # Stop and disable services.
+    if ! _is_test_mode; then
+        systemctl stop proxyhub.service 2>/dev/null || true
+        systemctl disable proxyhub.service 2>/dev/null || true
+        systemctl stop proxyhub-auto-update.timer 2>/dev/null || true
+        systemctl disable proxyhub-auto-update.timer 2>/dev/null || true
+    fi
+
+    # Remove systemd units.
+    local unit_path timer_path service_path
+    unit_path=$(root_path "$PROXYHUB_UNIT_PATH")
+    timer_path=$(root_path "$PROXYHUB_AUTO_UPDATE_TIMER")
+    service_path=$(root_path "$PROXYHUB_AUTO_UPDATE_SERVICE")
+    rm -f "$unit_path" "$timer_path" "$service_path"
+    _ph_log "removed systemd units"
+
+    if ! _is_test_mode; then
+        systemctl daemon-reload || true
+    fi
+
+    # Remove Caddy fragment and reload.
+    local caddy_frag
+    caddy_frag=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    if [[ -f "$caddy_frag" ]]; then
+        rm -f "$caddy_frag"
+        _ph_log "removed Caddy fragment"
+        if ! _is_test_mode; then
+            systemctl reload caddy.service 2>/dev/null || true
+        fi
+    fi
+
+    # Remove binary.
+    local binary_path
+    binary_path=$(root_path "$PROXYHUB_BINARY")
+    if [[ -f "$binary_path" ]]; then
+        rm -f "$binary_path"
+        _ph_log "removed binary: ${binary_path}"
+    fi
+
+    # Remove the operator CLI helper library (already sourced into memory, so
+    # this is safe). proxyhubctl itself is removed by the operator after this
+    # command exits: bash reads the running script incrementally, so it must
+    # not delete itself here.
+    local ctl_lib
+    ctl_lib=$(root_path /usr/local/bin/proxyhubctl-lib.sh)
+    if [[ -f "$ctl_lib" ]]; then
+        rm -f "$ctl_lib"
+        _ph_log "removed ${ctl_lib}"
+        _ph_log "NOTE: remove /usr/local/bin/proxyhubctl manually after this command exits"
+    fi
+
+    # Remove config and log directories.
+    local config_dir log_dir
+    config_dir=$(root_path "$PROXYHUB_CONFIG_DIR")
+    log_dir=$(root_path "$PROXYHUB_LOG_DIR")
+    rm -rf "$config_dir"
+    rm -rf "$log_dir"
+    _ph_log "removed config and log directories"
+
+    # Purge state and backups if requested.
+    if (( purge == 1 )); then
+        _ph_log "purging state and backups (--purge flag set)"
+
+        # Create final recovery archive before purging.
+        local backup_dir
+        backup_dir=$(root_path "$PROXYHUB_BACKUP_DIR")
+        local recovery_archive="${backup_dir}/final-recovery-$(date +%Y%m%d-%H%M%S).tar.gz"
+        if [[ -d "$backup_dir" ]]; then
+            mkdir -p "$(dirname "$recovery_archive")"
+            tar -czf "$recovery_archive" -C "$backup_dir" . 2>/dev/null || true
+            _ph_log "created final recovery archive: ${recovery_archive}"
+        fi
+
+        local state_dir install_info
+        state_dir=$(root_path "$PROXYHUB_STATE_DIR")
+        install_info=$(root_path "$PROXYHUB_INSTALL_INFO")
+
+        rm -rf "$state_dir"
+        rm -rf "$backup_dir"
+        rm -f "$install_info"
+        _ph_log "purged state, backups, and install record"
+    else
+        _ph_log "preserved state, backups, and install record (use --purge to remove)"
+    fi
+
+    _ph_log "uninstall complete"
+    return 0
+}
+
+# --------------------------------------------------------------------------
+# Main command dispatcher
+# --------------------------------------------------------------------------
+
+# cmd_status - show service state and the management URL.
+cmd_status() {
+    local state
+    state=$(systemctl is-active proxyhub.service 2>/dev/null) || true
+    state="${state:-unknown}"
+
+    local domain site_path version
+    domain=$(_read_install_field DOMAIN)
+    site_path=$(_read_install_field SITE_PATH)
+    version=$(_read_install_field VERSION)
+
+    printf 'ProxyHub Status\n'
+    printf '===============\n'
+    printf 'Service state: %s\n' "$state"
+    printf 'Version:       %s\n' "${version:-unknown}"
+    if [[ -n "$domain" ]] && [[ -n "$site_path" ]]; then
+        printf 'Management URL: https://%s/%s/\n' "$domain" "$site_path"
+    else
+        printf 'Management URL: unknown (install record missing)\n'
+    fi
+    return 0
+}
+
+# cmd_logs [--follow] [--lines N] - show service logs via journalctl.
+cmd_logs() {
+    local follow=0 lines=50
+    while (( $# > 0 )); do
+        case "$1" in
+            --follow) follow=1; shift ;;
+            --lines)
+                (( $# >= 2 )) || { _ph_err "--lines requires a value"; return 2; }
+                lines="$2"; shift 2 ;;
+            *) _ph_err "unknown option: $1"; return 2 ;;
+        esac
+    done
+
+    local -a args=(-u proxyhub.service -n "$lines" --no-pager)
+    if (( follow == 1 )); then
+        args+=(-f)
+    fi
+    journalctl "${args[@]}"
+}
+
+# cmd_restart - restart the service and verify it comes back healthy.
+cmd_restart() {
+    _ph_log "restarting proxyhub.service"
+    service_restart || return 1
+    if _is_test_mode; then
+        _ph_log "service is healthy"
+        return 0
+    fi
+    sleep 2
+    if systemctl is-active --quiet proxyhub.service; then
+        _ph_log "service is healthy"
+        return 0
+    fi
+    _ph_err "service failed health check after restart"
+    return 1
+}
+
+# cmd_show_info - print the install record (never contains the password).
+cmd_show_info() {
+    local install_info
+    install_info=$(root_path "$PROXYHUB_INSTALL_INFO")
+    if [[ ! -f "$install_info" ]]; then
+        _ph_err "install info not found: ${install_info} (not a managed install?)"
+        return 1
+    fi
+    cat "$install_info"
+}
+
+# usage - print usage information.
+usage() {
+    cat >&2 <<EOF
+USAGE: proxyhubctl COMMAND [OPTIONS]
+
+Commands:
+  status              Show service status and management URL
+  logs [--follow] [--lines N]
+                      Show service logs
+  restart             Restart the service
+  show-info           Show install information
+  backup [--protect]  Create a timestamped backup
+  restore ARCHIVE [--yes]
+                      Restore from a backup archive
+  update [VERSION] [--yes] [--prerelease] [--stable-only]
+                      Guarded update: backup, checksum + state-fingerprint
+                      verification, automatic rollback on failure
+  rotate-path [PATH] [--yes]
+                      Rotate to a new Site Path (high-risk, requires --yes)
+  enable-auto-update  Enable weekly auto-update timer (stable channel only)
+  disable-auto-update Disable auto-update timer
+  uninstall [--purge] [--yes]
+                      Remove ProxyHub (high-risk, requires --yes)
+  help                Show this help message
+
+Options:
+  --help              Show help for a command
+  --yes               Skip confirmation prompts (required for high-risk ops)
+  --prerelease        With update: allow installing a prerelease version
+  --stable-only       With update: reject prereleases (used by auto-update)
+  --purge             With uninstall: also remove state and backups
+EOF
+}
+
+# main - entry point.
+main() {
+    if [[ ${EUID:-$(id -u)} -ne 0 ]] && [[ -z "${PROXYHUB_ALLOW_NON_ROOT:-}" ]]; then
+        _die "proxyhubctl must be run as root"
+    fi
+
+    if (( $# == 0 )); then
+        usage
+        exit 2
+    fi
+
+    local cmd="$1"
+    shift
+
+    case "$cmd" in
+        help|--help|-h)
+            usage
+            exit 0
+            ;;
+        status|logs|restart)
+            acquire_lock || exit 1
+            "cmd_${cmd}" "$@"
+            ;;
+        show-info)
+            acquire_lock || exit 1
+            cmd_show_info "$@"
+            ;;
+        backup|restore)
+            acquire_lock || exit 1
+            "cmd_${cmd}" "$@"
+            ;;
+        update)
+            acquire_lock || exit 1
+            cmd_update "$@"
+            ;;
+        rotate-path)
+            acquire_lock || exit 1
+            cmd_rotate_path "$@"
+            ;;
+        enable-auto-update)
+            acquire_lock || exit 1
+            cmd_enable_auto_update "$@"
+            ;;
+        disable-auto-update)
+            acquire_lock || exit 1
+            cmd_disable_auto_update "$@"
+            ;;
+        uninstall)
+            acquire_lock || exit 1
+            cmd_uninstall "$@"
+            ;;
+        *)
+            _ph_err "unknown command: ${cmd}"
+            usage
+            exit 2
+            ;;
+    esac
+}
+
+main "$@"
+
+
+
+
+
+
+
+

@@ -1,0 +1,498 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"embed"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/taliove/proxyhub/internal/config"
+	"github.com/taliove/proxyhub/internal/detection"
+	"github.com/taliove/proxyhub/internal/geoip"
+	"github.com/taliove/proxyhub/internal/store"
+	"github.com/taliove/proxyhub/internal/subscription"
+)
+
+// fakeNodes 实现 NodeSource
+type fakeNodes struct {
+	nodes      []*subscription.Node
+	refreshErr error // TriggerRefresh 返回的错误（模拟刷新进行中等场景）
+	lastTrigger string
+}
+
+func (f *fakeNodes) Nodes() []*subscription.Node { return f.nodes }
+func (f *fakeNodes) LastUpdate() time.Time       { return time.Now() }
+
+func (f *fakeNodes) TriggerRefresh(_ context.Context, trigger string) (int64, error) {
+	f.lastTrigger = trigger
+	if f.refreshErr != nil {
+		return 0, f.refreshErr
+	}
+	return 42, nil
+}
+
+func (f *fakeNodes) UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool {
+	// 测试 mock：查找并更新节点，模拟真实行为
+	for _, n := range f.nodes {
+		if n.NodeKey() == nodeKey {
+			if mode == "bandwidth" {
+				n.BandwidthDownMbps = downMbps
+				n.BandwidthUpMbps = upMbps
+			} else {
+				n.Available = available
+				n.Latency = latency
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func newTestServer(t *testing.T, nodes []*subscription.Node) (*Server, *store.Store) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	cfg := &config.Config{}
+	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
+	// 测试不关心 SPA 静态资源，传入空 embed.FS（handleSPA 会优雅报错，不影响 API 测试）
+	var emptyFS embed.FS
+	geo := geoip.NewResolver(st, "")
+
+	fakeNodeSource := &fakeNodes{nodes: nodes}
+
+	// 构造真实的 DetectionService 以支持节点测试 handler
+	detector := detection.NewDetector(4, time.Second, time.Second)
+	detectionService := NewDetectionService(
+		detector,
+		st,
+		fakeNodeSource.Nodes,
+		st.GetDetectionTargets,
+	)
+
+	srv := New(cfg, st, fakeNodeSource, emptyFS, logger, detectionService, geo, nil)
+	return srv, st
+}
+
+// doSetup 走一遍初始化向导
+func doSetup(t *testing.T, h http.Handler, username, password string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"username": username,
+		"password": password,
+		"security": map[string]any{"ban_threshold": 3, "ban_duration": "1h"},
+	})
+	req := httptest.NewRequest("POST", "/api/setup", bytes.NewReader(body))
+	req.RemoteAddr = "10.0.0.1:1000"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func doLogin(t *testing.T, h http.Handler, username, password, ip string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	req := httptest.NewRequest("POST", "/api/login", bytes.NewReader(body))
+	req.RemoteAddr = ip + ":2000"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestStatus_Uninitialized(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+
+	req := httptest.NewRequest("GET", "/api/status", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]bool
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["initialized"] {
+		t.Error("initialized = true, want false before setup")
+	}
+}
+
+func TestSetup_Success(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+
+	w := doSetup(t, h, "owner", "a-very-strong-pass")
+	if w.Code != http.StatusOK {
+		t.Fatalf("setup status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+
+	init, _ := st.IsSystemInitialized()
+	if !init {
+		t.Error("system not marked initialized after setup")
+	}
+}
+
+func TestSetup_RejectsHoneypotUsername(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+
+	for _, name := range []string{"admin", "root", "Administrator", "ROOT"} {
+		w := doSetup(t, h, name, "a-very-strong-pass")
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("setup with honeypot %q: status = %d, want 400", name, w.Code)
+		}
+	}
+}
+
+func TestSetup_RejectsShortPassword(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+
+	w := doSetup(t, h, "owner", "short")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for short password", w.Code)
+	}
+}
+
+func TestSetup_AlreadyInitialized(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+
+	doSetup(t, h, "owner", "a-very-strong-pass")
+	w := doSetup(t, h, "owner2", "another-strong-pass")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("second setup status = %d, want 400", w.Code)
+	}
+}
+
+func TestLogin_Success(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+
+	w := doLogin(t, h, "owner", "a-very-strong-pass", "9.9.9.1")
+	if w.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) == 0 || cookies[0].Name != "session" {
+		t.Error("no session cookie set on successful login")
+	}
+}
+
+func TestLogin_WrongPassword(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+
+	w := doLogin(t, h, "owner", "wrong-password", "9.9.9.2")
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestLogin_HoneypotInstantBan(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+
+	ip := "6.6.6.6"
+	// 单次针对 admin 的尝试即应触发封禁
+	w := doLogin(t, h, "admin", "whatever", ip)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("honeypot login status = %d, want 403", w.Code)
+	}
+
+	banned, _ := st.IsBanned(ip, time.Now())
+	if !banned {
+		t.Error("honeypot hit did not ban the IP")
+	}
+
+	// 即便随后用正确凭据也应被拒（IP 已封）
+	w2 := doLogin(t, h, "owner", "a-very-strong-pass", ip)
+	if w2.Code != http.StatusForbidden {
+		t.Errorf("post-ban login status = %d, want 403", w2.Code)
+	}
+}
+
+func TestLogin_IP2BanAfterThreshold(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass") // threshold=3
+
+	ip := "7.7.7.7"
+	for i := 0; i < 3; i++ {
+		doLogin(t, h, "owner", "wrong-password", ip)
+	}
+	// 第 4 次即使密码正确也被封禁拦截
+	w := doLogin(t, h, "owner", "a-very-strong-pass", ip)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 after exceeding threshold", w.Code)
+	}
+}
+
+func TestEndpoints_RequireAuth(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+
+	req := httptest.NewRequest("GET", "/api/endpoints", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 without session", w.Code)
+	}
+}
+
+func TestSubscription_TokenGating(t *testing.T) {
+	nodes := []*subscription.Node{
+		{Name: "香港-01", Type: "ss", Server: "1.2.3.4", Port: 8388,
+			Cipher: "aes-256-gcm", Password: "p", Available: true},
+	}
+	srv, st := newTestServer(t, nodes)
+	h := srv.Handler()
+
+	ep, err := st.CreateEndpoint("测试设备")
+	if err != nil {
+		t.Fatalf("CreateEndpoint: %v", err)
+	}
+
+	// 正确 token → 200
+	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token, nil)
+	req.RemoteAddr = "1.2.3.4:5678"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("valid token status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	// 默认返回 Clash 格式，应包含 proxies 段与节点名
+	if body := w.Body.String(); !bytes.Contains([]byte(body), []byte("proxies")) {
+		t.Errorf("clash subscription missing 'proxies': %s", body)
+	}
+
+	// 错误 token → 404（不暴露端点存在）
+	req2 := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token=wrong", nil)
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusNotFound {
+		t.Errorf("wrong token status = %d, want 404", w2.Code)
+	}
+
+	// 未知 path → 404
+	req3 := httptest.NewRequest("GET", "/sub/nonexistent?token=x", nil)
+	w3 := httptest.NewRecorder()
+	h.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusNotFound {
+		t.Errorf("unknown path status = %d, want 404", w3.Code)
+	}
+}
+
+func TestSubscription_RecordsPull(t *testing.T) {
+	nodes := []*subscription.Node{
+		{Name: "香港-01", Type: "ss", Server: "1.2.3.4", Port: 8388,
+			Cipher: "aes-256-gcm", Password: "p", Available: true},
+	}
+	srv, st := newTestServer(t, nodes)
+	h := srv.Handler()
+
+	ep, _ := st.CreateEndpoint("统计设备")
+	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token, nil)
+	req.RemoteAddr = "5.6.7.8:1234"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	stats, err := st.EndpointStats(ep.ID)
+	if err != nil {
+		t.Fatalf("EndpointStats: %v", err)
+	}
+	if len(stats) != 1 || stats[0].IP != "5.6.7.8" {
+		t.Errorf("pull not recorded correctly: %+v", stats)
+	}
+}
+
+// authCookie 走一遍初始化 + 登录，返回可用于后台接口的 session cookie
+func authCookie(t *testing.T, h http.Handler) *http.Cookie {
+	t.Helper()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+	w := doLogin(t, h, "owner", "a-very-strong-pass", "9.9.9.9")
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "session" {
+			return c
+		}
+	}
+	t.Fatalf("no session cookie from login (status %d)", w.Code)
+	return nil
+}
+
+// keywordNodes 返回一组用于关键词过滤测试的节点:干净机场节点 / 命中黑名单机场节点 / 命中黑名单但豁免的自建节点
+func keywordNodes() []*subscription.Node {
+	return []*subscription.Node{
+		{Name: "香港优选", Type: "ss", Server: "1.1.1.1", Port: 8388,
+			Cipher: "aes-256-gcm", Password: "p", Available: true, Source: "机场A"},
+		{Name: "剩余流量GB", Type: "ss", Server: "2.2.2.2", Port: 8388,
+			Cipher: "aes-256-gcm", Password: "p", Available: true, Source: "机场A"},
+		{Name: "自建官网", Type: "ss", Server: "3.3.3.3", Port: 8388,
+			Cipher: "aes-256-gcm", Password: "p", Available: true, Source: subscription.SourceSelfHosted},
+	}
+}
+
+func TestSubscription_AppliesKeywordFilter(t *testing.T) {
+	srv, st := newTestServer(t, keywordNodes())
+	h := srv.Handler()
+	// Seed DB with self-hosted node (DB-authoritative after mergeSelfHosted)
+	if err := st.CreateSelfHostedNode(&store.SelfHostedNode{
+		Name:     "自建官网",
+		Protocol: "ss",
+		Server:   "3.3.3.3",
+		Port:     8388,
+		Cipher:   "aes-256-gcm",
+		Password: "p",
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("CreateSelfHostedNode: %v", err)
+	}
+	if err := st.SaveSystemSettings(map[string]string{"filter_keywords": "剩余流量,官网"}); err != nil {
+		t.Fatalf("SaveSystemSettings: %v", err)
+	}
+	ep, _ := st.CreateEndpoint("dev")
+
+	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token+"&format=clash", nil)
+	req.RemoteAddr = "1.2.3.4:5678"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+
+	body := w.Body.String()
+	if strings.Contains(body, "剩余流量") {
+		t.Errorf("blacklisted airport node leaked into /sub:\n%s", body)
+	}
+	if !strings.Contains(body, "香港优选") {
+		t.Errorf("clean node missing from /sub")
+	}
+	// 自建节点名命中 "官网" 但必须豁免
+	if !strings.Contains(body, "自建官网") {
+		t.Errorf("self-hosted node (matches '官网') must be exempt and present")
+	}
+}
+
+func TestEndpointPreview_WYSIWYGAndNoPullRecorded(t *testing.T) {
+	srv, st := newTestServer(t, keywordNodes())
+	h := srv.Handler()
+	// Seed DB with self-hosted node (DB-authoritative after mergeSelfHosted)
+	if err := st.CreateSelfHostedNode(&store.SelfHostedNode{
+		Name:     "自建官网",
+		Protocol: "ss",
+		Server:   "3.3.3.3",
+		Port:     8388,
+		Cipher:   "aes-256-gcm",
+		Password: "p",
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("CreateSelfHostedNode: %v", err)
+	}
+	st.SaveSystemSettings(map[string]string{"filter_keywords": "剩余流量"})
+	ep, _ := st.CreateEndpoint("dev")
+	cookie := authCookie(t, h)
+
+	req := httptest.NewRequest("GET", "/api/endpoints/"+strconv.FormatInt(ep.ID, 10)+"/preview?format=clash", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Count   int    `json:"count"`
+		Content string `json:"content"`
+		Nodes   []struct {
+			Name   string `json:"name"`
+			Source string `json:"source"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal preview response: %v", err)
+	}
+
+	// 3 个节点剔除 1 个命中黑名单的机场节点 → 剩 2(含豁免的自建节点)
+	if resp.Count != 2 {
+		t.Errorf("count = %d, want 2", resp.Count)
+	}
+	for _, n := range resp.Nodes {
+		if n.Name == "剩余流量GB" {
+			t.Errorf("blacklisted node present in preview node list")
+		}
+	}
+	// WYSIWYG:预览内容与 /sub 一致,应含干净节点
+	if !strings.Contains(resp.Content, "香港优选") {
+		t.Errorf("preview content is not WYSIWYG, missing clean node:\n%s", resp.Content)
+	}
+
+	// 关键:预览绝不记录拉取统计
+	stats, err := st.EndpointStats(ep.ID)
+	if err != nil {
+		t.Fatalf("EndpointStats: %v", err)
+	}
+	if len(stats) != 0 {
+		t.Errorf("preview must NOT record a pull, got %d stat rows", len(stats))
+	}
+}
+
+func TestEndpointPreview_RequiresAuth(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+
+	req := httptest.NewRequest("GET", "/api/endpoints/1/preview", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 without session", w.Code)
+	}
+}
+
+func TestEndpointPreview_UnknownEndpoint(t *testing.T) {
+	srv, _ := newTestServer(t, keywordNodes())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+
+	req := httptest.NewRequest("GET", "/api/endpoints/9999/preview", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for unknown endpoint", w.Code)
+	}
+}
+
+func TestSubscription_EmptyAfterKeywordFilterReturns503(t *testing.T) {
+	// 只有机场节点且全部命中黑名单 → 过滤后为空,应返回 503 而非 500(生成空订阅)
+	nodes := []*subscription.Node{
+		{Name: "剩余流量A", Type: "ss", Server: "1.1.1.1", Port: 8388,
+			Cipher: "aes-256-gcm", Password: "p", Available: true, Source: "机场A"},
+		{Name: "剩余流量B", Type: "ss", Server: "2.2.2.2", Port: 8388,
+			Cipher: "aes-256-gcm", Password: "p", Available: true, Source: "机场A"},
+	}
+	srv, st := newTestServer(t, nodes)
+	h := srv.Handler()
+	st.SaveSystemSettings(map[string]string{"filter_keywords": "剩余流量"})
+	ep, _ := st.CreateEndpoint("dev")
+
+	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token+"&format=clash", nil)
+	req.RemoteAddr = "1.2.3.4:5678"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 when keyword filter empties the pool (body: %s)", w.Code, w.Body.String())
+	}
+}

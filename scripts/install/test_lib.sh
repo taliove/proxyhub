@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+# test_lib.sh - plain-bash test harness for scripts/install/lib.sh (no bats).
+#
+# Usage: bash scripts/install/test_lib.sh
+#
+# SC2016: single-quoted strings passed to `bash -c` are intentionally not
+# expanded in this shell; they run in a child process.
+# shellcheck disable=SC2016
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib.sh
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib.sh"
+
+PASS=0
+FAIL=0
+
+_assert_ok() {
+    if "$@" >/dev/null 2>&1; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        printf 'FAIL (expected success): %s\n' "$*" >&2
+    fi
+}
+
+_assert_fail() {
+    if "$@" >/dev/null 2>&1; then
+        FAIL=$((FAIL + 1))
+        printf 'FAIL (expected failure): %s\n' "$*" >&2
+    else
+        PASS=$((PASS + 1))
+    fi
+}
+
+_assert_eq() {
+    local expected="$1"
+    local actual="$2"
+    local label="$3"
+    if [[ "$expected" == "$actual" ]]; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        printf 'FAIL (%s): expected [%s], got [%s]\n' "$label" "$expected" "$actual" >&2
+    fi
+}
+
+_assert_file_contains() {
+    local file="$1"
+    local needle="$2"
+    if grep -qF -- "$needle" "$file"; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        printf 'FAIL: %s does not contain [%s]\n' "$file" "$needle" >&2
+    fi
+}
+
+# --------------------------------------------------------------------------
+# validate_site_path
+# --------------------------------------------------------------------------
+
+# Build exact-length strings: PREFIX (4 chars, 4 classes) + N lowercase filler.
+_fill() { local n="$1"; printf 'aB3_'; printf 'x%.0s' $(seq "$n"); }
+SP_19=$(_fill 15)
+SP_20=$(_fill 16)
+SP_64=$(_fill 60)
+SP_65=$(_fill 61)
+
+# Valid: 4 classes, lengths at and within boundaries.
+_assert_ok validate_site_path "abCD1234_efgh-ijklMNOP"       # 22 chars, 4 classes
+_assert_ok validate_site_path "$SP_20"                        # 20 chars (min)
+_assert_ok validate_site_path "$SP_64"                        # 64 chars (max)
+# Valid: exactly 3 classes (no separator).
+_assert_ok validate_site_path "abCD1234efghijklMNOPqr"
+
+# Invalid: length.
+_assert_fail validate_site_path "$SP_19"                      # 19 chars
+_assert_fail validate_site_path "$SP_65"                      # 65 chars
+_assert_fail validate_site_path ""
+
+# Invalid: charset.
+_assert_fail validate_site_path "aB3_efghijklmnopqrs!uv"
+_assert_fail validate_site_path "aB3 efghijklmnopqrst"
+_assert_fail validate_site_path "aB3/efghijklmnopqrst"
+
+# Invalid: fewer than 3 classes.
+_assert_fail validate_site_path "abcdefghijklmnopqrstuvwxyz"   # 1 class
+_assert_fail validate_site_path "abcdefghijklmnopqrstuvwx1"    # 2 classes
+_assert_fail validate_site_path "abcdefghijklmnopqrstuvwx-"    # 2 classes
+_assert_fail validate_site_path "ABCDEFGHIJKLMNOPQRSTUVWX1"    # 2 classes
+
+# Reserved words: rejected case-insensitively, anywhere in the path.
+_assert_fail validate_site_path "xX9_admin_xX9_xX9_xX9_x"
+_assert_fail validate_site_path "xX9_ADMIN_xX9_xX9_xX9_x"
+_assert_fail validate_site_path "xX9_AdMin_xX9_xX9_xX9_x"
+for word in "${PROXYHUB_RESERVED_WORDS[@]}"; do
+    _assert_fail validate_site_path "xX9_${word}_xX9_xX9_xX9_x"
+    # ASCII-only upper-casing: reserved words are ASCII by construction.
+    # shellcheck disable=SC2018,SC2019
+    _assert_fail validate_site_path "xX9_$(printf '%s' "$word" | tr 'a-z' 'A-Z')_xX9_xX9_xX9_x"
+done
+
+# Reserved list size: 14 words.
+_assert_eq "14" "${#PROXYHUB_RESERVED_WORDS[@]}" "reserved word count"
+
+# --------------------------------------------------------------------------
+# validate_domain
+# --------------------------------------------------------------------------
+
+_assert_ok validate_domain "example.com"
+_assert_ok validate_domain "sub.example.co.uk"
+_assert_ok validate_domain "a-b.example.com"
+_assert_ok validate_domain "xn--nxasmq6b.example.com"
+
+_assert_fail validate_domain "example"
+_assert_fail validate_domain "-bad.example.com"
+_assert_fail validate_domain "bad-.example.com"
+_assert_fail validate_domain "bad..example.com"
+_assert_fail validate_domain "ex_ample.com"
+_assert_fail validate_domain "example.c"
+_assert_fail validate_domain "example .com"
+_assert_fail validate_domain ""
+
+# --------------------------------------------------------------------------
+# validate_repo
+# --------------------------------------------------------------------------
+
+_assert_ok validate_repo "xtls/xray-core"
+_assert_ok validate_repo "foo/bar"
+_assert_ok validate_repo "a1-b2/c.d_e"
+_assert_ok validate_repo "O/r"
+
+_assert_fail validate_repo "foo"
+_assert_fail validate_repo "foo/"
+_assert_fail validate_repo "/bar"
+_assert_fail validate_repo "foo/bar/baz"
+_assert_fail validate_repo "-foo/bar"
+_assert_fail validate_repo "foo bar/baz"
+_assert_fail validate_repo ""
+
+# --------------------------------------------------------------------------
+# validate_version
+# --------------------------------------------------------------------------
+
+_assert_ok validate_version "1.2.3"
+_assert_ok validate_version "v1.2.3"
+_assert_ok validate_version "0.0.0"
+_assert_ok validate_version "1.2.3-rc.1"
+_assert_ok validate_version "1.2.3+build.5"
+_assert_ok validate_version "v10.20.30-alpha+001"
+
+_assert_fail validate_version "1.2"
+_assert_fail validate_version "1.2.3.4"
+_assert_fail validate_version "v"
+_assert_fail validate_version "01.2.3"
+_assert_fail validate_version "1.2.x"
+_assert_fail validate_version ""
+
+# --------------------------------------------------------------------------
+# random_token
+# --------------------------------------------------------------------------
+
+tok32=$(random_token 32)
+_assert_eq "32" "${#tok32}" "random_token 32 length"
+tok64=$(random_token 64)
+_assert_eq "64" "${#tok64}" "random_token 64 length"
+_assert_eq "32" "$(printf '%s' "$tok32" | LC_ALL=C tr -cd 'A-Za-z0-9_-' | wc -c | tr -d ' ')" "random_token 32 url-safe"
+tok32b=$(random_token 32)
+if [[ "$tok32" != "$tok32b" ]]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); printf 'FAIL: two random_token 32 calls produced identical tokens\n' >&2
+fi
+_assert_fail random_token 0
+_assert_fail random_token -5
+_assert_fail random_token abc
+_assert_fail random_token ""
+
+# --------------------------------------------------------------------------
+# root_path
+# --------------------------------------------------------------------------
+
+# Empty assignment is intentional: clears PROXYHUB_ROOT for the child env.
+# shellcheck disable=SC1007
+_assert_eq "/etc/proxyhub" "$(PROXYHUB_ROOT= root_path /etc/proxyhub)" "root_path without prefix"
+_assert_eq "/tmp/x/etc/proxyhub" "$(PROXYHUB_ROOT=/tmp/x root_path /etc/proxyhub)" "root_path with prefix"
+
+# --------------------------------------------------------------------------
+# Service identity / directories (test mode via PROXYHUB_ROOT)
+# --------------------------------------------------------------------------
+
+TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-lib-test.XXXXXX")
+trap 'rm -rf "$TEST_ROOT"' EXIT
+
+_assert_ok env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; ensure_proxyhub_group' "$SCRIPT_DIR/lib.sh"
+_assert_ok env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; ensure_proxyhub_user' "$SCRIPT_DIR/lib.sh"
+_assert_ok env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; ensure_directories' "$SCRIPT_DIR/lib.sh"
+
+for d in var/lib/proxyhub etc/proxyhub var/log/proxyhub var/backups/proxyhub; do
+    if [[ -d "$TEST_ROOT/$d" ]]; then PASS=$((PASS + 1)); else
+        FAIL=$((FAIL + 1)); printf 'FAIL: directory %s not created\n' "$TEST_ROOT/$d" >&2
+    fi
+done
+
+_perm_of() {
+    if stat -f '%Lp' "$1" >/dev/null 2>&1; then stat -f '%Lp' "$1"; else stat -c '%a' "$1"; fi
+}
+_assert_eq "750" "$(_perm_of "$TEST_ROOT/var/lib/proxyhub")" "state dir perms"
+_assert_eq "750" "$(_perm_of "$TEST_ROOT/etc/proxyhub")" "config dir perms"
+_assert_eq "750" "$(_perm_of "$TEST_ROOT/var/log/proxyhub")" "log dir perms"
+_assert_eq "700" "$(_perm_of "$TEST_ROOT/var/backups/proxyhub")" "backup dir perms"
+
+# Idempotent: second run also succeeds.
+_assert_ok env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; ensure_directories' "$SCRIPT_DIR/lib.sh"
+
+# --------------------------------------------------------------------------
+# write_proxyhub_unit
+# --------------------------------------------------------------------------
+
+_assert_ok env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; write_proxyhub_unit' "$SCRIPT_DIR/lib.sh"
+UNIT="$TEST_ROOT/etc/systemd/system/proxyhub.service"
+_assert_file_contains "$UNIT" "User=proxyhub"
+_assert_file_contains "$UNIT" "Group=proxyhub"
+_assert_file_contains "$UNIT" "ExecStart=/usr/local/bin/proxyhub --config /etc/proxyhub/config.yaml"
+_assert_file_contains "$UNIT" "Restart=on-failure"
+_assert_file_contains "$UNIT" "NoNewPrivileges=true"
+_assert_file_contains "$UNIT" "ProtectSystem=strict"
+_assert_file_contains "$UNIT" "PrivateTmp=true"
+_assert_file_contains "$UNIT" "ReadWritePaths=/var/lib/proxyhub /var/log/proxyhub /var/backups/proxyhub"
+if grep -qi "xray" <(grep -i "execstart\|\[unit\]" "$UNIT" | grep -iv "proxyhub\|description\|after\|wants") ; then
+    FAIL=$((FAIL + 1)); printf 'FAIL: unit references a separate Xray service\n' >&2
+else
+    PASS=$((PASS + 1))
+fi
+
+# --------------------------------------------------------------------------
+# write_caddy_fragment
+# --------------------------------------------------------------------------
+
+SITE="aB3_efghijklmnopqrstuv"
+_assert_ok env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; write_caddy_fragment "example.com" "'"$SITE"'"' "$SCRIPT_DIR/lib.sh"
+CADDY="$TEST_ROOT/etc/caddy/conf.d/proxyhub.caddy"
+_assert_file_contains "$CADDY" "example.com {"
+_assert_file_contains "$CADDY" "reverse_proxy 127.0.0.1:8080"
+_assert_file_contains "$CADDY" "path /$SITE /$SITE/*"
+_assert_file_contains "$CADDY" "respond 404"
+
+# Rejects invalid inputs and does not write.
+rm -f "$CADDY"
+_assert_fail env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; write_caddy_fragment "bad_domain" "'"$SITE"'"' "$SCRIPT_DIR/lib.sh"
+_assert_fail env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; write_caddy_fragment "example.com" "short"' "$SCRIPT_DIR/lib.sh"
+_assert_fail env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; write_caddy_fragment "example.com" "xX9_admin_xX9_xX9_xX9_x"' "$SCRIPT_DIR/lib.sh"
+if [[ ! -e "$CADDY" ]]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); printf 'FAIL: caddy fragment written despite invalid input\n' >&2
+fi
+
+# --------------------------------------------------------------------------
+
+printf 'passed: %d, failed: %d\n' "$PASS" "$FAIL"
+(( FAIL == 0 ))
