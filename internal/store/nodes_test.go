@@ -129,3 +129,45 @@ func TestNodePool_SaveEmptyClears(t *testing.T) {
 		}
 	}
 }
+
+func TestStore_AllNodeKeys(t *testing.T) {
+	st := newTestStore(t)
+
+	// Empty pool returns empty slice
+	keys, err := st.AllNodeKeys()
+	if err != nil {
+		t.Fatalf("AllNodeKeys() on empty error = %v", err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("AllNodeKeys() on empty = %d keys, want 0", len(keys))
+	}
+
+	// Save pool and retrieve keys
+	pool := poolSample()
+	if err := st.SaveNodePool(pool); err != nil {
+		t.Fatalf("SaveNodePool() error = %v", err)
+	}
+
+	keys, err = st.AllNodeKeys()
+	if err != nil {
+		t.Fatalf("AllNodeKeys() error = %v", err)
+	}
+	if len(keys) != len(pool) {
+		t.Fatalf("AllNodeKeys() len = %d, want %d", len(keys), len(pool))
+	}
+
+	// Verify keys match NodeKey() computation
+	for i, n := range pool {
+		expected := n.NodeKey()
+		found := false
+		for _, k := range keys {
+			if k == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("pool[%d] key %q not found in AllNodeKeys()", i, expected)
+		}
+	}
+}

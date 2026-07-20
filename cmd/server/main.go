@@ -17,6 +17,7 @@ import (
 	"github.com/taliove/proxyhub/internal/config"
 	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/geoip"
+	"github.com/taliove/proxyhub/internal/jobs"
 	"github.com/taliove/proxyhub/internal/server"
 	"github.com/taliove/proxyhub/internal/store"
 )
@@ -85,10 +86,16 @@ func run(configPath string) error {
 	// 初始化检测服务
 	detectionSvc := initDetectionService(cfg, st, agg, logger)
 
+	// 初始化通用任务运行时(jobs + scheduler)
+	jobManager, scheduler := initJobsRuntime(st, logger)
+
 	// HTTP 服务（SPA + API + 订阅端点）
 	srv := server.New(cfg, st, agg, WebFS, logger, detectionSvc, resolver)
 	srv.RecoverJobs()            // 重启恢复:遗留 running 体检任务标记 interrupted
 	go srv.StartExamSweeper(ctx) // 后台清扫过期(超过 TTL)的体检任务
+
+	// 启动调度器(晚间标签重算)
+	go scheduler.Run(ctx)
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	httpServer := &http.Server{
 		Addr:         addr,
@@ -197,4 +204,36 @@ func initDetectionService(cfg *config.Config, st *store.Store, nodes server.Node
 		nodes.Nodes,            // 获取节点池的函数
 		st.GetDetectionTargets, // 获取检测目标的函数
 	)
+}
+
+// initJobsRuntime 初始化通用任务运行时:Manager + 注册 kinds + Scheduler。
+func initJobsRuntime(st *store.Store, logger *slog.Logger) (*jobs.Manager, *jobs.Scheduler) {
+	mgr := jobs.NewManager(
+		st.Jobs(),
+		jobs.WithErrorHandler(func(err error) {
+			logger.Warn("jobs runtime error", "error", err)
+		}),
+	)
+
+	// 注册 retag_all kind
+	mgr.Register(jobs.NewRetagAllKind(st))
+
+	// 恢复重启前未完成的 resumable 任务
+	if err := mgr.Recover(); err != nil {
+		logger.Error("jobs recover failed", "error", err)
+	}
+
+	// 启动 TTL 清扫(周期清理过期任务)
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			mgr.SweepExpired()
+		}
+	}()
+
+	// 创建调度器
+	scheduler := jobs.NewScheduler(mgr, st, logger)
+
+	return mgr, scheduler
 }
