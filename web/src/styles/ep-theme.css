@@ -1,0 +1,160 @@
+/* ==========================================================================
+   ep-theme.css — 第三层:Element Plus 映射("EP 怎么穿这套衣服")
+   全仓唯一允许书写 --el-* 变量的文件。
+   把 semantics 层令牌映射到 EP 变量;light-N 梯度按 EP 惯例由基色混白
+   生成(暗色下混黑),dark-2 由基色混黑 20% 生成。
+   暗色块必须重复声明:EP 自带 dark/css-vars.css 的选择器特异性
+   (html.dark, 0-1-1)高于 :root,本文件在其后加载,同特异性后写者胜。
+   ========================================================================== */
+:root {
+  /* 主色及梯度(亮主题:light-N 向白色混合 N*10%) */
+  --el-color-primary: var(--ph-color-primary);
+  --el-color-primary-light-3: color-mix(in srgb, var(--ph-color-primary), #ffffff 30%);
+  --el-color-primary-light-5: color-mix(in srgb, var(--ph-color-primary), #ffffff 50%);
+  --el-color-primary-light-7: color-mix(in srgb, var(--ph-color-primary), #ffffff 70%);
+  --el-color-primary-light-8: color-mix(in srgb, var(--ph-color-primary), #ffffff 80%);
+  --el-color-primary-light-9: color-mix(in srgb, var(--ph-color-primary), #ffffff 90%);
+  --el-color-primary-dark-2: color-mix(in srgb, var(--ph-color-primary), #000000 20%);
+
+  /* 功能色及梯度 */
+  --el-color-success: var(--ph-success);
+  --el-color-success-light-3: color-mix(in srgb, var(--ph-success), #ffffff 30%);
+  --el-color-success-light-5: color-mix(in srgb, var(--ph-success), #ffffff 50%);
+  --el-color-success-light-7: color-mix(in srgb, var(--ph-success), #ffffff 70%);
+  --el-color-success-light-8: color-mix(in srgb, var(--ph-success), #ffffff 80%);
+  --el-color-success-light-9: color-mix(in srgb, var(--ph-success), #ffffff 90%);
+  --el-color-success-dark-2: color-mix(in srgb, var(--ph-success), #000000 20%);
+
+  --el-color-warning: var(--ph-warning);
+  --el-color-warning-light-3: color-mix(in srgb, var(--ph-warning), #ffffff 30%);
+  --el-color-warning-light-5: color-mix(in srgb, var(--ph-warning), #ffffff 50%);
+  --el-color-warning-light-7: color-mix(in srgb, var(--ph-warning), #ffffff 70%);
+  --el-color-warning-light-8: color-mix(in srgb, var(--ph-warning), #ffffff 80%);
+  --el-color-warning-light-9: color-mix(in srgb, var(--ph-warning), #ffffff 90%);
+  --el-color-warning-dark-2: color-mix(in srgb, var(--ph-warning), #000000 20%);
+
+  --el-color-danger: var(--ph-danger);
+  --el-color-danger-light-3: color-mix(in srgb, var(--ph-danger), #ffffff 30%);
+  --el-color-danger-light-5: color-mix(in srgb, var(--ph-danger), #ffffff 50%);
+  --el-color-danger-light-7: color-mix(in srgb, var(--ph-danger), #ffffff 70%);
+  --el-color-danger-light-8: color-mix(in srgb, var(--ph-danger), #ffffff 80%);
+  --el-color-danger-light-9: color-mix(in srgb, var(--ph-danger), #ffffff 90%);
+  --el-color-danger-dark-2: color-mix(in srgb, var(--ph-danger), #000000 20%);
+
+  --el-color-info: var(--ph-info);
+  --el-color-info-light-3: color-mix(in srgb, var(--ph-info), #ffffff 30%);
+  --el-color-info-light-5: color-mix(in srgb, var(--ph-info), #ffffff 50%);
+  --el-color-info-light-7: color-mix(in srgb, var(--ph-info), #ffffff 70%);
+  --el-color-info-light-8: color-mix(in srgb, var(--ph-info), #ffffff 80%);
+  --el-color-info-light-9: color-mix(in srgb, var(--ph-info), #ffffff 90%);
+  --el-color-info-dark-2: color-mix(in srgb, var(--ph-info), #000000 20%);
+
+  /* 背景/填充 */
+  --el-bg-color: var(--ph-bg-surface);
+  --el-bg-color-page: var(--ph-bg-page);
+  --el-bg-color-overlay: var(--ph-bg-surface);
+  --el-fill-color: var(--ph-bg-hover);
+  --el-fill-color-light: var(--ph-bg-hover);
+  --el-fill-color-lighter: var(--ph-bg-page);
+  --el-fill-color-extra-light: var(--ph-bg-page);
+  --el-fill-color-blank: var(--ph-bg-surface);
+
+  /* 文本 */
+  --el-text-color-primary: var(--ph-text-primary);
+  --el-text-color-regular: var(--ph-text-regular);
+  --el-text-color-secondary: var(--ph-text-secondary);
+  --el-text-color-placeholder: var(--ph-text-placeholder);
+  --el-text-color-disabled: var(--ph-text-placeholder);
+
+  /* 描边 */
+  --el-border-color: var(--ph-border);
+  --el-border-color-light: var(--ph-border-light);
+  --el-border-color-lighter: var(--ph-border-light);
+  --el-border-color-extra-light: var(--ph-border-light);
+
+  /* 圆角(控件用 radius-sm 4px,与高密度控件基调一致) */
+  --el-border-radius-base: var(--ph-radius-sm);
+  --el-border-radius-small: 2px;
+  --el-border-radius-round: var(--ph-radius-full);
+
+  /* 字号 */
+  --el-font-size-base: var(--ph-text-base);
+  --el-font-size-small: var(--ph-text-sm);
+  --el-font-size-extra-small: var(--ph-text-xs);
+
+  /* 阴影 */
+  --el-box-shadow: var(--ph-shadow);
+  --el-box-shadow-light: var(--ph-shadow-sm);
+  --el-box-shadow-lighter: var(--ph-shadow-sm);
+  --el-box-shadow-dark: var(--ph-shadow-lg);
+}
+
+/* 暗色覆盖:EP dark/css-vars.css 会在 html.dark 下重写字面量,
+   这里把映射关系重新声明为语义令牌引用(语义层已切换暗色取值),
+   并把 light-N 梯度改为向黑色混合(EP 暗色惯例)。 */
+html.dark {
+  --el-color-primary: var(--ph-color-primary);
+  --el-color-primary-light-3: color-mix(in srgb, var(--ph-color-primary), #000000 30%);
+  --el-color-primary-light-5: color-mix(in srgb, var(--ph-color-primary), #000000 50%);
+  --el-color-primary-light-7: color-mix(in srgb, var(--ph-color-primary), #000000 70%);
+  --el-color-primary-light-8: color-mix(in srgb, var(--ph-color-primary), #000000 80%);
+  --el-color-primary-light-9: color-mix(in srgb, var(--ph-color-primary), #000000 90%);
+  --el-color-primary-dark-2: color-mix(in srgb, var(--ph-color-primary), #ffffff 20%);
+
+  --el-color-success: var(--ph-success);
+  --el-color-success-light-3: color-mix(in srgb, var(--ph-success), #000000 30%);
+  --el-color-success-light-5: color-mix(in srgb, var(--ph-success), #000000 50%);
+  --el-color-success-light-7: color-mix(in srgb, var(--ph-success), #000000 70%);
+  --el-color-success-light-8: color-mix(in srgb, var(--ph-success), #000000 80%);
+  --el-color-success-light-9: color-mix(in srgb, var(--ph-success), #000000 90%);
+  --el-color-success-dark-2: color-mix(in srgb, var(--ph-success), #ffffff 20%);
+
+  --el-color-warning: var(--ph-warning);
+  --el-color-warning-light-3: color-mix(in srgb, var(--ph-warning), #000000 30%);
+  --el-color-warning-light-5: color-mix(in srgb, var(--ph-warning), #000000 50%);
+  --el-color-warning-light-7: color-mix(in srgb, var(--ph-warning), #000000 70%);
+  --el-color-warning-light-8: color-mix(in srgb, var(--ph-warning), #000000 80%);
+  --el-color-warning-light-9: color-mix(in srgb, var(--ph-warning), #000000 90%);
+  --el-color-warning-dark-2: color-mix(in srgb, var(--ph-warning), #ffffff 20%);
+
+  --el-color-danger: var(--ph-danger);
+  --el-color-danger-light-3: color-mix(in srgb, var(--ph-danger), #000000 30%);
+  --el-color-danger-light-5: color-mix(in srgb, var(--ph-danger), #000000 50%);
+  --el-color-danger-light-7: color-mix(in srgb, var(--ph-danger), #000000 70%);
+  --el-color-danger-light-8: color-mix(in srgb, var(--ph-danger), #000000 80%);
+  --el-color-danger-light-9: color-mix(in srgb, var(--ph-danger), #000000 90%);
+  --el-color-danger-dark-2: color-mix(in srgb, var(--ph-danger), #ffffff 20%);
+
+  --el-color-info: var(--ph-info);
+  --el-color-info-light-3: color-mix(in srgb, var(--ph-info), #000000 30%);
+  --el-color-info-light-5: color-mix(in srgb, var(--ph-info), #000000 50%);
+  --el-color-info-light-7: color-mix(in srgb, var(--ph-info), #000000 70%);
+  --el-color-info-light-8: color-mix(in srgb, var(--ph-info), #000000 80%);
+  --el-color-info-light-9: color-mix(in srgb, var(--ph-info), #000000 90%);
+  --el-color-info-dark-2: color-mix(in srgb, var(--ph-info), #ffffff 20%);
+
+  --el-bg-color: var(--ph-bg-surface);
+  --el-bg-color-page: var(--ph-bg-page);
+  --el-bg-color-overlay: var(--ph-bg-surface);
+  --el-fill-color: var(--ph-bg-hover);
+  --el-fill-color-light: var(--ph-bg-hover);
+  --el-fill-color-lighter: var(--ph-bg-page);
+  --el-fill-color-extra-light: var(--ph-bg-page);
+  --el-fill-color-blank: var(--ph-bg-surface);
+
+  --el-text-color-primary: var(--ph-text-primary);
+  --el-text-color-regular: var(--ph-text-regular);
+  --el-text-color-secondary: var(--ph-text-secondary);
+  --el-text-color-placeholder: var(--ph-text-placeholder);
+  --el-text-color-disabled: var(--ph-text-placeholder);
+
+  --el-border-color: var(--ph-border);
+  --el-border-color-light: var(--ph-border-light);
+  --el-border-color-lighter: var(--ph-border-light);
+  --el-border-color-extra-light: var(--ph-border-light);
+
+  --el-box-shadow: var(--ph-shadow);
+  --el-box-shadow-light: var(--ph-shadow-sm);
+  --el-box-shadow-lighter: var(--ph-shadow-sm);
+  --el-box-shadow-dark: var(--ph-shadow-lg);
+}

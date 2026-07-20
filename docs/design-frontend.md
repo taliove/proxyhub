@@ -120,9 +120,9 @@ ep-theme.css    Element Plus 映射("EP 怎么穿这套衣服")
 
 **字号**:text-xs 12px / text-sm 13px / text-base 14px(正文基准)/ text-md 16px / text-lg 18px / text-xl 20px / text-2xl 24px。表格内次要信息用 text-sm。
 
-**圆角**:radius-sm 4px(控件)/ radius 6px(默认)/ radius-lg 8px(卡片)/ radius-xl 12px(抽屉、浮层)/ radius-full 999px(标签、胶囊)。
+**圆角**:radius-sm 4px(控件)/ radius 6px(默认)/ radius-lg 8px(卡片)/ radius-xl 12px(抽屉、浮层)/ radius-full 999px(标签、胶囊)。卡片(`el-card`)统一用 radius-lg,不用 radius。
 
-**阴影**(亮主题基准,暗色由语义层覆盖):shadow-sm `0 1px 2px rgba(15,23,42,0.05)` / shadow `0 2px 8px rgba(15,23,42,0.08)` / shadow-lg `0 8px 24px rgba(15,23,42,0.12)`。
+**阴影**(亮主题基准):shadow-sm `0 1px 2px rgba(15,23,42,0.05)` / shadow `0 2px 8px rgba(15,23,42,0.08)` / shadow-lg `0 8px 24px rgba(15,23,42,0.12)`。暗色阴影在 semantics 层覆盖同名令牌:`rgba(0,0,0,0.3 / 0.4 / 0.5)` 递进(暗底上蓝灰阴影不可见,必须用纯黑)。
 
 **z-index**:z-sticky 100(表头吸附)/ z-fixed 500(侧栏、顶栏)/ z-dropdown 1000(下拉)/ z-overlay 2000(遮罩)/ z-drawer 2010(抽屉)/ z-dialog 2020(对话框)/ z-message 3000(全局消息)/ z-tooltip 4000。页面代码不允许出现刻度外的 z-index 字面量。
 
@@ -133,6 +133,8 @@ ep-theme.css    Element Plus 映射("EP 怎么穿这套衣服")
 ### 第三层:ep-theme.css — Element Plus 映射
 
 全仓**唯一**允许书写 `--el-*` 变量的文件。把语义令牌映射到 EP 变量(`--el-color-primary`、`--el-bg-color`、`--el-text-color-primary`、`--el-border-radius-base` 等),EP 组件因此自动穿上设计层。EP 未暴露变量的细节样式(如表格行高)也只在 ep-theme.css 内以 EP 类选择器微调,不散落到页面。
+
+**例外:EP 变量必须有暗色块。**"暗色只覆盖 semantics 层"对 EP 变量不成立——element-plus 的 `dark/css-vars.css` 用 `html.dark` 选择器写字面量,特异性高于 `:root`,与加载顺序无关。因此 ep-theme.css 必须在 `html.dark` 块中重复声明全部映射(引用 semantics 变量,不写新字面量),否则暗色下 EP 变量回落到 EP 默认暗色。亮主题的 light-N 混白/dark-2 混黑 20%;暗主题按 EP 暗色惯例反转(light-N 混黑、dark-2 混白 20%)。
 
 ### 修改纪律
 

@@ -1,0 +1,76 @@
+/* ==========================================================================
+   semantics.css — 第二层:语义令牌("这个词是什么意思")
+   页面与组件只消费这一层。暗色主题(html.dark)只覆盖本层,
+   暗色切换不需要动任何页面代码。
+   表面/文本/描边取值唯一事实源:docs/design-frontend.md
+   (本文件同时收编原 variables.css 的布局尺寸令牌与 dark.css 的暗色覆盖)
+   ========================================================================== */
+:root {
+  /* 品牌色:亮主题主色取 indigo-600 */
+  --ph-color-primary: var(--ph-indigo-600);
+  --ph-color-primary-hover: var(--ph-indigo-500);
+  --ph-color-primary-active: var(--ph-indigo-700);
+  /* 兼容别名:既有页面消费 --ph-primary,名字保留 */
+  --ph-primary: var(--ph-color-primary);
+
+  /* 功能色 */
+  --ph-success: var(--ph-success-base);
+  --ph-warning: var(--ph-warning-base);
+  --ph-danger: var(--ph-danger-base);
+  --ph-info: var(--ph-info-base);
+
+  /* 表面色(三级) */
+  --ph-bg-page: #f8fafc; /* gray-50 */
+  --ph-bg-surface: #ffffff;
+  --ph-bg-sidebar: var(--ph-bg-surface);
+  --ph-bg-hover: #f1f5f9; /* gray-100 */
+
+  /* 文本色(四级) */
+  --ph-text-primary: #0f172a; /* gray-900 */
+  --ph-text-regular: #334155; /* gray-700 */
+  --ph-text-secondary: #64748b; /* gray-500 */
+  --ph-text-placeholder: #94a3b8; /* gray-400 */
+
+  /* 描边 */
+  --ph-border: #e2e8f0; /* gray-200 */
+  --ph-border-light: #f1f5f9; /* gray-100 */
+
+  /* 布局尺寸(语义令牌,自原 variables.css 迁入) */
+  --ph-sidebar-width: 210px;
+  --ph-sidebar-width-collapsed: 60px;
+  --ph-header-height: 52px;
+  --ph-tags-height: 40px;
+
+  /* 过渡(主题无关,归语义层统一暴露) */
+  --ph-transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 暗色主题覆盖 — 由 <html class="dark"> 驱动。
+   只覆盖语义层:表面、文本、描边、阴影、主色。 */
+html.dark {
+  /* 品牌色:暗主题主色取 indigo-500(暗底上提高亮度保对比度) */
+  --ph-color-primary: var(--ph-indigo-500);
+  --ph-color-primary-hover: var(--ph-indigo-400);
+  --ph-color-primary-active: var(--ph-indigo-600);
+
+  /* 表面色(暗色取值,见 design-frontend.md) */
+  --ph-bg-page: #0f1115;
+  --ph-bg-surface: #17191d;
+  --ph-bg-sidebar: var(--ph-bg-surface);
+  --ph-bg-hover: #1f2227;
+
+  /* 文本色(暗色取值) */
+  --ph-text-primary: #e2e8f0;
+  --ph-text-regular: #c3c7cd;
+  --ph-text-secondary: #8a8f98;
+  --ph-text-placeholder: #5c616a;
+
+  /* 描边(暗色取值) */
+  --ph-border: #2a2d33;
+  --ph-border-light: #23262b;
+
+  /* 阴影(暗色:黑色基底,沿用原 dark.css 的取值) */
+  --ph-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --ph-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  --ph-shadow-lg: 0 6px 24px rgba(0, 0, 0, 0.5);
+}

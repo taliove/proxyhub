@@ -1,0 +1,77 @@
+/* ==========================================================================
+   tokens.css — 第一层:原始刻度(主题无关的"尺")
+   只放不带语义的原始刻度。亮暗主题取值不同的一律不放这一层。
+   取值唯一事实源:docs/design-frontend.md
+   ========================================================================== */
+:root {
+  /* 品牌色:靛蓝 9 级刻度 */
+  --ph-indigo-50: #eef2ff;
+  --ph-indigo-100: #e0e7ff;
+  --ph-indigo-200: #c7d2fe;
+  --ph-indigo-300: #a5b4fc;
+  --ph-indigo-400: #818cf8;
+  --ph-indigo-500: #6366f1;
+  --ph-indigo-600: #4f46e5;
+  --ph-indigo-700: #4338ca;
+  --ph-indigo-800: #3730a3;
+  --ph-indigo-900: #312e81;
+
+  /* 中性灰阶:冷灰 10 级(与靛蓝同色系) */
+  --ph-gray-50: #f8fafc;
+  --ph-gray-100: #f1f5f9;
+  --ph-gray-200: #e2e8f0;
+  --ph-gray-300: #cbd5e1;
+  --ph-gray-400: #94a3b8;
+  --ph-gray-500: #64748b;
+  --ph-gray-600: #475569;
+  --ph-gray-700: #334155;
+  --ph-gray-800: #1e293b;
+  --ph-gray-900: #0f172a;
+
+  /* 功能色基色(600 级中调,与主色同明度体系) */
+  --ph-success-base: #059669;
+  --ph-warning-base: #d97706;
+  --ph-danger-base: #dc2626;
+  --ph-info-base: #475569;
+
+  /* 间距刻度:4px 基网,space-1..8 */
+  --ph-space-1: 4px;
+  --ph-space-2: 8px;
+  --ph-space-3: 12px;
+  --ph-space-4: 16px;
+  --ph-space-5: 24px;
+  --ph-space-6: 32px;
+  --ph-space-7: 48px;
+  --ph-space-8: 64px;
+
+  /* 字号刻度(text-base 为正文基准) */
+  --ph-text-xs: 12px;
+  --ph-text-sm: 13px;
+  --ph-text-base: 14px;
+  --ph-text-md: 16px;
+  --ph-text-lg: 18px;
+  --ph-text-xl: 20px;
+  --ph-text-2xl: 24px;
+
+  /* 圆角刻度(主题无关,语义层直接复用同名令牌) */
+  --ph-radius-sm: 4px;
+  --ph-radius: 6px;
+  --ph-radius-lg: 8px;
+  --ph-radius-xl: 12px;
+  --ph-radius-full: 999px;
+
+  /* 阴影刻度(亮主题基准;暗色由 semantics.css 的 html.dark 覆盖同名令牌) */
+  --ph-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --ph-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  --ph-shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.12);
+
+  /* z-index 刻度(页面代码不允许出现刻度外的 z-index 字面量) */
+  --ph-z-sticky: 100;
+  --ph-z-fixed: 500;
+  --ph-z-dropdown: 1000;
+  --ph-z-overlay: 2000;
+  --ph-z-drawer: 2010;
+  --ph-z-dialog: 2020;
+  --ph-z-message: 3000;
+  --ph-z-tooltip: 4000;
+}
