@@ -56,16 +56,40 @@
               <el-tag size="small" type="info" class="unlock-tag">{{ unlockSummary(row) }}</el-tag>
             </template>
             <div class="unlock-detail">
-              <div v-for="(result, target) in row.unlock_results" :key="target" class="unlock-item">
+              <div v-for="item in unlockDisplayRows(row)" :key="item.target" class="unlock-item">
                 <div class="unlock-target">
-                  <strong>{{ target }}</strong>
-                  <el-tag :type="result.available ? 'success' : 'danger'" size="small">
-                    {{ result.available ? '✓' : '✗' }}
-                  </el-tag>
+                  <strong>{{ item.target }}</strong>
+                  <span class="unlock-badges">
+                    <el-tag
+                      v-if="item.region"
+                      size="small"
+                      type="info"
+                      effect="plain"
+                      class="region-badge"
+                    >
+                      {{ item.region }}
+                    </el-tag>
+                    <!-- 通用探测保持既有 ✓/✗;解锁目标用三档语义色 + 文案 -->
+                    <el-tag
+                      v-if="isGenericVariant(item.display.variant)"
+                      :type="item.display.tagType"
+                      size="small"
+                    >
+                      {{ item.result.available ? '✓' : '✗' }}
+                    </el-tag>
+                    <el-tag v-else :type="item.display.tagType" size="small">
+                      {{ item.display.label }}
+                    </el-tag>
+                  </span>
                 </div>
                 <div class="unlock-info">
-                  <span v-if="result.available" class="muted">{{ result.latency }}ms</span>
-                  <span v-else class="error-text">{{ result.error || '不可用' }}</span>
+                  <span v-if="item.result.available" class="muted"
+                    >{{ item.result.latency }}ms</span
+                  >
+                  <span v-else-if="item.display.variant === 'error'" class="muted">
+                    {{ item.result.error || '检测失败' }}
+                  </span>
+                  <span v-else class="error-text">{{ item.result.error || '不可用' }}</span>
                 </div>
               </div>
             </div>
@@ -143,7 +167,8 @@
 <script setup lang="ts">
 import { ArrowDown } from '@element-plus/icons-vue'
 import type { Node } from '@/types'
-import { isSelfHosted, unlockSummary } from '../utils'
+import { isSelfHosted } from '../utils'
+import { isGenericVariant, unlockDisplayRows, unlockSummary } from '../unlock'
 
 export type TestCommand = 'quick' | 'real' | 'bandwidth' | 'exam'
 export interface SortChange {
@@ -224,7 +249,17 @@ const onRowClick = (row: Node, column: { type?: string } | null) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--ph-space-2);
   margin-bottom: var(--ph-space-1);
+}
+.unlock-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ph-space-1);
+}
+.region-badge {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
 }
 .unlock-info {
   font-size: var(--ph-text-xs);

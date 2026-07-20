@@ -19,23 +19,43 @@
         <div class="drawer-section-title">解锁检测结果</div>
         <el-table v-if="rows.length > 0" :data="rows" size="small" border>
           <el-table-column prop="target" label="检测目标" width="140" />
-          <el-table-column label="状态" width="90">
+          <el-table-column label="状态" width="150">
             <template #default="{ row: r }">
-              <el-tag :type="r.available ? 'success' : 'danger'" size="small">
-                {{ r.available ? '通过' : '失败' }}
-              </el-tag>
+              <span class="status-cell">
+                <!-- 通用探测保持既有 通过/失败;解锁目标用三档语义色 + 文案 -->
+                <el-tag
+                  v-if="isGenericVariant(r.display.variant)"
+                  :type="r.display.tagType"
+                  size="small"
+                >
+                  {{ r.result.available ? '通过' : '失败' }}
+                </el-tag>
+                <el-tag v-else :type="r.display.tagType" size="small">{{ r.display.label }}</el-tag>
+                <el-tag
+                  v-if="r.region"
+                  size="small"
+                  type="info"
+                  effect="plain"
+                  class="region-badge"
+                >
+                  {{ r.region }}
+                </el-tag>
+              </span>
             </template>
           </el-table-column>
           <el-table-column label="延迟" width="90">
             <template #default="{ row: r }">
-              <span v-if="r.available">{{ r.latency }}ms</span>
+              <span v-if="r.result.available">{{ r.result.latency }}ms</span>
               <span v-else class="muted">—</span>
             </template>
           </el-table-column>
           <el-table-column label="失败原因" min-width="200">
             <template #default="{ row: r }">
-              <span v-if="r.available" class="muted">—</span>
-              <span v-else class="error-text">{{ r.error || '不可用' }}</span>
+              <span v-if="r.result.available" class="muted">—</span>
+              <span v-else-if="r.display.variant === 'error'" class="muted">
+                {{ r.result.error || '检测失败' }}
+              </span>
+              <span v-else class="error-text">{{ r.result.error || '不可用' }}</span>
             </template>
           </el-table-column>
         </el-table>
@@ -65,7 +85,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Node } from '@/types'
-import { unlockRows } from '../utils'
+import { isGenericVariant, unlockDisplayRows } from '../unlock'
 
 const visible = defineModel<boolean>({ required: true })
 
@@ -78,7 +98,7 @@ const emit = defineEmits<{
   (e: 'detect', node: Node): void
 }>()
 
-const rows = computed(() => (props.node ? unlockRows(props.node) : []))
+const rows = computed(() => (props.node ? unlockDisplayRows(props.node) : []))
 </script>
 
 <style scoped>
@@ -98,6 +118,15 @@ const rows = computed(() => (props.node ? unlockRows(props.node) : []))
 }
 .error-text {
   color: var(--ph-danger);
+}
+.status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ph-space-1);
+}
+.region-badge {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
 }
 .bw-detail {
   display: flex;
