@@ -170,20 +170,39 @@ export interface ExamRegionSpeedMetrics {
   regions: ExamRegionResult[]
 }
 
-// 深度体检报告(稳定性段 + 多地域测速段;unlock 为后续段预留)
+// 深度体检 - 单目标解锁判定结果(复用后端 detection.Result;level/region 仅专用判定填充)
+export interface ExamUnlockResult {
+  node_key: string
+  target_name: string
+  available: boolean
+  latency: number
+  error?: string
+  level?: string // full | originals_only | blocked
+  region?: string // 命中区域国家码(如 US/HK)
+}
+
+// 深度体检 - 解锁段聚合结果(逐目标一条,顺序与 DefaultUnlockTargets 一致)
+export interface ExamUnlockMetrics {
+  results: ExamUnlockResult[]
+}
+
+// 深度体检报告(稳定性段 + 多地域测速段 + 解锁段)
 export interface ExamReport {
   stability?: ExamStabilityMetrics
   region_speed?: ExamRegionSpeedMetrics
+  unlock?: ExamUnlockMetrics
 }
 
 // 深度体检 SSE 事件帧
 export interface ExamEvent {
-  phase: 'sample' | 'region' | 'section_done' | 'done' | 'error'
+  phase: 'sample' | 'region' | 'unlock' | 'section_done' | 'done' | 'error'
   section?: string
   sample?: ExamStabilitySample
   metrics?: ExamStabilityMetrics
   region?: ExamRegionResult
   region_speed?: ExamRegionSpeedMetrics
+  unlock_result?: ExamUnlockResult
+  unlock?: ExamUnlockMetrics
   report?: ExamReport
   error?: string
 }
