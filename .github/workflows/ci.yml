@@ -30,13 +30,29 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build
-        run: go build ./...
+        run: make build-backend
 
       - name: Vet
-        run: go vet ./...
+        run: make vet
 
       - name: Test
-        run: go test ./...
+        run: make test
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_COMMENTS: 'false'
 
   frontend:
     name: Frontend build

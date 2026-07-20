@@ -244,9 +244,7 @@ cd proxyhub
 ### 前端开发
 
 ```bash
-cd web
-npm install
-npm run dev
+make dev-frontend
 # 访问 http://localhost:3000
 # API 自动代理到后端 :8080
 ```
@@ -254,28 +252,19 @@ npm run dev
 ### 后端开发
 
 ```bash
-go run ./cmd/server
+make dev-backend
 ```
 
-### 完整构建
+### 构建与测试
+
+一切构建/测试动作统一经 Makefile(禁止裸 `go build`,避免二进制掉落根目录):
 
 ```bash
-# 构建前端
-cd web && npm install && npm run build && cd ..
-
-# 复制前端到 cmd/server
-cp -r dist/web/* cmd/server/web/
-
-# 构建后端（带嵌入式前端）
-go build -o dist/proxyhub ./cmd/server
-```
-
-或使用 Makefile：
-
-```bash
-make build         # 完整构建
+make build         # 完整构建(前端 + 后端,产物在 dist/)
 make build-all     # 多平台构建
-make test          # 运行测试
+make test          # Go 测试
+make test-shell    # 安装/运维脚本测试套件
+make check         # 签入前聚合检查(vet + test + test-shell)
 make clean         # 清理产物
 ```
 
@@ -307,7 +296,9 @@ proxyhub/
 │   │   └── types/       # TypeScript 类型
 │   ├── package.json
 │   └── vite.config.ts
-├── dist/                # 构建产物
+├── scripts/             # 安装/发布运维脚本及测试套件
+├── dist/                # 构建产物(gitignored)
+├── var/                 # 本地运行态(gitignored):data/ 数据库、log/ 日志、xray/ 生成的配置
 ├── docs/                # 文档
 ├── Makefile
 ├── Dockerfile

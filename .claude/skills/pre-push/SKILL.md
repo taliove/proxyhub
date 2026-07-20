@@ -7,16 +7,14 @@ description: 推送到任何远端前的最终门禁(全量测试、全历史泄
 
 推送到任何远端(GitHub 等)之前执行。**推送是不可逆的公开发布**——历史一旦推出去,任何残留秘密都视为已泄露,只能轮换不能回收。所以本流程比 pre-commit 严格得多。
 
-## 1. 全量测试
+## 1. 全量测试与完整构建
 
 ```bash
-go build ./... && go vet ./...
-go test ./...
-cd scripts/install && for t in test_*.sh; do bash "$t" || exit 1; done
-cd ../../web && npm run build
+make check   # vet + Go 测试 + shell 套件
+make build   # 验证完整构建(前端 + 后端)可用
 ```
 
-既有失败(2 个模板测试 + TestHandleTestNode_MissingTarget)除外,其余必须全绿。
+必须全绿。既有失败 3 处已被 `make test` 显式隔离;如需看它们的真实状态跑 `make test-all`(预期红,属 backlog 待定项,不算门禁失败)。
 
 ## 2. 全历史泄密扫描(不是只扫工作区)
 

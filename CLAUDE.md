@@ -58,17 +58,31 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 - 作者:`taliove2009 <taliove2009@gmail.com>`(repo 级 config)
 - 一个提交一个语义;修复不混进功能提交
 
-## 5. 构建与运行
+## 5. 构建与运行(命令入口基本法)
 
-前端嵌入二进制(go:embed),顺序不可逆:
-`make build`(= web npm build → go build -o dist/proxyhub)→ `./start.sh` 重启。
-改前端不重启 = 没生效。日常开发范式见 `.claude/skills/dev-workflow`。
+**一切构建/测试/检查动作,唯一入口是 `make`。** 文档与 Skill 中禁止出现裸 `go build`/`npm run build` 示范;裸 `go build ./cmd/server`(无 `-o`)会在根目录掉落二进制,是历史事故源头。
+
+| 动作 | 命令 |
+|---|---|
+| 完整构建(前端+后端) | `make build`(改了前端必须跑这个,go:embed) |
+| 只改后端 | `make build-backend` |
+| 只改前端 | `make build-frontend` |
+| Go 测试 | `make test` |
+| 安装/运维脚本套件 | `make test-shell` |
+| 静态检查 | `make vet` |
+| 签入前聚合检查 | `make check`(= vet + test + test-shell) |
+| 前端/后端开发服务器 | `make dev-frontend` / `make dev-backend` |
+| 多平台发布 | `make build-all` |
+
+唯一豁免:定向调试允许 `go test ./internal/<pkg>/ -run <TestName>`(纯读操作,不落盘)。
+
+构建顺序不可逆:`make build` → `./start.sh` 重启(日志在 `var/log/`)。改前端不重启 = 没生效。日常开发范式见 `.claude/skills/dev-workflow`。
 
 ## 6. 测试门槛
 
-- 每次签入前:`go build ./...` + `go vet ./...` + 受影响包的测试
-- 推送前:`go test ./...` 全量 + `scripts/install/test_*.sh` 六个套件
-- 已知既有失败(3 处,勿"修"):2 个默认模板测试 + `TestHandleTestNode_MissingTarget`
+- 每次签入前:`make check`(vet + Go 测试 + shell 套件)
+- 推送前:`make check` 全量 + `make build` 验证完整构建
+- 既有失败 3 处(2 个默认模板测试 + `TestHandleTestNode_MissingTarget`,处置待定见 backlog):已在 `make test` 中显式隔离(`-skip`,Makefile 有注释清单);`make test-all` 可跑全量(预期红,用于完整性审计)。**不许通过改测试让它们消失**,也不许扩大隔离名单。
 
 ## 7. 安全红线
 

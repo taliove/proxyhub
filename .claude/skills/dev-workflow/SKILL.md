@@ -22,15 +22,15 @@ description: ProxyHub 日常开发统一范式——编译、运行、测试、�
 
 口诀:**根目录只放入口与控制文件;产物进 dist,运行态进 var,测试临时进 .test/testdata。**
 
-## 2. 编译
+## 2. 编译(唯一入口:make)
 
 ```bash
-make build          # 唯一正确姿势:web npm build → go build -o dist/proxyhub
+make build          # 完整构建:前端 npm build → 后端 go build -o dist/proxyhub
+make build-backend  # 只改了 Go
+make build-frontend # 只改了 web/(注意:go:embed,改前端后必须 make build 才会进二进制)
 ```
 
-- 改了前端(`web/`):必须 `make build` 完整跑(go:embed,单独 go build 不会更新前端)
-- 只改 Go:`go build -o dist/proxyhub ./cmd/server` 即可,不要裸 `go build`(产物会掉在根目录)
-- 多平台发布:`make build-all`(产物也在 `dist/`)
+**禁止任何形式的裸 `go build`**——裸 `go build ./cmd/server`(无 `-o`)会把 `server` 二进制掉在根目录(历史事故);裸 `go test -c` 会掉 `*.test`。产生文件的动作只经 make。
 
 ## 3. 运行与调试
 
@@ -43,16 +43,18 @@ make dev-backend    # 后端开发(config.example.yaml,storage 指向 var/data/d
 
 重启验证三件套:`curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/` 返回 200;`var/xray/xray_config.json` 已重新生成;日志无新增 ERROR(已知:`enabled_nodes: 0` 时 distribution 起不来是既有功能 bug,不算新问题)。
 
-## 4. 测试
+## 4. 测试(唯一入口:make)
 
 ```bash
-go test ./...                                  # 全量
-go test ./internal/<改动的包>/                  # 日常最小集
-cd scripts/install && bash test_<对应套件>.sh   # 改了安装/CLI 时
+make test         # Go 全量
+make test-shell   # 安装/运维脚本六套件
+make check        # 签入前聚合:vet + test + test-shell
 ```
 
+唯一豁免:定向调试允许 `go test ./internal/<pkg>/ -run <TestName>`(纯读操作,不落盘)。
+
 - 新功能先写测试(TDD):同包 `_test.go`,fixture 必须合成值(`example.com` + 全零 UUID)
-- 既有失败 3 处(2 模板 + TestHandleTestNode_MissingTarget)不是回归,别"修"
+- 既有失败 3 处已被 `make test` 显式隔离(Makefile 有清单);`make test-all` 跑全量时它们红是预期,别"修",也别扩大隔离名单
 - 集成测试产生的数据只能落在 `.test/`
 
 ## 5. 提交之前
