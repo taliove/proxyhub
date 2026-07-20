@@ -63,9 +63,9 @@ func TestExamJobManager_SingleInstancePerNode(t *testing.T) {
 	m := NewExamJobManager(se.run, nil)
 	node := examTestNode()
 
-	j1 := m.startOrAttach(node.NodeKey(), node)
+	j1 := m.startOrAttach(node.NodeKey(), node, false)
 	<-se.started
-	j2 := m.startOrAttach(node.NodeKey(), node)
+	j2 := m.startOrAttach(node.NodeKey(), node, false)
 	if j1 != j2 {
 		t.Fatal("StartOrAttach on same node should attach to the same job")
 	}
@@ -83,7 +83,7 @@ func TestExamJob_AttachReplaysThenLive(t *testing.T) {
 	m := NewExamJobManager(se.run, nil)
 	node := examTestNode()
 
-	j := m.startOrAttach(node.NodeKey(), node)
+	j := m.startOrAttach(node.NodeKey(), node, false)
 	<-se.started
 
 	_, live1, unsub1 := j.subscribe()
@@ -121,7 +121,7 @@ func TestExamJob_RingBufferCap(t *testing.T) {
 	m := NewExamJobManager(se.run, nil)
 	node := examTestNode()
 
-	j := m.startOrAttach(node.NodeKey(), node)
+	j := m.startOrAttach(node.NodeKey(), node, false)
 	<-se.started
 
 	_, live, unsub := j.subscribe()
@@ -164,7 +164,7 @@ func TestExamJobManager_CancelEmitsCancelledNoHistory(t *testing.T) {
 	m := NewExamJobManager(se.run, onComplete)
 	node := examTestNode()
 
-	j := m.startOrAttach(node.NodeKey(), node)
+	j := m.startOrAttach(node.NodeKey(), node, false)
 	<-se.started
 
 	_, live, unsub := j.subscribe()
@@ -208,7 +208,7 @@ func TestExamJobManager_CompleteSavesHistory(t *testing.T) {
 	m := NewExamJobManager(se.run, onComplete)
 	node := examTestNode()
 
-	j := m.startOrAttach(node.NodeKey(), node)
+	j := m.startOrAttach(node.NodeKey(), node, false)
 	<-se.started
 
 	se.events <- ExamEvent{Phase: "done"}
@@ -234,7 +234,7 @@ func TestExamJobManager_FailedNoHistory(t *testing.T) {
 	m := NewExamJobManager(se.run, onComplete)
 	node := examTestNode()
 
-	j := m.startOrAttach(node.NodeKey(), node)
+	j := m.startOrAttach(node.NodeKey(), node, false)
 	<-se.started
 
 	se.events <- ExamEvent{Phase: "error", Error: "create proxy session: boom"}
@@ -253,13 +253,13 @@ func TestExamJobManager_TTLExpiry(t *testing.T) {
 	m.now = fc.now
 
 	node := examTestNode()
-	j1 := m.startOrAttach(node.NodeKey(), node)
+	j1 := m.startOrAttach(node.NodeKey(), node, false)
 	<-se.started
 	close(se.events) // 完成后返回(events 已关,后续 run 也会立即返回)
 	drainJob(j1)
 
 	// TTL 内:附加到已完成的任务(同实例,可回放)。
-	j1b := m.startOrAttach(node.NodeKey(), node)
+	j1b := m.startOrAttach(node.NodeKey(), node, false)
 	if j1b != j1 {
 		t.Fatal("within TTL StartOrAttach should attach to the finished job")
 	}
@@ -268,7 +268,7 @@ func TestExamJobManager_TTLExpiry(t *testing.T) {
 	fc.cur = fc.cur.Add(examResultTTL + time.Second)
 	m.SweepExpired()
 
-	j2 := m.startOrAttach(node.NodeKey(), node)
+	j2 := m.startOrAttach(node.NodeKey(), node, false)
 	if j2 == j1 {
 		t.Fatal("after TTL StartOrAttach should start a fresh job")
 	}
@@ -278,12 +278,41 @@ func TestExamJobManager_TTLExpiry(t *testing.T) {
 	}
 }
 
+// TestExamJobManager_OpenForce force=重新体检:已收口的旧任务丢弃重开(即使 TTL 未过);
+// 进行中的任务不受 force 影响,仍附加到原任务。
+func TestExamJobManager_OpenForce(t *testing.T) {
+	se := newScriptedExam()
+	m := NewExamJobManager(se.run, nil)
+	node := examTestNode()
+
+	// 进行中的任务:force 不打断,附加到同一实例。
+	j1 := m.startOrAttach(node.NodeKey(), node, true)
+	<-se.started
+	j1b := m.startOrAttach(node.NodeKey(), node, true)
+	if j1b != j1 {
+		t.Fatal("force on a running job should attach, not restart")
+	}
+
+	close(se.events) // 自然完成
+	drainJob(j1)
+
+	// 已收口:force 丢弃旧任务起新任务(对比:非 force 在 TTL 内附加旧任务,见 TTLExpiry)。
+	j2 := m.startOrAttach(node.NodeKey(), node, true)
+	if j2 == j1 {
+		t.Fatal("force on a finished job should start a fresh job")
+	}
+	drainJob(j2)
+	if got := se.calls.Load(); got != 2 {
+		t.Fatalf("runner invoked %d times, want 2 (force restarted finished job)", got)
+	}
+}
+
 func TestExamJob_ConcurrentSubscribersRace(t *testing.T) {
 	se := newScriptedExam()
 	m := NewExamJobManager(se.run, nil)
 	node := examTestNode()
 
-	j := m.startOrAttach(node.NodeKey(), node)
+	j := m.startOrAttach(node.NodeKey(), node, false)
 	<-se.started
 
 	var wg sync.WaitGroup

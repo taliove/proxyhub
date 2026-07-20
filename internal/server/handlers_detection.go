@@ -295,7 +295,13 @@ func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	sub := s.examJobs.Open(node.NodeKey(), node)
+	// force=1:"重新体检"语义,已收口的旧任务丢弃重开(进行中的任务不受影响,仍附加)。
+	var sub *detection.ExamSubscription
+	if q.Get("force") == "1" {
+		sub = s.examJobs.OpenForce(node.NodeKey(), node)
+	} else {
+		sub = s.examJobs.Open(node.NodeKey(), node)
+	}
 	defer sub.Close()
 
 	// 先回放缓冲事件(附加语义),再转直播。

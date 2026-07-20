@@ -183,7 +183,7 @@ const buildParams = () => {
   return params
 }
 
-const runExam = () => {
+const runExam = (force = false) => {
   stream?.dispose()
   stream = new ExamStream(
     {
@@ -193,7 +193,9 @@ const runExam = () => {
     },
     { onFrame, onStatus, onTerminal }
   )
-  stream.start(`/api/nodes/exam/stream?${buildParams()}`)
+  const params = buildParams()
+  if (force) params.set('force', '1') // 重新体检:已收口的旧任务强制重开,不回放上次结果
+  stream.start(`/api/nodes/exam/stream?${params}`)
 }
 
 const pushLog = (frame: ExamEvent) => {
@@ -237,7 +239,7 @@ const cancel = () => {
 
 const rerun = () => {
   reset()
-  runExam()
+  runExam(true)
 }
 
 const onClosed = () => {

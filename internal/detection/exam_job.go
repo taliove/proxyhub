@@ -120,6 +120,13 @@ func (j *examJob) subscribe() (replay []ExamFrame, live <-chan ExamFrame, unsub 
 	}
 }
 
+// isDone 报告任务是否已收口(供 manager 在 m.mu 下安全查询)。
+func (j *examJob) isDone() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.done
+}
+
 // requestCancel 请求取消:任务已收口返回 false(无可取消);否则置位并取消 ctx。
 func (j *examJob) requestCancel() bool {
 	j.mu.Lock()
@@ -191,20 +198,35 @@ func (s *ExamSubscription) Close() { s.unsub() }
 
 // Open 启动或附加该节点的体检任务,并返回一次订阅(回放 + 直播)。供 SSE handler 使用。
 func (m *ExamJobManager) Open(nodeKey string, node *subscription.Node) *ExamSubscription {
-	j := m.startOrAttach(nodeKey, node)
+	return m.open(nodeKey, node, false)
+}
+
+// OpenForce 强制开始一场新体检:已收口的旧任务直接丢弃重开(用于"重新体检",
+// 避免 TTL 窗口内附加到上次结果);仍在运行的任务不打断,按 Open 语义附加。
+func (m *ExamJobManager) OpenForce(nodeKey string, node *subscription.Node) *ExamSubscription {
+	return m.open(nodeKey, node, true)
+}
+
+func (m *ExamJobManager) open(nodeKey string, node *subscription.Node, force bool) *ExamSubscription {
+	j := m.startOrAttach(nodeKey, node, force)
 	replay, live, unsub := j.subscribe()
 	return &ExamSubscription{Replay: replay, Live: live, unsub: unsub}
 }
 
 // startOrAttach 该节点无任务(或已过期)则启动新任务,否则返回现有任务(启动或附加)。
-func (m *ExamJobManager) startOrAttach(nodeKey string, node *subscription.Node) *examJob {
+// force 仅对"已收口"的旧任务生效:丢弃并重开;进行中的任务不受 force 影响。
+func (m *ExamJobManager) startOrAttach(nodeKey string, node *subscription.Node, force bool) *examJob {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.sweepLocked(m.now())
 
 	if j, ok := m.jobs[nodeKey]; ok {
-		return j
+		if force && j.isDone() {
+			delete(m.jobs, nodeKey) // 已收口的旧任务,强制重开
+		} else {
+			return j
+		}
 	}
 
 	// 任务自带 context.Background() 派生的 ctx —— 绝不从请求 ctx 派生,连接断开不杀任务。
