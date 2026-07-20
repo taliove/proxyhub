@@ -14,7 +14,7 @@ export interface NodeFilterCriteria {
   blocked: boolean | null
   stale: boolean | null
   keyword: string // 名称 / 标准名 / 服务器 子串模糊(大小写不敏感)
-  tags: string[] // 标签:命中任一即匹配(OR)
+  tags: string[] // 标签:全含才匹配(AND,与 Go subfilter 语义对齐——订阅组合条件如 region:HK+nf-full 必须同时满足)
   unlock: string[] // 解锁能力:每个目标都需已解锁(AND)
   stabilityBand: ScoreLevel | null // 稳定性分档 good/fair/poor
 }
@@ -57,11 +57,12 @@ export const matchesKeyword = (n: Node, keyword: string): boolean => {
   return [n.name, n.display_name, n.server].some((f) => (f ?? '').toLowerCase().includes(q))
 }
 
-// 标签:OR 语义——节点带有任一所选标签即命中(标签是分类维度)。
+// 标签:AND 语义——节点须带全所选标签(标签是组合条件,订阅场景要求同时满足;
+// 与 internal/subfilter 的 Go 侧谓词同一语义,改一必查二)。
 export const matchesTags = (n: Node, tags: string[]): boolean => {
   if (tags.length === 0) return true
   const own = n.tags ?? []
-  return tags.some((t) => own.includes(t))
+  return tags.every((t) => own.includes(t))
 }
 
 // 解锁能力:AND 语义——要求所选每个目标都已解锁(能力是"必须满足"的要求)。

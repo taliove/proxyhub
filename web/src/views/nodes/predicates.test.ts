@@ -102,14 +102,15 @@ describe('matchesKeyword', () => {
   })
 })
 
-describe('matchesTags - OR 语义', () => {
+describe('matchesTags - AND 语义(与 Go subfilter 对齐)', () => {
   it('空条件匹配所有', () => {
     expect(matchesTags(node({ tags: [] }), [])).toBe(true)
   })
-  it('任一标签命中即匹配', () => {
+  it('须带全所选标签才匹配(组合条件同时满足)', () => {
     const n = node({ tags: ['流媒体', '低延迟'] })
     expect(matchesTags(n, ['低延迟'])).toBe(true)
-    expect(matchesTags(n, ['游戏', '低延迟'])).toBe(true)
+    expect(matchesTags(n, ['流媒体', '低延迟'])).toBe(true)
+    expect(matchesTags(n, ['游戏', '低延迟'])).toBe(false)
     expect(matchesTags(n, ['游戏'])).toBe(false)
   })
   it('节点无 tags 字段(票据 21 前)时,启用标签筛选不报错且不命中', () => {
