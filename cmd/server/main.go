@@ -194,6 +194,8 @@ func initDetectionService(cfg *config.Config, st *store.Store, nodes server.Node
 	)
 	// 注入带宽配置提供函数（每次带宽测试实时从 settings 读取，缺省用默认值）
 	detector.SetBandwidthConfigProvider(st.GetBandwidthConfig)
+	// 注入体检配置提供函数（每场深度体检实时从 settings 读取，缺省用默认值）
+	detector.SetExamConfigProvider(st.GetExamConfig)
 
 	// 创建检测服务
 	return server.NewDetectionService(

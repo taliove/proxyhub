@@ -51,6 +51,7 @@
                 <el-dropdown-item command="quick">快测</el-dropdown-item>
                 <el-dropdown-item command="real">真实检测</el-dropdown-item>
                 <el-dropdown-item command="bandwidth">带宽测试</el-dropdown-item>
+                <el-dropdown-item command="exam" divided>深度体检</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -67,6 +68,7 @@
     />
     <SelfNodeImportDialog v-model="importDialogVisible" @imported="onImported" />
     <BandwidthTestDialog ref="bwDialog" />
+    <NodeExamDialog ref="examDialog" />
   </div>
 </template>
 
@@ -76,6 +78,7 @@ import { ArrowDown } from '@element-plus/icons-vue'
 import type { SelfNode } from '@/types'
 import { useNodeTest } from '@/composables/useNodeTest'
 import BandwidthTestDialog from '@/components/BandwidthTestDialog.vue'
+import NodeExamDialog from '@/components/NodeExamDialog.vue'
 import SelfNodeFormDialog from './SelfNodeFormDialog.vue'
 import SelfNodeImportDialog from './SelfNodeImportDialog.vue'
 import { useSelfNodes } from '../composables/useSelfNodes'
@@ -149,9 +152,14 @@ const onImported = (parsed: Partial<SelfNodeForm>) => {
 
 // 测试下拉:quick/real 走消息提示,bandwidth 走弹窗
 const bwDialog = ref<InstanceType<typeof BandwidthTestDialog> | null>(null)
+const examDialog = ref<InstanceType<typeof NodeExamDialog> | null>(null)
 const onTestCommand = (row: SelfNode, cmd: string) => {
   if (cmd === 'bandwidth') {
     bwDialog.value?.open({ self_node_id: row.id }, row.name)
+    return
+  }
+  if (cmd === 'exam') {
+    examDialog.value?.open({ self_node_id: row.id }, row.name)
     return
   }
   testNode({ self_node_id: row.id }, cmd as 'quick' | 'real')

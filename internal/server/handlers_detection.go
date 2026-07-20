@@ -251,3 +251,47 @@ func (s *Server) handleTestNodeStream(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleNodeExamStream 单节点深度体检流式端点(SSE):各段串行,实时推送 sample/section_done/done。
+// 与 handleTestNodeStream 同风格(EventSource 只能 GET+query)。本段只跑稳定性,后续段预留。
+func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
+	if s.detectionService == nil {
+		http.Error(w, "detection service not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	q := r.URL.Query()
+	nodeKey := q.Get("node_key")
+	var selfNodeID int64
+	if v := q.Get("self_node_id"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid self_node_id", http.StatusBadRequest)
+			return
+		}
+		selfNodeID = id
+	}
+
+	node := s.resolveTestNode(selfNodeID, nodeKey)
+	if node == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	emit := func(evt detection.ExamEvent) {
+		b, _ := json.Marshal(evt)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+
+	s.detectionService.ExamStream(r.Context(), node, emit)
+}

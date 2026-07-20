@@ -60,6 +60,7 @@
       @done="load"
     />
     <BandwidthTestDialog ref="bwDialog" />
+    <NodeExamDialog ref="examDialog" />
   </div>
 </template>
 
@@ -69,6 +70,7 @@ import { useRouter } from 'vue-router'
 import type { Node } from '@/types'
 import { useNodeTest } from '@/composables/useNodeTest'
 import BandwidthTestDialog from '@/components/BandwidthTestDialog.vue'
+import NodeExamDialog from '@/components/NodeExamDialog.vue'
 import NodeFilterBar from './NodeFilterBar.vue'
 import NodeGlobalActions from './NodeGlobalActions.vue'
 import NodeBatchBar from './NodeBatchBar.vue'
@@ -157,9 +159,15 @@ const overrideDialog = ref<InstanceType<typeof NodeOverrideDialog> | null>(null)
 const openOverride = (row: Node) => overrideDialog.value?.open(row)
 const editSelfNode = () => router.push({ path: '/nodes', query: { tab: 'self' } })
 const bwDialog = ref<InstanceType<typeof BandwidthTestDialog> | null>(null)
+const examDialog = ref<InstanceType<typeof NodeExamDialog> | null>(null)
 const runTest = async (row: Node, mode: TestCommand) => {
+  const label = row.display_name || row.name
   if (mode === 'bandwidth') {
-    bwDialog.value?.open({ node_key: row.node_key }, row.display_name || row.name)
+    bwDialog.value?.open({ node_key: row.node_key }, label)
+    return
+  }
+  if (mode === 'exam') {
+    examDialog.value?.open({ node_key: row.node_key }, label)
     return
   }
   const res = await testNode({ node_key: row.node_key }, mode)

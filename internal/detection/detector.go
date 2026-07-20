@@ -22,18 +22,25 @@ type Detector struct {
 	// bandwidthConfig 返回带宽测试配置(nil 时用默认值)。
 	// 用函数注入而非固定字段:每次测试实时读取(如从 settings),且线程安全(无共享可变状态)。
 	bandwidthConfig func() BandwidthConfig
+
+	// examConfig 返回深度体检配置(nil 时用默认值),注入方式同 bandwidthConfig。
+	examConfig func() ExamConfig
+
+	// stabilityProbeFactory 为一次体检构造稳定性探测器(默认经 mihomo 会话请求 generate_204)。
+	// 用工厂而非固定实现:每场体检独立会话,且测试可注入假探测器(不触真实网络)。
+	stabilityProbeFactory func(*subscription.Node) (StabilityProbe, error)
 }
 
 // BandwidthConfig 带宽测试配置(可由 settings 覆盖)
 type BandwidthConfig struct {
-	DownURL       string  // 下行探测 URL(大小由 URL 的 bytes= 参数控制,作为数据上限)
-	UpURL         string  // 上行探测 URL
-	UpBytes       int     // 上行数据大小上限(字节),固定时长内的数据预算
-	TestDurationSec int   // 单方向固定测速时长(秒):下行/上行都跑满这个时长,保证两条曲线等长
-	TimeoutSec    int     // 单次带宽测试整体超时(秒)
-	DirTimeoutSec int     // 单方向硬超时上限(秒),防卡死;正常应先到 TestDurationSec
-	MinDownMbps   float64 // 下行合格阈值
-	MinUpMbps     float64 // 上行合格阈值
+	DownURL         string  // 下行探测 URL(大小由 URL 的 bytes= 参数控制,作为数据上限)
+	UpURL           string  // 上行探测 URL
+	UpBytes         int     // 上行数据大小上限(字节),固定时长内的数据预算
+	TestDurationSec int     // 单方向固定测速时长(秒):下行/上行都跑满这个时长,保证两条曲线等长
+	TimeoutSec      int     // 单次带宽测试整体超时(秒)
+	DirTimeoutSec   int     // 单方向硬超时上限(秒),防卡死;正常应先到 TestDurationSec
+	MinDownMbps     float64 // 下行合格阈值
+	MinUpMbps       float64 // 上行合格阈值
 }
 
 // DefaultBandwidthConfig 带宽测试默认配置。
@@ -55,16 +62,28 @@ func DefaultBandwidthConfig() BandwidthConfig {
 
 // NewDetector 创建检测服务
 func NewDetector(nodeConcurrency int, tcpTimeout, requestTimeout time.Duration) *Detector {
-	return &Detector{
+	d := &Detector{
 		nodeConcurrency: nodeConcurrency,
 		tcpTimeout:      tcpTimeout,
 		requestTimeout:  requestTimeout,
 	}
+	d.stabilityProbeFactory = d.defaultStabilityProbe
+	return d
 }
 
 // SetBandwidthConfigProvider 注入带宽配置提供函数(每次带宽测试调用,返回实时配置)
 func (d *Detector) SetBandwidthConfigProvider(provider func() BandwidthConfig) {
 	d.bandwidthConfig = provider
+}
+
+// SetExamConfigProvider 注入体检配置提供函数(每场体检调用,返回实时配置)
+func (d *Detector) SetExamConfigProvider(provider func() ExamConfig) {
+	d.examConfig = provider
+}
+
+// SetStabilityProbeFactory 覆盖稳定性探测器工厂(测试用:注入假探测器绕过真实网络)。
+func (d *Detector) SetStabilityProbeFactory(factory func(*subscription.Node) (StabilityProbe, error)) {
+	d.stabilityProbeFactory = factory
 }
 
 // resolveBandwidthConfig 取带宽配置:有 provider 用之,否则用默认
