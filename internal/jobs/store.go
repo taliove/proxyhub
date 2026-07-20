@@ -104,6 +104,38 @@ func (s *Store) LoadRunning() ([]Record, error) {
 	return records, rows.Err()
 }
 
+// LoadAll 加载所有任务记录(供任务中心列表展示),按 id 降序(最新在前)。
+func (s *Store) LoadAll() ([]Record, error) {
+	rows, err := s.db.Query(
+		`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at
+		 FROM jobs ORDER BY id DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query all jobs: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]Record, 0)
+	for rows.Next() {
+		var (
+			rec        Record
+			params     string
+			status     string
+			createdStr string
+			updatedStr string
+		)
+		if err := rows.Scan(&rec.ID, &rec.Kind, &rec.Key, &params, &status, &rec.Cursor, &createdStr, &updatedStr); err != nil {
+			return nil, fmt.Errorf("scan job: %w", err)
+		}
+		rec.Params = json.RawMessage(params)
+		rec.Status = Status(status)
+		rec.CreatedAt = parseSQLTime(createdStr)
+		rec.UpdatedAt = parseSQLTime(updatedStr)
+		records = append(records, rec)
+	}
+	return records, rows.Err()
+}
+
 // Get 读取单条记录(测试/诊断用);无记录返回 (nil, nil)。
 func (s *Store) Get(id int64) (*Record, error) {
 	var (
