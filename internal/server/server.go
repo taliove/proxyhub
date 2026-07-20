@@ -249,6 +249,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings/detection-targets", s.requireAuth(s.handleGetDetectionTargets))
 	mux.HandleFunc("PUT /api/settings/detection-targets", s.requireAuth(s.handleSaveDetectionTargets))
 
+	// 晚间标签重算调度配置(schedule_retag_time / schedule_retag_enabled)
+	mux.HandleFunc("GET /api/settings/schedule", s.requireAuth(s.handleGetSchedule))
+	mux.HandleFunc("PUT /api/settings/schedule", s.requireAuth(s.handleSaveSchedule))
+
 	// 地区白名单
 	mux.HandleFunc("GET /api/settings/region-whitelist", s.requireAuth(s.handleGetRegionWhitelist))
 	mux.HandleFunc("POST /api/settings/region-whitelist", s.requireAuth(s.handleSetRegionWhitelist))

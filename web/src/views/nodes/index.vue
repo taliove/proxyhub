@@ -34,9 +34,14 @@
       v-if="selectableSelection.length > 0"
       :count="selectableSelection.length"
       :detecting="detecting"
+      :examining="examining"
+      :exam-completed="examCompleted"
+      :exam-total="examTotal"
       @block="blockSelected"
       @unblock="unblockSelected"
       @detect="detectSelected"
+      @exam="examSelected"
+      @cancel-exam="cancelExam"
     />
 
     <NodeTable
@@ -109,6 +114,7 @@ import { useNodePool } from './composables/useNodePool'
 import { useNodeQuery } from './composables/useNodeQuery'
 import { useNodeDetection, type DetectionScope } from './composables/useNodeDetection'
 import { useNodeBatch } from './composables/useNodeBatch'
+import { useBatchExam } from './composables/useBatchExam'
 import { useSelfNodes } from './composables/useSelfNodes'
 import { useExamSummaries } from './composables/useExamSummaries'
 import { buildUnifiedRows, selfNodeIndex, type UnifiedNode } from './selfmerge'
@@ -188,6 +194,16 @@ const detectSelected = () =>
   detect({ type: 'selected', node_keys: selectableSelection.value.map((n) => n.node_key) })
 const detectOne = (node: UnifiedNode) => detect({ type: 'selected', node_keys: [node.node_key] })
 const cancelDetection = () => cancel(reload)
+
+// 批量体检:对选中集启动,完成后刷新体检摘要(复用 jobs 轮询,不接 SSE)。
+const {
+  running: examining,
+  completed: examCompleted,
+  total: examTotal,
+  start: startBatchExam,
+  cancel: cancelExam
+} = useBatchExam(reloadExam)
+const examSelected = () => startBatchExam(selectableSelection.value.map((n) => n.node_key))
 const triggerCleanupDetection = (onComplete: () => void) =>
   trigger({ type: 'all' }, onComplete, '检测已启动,完成后自动刷新失败列表')
 
