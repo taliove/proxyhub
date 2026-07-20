@@ -156,3 +156,11 @@ export function buildEgressRows(
   }))
   return applyActive(rows, sectionActive)
 }
+
+// egressSectionComplete 出网段(新段序第一段)3 类是否全部到达(ipv4/ipv6/dns)。
+// 出网前置:该判定驱动出网段进行中高亮的收束,并作为后续段开测的前置条件。
+// error 项仍算已结算(与 regionSectionComplete 同构:只看是否到达,不看成败)。
+export function egressSectionComplete(egress: ExamEgressMetrics | null): boolean {
+  if (!egress) return false
+  return EXAM_EGRESS_SLOTS.every((slot) => egress[slot.kind] != null)
+}

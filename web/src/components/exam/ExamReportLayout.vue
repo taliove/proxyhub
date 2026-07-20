@@ -1,16 +1,16 @@
 <template>
-  <!-- 体检双栏布局(左:稳定性 + 出网信息;右:多地域 + 解锁)。
+  <!-- 体检双栏布局(左:出网信息 + 稳定性;右:多地域 + 解锁)。出网为新段序第一段,置左栏顶部。
        实时体检对话框(NodeExamDialog)与历史报告卡(ExamReportCard)同构复用此布局:
        宽容器双栏并排,窄容器(历史抽屉)自动收成单栏。 -->
   <div class="exam-layout">
     <div class="exam-col">
+      <EgressSection :egress="egress" :active="egressActive" :terminal="terminal" />
       <StabilitySection
         :metrics="stability"
         :samples="samples"
         :show-sparkline="showSparkline"
         :error="stabilityError"
       />
-      <EgressSection :egress="egress" :active="egressActive" :terminal="terminal" />
     </div>
     <div class="exam-col">
       <RegionSpeedSection :regions="regions" :active="regionActive" :terminal="terminal" />

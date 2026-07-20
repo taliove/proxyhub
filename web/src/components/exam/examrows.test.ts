@@ -4,6 +4,7 @@ import {
   buildUnlockRows,
   buildEgressRows,
   regionSectionComplete,
+  egressSectionComplete,
   isBaselineRow,
   BASELINE_KEY,
   BASELINE_NAME,
@@ -172,5 +173,32 @@ describe('buildEgressRows', () => {
   it('keeps no row active in terminal state', () => {
     const rows = buildEgressRows(egress({ ipv4: { proxy: false, hosting: false } }), false)
     expect(rows.some((r) => r.status === 'active')).toBe(false)
+  })
+})
+
+describe('egressSectionComplete', () => {
+  const egress = (over: Partial<ExamEgressMetrics> = {}): ExamEgressMetrics => ({ ...over })
+
+  it('is false with no egress data (section 1, still probing)', () => {
+    expect(egressSectionComplete(null)).toBe(false)
+    expect(egressSectionComplete(egress())).toBe(false)
+  })
+
+  it('is false until all 3 classes (ipv4/ipv6/dns) have arrived', () => {
+    expect(egressSectionComplete(egress({ ipv4: { proxy: false, hosting: false } }))).toBe(false)
+    expect(
+      egressSectionComplete(
+        egress({ ipv4: { proxy: false, hosting: false }, ipv6: { available: false } })
+      )
+    ).toBe(false)
+  })
+
+  it('is true once all 3 classes have arrived (error items still count as settled)', () => {
+    const full = egress({
+      ipv4: { proxy: false, hosting: false, ip: '203.0.113.7' },
+      ipv6: { available: false },
+      dns: { leak: false, error: 'boom' }
+    })
+    expect(egressSectionComplete(full)).toBe(true)
   })
 })

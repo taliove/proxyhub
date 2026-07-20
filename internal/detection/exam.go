@@ -48,7 +48,7 @@ func (c ExamConfig) stabilitySampleCount() int {
 	return n
 }
 
-// ExamReport 体检报告。稳定性段 + 多地域测速段 + 解锁段 + 出网信息段。
+// ExamReport 体检报告。出网信息段 + 稳定性段 + 多地域测速段 + 解锁段。
 type ExamReport struct {
 	Stability   *StabilityMetrics   `json:"stability,omitempty"`
 	RegionSpeed *RegionSpeedMetrics `json:"region_speed,omitempty"`
@@ -78,7 +78,7 @@ type examStage struct {
 }
 
 // ExamOrchestrator 体检编排器:按注册顺序串行执行各段,末尾推 done。
-// 三段串行(稳定性 -> 多地域测速 -> 解锁)的结构在此预留,当前仅注册稳定性段。
+// 四段串行(出网信息 -> 稳定性 -> 多地域测速 -> 解锁),各段独占会话不重叠。
 type ExamOrchestrator struct {
 	stages []examStage
 }
@@ -127,9 +127,21 @@ func (d *Detector) ExamStream(ctx context.Context, node *subscription.Node, emit
 		return ExamReport{}
 	}
 
-	stages := []examStage{stabilityStage(cfg, realClock(), probe)}
+	var stages []examStage
 
-	// 多地域测速段:独立节点会话串行测 [基准 + 8 区]。基准行(Cloudflare 就近 POP)为第一行对照。
+	// 第一段:出网信息(IPv4/IPv6/DNS)。前置以便用户 ~5s 内看到出口 IP/地区/DNS,死节点 fail-fast。
+	// 出网段独占串行:跑完才进稳定性采样,不破坏采样独占。真实探针叠加网络类失败重试(withEgressRetry);
+	// 工厂失败时走降级段(逐类 error 行),不静默跳过。
+	if eprobe, eerr := d.egressProbeFactory(node); eerr == nil {
+		stages = append(stages, egressStage(withEgressRetry(eprobe), egressSegmentTimeout))
+	} else {
+		stages = append(stages, egressErrorStage(eerr))
+	}
+
+	// 第二段:稳定性采样(1Hz 探测 generate_204),独占会话。
+	stages = append(stages, stabilityStage(cfg, realClock(), probe))
+
+	// 第三段:多地域测速。独立节点会话串行测 [基准 + 8 区]。基准行(Cloudflare 就近 POP)为第一行对照。
 	// 真实探针叠加单区(含基准)失败重试(withRegionRetry);探测器工厂失败时走降级段(逐区 error 行),
 	// 不静默跳过、也不发全局 error 打断前端。
 	regions := examRegionsWithBaseline()
@@ -139,23 +151,13 @@ func (d *Detector) ExamStream(ctx context.Context, node *subscription.Node, emit
 		stages = append(stages, regionSpeedErrorStage(regions, rerr))
 	}
 
-	// 第三段:解锁判定(6 目标)与出网信息探测(IPv4/IPv6/DNS)同段并行,皆为小请求。
-	// 各自独立节点会话;工厂失败时走各自降级段(逐项 error 行),与前两段同构,不静默跳过。
-	// 合成一个并发段并入编排:从编排器看仍是稳定性段之后的单个串行段,不破坏稳定性段独占。
-	// 真实探针叠加网络类失败重试(withUnlockRetry / withEgressRetry):传输抖动重试一次,
-	// 判定结论绝不重试;工厂失败时走各自降级段(逐项 error 行,不重试),与前两段同构。
-	var third []examStage
+	// 第四段:解锁判定(6 目标)。独立节点会话并行判定各目标。真实探针叠加网络类失败重试
+	// (withUnlockRetry):传输抖动重试一次,判定结论绝不重试;工厂失败时走降级段(逐项 error 行,不重试)。
 	if uprobe, uerr := d.unlockProbeFactory(node); uerr == nil {
-		third = append(third, unlockStage(DefaultUnlockTargets(), withUnlockRetry(uprobe), unlockSegmentTimeout))
+		stages = append(stages, unlockStage(DefaultUnlockTargets(), withUnlockRetry(uprobe), unlockSegmentTimeout))
 	} else {
-		third = append(third, unlockErrorStage(DefaultUnlockTargets(), uerr))
+		stages = append(stages, unlockErrorStage(DefaultUnlockTargets(), uerr))
 	}
-	if eprobe, eerr := d.egressProbeFactory(node); eerr == nil {
-		third = append(third, egressStage(withEgressRetry(eprobe), egressSegmentTimeout))
-	} else {
-		third = append(third, egressErrorStage(eerr))
-	}
-	stages = append(stages, concurrentStages("unlock_egress", third...))
 
 	orch := &ExamOrchestrator{stages: stages}
 	return orch.Run(ctx, emit)
