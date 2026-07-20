@@ -53,6 +53,8 @@ config.yaml
 .claude/*
 !.claude/skills/
 !.claude/skills/**
+!.claude/agents/
+!.claude/agents/**
 logs/
 .gstack/
 
