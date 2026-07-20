@@ -67,6 +67,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '安全审计', icon: 'Warning' }
       },
       {
+        path: 'jobs',
+        name: 'Jobs',
+        component: () => import('@/views/jobs/index.vue'),
+        meta: { title: '任务中心', icon: 'List' }
+      },
+      {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/Settings.vue'),
