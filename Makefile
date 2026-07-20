@@ -1,6 +1,10 @@
-.PHONY: help build build-frontend build-backend build-all clean test test-all test-v test-cover vet lint-frontend test-frontend test-shell check dev-frontend dev-backend start stop restart status install
+.PHONY: help build build-frontend build-backend build-all clean test test-all test-v test-cover vet lint-frontend test-frontend test-shell check dev-frontend dev-backend start stop restart status install geoip-update geoip-check
 
 BINARY_NAME=proxyhub
+
+# Embedded GeoIP (DB-IP Lite country mmdb, CC BY 4.0). The binary data file is
+# never committed; `make geoip-update` downloads and stages it here for go:embed.
+GEOIP_MMDB=internal/geoip/dbip-country.mmdb
 VERSION?=dev
 BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
 LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
@@ -20,14 +24,26 @@ build-frontend: ## 构建前端
 	cd web && npm install && npm run build
 	@echo "✅ 前端构建完成"
 
-build-backend: ## 构建后端
+geoip-update: ## 下载/刷新内嵌 GeoIP 数据库(DB-IP Lite,CC BY 4.0)
+	@echo "🌍 更新 GeoIP 数据库..."
+	bash scripts/geoip/update.sh
+	@echo "✅ GeoIP 数据库就位: $(GEOIP_MMDB)"
+
+geoip-check: ## 校验内嵌 GeoIP 数据库是否就位(缺失即硬失败)
+	@test -f $(GEOIP_MMDB) || { \
+		echo "❌ GeoIP 数据库缺失: $(GEOIP_MMDB)"; \
+		echo "   run 'make geoip-update' first"; \
+		exit 1; \
+	}
+
+build-backend: geoip-check ## 构建后端
 	@echo "🔧 构建后端..."
 	go build $(LDFLAGS) -o dist/$(BINARY_NAME) ./cmd/server
 	@echo "✅ 后端构建完成: dist/$(BINARY_NAME)"
 
 build: build-frontend build-backend ## 完整构建（前端+后端）
 
-build-all: build-frontend ## 构建所有平台
+build-all: geoip-check build-frontend ## 构建所有平台
 	@echo "🔧 构建多平台二进制..."
 	@mkdir -p dist/{linux-amd64,linux-arm64,darwin-amd64,darwin-arm64,windows-amd64}
 	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o dist/linux-amd64/$(BINARY_NAME) ./cmd/server
@@ -37,22 +53,22 @@ build-all: build-frontend ## 构建所有平台
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o dist/windows-amd64/$(BINARY_NAME).exe ./cmd/server
 	@echo "✅ 多平台构建完成"
 
-test: ## 运行所有测试(隔离 3 处既有失败;全量含它们用 test-all)
+test: geoip-check ## 运行所有测试(隔离 3 处既有失败;全量含它们用 test-all)
 	go test -skip '$(KNOWN_FAILING)' ./...
 
-test-all: ## 运行全部测试(含 3 处既有失败,预期红,用于完整性审计)
+test-all: geoip-check ## 运行全部测试(含 3 处既有失败,预期红,用于完整性审计)
 	-go test ./...
 
-test-v: ## 运行测试（详细输出）
+test-v: geoip-check ## 运行测试（详细输出）
 	go test -v ./...
 
-test-cover: ## 运行测试并生成覆盖率报告
+test-cover: geoip-check ## 运行测试并生成覆盖率报告
 	go test -cover ./...
 	go test -coverprofile=.test/coverage.out ./...
 	go tool cover -html=.test/coverage.out -o .test/coverage.html
 	@echo "✅ 覆盖率报告: .test/coverage.html"
 
-vet: ## go vet 静态检查
+vet: geoip-check ## go vet 静态检查
 	@echo "🔍 go vet..."
 	go vet ./...
 
@@ -64,10 +80,13 @@ test-frontend: ## 前端单元测试(vitest,纯逻辑)
 	@echo "🧪 前端单元测试..."
 	cd web && npm run test
 
-test-shell: ## 运行安装/运维脚本测试套件(scripts/install/test_*.sh)
+test-shell: ## 运行安装/运维/GeoIP 脚本测试套件(scripts/*/test_*.sh)
 	@echo "🧪 运行 shell 测试套件..."
-	@cd scripts/install && for t in test_*.sh; do \
-		bash $$t > /dev/null 2>&1 && echo "  ✅ $$t" || { echo "  ❌ $$t"; exit 1; }; \
+	@for d in scripts/install scripts/geoip; do \
+		for t in $$d/test_*.sh; do \
+			[ -f "$$t" ] || continue; \
+			bash "$$t" > /dev/null 2>&1 && echo "  ✅ $$t" || { echo "  ❌ $$t"; exit 1; }; \
+		done; \
 	done
 
 check: vet test test-shell lint-frontend ## 签入前聚合检查(vet + Go 测试 + shell 套件 + 前端 lint)

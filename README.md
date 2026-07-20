@@ -111,6 +111,9 @@ ProxyHub 采用纵深防御:仅监听环回地址、Caddy 强制 HTTPS、管理�
 
 MIT License - 详见 [LICENSE](LICENSE)
 
+本产品内置并使用了 [DB-IP](https://db-ip.com) 的 IP 地理位置数据(DB-IP Lite,依据 CC BY 4.0 许可)。
+This product uses DB-IP data, CC BY 4.0, https://db-ip.com
+
 ---
 
 项目地址:https://github.com/taliove/proxyhub

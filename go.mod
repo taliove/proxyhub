@@ -3,8 +3,10 @@ module github.com/taliove/proxyhub
 go 1.26.3
 
 require (
+	github.com/maxmind/mmdbwriter v1.2.0
 	github.com/metacubex/mihomo v1.19.28
 	github.com/mozillazg/go-pinyin v0.21.0
+	github.com/oschwald/maxminddb-golang v1.12.0
 	github.com/xtls/xray-core v1.260327.0
 	golang.org/x/crypto v0.54.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -96,6 +98,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/oasisprotocol/deoxysii v0.0.0-20220228165953-2091330c22b7 // indirect
 	github.com/openacid/low v0.1.21 // indirect
+	github.com/oschwald/maxminddb-golang/v2 v2.1.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pires/go-proxyproto v0.11.0 // indirect
 	github.com/rasky/go-lzo v0.0.0-20200203143853-96a758eda86e // indirect

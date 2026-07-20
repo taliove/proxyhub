@@ -72,6 +72,9 @@ jobs:
           go-version: '1.26'
           cache-dependency-path: go.sum
 
+      - name: Stage embedded GeoIP database
+        run: make geoip-update
+
       - name: Vet
         run: make vet
 
@@ -105,6 +108,9 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
+
+      - name: Stage embedded GeoIP database
+        run: make geoip-update
 
       - name: Package release matrix
         run: bash scripts/release/package.sh
@@ -148,6 +154,11 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+
+      # The Dockerfile's `go build` embeds the GeoIP database from the build
+      # context, so it must be staged before `docker build`.
+      - name: Stage embedded GeoIP database
+        run: make geoip-update
 
       - name: Derive lowercase image name and tags
         id: image

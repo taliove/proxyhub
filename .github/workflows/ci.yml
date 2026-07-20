@@ -29,6 +29,9 @@ jobs:
           go-version: '1.26'
           cache-dependency-path: go.sum
 
+      - name: Stage embedded GeoIP database
+        run: make geoip-update
+
       - name: Build
         run: make build-backend
 

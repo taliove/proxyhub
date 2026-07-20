@@ -20,6 +20,10 @@ proxyhub
 server
 .test
 
+# GeoIP download cache (the staged mmdb under internal/geoip IS needed for
+# go:embed and must stay in the build context).
+.geoip-cache
+
 # Runtime data
 logs
 *.db

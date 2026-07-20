@@ -4,6 +4,12 @@ dist/
 sub-outer/
 vendor/
 
+# Embedded GeoIP data (DB-IP Lite country mmdb): downloaded/staged by
+# `make geoip-update`, never committed. The .sha256 sidecars in scripts/geoip
+# ARE committed (small text, pin the expected checksum).
+.geoip-cache/
+internal/geoip/*.mmdb
+
 # Frontend build output (vite emits into cmd/server/web; only the
 # placeholder index.html is tracked)
 cmd/server/web/assets/
