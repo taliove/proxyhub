@@ -193,6 +193,14 @@ export interface ExamReport {
   unlock?: ExamUnlockMetrics
 }
 
+// 深度体检历史记录(后端 store.ExamHistoryEntry;report 已从 JSON 解析)
+export interface ExamHistoryEntry {
+  id: number
+  node_key: string
+  report: ExamReport
+  created_at: string // RFC3339
+}
+
 // 深度体检 SSE 事件帧
 export interface ExamEvent {
   phase: 'sample' | 'region' | 'unlock' | 'section_done' | 'done' | 'error'

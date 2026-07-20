@@ -72,6 +72,15 @@
         </el-tag>
       </div>
 
+      <!-- 体检历史时间线:历次深度体检,点开看完整三段报告卡;空历史给引导态 -->
+      <div class="drawer-block">
+        <ExamHistoryTimeline
+          :entries="examEntries"
+          :loading="examLoading"
+          @exam="emit('exam', node)"
+        />
+      </div>
+
       <!-- 抽屉内只允许轻量操作:针对当前节点跑一次解锁检测 -->
       <div class="drawer-actions">
         <el-button type="primary" size="small" :disabled="detecting" @click="emit('detect', node)">
@@ -83,9 +92,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { Node } from '@/types'
+import { computed, ref, watch } from 'vue'
+import type { ExamHistoryEntry, Node } from '@/types'
 import { isGenericVariant, unlockDisplayRows } from '../unlock'
+import { fetchExamHistory } from '@/api/exam'
+import ExamHistoryTimeline from '@/components/exam/ExamHistoryTimeline.vue'
 
 const visible = defineModel<boolean>({ required: true })
 
@@ -96,9 +107,36 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'detect', node: Node): void
+  (e: 'exam', node: Node): void
 }>()
 
 const rows = computed(() => (props.node ? unlockDisplayRows(props.node) : []))
+
+// 体检历史:抽屉打开且有节点时按需拉取(每节点最多 50 条,一次拉全,时间线内分批渲染)。
+const examEntries = ref<ExamHistoryEntry[]>([])
+const examLoading = ref(false)
+
+const loadExamHistory = async (nodeKey: string) => {
+  examLoading.value = true
+  examEntries.value = []
+  try {
+    examEntries.value = await fetchExamHistory({ node_key: nodeKey })
+  } catch {
+    examEntries.value = [] // 历史查询失败不阻塞抽屉,静默降级为空态
+  } finally {
+    examLoading.value = false
+  }
+}
+
+// 打开抽屉 / 切换节点时刷新历史;关闭时清空,避免下次闪现旧节点数据。
+watch(
+  () => [visible.value, props.node?.node_key] as const,
+  ([open, key]) => {
+    if (open && key) loadExamHistory(key)
+    else if (!open) examEntries.value = []
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>

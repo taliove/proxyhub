@@ -49,6 +49,20 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
+      <!-- 体检摘要:最近一次深度体检的稳定性分 + 相对时间;无历史不占位 -->
+      <el-table-column label="体检" width="150">
+        <template #default="{ row }">
+          <el-tag
+            v-if="badgeFor(row)"
+            size="small"
+            :type="badgeTagType(badgeFor(row)!.level)"
+            class="exam-badge"
+            :title="badgeFor(row)!.text"
+          >
+            稳定性 {{ badgeFor(row)!.score }} · {{ badgeFor(row)!.relative }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="解锁" width="100">
         <template #default="{ row }">
           <el-popover v-if="hasUnlock(row)" placement="left" width="300" trigger="hover">
@@ -167,6 +181,8 @@
 <script setup lang="ts">
 import { ArrowDown } from '@element-plus/icons-vue'
 import type { Node } from '@/types'
+import type { ExamBadge } from '@/components/exam/examhistory'
+import type { ScoreLevel } from '@/components/exam/stability'
 import { isSelfHosted } from '../utils'
 import { isGenericVariant, unlockDisplayRows, unlockSummary } from '../unlock'
 
@@ -176,14 +192,27 @@ export interface SortChange {
   order: string | null
 }
 
-defineProps<{
-  nodes: Node[]
-  loading: boolean
-  testing: boolean
-  page: number
-  pageSize: number
-  total: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    nodes: Node[]
+    loading: boolean
+    testing: boolean
+    page: number
+    pageSize: number
+    total: number
+    // node_key -> 最近一次体检摘要;缺省即无历史(不渲染徽标)
+    examSummaries?: Record<string, ExamBadge | undefined>
+  }>(),
+  { examSummaries: () => ({}) }
+)
+
+const badgeFor = (row: Node): ExamBadge | undefined => props.examSummaries[row.node_key]
+
+const badgeTagType = (level: ScoreLevel): 'success' | 'warning' | 'danger' => {
+  if (level === 'good') return 'success'
+  if (level === 'fair') return 'warning'
+  return 'danger'
+}
 
 const emit = defineEmits<{
   (e: 'selection-change', rows: Node[]): void
