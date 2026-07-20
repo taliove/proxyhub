@@ -1,43 +1,36 @@
 <template>
   <el-dialog
     v-model="visible"
-    :title="`深度体检 · ${nodeName}`"
-    width="560px"
+    width="960px"
+    class="exam-dialog"
     :close-on-click-modal="!running"
     :close-on-press-escape="!running"
     :show-close="!running"
     @closed="onClosed"
   >
-    <!-- 顶部总进度:三段加权进度条 + 当前段计数 + 终态/运行态标签(三态可区分)。 -->
-    <div class="exam-progress">
-      <div class="exam-progress-head">
-        <span class="exam-progress-counter">{{ counterText }}</span>
+    <!-- 头部:标题 + 三态标签(连接中/体检中/重连中/完成/已取消/连接失败)。 -->
+    <template #header>
+      <div class="exam-dialog-head">
+        <span class="exam-dialog-title">深度体检 · {{ nodeName }}</span>
         <el-tag :type="statusTag.type" size="small" effect="light">{{ statusTag.label }}</el-tag>
       </div>
-      <div class="exam-progress-track">
-        <div
-          class="exam-progress-fill"
-          :class="`exam-progress-fill-${statusTag.tone}`"
-          :style="{ width: `${progressPercent}%` }"
-        />
-      </div>
-    </div>
+    </template>
 
-    <!-- 三段串行体检,随 SSE 分段推送。段组件与历史报告卡(ExamReportCard)复用同一实现。 -->
-    <StabilitySection
-      :metrics="metrics"
+    <!-- 一屏化双栏体检:所有检测项从打开即全占位,数据到达即填值,正在处理项高亮。
+         与历史报告卡(ExamReportCard)复用同一 ExamReportLayout。 -->
+    <ExamReportLayout
+      :stability="metrics"
       :samples="samples"
-      :sub-text="phaseText"
-      :error="fatalError"
+      show-sparkline
+      :stability-error="fatalError"
+      :regions="regions"
+      :region-active="regionActive"
+      :unlocks="unlockResults"
+      :unlock-active="unlockActive"
+      :egress="egress"
+      :egress-active="egressActive"
+      :terminal="terminal"
     />
-    <RegionSpeedSection :regions="regions" :sub-text="regionPhaseText" />
-    <UnlockSection :results="unlockResults" :phase-text="unlockPhaseText" />
-    <EgressSection :egress="egress" :sub-text="egressPhaseText" />
-
-    <!-- 底部滚动日志:最近 ~8 条人类可读行,从各类帧生成。 -->
-    <div v-if="logLines.length" class="exam-log">
-      <div v-for="(line, i) in logLines" :key="i" class="exam-log-line">{{ line }}</div>
-    </div>
 
     <template #footer>
       <el-button v-if="running" :loading="cancelling" @click="cancel">取消体检</el-button>
@@ -60,14 +53,10 @@ import type {
 import { upsertRegionRow } from './exam/regionspeed'
 import { upsertUnlockRow } from './exam/unlock'
 import { mergeEgress } from './exam/egress'
-import { examProgressPercent, examSegmentCounter } from './exam/progress'
-import { examLogLine, appendExamLog } from './exam/examlog'
+import { regionSectionComplete } from './exam/examrows'
 import { ExamStream } from './exam/examstream'
 import type { ExamStreamStatus, EventSourceLike } from './exam/examstream'
-import StabilitySection from './exam/StabilitySection.vue'
-import RegionSpeedSection from './exam/RegionSpeedSection.vue'
-import UnlockSection from './exam/UnlockSection.vue'
-import EgressSection from './exam/EgressSection.vue'
+import ExamReportLayout from './exam/ExamReportLayout.vue'
 
 const visible = ref(false)
 const nodeName = ref('')
@@ -79,15 +68,12 @@ const metrics = ref<ExamStabilityMetrics | null>(null)
 const regions = ref<ExamRegionResult[]>([])
 const unlockResults = ref<ExamUnlockResult[]>([])
 const egress = ref<ExamEgressMetrics | null>(null)
-const logLines = ref<string[]>([])
-const currentRegionName = ref('')
-const currentUnlockName = ref('')
 const terminalError = ref('')
 
 let payload: { self_node_id?: number; node_key?: string } = {}
 let stream: ExamStream | null = null
 
-// 运行态:连接中 / 直播中 / 重连中(可取消,进度条推进)。
+// 运行态:连接中 / 直播中 / 重连中(可取消)。
 const running = computed(
   () => status.value === 'connecting' || status.value === 'live' || status.value === 'reconnecting'
 )
@@ -96,47 +82,35 @@ const terminal = computed(
   () => status.value === 'done' || status.value === 'cancelled' || status.value === 'error'
 )
 
-// 稳定性段是否收尾(metrics 到达)用于推进分段计数。
-const counts = computed(() => ({
-  samples: samples.value.length,
-  regions: regions.value.length,
-  unlocks: unlockResults.value.length,
-  stabilityDone: metrics.value !== null
-}))
+// 段进行中判定(驱动各段首个 waiting 行的高亮转移):
+// - 稳定性收尾(metrics 到达)后多地域段开测,8 固定区域全到达即收尾(基准可缺席不阻塞);
+// - 多地域收尾后解锁与出网并行开测。
+const stabilityDone = computed(() => metrics.value !== null)
+const regionsComplete = computed(() => regionSectionComplete(regions.value))
+const regionActive = computed(() => running.value && stabilityDone.value && !regionsComplete.value)
+const unlockActive = computed(() => running.value && regionsComplete.value)
+const egressActive = computed(() => running.value && regionsComplete.value)
 
-const progressPercent = computed(() =>
-  status.value === 'done' ? 100 : examProgressPercent(counts.value)
-)
-
-const counterText = computed(
-  () =>
-    examSegmentCounter(counts.value, {
-      regionName: currentRegionName.value,
-      unlockName: currentUnlockName.value
-    }).text
-)
-
-// 状态标签:三态(完成/已取消/连接失败)与运行态互斥可区分;tone 同时驱动进度条配色。
+// 三态标签:完成/已取消/连接失败(终态)与连接中/体检中/重连中(运行态)互斥可区分。
 const statusTag = computed<{
   label: string
   type: 'success' | 'info' | 'warning' | 'danger'
-  tone: string
 }>(() => {
   switch (status.value) {
     case 'connecting':
-      return { label: '连接中', type: 'info', tone: 'live' }
+      return { label: '连接中', type: 'info' }
     case 'live':
-      return { label: '体检中', type: 'info', tone: 'live' }
+      return { label: '体检中', type: 'info' }
     case 'reconnecting':
-      return { label: '重连中…', type: 'warning', tone: 'warn' }
+      return { label: '重连中…', type: 'warning' }
     case 'done':
-      return { label: '完成', type: 'success', tone: 'done' }
+      return { label: '完成', type: 'success' }
     case 'cancelled':
-      return { label: '已取消', type: 'info', tone: 'cancelled' }
+      return { label: '已取消', type: 'info' }
     case 'error':
-      return { label: '连接失败', type: 'danger', tone: 'error' }
+      return { label: '连接失败', type: 'danger' }
     default:
-      return { label: '准备中', type: 'info', tone: 'live' }
+      return { label: '准备中', type: 'info' }
   }
 })
 
@@ -144,26 +118,6 @@ const statusTag = computed<{
 const fatalError = computed(() =>
   status.value === 'error' ? terminalError.value || '连接失败' : ''
 )
-
-const phaseText = computed(() => {
-  if (status.value === 'reconnecting') return '连接中断,重连中…'
-  if (metrics.value) return '稳定性完成'
-  if (running.value) return '稳定性采样中…'
-  return '准备中…'
-})
-const regionPhaseText = computed(() => {
-  if (regions.value.length === 0) return '等待中…'
-  return regions.value.length >= 8 ? '多地域测速完成' : '多地域测速中…'
-})
-const unlockPhaseText = computed(() => {
-  if (unlockResults.value.length === 0) return '等待中…'
-  return unlockResults.value.length >= 6 ? '解锁检测完成' : '解锁检测中…'
-})
-const egressPhaseText = computed(() => {
-  if (egress.value === null) return '等待中…'
-  const e = egress.value
-  return e.ipv4 && e.ipv6 && e.dns ? '出网信息探测完成' : '出网信息探测中…'
-})
 
 const open = (p: { self_node_id?: number; node_key?: string }, name: string) => {
   payload = p
@@ -179,9 +133,6 @@ const reset = () => {
   regions.value = []
   unlockResults.value = []
   egress.value = null
-  logLines.value = []
-  currentRegionName.value = ''
-  currentUnlockName.value = ''
   terminalError.value = ''
   cancelling.value = false
   status.value = 'idle'
@@ -209,19 +160,13 @@ const runExam = (force = false) => {
   stream.start(`/api/nodes/exam/stream?${params}`)
 }
 
-const pushLog = (frame: ExamEvent) => {
-  logLines.value = appendExamLog(logLines.value, examLogLine(frame))
-}
-
 const onFrame = (frame: ExamEvent) => {
   if (frame.phase === 'sample' && frame.sample) {
     samples.value = [...samples.value, frame.sample]
   } else if (frame.phase === 'region' && frame.region) {
     regions.value = upsertRegionRow(regions.value, frame.region)
-    currentRegionName.value = frame.region.name
   } else if (frame.phase === 'unlock' && frame.unlock_result) {
     unlockResults.value = upsertUnlockRow(unlockResults.value, frame.unlock_result)
-    currentUnlockName.value = frame.unlock_result.target_name
   } else if (frame.phase === 'egress' && frame.egress) {
     // 逐条到达:按子项不可变叠加(IPv4/IPv6/DNS 各带一类)。
     egress.value = mergeEgress(egress.value, frame.egress)
@@ -231,7 +176,6 @@ const onFrame = (frame: ExamEvent) => {
   } else if (frame.phase === 'section_done' && frame.metrics) {
     metrics.value = frame.metrics
   }
-  pushLog(frame)
 }
 
 const onStatus = (s: ExamStreamStatus) => {
@@ -239,10 +183,9 @@ const onStatus = (s: ExamStreamStatus) => {
   if (s === 'cancelled' || s === 'done' || s === 'error') cancelling.value = false
 }
 
-// 终态帧携带的信息:error 帧带失败文案,cancelled/done 帧补一条日志。
+// 终态帧携带的信息:error 帧带失败文案。
 const onTerminal = (frame: ExamEvent) => {
   if (frame.phase === 'error') terminalError.value = frame.error || '体检失败'
-  pushLog(frame)
 }
 
 const cancel = () => {
@@ -269,59 +212,14 @@ defineExpose({ open })
 </script>
 
 <style scoped>
-.exam-progress {
-  margin-bottom: var(--ph-space-4);
-}
-.exam-progress-head {
+.exam-dialog-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--ph-space-2);
+  gap: var(--ph-space-3);
 }
-.exam-progress-counter {
-  font-size: var(--ph-text-sm);
+.exam-dialog-title {
+  font-size: var(--ph-text-md);
   font-weight: 600;
-  color: var(--ph-text-regular);
-}
-.exam-progress-track {
-  height: 6px;
-  border-radius: var(--ph-radius-full);
-  background: var(--ph-bg-hover);
-  overflow: hidden;
-}
-.exam-progress-fill {
-  height: 100%;
-  border-radius: var(--ph-radius-full);
-  transition: width 0.3s ease;
-  background: var(--ph-color-primary);
-}
-.exam-progress-fill-done {
-  background: var(--ph-success);
-}
-.exam-progress-fill-warn {
-  background: var(--ph-warning);
-}
-.exam-progress-fill-error {
-  background: var(--ph-danger);
-}
-.exam-progress-fill-cancelled {
-  background: var(--ph-text-secondary);
-}
-.exam-log {
-  margin-top: var(--ph-space-4);
-  padding: var(--ph-space-3);
-  border-radius: var(--ph-radius-sm);
-  background: var(--ph-bg-hover);
-  font-size: var(--ph-text-xs);
-  color: var(--ph-text-secondary);
-  line-height: 1.7;
-  max-height: 132px;
-  overflow-y: auto;
-}
-.exam-log-line {
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--ph-text-primary);
 }
 </style>
