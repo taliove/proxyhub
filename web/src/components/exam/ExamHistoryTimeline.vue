@@ -39,6 +39,8 @@
           <ExamReportCard
             v-if="item.id === selectedId && selectedReport"
             :report="selectedReport"
+            :node-name="nodeName"
+            :exam-time="item.createdAt"
             class="exam-timeline-report"
           />
         </li>
@@ -68,8 +70,10 @@ const props = withDefaults(
   defineProps<{
     entries: ExamHistoryEntry[]
     loading?: boolean
+    // 分享卡展示用节点名(宿主抽屉可透传节点显示名);缺省时分享卡回落打码占位。
+    nodeName?: string
   }>(),
-  { loading: false }
+  { loading: false, nodeName: '' }
 )
 
 const emit = defineEmits<{ (e: 'exam'): void }>()
