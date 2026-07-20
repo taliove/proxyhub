@@ -308,6 +308,131 @@ func TestEgressErrorStage_EmitsErrorRows(t *testing.T) {
 	}
 }
 
+// --- 出网重试:网络类失败重试;明确负判定 / 解析失败不重试 ---
+
+// TestWithEgressRetry_IPv4TransientRetried IPv4 传输失败先失败后成功:重试捞回。
+func TestWithEgressRetry_IPv4TransientRetried(t *testing.T) {
+	calls := 0
+	probe := EgressProbe{
+		IPv4: func(context.Context) EgressIPv4 {
+			calls++
+			if calls == 1 {
+				return EgressIPv4{Error: "请求失败: dial tcp: i/o timeout"}
+			}
+			return EgressIPv4{IP: "203.0.113.7", Country: "United States"}
+		},
+		IPv6: func(context.Context) EgressIPv6 { return EgressIPv6{Available: false} },
+		DNS:  func(context.Context) EgressDNS { return EgressDNS{ResolverIP: "198.51.100.9"} },
+	}
+	res := withEgressRetry(probe).IPv4(context.Background())
+	if res.Error != "" || res.IP != "203.0.113.7" {
+		t.Errorf("ipv4 = %+v, want recovered", res)
+	}
+	if calls != 2 {
+		t.Errorf("ipv4 calls = %d, want 2", calls)
+	}
+}
+
+// TestWithEgressRetry_IPv4ParseFailNotRetried 解析失败(拿到响应但非法)非传输类,不重试。
+func TestWithEgressRetry_IPv4ParseFailNotRetried(t *testing.T) {
+	calls := 0
+	probe := EgressProbe{
+		IPv4: func(context.Context) EgressIPv4 {
+			calls++
+			return EgressIPv4{Error: "解析 IPv4 出口响应失败: invalid character"}
+		},
+		IPv6: func(context.Context) EgressIPv6 { return EgressIPv6{Available: false} },
+		DNS:  func(context.Context) EgressDNS { return EgressDNS{ResolverIP: "198.51.100.9"} },
+	}
+	withEgressRetry(probe).IPv4(context.Background())
+	if calls != 1 {
+		t.Errorf("parse failure retried (%d calls), want 1", calls)
+	}
+}
+
+// TestWithEgressRetry_IPv6TimeoutRetried IPv6 探测超时(传输类)重试;成功即返回。
+func TestWithEgressRetry_IPv6TimeoutRetried(t *testing.T) {
+	calls := 0
+	probe := EgressProbe{
+		IPv4: func(context.Context) EgressIPv4 { return EgressIPv4{IP: "203.0.113.7"} },
+		IPv6: func(context.Context) EgressIPv6 {
+			calls++
+			if calls == 1 {
+				return EgressIPv6{Available: false, Error: "IPv6 出口探测超时"}
+			}
+			return EgressIPv6{Available: true, Address: "2001:db8::1"}
+		},
+		DNS: func(context.Context) EgressDNS { return EgressDNS{ResolverIP: "198.51.100.9"} },
+	}
+	res := withEgressRetry(probe).IPv6(context.Background())
+	if !res.Available || res.Address != "2001:db8::1" {
+		t.Errorf("ipv6 = %+v, want recovered available", res)
+	}
+	if calls != 2 {
+		t.Errorf("ipv6 calls = %d, want 2", calls)
+	}
+}
+
+// TestWithEgressRetry_IPv6UnreachableNotRetried 不可达是明确负判定(Error 空),绝不重试。
+func TestWithEgressRetry_IPv6UnreachableNotRetried(t *testing.T) {
+	calls := 0
+	probe := EgressProbe{
+		IPv4: func(context.Context) EgressIPv4 { return EgressIPv4{IP: "203.0.113.7"} },
+		IPv6: func(context.Context) EgressIPv6 {
+			calls++
+			return EgressIPv6{Available: false} // 明确无 IPv6 出口
+		},
+		DNS: func(context.Context) EgressDNS { return EgressDNS{ResolverIP: "198.51.100.9"} },
+	}
+	res := withEgressRetry(probe).IPv6(context.Background())
+	if res.Available {
+		t.Error("unreachable must stay negative")
+	}
+	if calls != 1 {
+		t.Errorf("definite no-egress retried (%d calls), want 1", calls)
+	}
+}
+
+// TestWithEgressRetry_DNSTransientRetried DNS 传输失败重试捞回。
+func TestWithEgressRetry_DNSTransientRetried(t *testing.T) {
+	calls := 0
+	probe := EgressProbe{
+		IPv4: func(context.Context) EgressIPv4 { return EgressIPv4{IP: "203.0.113.7"} },
+		IPv6: func(context.Context) EgressIPv6 { return EgressIPv6{Available: false} },
+		DNS: func(context.Context) EgressDNS {
+			calls++
+			if calls == 1 {
+				return EgressDNS{Error: "请求失败: unexpected EOF"}
+			}
+			return EgressDNS{ResolverIP: "198.51.100.9", ResolverGeo: "United States - Example DNS"}
+		},
+	}
+	res := withEgressRetry(probe).DNS(context.Background())
+	if res.Error != "" || res.ResolverIP != "198.51.100.9" {
+		t.Errorf("dns = %+v, want recovered", res)
+	}
+	if calls != 2 {
+		t.Errorf("dns calls = %d, want 2", calls)
+	}
+}
+
+// TestWithEgressRetry_SuccessNoRetry 三类首探即成功:各只调用一次。
+func TestWithEgressRetry_SuccessNoRetry(t *testing.T) {
+	var v4, v6, dns int
+	probe := EgressProbe{
+		IPv4: func(context.Context) EgressIPv4 { v4++; return EgressIPv4{IP: "203.0.113.7"} },
+		IPv6: func(context.Context) EgressIPv6 { v6++; return EgressIPv6{Available: true, Address: "2001:db8::1"} },
+		DNS:  func(context.Context) EgressDNS { dns++; return EgressDNS{ResolverIP: "198.51.100.9"} },
+	}
+	wrapped := withEgressRetry(probe)
+	wrapped.IPv4(context.Background())
+	wrapped.IPv6(context.Background())
+	wrapped.DNS(context.Background())
+	if v4 != 1 || v6 != 1 || dns != 1 {
+		t.Errorf("success calls = %d/%d/%d, want 1/1/1", v4, v6, dns)
+	}
+}
+
 // --- 并行组合段:出网探测与解锁判定同段并行,不串行 ---
 
 func TestConcurrentStages_RunsSubStagesInParallel(t *testing.T) {

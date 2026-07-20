@@ -173,6 +173,7 @@ func TestExamStream_StabilityThenRegionOrder(t *testing.T) {
 
 	var phases []string
 	var stabilityDoneAt, firstRegionAt, regionDoneAt, doneAt = -1, -1, -1, -1
+	var firstRegionName string
 	report := d.ExamStream(context.Background(), node, func(e ExamEvent) {
 		i := len(phases)
 		phases = append(phases, e.Phase+"/"+e.Section)
@@ -182,6 +183,7 @@ func TestExamStream_StabilityThenRegionOrder(t *testing.T) {
 		case e.Phase == "region":
 			if firstRegionAt == -1 {
 				firstRegionAt = i
+				firstRegionName = e.Region.Name
 			}
 		case e.Phase == "section_done" && e.Section == "region_speed":
 			regionDoneAt = i
@@ -197,11 +199,15 @@ func TestExamStream_StabilityThenRegionOrder(t *testing.T) {
 		t.Errorf("order wrong: stabilityDone=%d firstRegion=%d regionDone=%d done=%d (%v)",
 			stabilityDoneAt, firstRegionAt, regionDoneAt, doneAt, phases)
 	}
+	if firstRegionName != "基准" {
+		t.Errorf("first region row = %q, want 基准 (baseline is the first multi-region row)", firstRegionName)
+	}
 	if report.Stability == nil || report.RegionSpeed == nil {
 		t.Errorf("report missing sections: %+v", report)
 	}
-	if len(report.RegionSpeed.Regions) != len(examRegions) {
-		t.Errorf("region rows = %d, want %d", len(report.RegionSpeed.Regions), len(examRegions))
+	// 基准行 + 8 区 = len(examRegions)+1。
+	if len(report.RegionSpeed.Regions) != len(examRegions)+1 {
+		t.Errorf("region rows = %d, want %d (baseline + %d regions)", len(report.RegionSpeed.Regions), len(examRegions)+1, len(examRegions))
 	}
 }
 
@@ -290,6 +296,154 @@ func TestMeasureRegionSpeed_SuccessAndError(t *testing.T) {
 	failed := measureRegionSpeed(context.Background(), client, Region{Code: "bad", Name: "BAD", URL: bad.URL}, slice, hard)
 	if failed.Error == "" {
 		t.Errorf("bad region (403) should carry an error, got %+v", failed)
+	}
+}
+
+// --- 基准对照行:多地域段第一行,name="基准",Cloudflare 就近 POP ---
+
+func TestExamRegionsWithBaseline_BaselineFirst(t *testing.T) {
+	regions := examRegionsWithBaseline()
+	if len(regions) != len(examRegions)+1 {
+		t.Fatalf("len = %d, want %d (baseline + %d regions)", len(regions), len(examRegions)+1, len(examRegions))
+	}
+	base := regions[0]
+	if base.Name != "基准" {
+		t.Errorf("first row name = %q, want 基准", base.Name)
+	}
+	if base.Code == "" {
+		t.Error("baseline code must be non-empty (stable key)")
+	}
+	if !strings.Contains(base.URL, "speed.cloudflare.com") {
+		t.Errorf("baseline URL = %q, want Cloudflare down endpoint", base.URL)
+	}
+	// 其后必须是原样 8 区(基准不污染 examRegions)。
+	for i, r := range examRegions {
+		if regions[i+1].Code != r.Code {
+			t.Errorf("region[%d] = %q, want %q (baseline must not reorder regions)", i+1, regions[i+1].Code, r.Code)
+		}
+	}
+	if len(examRegions) != 8 {
+		t.Errorf("examRegions mutated: len = %d, want 8", len(examRegions))
+	}
+}
+
+func TestRegionSpeedStage_BaselineRowEmittedFirst(t *testing.T) {
+	probe := func(_ context.Context, r Region) RegionResult {
+		return RegionResult{Code: r.Code, Name: r.Name, TTFBms: 20, DownMbps: 30}
+	}
+	stage := regionSpeedStage(examRegionsWithBaseline(), probe)
+
+	var firstRowName string
+	seen := false
+	var report ExamReport
+	stage.run(context.Background(), func(e ExamEvent) {
+		if e.Phase == "region" && !seen {
+			seen = true
+			firstRowName = e.Region.Name
+		}
+	}, &report)
+
+	if firstRowName != "基准" {
+		t.Errorf("first emitted region row = %q, want 基准", firstRowName)
+	}
+	if report.RegionSpeed == nil || len(report.RegionSpeed.Regions) != len(examRegions)+1 {
+		t.Errorf("report rows = %+v, want %d", report.RegionSpeed, len(examRegions)+1)
+	}
+	if report.RegionSpeed.Regions[0].Name != "基准" {
+		t.Errorf("report first row = %q, want 基准", report.RegionSpeed.Regions[0].Name)
+	}
+}
+
+// --- 单区(含基准)失败自动重试:捞回 / 耗尽 / 成功不重试 / 串行独占不回归 ---
+
+func TestWithRegionRetry_RecoversAfterRetry(t *testing.T) {
+	calls := 0
+	probe := func(_ context.Context, r Region) RegionResult {
+		calls++
+		if calls == 1 {
+			return RegionResult{Code: r.Code, Name: r.Name, Error: "dial tcp: i/o timeout"}
+		}
+		return RegionResult{Code: r.Code, Name: r.Name, TTFBms: 25, DownMbps: 40}
+	}
+	res := withRegionRetry(probe)(context.Background(), Region{Code: "a", Name: "A"})
+	if res.Error != "" {
+		t.Errorf("result error = %q, want recovered (empty)", res.Error)
+	}
+	if res.DownMbps != 40 {
+		t.Errorf("down = %v, want 40 (second attempt result)", res.DownMbps)
+	}
+	if calls != 2 {
+		t.Errorf("probe calls = %d, want 2 (one retry)", calls)
+	}
+}
+
+func TestWithRegionRetry_ExhaustsToError(t *testing.T) {
+	calls := 0
+	probe := func(_ context.Context, r Region) RegionResult {
+		calls++
+		return RegionResult{Code: r.Code, Name: r.Name, Error: "boom"}
+	}
+	res := withRegionRetry(probe)(context.Background(), Region{Code: "a", Name: "A"})
+	if res.Error == "" {
+		t.Error("exhausted retries should still carry error")
+	}
+	if calls != examRegionMaxRetries+1 {
+		t.Errorf("probe calls = %d, want %d (initial + retries)", calls, examRegionMaxRetries+1)
+	}
+}
+
+func TestWithRegionRetry_SuccessNoRetry(t *testing.T) {
+	calls := 0
+	probe := func(_ context.Context, r Region) RegionResult {
+		calls++
+		return RegionResult{Code: r.Code, Name: r.Name, TTFBms: 10, DownMbps: 99}
+	}
+	res := withRegionRetry(probe)(context.Background(), Region{Code: "a", Name: "A"})
+	if res.DownMbps != 99 || calls != 1 {
+		t.Errorf("success path: down=%v calls=%d, want 99 and 1 call", res.DownMbps, calls)
+	}
+}
+
+// TestWithRegionRetry_SerialInSampler 重试不破坏串行独占:即便每区首探失败触发重试,
+// 任一时刻只有一路探测在飞,且每区只 emit 最终一行(重试期间不 emit 中间失败态)。
+func TestWithRegionRetry_SerialInSampler(t *testing.T) {
+	regions := []Region{{Code: "a", Name: "A"}, {Code: "b", Name: "B"}}
+	var active atomic.Int32
+	var overlap atomic.Bool
+	attempt := map[string]int{}
+	probe := func(_ context.Context, r Region) RegionResult {
+		if active.Add(1) != 1 {
+			overlap.Store(true)
+		}
+		attempt[r.Code]++
+		res := RegionResult{Code: r.Code, Name: r.Name, TTFBms: 15, DownMbps: 20}
+		if attempt[r.Code] == 1 {
+			res = RegionResult{Code: r.Code, Name: r.Name, Error: "connection reset by peer"}
+		}
+		active.Add(-1)
+		return res
+	}
+
+	var emitted []RegionResult
+	results := runRegionSpeedSampler(context.Background(), regions, withRegionRetry(probe), func(r RegionResult) {
+		emitted = append(emitted, r)
+	})
+
+	if overlap.Load() {
+		t.Error("retry overlapped probes: serial exclusivity violated")
+	}
+	if len(emitted) != 2 {
+		t.Fatalf("emitted rows = %d, want 2 (one final row per region, no intermediate failure)", len(emitted))
+	}
+	for i, r := range emitted {
+		if r.Error != "" {
+			t.Errorf("emitted[%d] = %+v, want recovered final row (no error)", i, r)
+		}
+	}
+	for _, r := range results {
+		if r.Error != "" {
+			t.Errorf("result %+v should be recovered after retry", r)
+		}
 	}
 }
 

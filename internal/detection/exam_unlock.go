@@ -49,6 +49,19 @@ func runUnlockChecks(ctx context.Context, targets []Target, probe UnlockProbe, o
 	return results
 }
 
+// withUnlockRetry 包裹解锁探针,叠加网络类失败重试:传输抖动(Level 为空且 Error 为传输类)
+// 重试至多 examTransientMaxRetries 次,仅返回最后一次结果;判定结论(full/blocked/originals_only,
+// Level 非空)绝不重试,解析/配置类失败(非传输)也不重试。ctx 取消则不再重试。
+// 重试在单次探针调用内同步完成,对 runUnlockChecks 透明,不改判定器本身(包在调用侧)。
+func withUnlockRetry(probe UnlockProbe) UnlockProbe {
+	return func(ctx context.Context, target Target) Result {
+		return retryResult(ctx, examTransientMaxRetries,
+			func() Result { return probe(ctx, target) },
+			func(res Result) bool { return res.Level == "" && isTransientNetError(res.Error) },
+		)
+	}
+}
+
 // unlockStage 构造解锁段:整段套一个总超时,并行判定各目标,每完成一个推 unlock 行,段末推 section_done + 指标。
 func unlockStage(targets []Target, probe UnlockProbe, timeout time.Duration) examStage {
 	return examStage{

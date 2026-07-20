@@ -15,7 +15,43 @@ import (
 const (
 	regionSliceDurationSec = 5 // 每区下载切片时长(秒)
 	regionHardTimeoutSec   = 8 // 单区硬超时上限(秒):含建连 + TTFB + 切片,防链路卡死
+	// examRegionMaxRetries 单区(含基准)测速失败后的最大重试次数。
+	// 高延迟链路(4s+)上单次探测易偶发超时,多区一半被误判为失败;失败后自动重试这么多次,
+	// 仍失败才标 error(重试期间不 emit 中间失败态,见 withRegionRetry)。区域探测无判定结论,
+	// 任一失败(Error 非空)皆重试。改此值即调整重试力度。
+	examRegionMaxRetries = 1
 )
+
+// baselineRegion 基准对照行(多地域段第一行):经节点打 Cloudflare 就近 POP(speed.cloudflare.com/__down),
+// 与 8 个区域行同一探针形态(TTFB + 下行切片),等价于 bench.sh 里 Speedtest.net 自动选最近服务器的对照。
+// 它就是一个特殊区域行,复用区域探针实现,不另起测量路径。URL 复用 bandwidth 段下行首选点(唯一事实源)。
+var baselineRegion = Region{
+	Code: "baseline",
+	Name: "基准",
+	URL:  downloadFallbackURLs[0], // Cloudflare 100MB 下行点(与 bandwidth 段一致)
+}
+
+// examRegionsWithBaseline 多地域段实际测量序列:基准对照行在前,其后为 8 个固定区域。
+// 返回新切片,不修改 examRegions(不可变)。
+func examRegionsWithBaseline() []Region {
+	out := make([]Region, 0, len(examRegions)+1)
+	out = append(out, baselineRegion)
+	out = append(out, examRegions...)
+	return out
+}
+
+// withRegionRetry 包裹区域探针,叠加单区(含基准)失败重试:任一探测失败(Error 非空)自动重试
+// 至多 examRegionMaxRetries 次,仅返回最后一次结果(重试期间不 emit 中间失败态);ctx 取消则不再重试。
+// 重试在单次探针调用内同步完成,对 runRegionSpeedSampler 透明,不破坏串行独占与单区硬超时
+//(每次 attempt 由 measureRegionSpeed 各自套用 hard 超时)。
+func withRegionRetry(probe RegionSpeedProbe) RegionSpeedProbe {
+	return func(ctx context.Context, r Region) RegionResult {
+		return retryResult(ctx, examRegionMaxRetries,
+			func() RegionResult { return probe(ctx, r) },
+			func(res RegionResult) bool { return res.Error != "" },
+		)
+	}
+}
 
 // Region 一个固定测速区域。URL 指向该区域 Linode 数据中心的测速文件。
 type Region struct {
