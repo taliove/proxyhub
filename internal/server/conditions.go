@@ -1,0 +1,127 @@
+package server
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+
+	"github.com/taliove/proxyhub/internal/store"
+	"github.com/taliove/proxyhub/internal/subfilter"
+	"github.com/taliove/proxyhub/internal/subscription"
+)
+
+// applyConditions 按订阅地址的节点范围条件过滤节点池(见 internal/subfilter)。
+// /sub 与后台预览共用,保证所见即所得。空条件短路返回原池(零回归)。
+// 解析失败降级为不过滤(宁可多给节点,与全局过滤链的降级风格一致)。
+//
+// 注意:条件对所有节点统一生效(含自建节点)。自建节点在全局卫生过滤(白/黑名单/屏蔽)中
+// 是 FailBack 安全网而豁免;但 conditions 是用户对本订阅地址的显式取范围意图,应可预测地收窄。
+// 默认(空条件)完整保留现状,含自建 FailBack。
+func (s *Server) applyConditions(nodes []*subscription.Node, ep *store.Endpoint) []*subscription.Node {
+	cond, err := subfilter.Parse(ep.Conditions)
+	if err != nil {
+		s.logger.Warn("parse endpoint conditions failed, skipping condition filter",
+			"endpoint", ep.ID, "error", err)
+		return nodes
+	}
+	return s.applyConditionsResolved(nodes, cond)
+}
+
+// applyConditionsResolved 用已解析的条件过滤节点池。tag 维度按需拉取 node_tags;
+// 拉取失败时丢弃 tag 维度(保留机场/地区/关键词维度),而非把订阅打空。
+func (s *Server) applyConditionsResolved(nodes []*subscription.Node, cond subfilter.Conditions) []*subscription.Node {
+	if cond.IsEmpty() {
+		return nodes
+	}
+	if !cond.NeedsTags() {
+		return subfilter.Filter(nodes, nil, cond)
+	}
+	tagsByKey, ok := s.collectNodeTags(nodes)
+	if !ok {
+		// 标签数据读不出:丢弃 tag 维度,用其余维度过滤(降级=宁可多给节点)。
+		// 构造新条件而非原地改,保持不可变。
+		cond = subfilter.Conditions{Airports: cond.Airports, Regions: cond.Regions, Keyword: cond.Keyword}
+		return subfilter.Filter(nodes, nil, cond)
+	}
+	return subfilter.Filter(nodes, tagsByKey, cond)
+}
+
+// collectNodeTags 批量拉取节点池的自动标签(NodeKey -> tags)。分块调用 ListNodeTags,
+// 规避 SQLite 变量数上限。任一分块失败返回 ok=false,交由调用方降级。
+func (s *Server) collectNodeTags(nodes []*subscription.Node) (map[string][]string, bool) {
+	keys := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		keys = append(keys, n.NodeKey())
+	}
+	const chunk = 500
+	result := make(map[string][]string, len(keys))
+	for i := 0; i < len(keys); i += chunk {
+		end := i + chunk
+		if end > len(keys) {
+			end = len(keys)
+		}
+		part, err := s.st.ListNodeTags(keys[i:end])
+		if err != nil {
+			s.logger.Warn("list node tags for conditions failed, dropping tag filter", "error", err)
+			return nil, false
+		}
+		for k, v := range part {
+			result[k] = v
+		}
+	}
+	return result, true
+}
+
+// handleUpdateEndpointConditions 设置订阅地址的节点范围条件。请求体即 Conditions 对象。
+// 空条件落库为空串(表示全量);非法请求体 -> 400;端点不存在 -> 404。
+func (s *Server) handleUpdateEndpointConditions(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var cond subfilter.Conditions
+	if err := json.NewDecoder(r.Body).Decode(&cond); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	raw := ""
+	if !cond.IsEmpty() {
+		raw, err = cond.Marshal()
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if err := s.st.UpdateEndpointConditions(id, raw); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		// JSON 已在上方校验,走到这里只剩真实 DB 错误:服务端故障回 500,不外泄底层信息。
+		s.logger.Error("update endpoint conditions failed", "endpoint", id, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handlePreviewConditions 预览一组(未保存的)条件在当前节点池上的命中数,用于编辑时实时反馈。
+// total = 全局过滤链后的可下发节点数;count = 再套用条件后命中的节点数。走与 /sub 同一条链。
+func (s *Server) handlePreviewConditions(w http.ResponseWriter, r *http.Request) {
+	var cond subfilter.Conditions
+	if err := json.NewDecoder(r.Body).Decode(&cond); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	filtered := s.filteredNodes(s.nodes.Nodes())
+	matched := s.applyConditionsResolved(filtered, cond)
+	writeJSON(w, map[string]int{
+		"total": len(filtered),
+		"count": len(matched),
+	})
+}

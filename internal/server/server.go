@@ -123,6 +123,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/endpoints", s.requireAuth(s.handleCreateEndpoint))
 	mux.HandleFunc("POST /api/endpoints/{id}/toggle", s.requireAuth(s.handleToggleEndpoint))
 	mux.HandleFunc("PUT /api/endpoints/{id}/name-config", s.requireAuth(s.handleUpdateEndpointNameConfig))
+	mux.HandleFunc("PUT /api/endpoints/{id}/conditions", s.requireAuth(s.handleUpdateEndpointConditions))
+	mux.HandleFunc("POST /api/endpoints/preview-conditions", s.requireAuth(s.handlePreviewConditions))
 	mux.HandleFunc("DELETE /api/endpoints/{id}", s.requireAuth(s.handleDeleteEndpoint))
 	mux.HandleFunc("GET /api/endpoints/{id}/stats", s.requireAuth(s.handleEndpointStats))
 	mux.HandleFunc("GET /api/endpoints/{id}/preview", s.requireAuth(s.handleEndpointPreview))
@@ -303,6 +305,8 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 
 	// 订阅时过滤链：白名单 → 黑名单 → 机场屏蔽，自建节点全程豁免（见 ADR 0005/0009）
 	nodes = s.filteredNodes(nodes)
+	// 该订阅地址的节点范围条件(动态查询,见 internal/subfilter);空条件=全量(零回归)
+	nodes = s.applyConditions(nodes, ep)
 	if len(nodes) == 0 {
 		// 过滤链过窄把节点池清空：与池未就绪同样返回 503，避免生成空订阅落到 500，
 		// 也与后台预览（返回空清单）保持一致
@@ -1009,7 +1013,8 @@ func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nodes := s.filteredNodes(s.nodes.Nodes())
-	// 与 /sub 同源:预览也用该端点的生效配置标准化，保证所见即所得（见 ADR 0012）
+	// 与 /sub 同源:预览也套用该端点的节点范围条件与标准化，保证所见即所得（见 ADR 0012 / internal/subfilter）
+	nodes = s.applyConditions(nodes, ep)
 	nodes = s.standardizeNodesForEndpoint(nodes, ep)
 
 	// 过滤后可能为空（节点池未就绪或全被过滤链剔除）；此时返回空内容而非 500，方便后台排查
