@@ -34,7 +34,9 @@ COPY --from=backend-builder /app/proxyhub .
 COPY config.example.yaml /tmp/config.example.yaml
 RUN sed -e 's/host: "127.0.0.1"/host: "0.0.0.0"/' \
         -e 's|path: "var/data/data.db"|path: "/data/data.db"|' \
-        /tmp/config.example.yaml > /app/config.yaml && rm /tmp/config.example.yaml
+        /tmp/config.example.yaml > /app/config.yaml && rm /tmp/config.example.yaml \
+    && grep -q 'host: "0.0.0.0"' /app/config.yaml \
+    && grep -q 'path: "/data/data.db"' /app/config.yaml
 
 RUN mkdir -p /data
 

@@ -76,10 +76,18 @@ if [[ "$*" == *"api.github.com/repos"*"/releases/latest"* ]]; then
     exit 0
 fi
 if [[ "$*" == *"SHA256SUMS"* ]]; then
-    # Find output file.
+    # Find output file. Emit the full release-matrix manifest (5 targets),
+    # matching scripts/release/package.sh output shape, with a syntactically
+    # valid 64-hex fake checksum.
     for arg in "$@"; do
         if [[ "$prev_arg" == "-o" ]]; then
-            echo "fakehash  proxyhub_1.1.0_linux_amd64.tar.gz" > "$arg"
+            {
+                echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_darwin_amd64.tar.gz"
+                echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_darwin_arm64.tar.gz"
+                echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_linux_amd64.tar.gz"
+                echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_linux_arm64.tar.gz"
+                echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_windows_amd64.tar.gz"
+            } > "$arg"
             exit 0
         fi
         prev_arg="$arg"

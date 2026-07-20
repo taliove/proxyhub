@@ -91,12 +91,13 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 - 管理面只走 Site Path + loopback;订阅地址 = 随机 path + token,公开但不可枚举
 - 签入前必过 `gitleaks`(配置见 `.gitleaks.toml`)
 
-## 8. 工作流 Skills
+## 8. 工作流 Skills 与 Agent
 
 - 日常开发(编译/运行/测试/目录归属):`.claude/skills/dev-workflow`
-- 签入前:`.claude/skills/pre-commit`
+- 签入前:`.claude/skills/pre-commit`(Go 改动会 dispatch go-reviewer)
 - 推送前:`.claude/skills/pre-push`
 - 发布(版本纪律/演练/tag/验证):`.claude/skills/release`
+- Go 语义评审:`.claude/agents/go-reviewer`(独立上下文,专挑机械门禁抓不住的毛病;它只评审,不写码)
 
 Skills 是流程,不是建议——逐条执行,不允许跳项。
 

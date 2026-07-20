@@ -41,7 +41,11 @@ make check   # = vet + Go 测试 + shell 套件,一把全过
 既有失败 3 处已在 `make test` 中显式隔离(Makefile 有清单),其余必须全绿。
 构建/测试只经 make,禁止裸 `go build`/`npm run build`(见 CLAUDE.md §5)。
 
-## 4. 提交消息
+## 4. 语义审查(Go 代码改动时)
+
+diff 涉及 Go 代码且非 trivial(改逻辑而非改文案)时,在提交前 dispatch `go-reviewer` agent 审查 `git diff HEAD`,拿到 SHIP  verdict 或修掉它报的 CRITICAL/HIGH。机械门禁抓不住的语义问题(真实感凭证、默认路径越界、错误被吞)由它兜底。
+
+## 5. 提交消息
 
 - 纯英文、纯 ASCII(`-` 和 `->`,不用 `—`/`→`)
 - 格式:`<type>: <description>`,type ∈ feat/fix/refactor/docs/test/chore/perf/ci

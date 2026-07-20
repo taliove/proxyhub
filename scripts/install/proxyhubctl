@@ -690,7 +690,17 @@ cmd_update() {
     fi
 
     _ph_log "verifying SHA256 checksum of ${asset}"
-    if ! (cd "$workdir" && sha256sum -c SHA256SUMS >/dev/null 2>&1); then
+    # The release SHA256SUMS lists every matrix target; verify ONLY the line
+    # for the asset we downloaded (mirrors install.sh). A full-manifest
+    # sha256sum -c would fail on the assets we did not download.
+    local line_file="${workdir}/.checksum-line"
+    grep -F -- "$asset" "${workdir}/SHA256SUMS" \
+        | grep -E '^[0-9a-fA-F]{64}[[:space:]]+[^[:space:]]+$' > "$line_file" || true
+    if [[ $(wc -l < "$line_file" | tr -d ' ') != "1" ]]; then
+        _ph_err "SHA256SUMS does not contain exactly one entry for ${asset}; refusing to update"
+        return 1
+    fi
+    if ! (cd "$workdir" && sha256sum -c "$line_file" >/dev/null 2>&1); then
         _ph_err "checksum verification failed for ${asset}; refusing to update (current installation untouched)"
         return 1
     fi
