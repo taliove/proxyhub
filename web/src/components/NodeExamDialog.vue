@@ -34,10 +34,19 @@
 
     <template #footer>
       <el-button v-if="running" :loading="cancelling" @click="cancel">取消体检</el-button>
+      <el-button v-if="!running && terminal && shareable" @click="openShare">分享</el-button>
       <el-button v-if="!running && terminal" @click="rerun">重新体检</el-button>
       <el-button :disabled="running" type="primary" @click="visible = false">关闭</el-button>
     </template>
   </el-dialog>
+
+  <!-- 分享卡:完成态可把本次体检渲染成一张精心设计的分享 PNG。 -->
+  <ExamShareDialog
+    v-model:visible="shareVisible"
+    :report="shareReport"
+    :node-name="nodeName"
+    :exam-time="shareTime"
+  />
 </template>
 
 <script setup lang="ts">
@@ -57,6 +66,8 @@ import { regionSectionComplete, egressSectionComplete } from './exam/examrows'
 import { ExamStream } from './exam/examstream'
 import type { ExamStreamStatus, EventSourceLike } from './exam/examstream'
 import ExamReportLayout from './exam/ExamReportLayout.vue'
+import ExamShareDialog from './exam/ExamShareDialog.vue'
+import type { ExamReport } from '@/types'
 
 const visible = ref(false)
 const nodeName = ref('')
@@ -121,6 +132,27 @@ const statusTag = computed<{
 const fatalError = computed(() =>
   status.value === 'error' ? terminalError.value || '连接失败' : ''
 )
+
+// 分享卡:完成态把当前各段状态汇聚成一份 ExamReport 交给分享对话框渲染。
+const shareVisible = ref(false)
+const shareTime = ref<number>(0)
+const shareable = computed(
+  () =>
+    metrics.value !== null ||
+    regions.value.length > 0 ||
+    unlockResults.value.length > 0 ||
+    egress.value !== null
+)
+const shareReport = computed<ExamReport>(() => ({
+  stability: metrics.value ?? undefined,
+  region_speed: { regions: regions.value },
+  unlock: { results: unlockResults.value },
+  egress: egress.value ?? undefined
+}))
+const openShare = () => {
+  shareTime.value = Date.now()
+  shareVisible.value = true
+}
 
 const open = (p: { self_node_id?: number; node_key?: string }, name: string) => {
   payload = p
