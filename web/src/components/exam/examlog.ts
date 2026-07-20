@@ -1,6 +1,6 @@
 // 体检滚动日志的纯计算逻辑(与渲染解耦,便于单测)。
 // 从各类 SSE 帧生成人类可读的一行文案,组件只负责把最近 N 行渲染出来。
-import type { ExamEvent } from '@/types'
+import type { ExamEvent, ExamEgressMetrics } from '@/types'
 import { unlockLabel, regionBadge } from './unlock'
 
 // 滚动日志保留的最大行数(展示最近 ~8 条)。
@@ -17,7 +17,20 @@ function mbps(v: number | undefined): string {
 const SECTION_DONE_TEXT: Record<string, string> = {
   stability: '稳定性采样完成',
   region_speed: '多地域测速完成',
-  unlock: '解锁检测完成'
+  unlock: '解锁检测完成',
+  egress: '出网信息探测完成'
+}
+
+// egressLogLine 把一条 egress 帧(携带一类子项)折成一行文案;无载荷返回 null。
+function egressLogLine(m: ExamEgressMetrics | undefined): string | null {
+  if (!m) return null
+  if (m.ipv4) return m.ipv4.error ? '出口 IPv4: 探测失败' : `出口 IPv4: ${m.ipv4.ip ?? '-'}`
+  if (m.ipv6) {
+    if (m.ipv6.available) return `IPv6 出口: ${m.ipv6.address ?? '有'}`
+    return m.ipv6.error ? 'IPv6 出口: 探测异常' : 'IPv6 出口: 无'
+  }
+  if (m.dns) return m.dns.error ? '出口 DNS: 探测失败' : `出口 DNS: ${m.dns.resolver_ip ?? '-'}`
+  return null
 }
 
 // examLogLine 把单帧映射为一行日志文案;无可展示载荷时返回 null(调用方跳过)。
@@ -41,6 +54,8 @@ export function examLogLine(frame: ExamEvent): string | null {
         ? `${u.target_name}: ${unlockLabel(u)} ${badge}`
         : `${u.target_name}: ${unlockLabel(u)}`
     }
+    case 'egress':
+      return egressLogLine(frame.egress)
     case 'section_done':
       return frame.section ? (SECTION_DONE_TEXT[frame.section] ?? null) : null
     case 'done':

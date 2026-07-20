@@ -9,6 +9,7 @@
       empty-text="本次体检无多地域测速数据"
     />
     <UnlockSection :results="report.unlock?.results ?? []" phase-text="" />
+    <EgressSection :egress="report.egress ?? null" empty-text="本次体检无出网信息数据" />
   </div>
 </template>
 
@@ -17,6 +18,7 @@ import type { ExamReport } from '@/types'
 import StabilitySection from './StabilitySection.vue'
 import RegionSpeedSection from './RegionSpeedSection.vue'
 import UnlockSection from './UnlockSection.vue'
+import EgressSection from './EgressSection.vue'
 
 defineProps<{ report: ExamReport }>()
 </script>

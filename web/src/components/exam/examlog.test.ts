@@ -64,10 +64,35 @@ describe('examLogLine', () => {
     expect(examLogLine(f)).toBe('Disney+: 封锁')
   })
 
+  it('renders egress rows for each of the three probe kinds', () => {
+    expect(
+      examLogLine({
+        phase: 'egress',
+        egress: { ipv4: { ip: '203.0.113.7', proxy: false, hosting: true } }
+      })
+    ).toBe('出口 IPv4: 203.0.113.7')
+    expect(
+      examLogLine({
+        phase: 'egress',
+        egress: { ipv6: { available: true, address: '2001:db8::1' } }
+      })
+    ).toBe('IPv6 出口: 2001:db8::1')
+    expect(examLogLine({ phase: 'egress', egress: { ipv6: { available: false } } })).toBe(
+      'IPv6 出口: 无'
+    )
+    expect(
+      examLogLine({
+        phase: 'egress',
+        egress: { dns: { resolver_ip: '198.51.100.9', leak: false } }
+      })
+    ).toBe('出口 DNS: 198.51.100.9')
+  })
+
   it('renders terminal and section lines', () => {
     expect(examLogLine({ phase: 'section_done', section: 'stability' })).toBe('稳定性采样完成')
     expect(examLogLine({ phase: 'section_done', section: 'region_speed' })).toBe('多地域测速完成')
     expect(examLogLine({ phase: 'section_done', section: 'unlock' })).toBe('解锁检测完成')
+    expect(examLogLine({ phase: 'section_done', section: 'egress' })).toBe('出网信息探测完成')
     expect(examLogLine({ phase: 'done' })).toBe('体检完成')
     expect(examLogLine({ phase: 'cancelled' })).toBe('已取消')
     expect(examLogLine({ phase: 'error', error: '连接失败' })).toBe('体检失败: 连接失败')

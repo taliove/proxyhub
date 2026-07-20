@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/store"
@@ -26,7 +27,8 @@ func examNode() *subscription.Node {
 	}
 }
 
-// injectFastExam 注入假探测器 + 短配置,让 SSE 秒级跑完(不触真实网络)。
+// injectFastExam 注入假探测器 + 短配置,让 SSE 秒级跑完(全程不触真实网络)。
+// 四段(稳定性/多地域/解锁/出网)都注入假探测器:避免真实网络的不确定时延。
 func injectFastExam(t *testing.T, srv *Server) {
 	t.Helper()
 	det := srv.detectionService.detector
@@ -36,6 +38,48 @@ func injectFastExam(t *testing.T, srv *Server) {
 	det.SetExamConfigProvider(func() detection.ExamConfig {
 		return detection.ExamConfig{StabilityDurationSec: 1, StabilityIntervalMs: 300, ProbeURL: "https://example.com/generate_204", ProbeTimeoutSec: 5}
 	})
+	det.SetRegionSpeedProbeFactory(func(*subscription.Node) (detection.RegionSpeedProbe, error) {
+		return func(_ context.Context, r detection.Region) detection.RegionResult {
+			return detection.RegionResult{Code: r.Code, Name: r.Name, TTFBms: 42, DownMbps: 18.5}
+		}, nil
+	})
+	det.SetUnlockProbeFactory(func(*subscription.Node) (detection.UnlockProbe, error) {
+		return func(_ context.Context, target detection.Target) detection.Result {
+			return detection.Result{TargetName: target.Name, Available: true, Level: detection.LevelFull, Region: "US"}
+		}, nil
+	})
+	det.SetEgressProbeFactory(func(*subscription.Node) (detection.EgressProbe, error) {
+		return detection.EgressProbe{
+			IPv4: func(context.Context) detection.EgressIPv4 {
+				return detection.EgressIPv4{IP: "203.0.113.7", Country: "United States", CountryCode: "US", Hosting: true}
+			},
+			IPv6: func(context.Context) detection.EgressIPv6 { return detection.EgressIPv6{Available: false} },
+			DNS: func(context.Context) detection.EgressDNS {
+				return detection.EgressDNS{ResolverIP: "198.51.100.9", ResolverGeo: "United States - Example DNS"}
+			},
+		}, nil
+	})
+}
+
+// waitExamHistory 轮询等待某节点的体检历史落库并返回。
+// 落历史由任务生命周期(ExamJobManager.runJob)在 SSE 流收口之后异步完成(任务模型下任务寿命长于连接),
+// 故 SSE handler 返回不代表已落盘;此处短轮询等待该异步副作用,而非假设其与流终止同步。
+func waitExamHistory(t *testing.T, st *store.Store, nodeKey string) *store.ExamHistoryEntry {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		latest, err := st.LatestExamHistory(nodeKey)
+		if err != nil {
+			t.Fatalf("latest: %v", err)
+		}
+		if latest != nil {
+			return latest
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no exam history persisted within timeout")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // 体检成功完成 -> 自动落一条历史,latest 可读回。
@@ -52,13 +96,7 @@ func TestHandleNodeExamStream_PersistsOnComplete(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 
-	latest, err := st.LatestExamHistory(node.NodeKey())
-	if err != nil {
-		t.Fatalf("latest: %v", err)
-	}
-	if latest == nil {
-		t.Fatalf("no exam history persisted after successful exam")
-	}
+	latest := waitExamHistory(t, st, node.NodeKey())
 	if latest.Report.Stability == nil {
 		t.Errorf("persisted report missing stability section")
 	}
@@ -151,12 +189,15 @@ func TestHandleGetExamLatest_MissingKey(t *testing.T) {
 // 体检完成后 latest 查询接口读回报告。
 func TestHandleGetExamLatest_AfterExam(t *testing.T) {
 	node := examNode()
-	srv, _ := newTestServer(t, []*subscription.Node{node})
+	srv, st := newTestServer(t, []*subscription.Node{node})
 	injectFastExam(t, srv)
 
 	// 先跑一次体检落历史。
 	examReq := httptest.NewRequest(http.MethodGet, "/api/nodes/exam/stream?node_key="+node.NodeKey(), nil)
 	srv.handleNodeExamStream(httptest.NewRecorder(), examReq)
+
+	// 落历史是任务收口后的异步副作用,等其完成再查 latest(见 waitExamHistory)。
+	waitExamHistory(t, st, node.NodeKey())
 
 	// 再查 latest。
 	req := httptest.NewRequest(http.MethodGet, "/api/nodes/exam/latest?node_key="+node.NodeKey(), nil)
