@@ -33,7 +33,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'nodes',
         name: 'Nodes',
-        component: () => import('@/views/Nodes.vue'),
+        component: () => import('@/views/nodes/index.vue'),
         meta: { title: '节点管理', icon: 'Cpu' }
       },
       {
