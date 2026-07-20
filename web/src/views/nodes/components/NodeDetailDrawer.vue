@@ -77,6 +77,7 @@
         <ExamHistoryTimeline
           :entries="examEntries"
           :loading="examLoading"
+          :node-name="node.display_name || node.name"
           @exam="emit('exam', node)"
         />
       </div>
