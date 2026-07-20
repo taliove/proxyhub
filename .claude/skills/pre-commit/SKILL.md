@@ -40,10 +40,10 @@ gitleaks dir --redact=100 .
 ## 3. 构建与测试
 
 ```bash
-make check   # = vet + Go 测试 + shell 套件,一把全过
+make check   # = vet + Go 测试 + shell 套件 + 前端 lint,一把全过
 ```
 
-改了前端:必须先 `make build`(go:embed,不构建不生效;`make check` 不含前端构建)。
+改了前端:必须先 `make build`(go:embed,不构建不生效;`make check` 不含前端构建);前端改动还须过 `make lint-frontend`(已含在 `make check` 中,ESLint warn 不阻塞,Prettier 不贴合会失败)。
 既有失败 3 处已在 `make test` 中显式隔离(Makefile 有清单),其余必须全绿。
 构建/测试只经 make,禁止裸 `go build`/`npm run build`(见 CLAUDE.md §5)。
 

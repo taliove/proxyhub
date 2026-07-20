@@ -1,4 +1,4 @@
-.PHONY: help build build-frontend build-backend build-all clean test test-all test-v test-cover vet test-shell check dev-frontend dev-backend install
+.PHONY: help build build-frontend build-backend build-all clean test test-all test-v test-cover vet lint-frontend test-shell check dev-frontend dev-backend install
 
 BINARY_NAME=proxyhub
 VERSION?=dev
@@ -56,13 +56,17 @@ vet: ## go vet 静态检查
 	@echo "🔍 go vet..."
 	go vet ./...
 
+lint-frontend: ## 前端 lint + 格式检查(ESLint warn 不阻塞;Prettier 不贴合即失败)
+	@echo "🔍 前端 lint..."
+	cd web && npm run lint && npm run format:check
+
 test-shell: ## 运行安装/运维脚本测试套件(scripts/install/test_*.sh)
 	@echo "🧪 运行 shell 测试套件..."
 	@cd scripts/install && for t in test_*.sh; do \
 		bash $$t > /dev/null 2>&1 && echo "  ✅ $$t" || { echo "  ❌ $$t"; exit 1; }; \
 	done
 
-check: vet test test-shell ## 签入前聚合检查(vet + Go 测试 + shell 套件)
+check: vet test test-shell lint-frontend ## 签入前聚合检查(vet + Go 测试 + shell 套件 + 前端 lint)
 	@echo "✅ 全部检查通过"
 
 lint: ## 代码检查

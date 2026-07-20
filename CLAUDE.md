@@ -87,7 +87,8 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 | Go 测试 | `make test` |
 | 安装/运维脚本套件 | `make test-shell` |
 | 静态检查 | `make vet` |
-| 签入前聚合检查 | `make check`(= vet + test + test-shell) |
+| 前端 lint(ESLint + Prettier) | `make lint-frontend` |
+| 签入前聚合检查 | `make check`(= vet + test + test-shell + lint-frontend) |
 | 前端/后端开发服务器 | `make dev-frontend` / `make dev-backend` |
 | 多平台发布 | `make build-all` |
 
@@ -97,7 +98,7 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 
 ## 6. 测试门槛
 
-- 每次签入前:`make check`(vet + Go 测试 + shell 套件)
+- 每次签入前:`make check`(vet + Go 测试 + shell 套件 + 前端 lint)
 - 推送前:`make check` 全量 + `make build` 验证完整构建
 - 既有失败 3 处(2 个默认模板测试 + `TestHandleTestNode_MissingTarget`,处置待定见 backlog):已在 `make test` 中显式隔离(`-skip`,Makefile 有注释清单);`make test-all` 可跑全量(预期红,用于完整性审计)。**不许通过改测试让它们消失**,也不许扩大隔离名单。
 

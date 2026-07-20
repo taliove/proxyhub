@@ -48,8 +48,11 @@ make dev-backend    # 后端开发(config.example.yaml,storage 指向 var/data/d
 ```bash
 make test         # Go 全量
 make test-shell   # 安装/运维脚本六套件
-make check        # 签入前聚合:vet + test + test-shell
+make lint-frontend # 前端 ESLint + Prettier(改前端必跑,warn 不阻塞,格式不贴合会失败)
+make check        # 签入前聚合:vet + test + test-shell + lint-frontend
 ```
+
+前端开发循环:改前端 → `make lint-frontend` → `make build` → `./start.sh` 重启。
 
 唯一豁免:定向调试允许 `go test ./internal/<pkg>/ -run <TestName>`(纯读操作,不落盘)。
 
