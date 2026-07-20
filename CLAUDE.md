@@ -87,7 +87,7 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 | Go 测试 | `make test` |
 | 安装/运维脚本套件 | `make test-shell` |
 | 静态检查 | `make vet` |
-| 前端 lint(ESLint + Prettier) | `make lint-frontend` |
+| 前端 lint(ESLint + Prettier + 类型检查) | `make lint-frontend` |
 | 签入前聚合检查 | `make check`(= vet + test + test-shell + lint-frontend) |
 | 前端/后端开发服务器 | `make dev-frontend` / `make dev-backend` |
 | 多平台发布 | `make build-all` |
