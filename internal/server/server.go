@@ -49,6 +49,10 @@ type Server struct {
 	detectionService *DetectionService
 	geo              *geoip.Resolver
 	examJobs         *detection.ExamJobManager
+	// self-node region resolution seams: real by default, overridable in tests
+	// to drive the suggest/save paths without touching DNS or the embedded DB.
+	lookupHost    func(host string) ([]string, error)
+	countryLookup func(ip string) (string, error)
 }
 
 // New 创建 HTTP 服务
@@ -62,6 +66,8 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		logger:           logger,
 		detectionService: detectionService,
 		geo:              geo,
+		lookupHost:       net.LookupHost,
+		countryLookup:    geoip.LookupCountry,
 	}
 
 	// 体检任务管理器:runner 复用 detectionService.ExamStream(逻辑零改动),
@@ -131,6 +137,7 @@ func (s *Server) Handler() http.Handler {
 
 	// 机场管理
 	mux.HandleFunc("GET /api/airports", s.requireAuth(s.handleListAirports))
+	mux.HandleFunc("GET /api/airports/abbr-suggest", s.requireAuth(s.handleSuggestAbbr))
 	mux.HandleFunc("POST /api/airports", s.requireAuth(s.handleCreateAirport))
 	mux.HandleFunc("PUT /api/airports/{id}", s.requireAuth(s.handleUpdateAirport))
 	mux.HandleFunc("POST /api/airports/{id}/toggle", s.requireAuth(s.handleToggleAirport))
@@ -149,6 +156,7 @@ func (s *Server) Handler() http.Handler {
 
 	// 自建节点管理（增/改/删/启停）
 	mux.HandleFunc("GET /api/self-nodes", s.requireAuth(s.handleListSelfNodes))
+	mux.HandleFunc("GET /api/self-nodes/suggest", s.requireAuth(s.handleSuggestSelfNode))
 	mux.HandleFunc("POST /api/self-nodes", s.requireAuth(s.handleCreateSelfNode))
 	mux.HandleFunc("PUT /api/self-nodes/{id}", s.requireAuth(s.handleUpdateSelfNode))
 	mux.HandleFunc("DELETE /api/self-nodes/{id}", s.requireAuth(s.handleDeleteSelfNode))

@@ -1,20 +1,18 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/taliove/proxyhub/internal/geoip"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
-// handleListSelfNodes 列出全部自建节点（含已禁用），供后台管理页
+// handleListSelfNodes lists all self-hosted nodes (including disabled) for admin UI
 func (s *Server) handleListSelfNodes(w http.ResponseWriter, r *http.Request) {
 	nodes, err := s.st.ListAllSelfHostedNodes()
 	if err != nil {
@@ -25,7 +23,7 @@ func (s *Server) handleListSelfNodes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"nodes": nodes})
 }
 
-// decodeSelfNode 解析并校验自建节点请求体（协议 + 必填字段）
+// decodeSelfNode parses and validates self-hosted node request body (protocol + required fields)
 func decodeSelfNode(r *http.Request) (*store.SelfHostedNode, error) {
 	var n store.SelfHostedNode
 	if err := json.NewDecoder(r.Body).Decode(&n); err != nil {
@@ -33,8 +31,9 @@ func decodeSelfNode(r *http.Request) (*store.SelfHostedNode, error) {
 	}
 	n.Name = strings.TrimSpace(n.Name)
 	n.Server = strings.TrimSpace(n.Server)
-	if n.Name == "" || n.Server == "" {
-		return nil, errors.New("name and server are required")
+	// Name can be empty: save fallback (applySelfNodeNameFallback) will auto-name by region or return 400.
+	if n.Server == "" {
+		return nil, errors.New("server is required")
 	}
 	if n.Port <= 0 || n.Port > 65535 {
 		return nil, errors.New("invalid port")
@@ -47,7 +46,7 @@ func decodeSelfNode(r *http.Request) (*store.SelfHostedNode, error) {
 	return &n, nil
 }
 
-// handleCreateSelfNode 新增自建节点（默认启用）
+// handleCreateSelfNode creates a new self-hosted node (enabled by default)
 func (s *Server) handleCreateSelfNode(w http.ResponseWriter, r *http.Request) {
 	n, err := decodeSelfNode(r)
 	if err != nil {
@@ -55,9 +54,11 @@ func (s *Server) handleCreateSelfNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n.Enabled = true
-	rctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-	defer cancel()
-	n.RegionCode = s.resolveSelfNodeRegion(rctx, n)
+	n.RegionCode = s.resolveSelfNodeRegion(n)
+	if err := applySelfNodeNameFallback(n); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := s.st.CreateSelfHostedNode(n); err != nil {
 		s.logger.Error("create self node failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -66,7 +67,7 @@ func (s *Server) handleCreateSelfNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"success": true})
 }
 
-// handleUpdateSelfNode 编辑自建节点
+// handleUpdateSelfNode updates an existing self-hosted node
 func (s *Server) handleUpdateSelfNode(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -79,9 +80,11 @@ func (s *Server) handleUpdateSelfNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n.ID = id
-	rctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-	defer cancel()
-	n.RegionCode = s.resolveSelfNodeRegion(rctx, n)
+	n.RegionCode = s.resolveSelfNodeRegion(n)
+	if err := applySelfNodeNameFallback(n); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := s.st.UpdateSelfHostedNode(n); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
@@ -94,7 +97,7 @@ func (s *Server) handleUpdateSelfNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"success": true})
 }
 
-// handleDeleteSelfNode 删除自建节点
+// handleDeleteSelfNode deletes a self-hosted node
 func (s *Server) handleDeleteSelfNode(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -109,7 +112,7 @@ func (s *Server) handleDeleteSelfNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"success": true})
 }
 
-// handleToggleSelfNode 启用/禁用自建节点
+// handleToggleSelfNode enables/disables a self-hosted node
 func (s *Server) handleToggleSelfNode(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -172,8 +175,9 @@ type batchBlockRequest struct {
 	Source   string   `json:"source"`
 }
 
-// resolveBatchKeys 从请求解析出目标 NodeKey 列表。
-// 优先用显式 node_keys；否则按 source 从当前节点池收集该机场（自建节点豁免）的全部 NodeKey。
+// resolveBatchKeys extracts target NodeKey list from request.
+// Prefers explicit node_keys; otherwise collects all NodeKeys from the current pool
+// for the given airport source (self-hosted nodes are exempt).
 func (s *Server) resolveBatchKeys(req batchBlockRequest) []string {
 	if len(req.NodeKeys) > 0 {
 		return req.NodeKeys
@@ -252,24 +256,68 @@ func decodeNodeKey(r *http.Request) (string, error) {
 	return key, nil
 }
 
-// resolveSelfNodeRegion 用真实依赖解析自建节点地区码(带超时,失败不阻断保存)。
-func (s *Server) resolveSelfNodeRegion(ctx context.Context, n *store.SelfHostedNode) string {
+// resolveSelfNodeRegion resolves self-hosted node region code with real dependencies (offline DB, failure does not block save).
+// Region lookup uses embedded GeoIP (geoip.LookupCountry), no longer calls ip-api.com.
+func (s *Server) resolveSelfNodeRegion(n *store.SelfHostedNode) string {
 	recognizer, err := s.st.NewRegionRecognizer()
 	if err != nil {
 		s.logger.Warn("build region recognizer failed", "error", err)
 		return "Unknown"
 	}
 	deps := regionResolverDeps{
-		lookupHost: net.LookupHost,
-		geoLookup: func(ctx context.Context, ip string) (string, error) {
-			geo, err := s.geo.LookupIP(ctx, ip)
-			if err != nil {
-				return "", err
-			}
-			return geo.Country, nil
-		},
-		recognize: recognizer.Recognize,
+		lookupHost:    s.lookupHost,
+		countryLookup: s.countryLookup,
+		recognize:     recognizer.Recognize,
 	}
-	return resolveRegionCode(ctx, n.Server, n.Name, deps)
+	return resolveRegionCode(n.Server, n.Name, deps)
 }
 
+// selfNodeNamePrefix is the auto-naming prefix for self-hosted nodes, forming "自建{region Chinese name}" (e.g. 自建香港).
+const selfNodeNamePrefix = "自建"
+
+// suggestSelfNodeName uses offline GeoIP to derive suggested name and region code for server: pure geo chain
+// (IP direct or DNS resolve first IP -> LookupCountry -> CountryName), no name recognition fallback.
+// Any step failure (empty server/DNS failure/no country record/missing Chinese name) returns empty strings, letting caller silently degrade.
+func (s *Server) suggestSelfNodeName(server string) (name, regionCode string) {
+	if server == "" {
+		return "", ""
+	}
+	deps := regionResolverDeps{
+		lookupHost:    s.lookupHost,
+		countryLookup: s.countryLookup,
+	}
+	code := resolveRegionGeoOnly(server, deps)
+	if code == "" {
+		return "", ""
+	}
+	cn := geoip.CountryName(code)
+	if cn == "" {
+		return "", ""
+	}
+	return selfNodeNamePrefix + cn, code
+}
+
+// handleSuggestSelfNode provides self-hosted node naming suggestion: input server (IP/domain) walks pure offline GeoIP chain
+// to reverse-lookup region, returning {"name":"自建香港","regionCode":"HK"} on hit. Any step failure uniformly returns
+// 200 + empty fields (both name/regionCode empty), letting frontend silently degrade to not fill, avoiding 404.
+func (s *Server) handleSuggestSelfNode(w http.ResponseWriter, r *http.Request) {
+	server := strings.TrimSpace(r.URL.Query().Get("server"))
+	name, code := s.suggestSelfNodeName(server)
+	writeJSON(w, map[string]string{"name": name, "regionCode": code})
+}
+
+// applySelfNodeNameFallback is the save fallback: when name (after trim) is empty, if the backend-resolved region code
+// has a corresponding Chinese name, auto-name as "自建{Chinese name}" for DB; region resolution failure (Unknown/empty or missing Chinese name)
+// returns name-required error (caller responds 400). User-provided name is left unchanged.
+// Requires n.RegionCode to be already resolved as authoritative value by resolveSelfNodeRegion.
+func applySelfNodeNameFallback(n *store.SelfHostedNode) error {
+	if strings.TrimSpace(n.Name) != "" {
+		return nil
+	}
+	cn := geoip.CountryName(n.RegionCode)
+	if cn == "" {
+		return errors.New("name is required")
+	}
+	n.Name = selfNodeNamePrefix + cn
+	return nil
+}

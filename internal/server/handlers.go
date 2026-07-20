@@ -10,6 +10,7 @@ import (
 
 	"github.com/taliove/proxyhub/internal/aggregator"
 	"github.com/taliove/proxyhub/internal/store"
+	"github.com/taliove/proxyhub/internal/subscription"
 )
 
 // handleSetup 系统初始化
@@ -131,6 +132,14 @@ func (s *Server) handleCreateAirport(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("airport created", "name", req.Name)
 	json.NewEncoder(w).Encode(airport)
+}
+
+// handleSuggestAbbr 机场简称建议:输入名称返回后端推导简称,复用
+// subscription.GenerateAbbreviation 作为单一事实源(拼音/字母首字母规则)。
+// 无法推导时 abbr 为空串,仍返回 200——空是有效结果,不是错误。
+func (s *Server) handleSuggestAbbr(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	writeJSON(w, map[string]string{"abbr": subscription.GenerateAbbreviation(name)})
 }
 
 // handleToggleAirport 启用/禁用机场

@@ -2,7 +2,7 @@
   <el-dialog v-model="visible" :title="editMode ? '编辑自建节点' : '添加自建节点'" width="600px">
     <el-form :model="form" label-width="100px">
       <el-form-item label="名称">
-        <el-input v-model="form.name" placeholder="例如:自建香港" />
+        <el-input v-model="form.name" placeholder="例如:自建香港" @input="nameDirty = true" />
       </el-form-item>
       <el-form-item label="协议">
         <el-select v-model="form.protocol" class="full-width">
@@ -13,7 +13,7 @@
         </el-select>
       </el-form-item>
       <el-form-item label="服务器">
-        <el-input v-model="form.server" placeholder="域名或 IP" />
+        <el-input v-model="form.server" placeholder="域名或 IP" @input="onServerInput" />
       </el-form-item>
       <el-form-item label="端口">
         <el-input-number v-model="form.port" :min="1" :max="65535" />
@@ -61,13 +61,16 @@
 </template>
 
 <script setup lang="ts">
+import { watch, computed } from 'vue'
+import client from '@/api/client'
 import { fieldVisible, type SelfNodeForm } from '../self-node-utils'
+import { useDebouncedSuggest } from '@/composables/useDebouncedSuggest'
 
 const visible = defineModel<boolean>({ required: true })
 const form = defineModel<SelfNodeForm>('form', { required: true })
 
-// submitting 由装配层持有(异步 save 期间置真),对话框只负责渲染 loading 态
-defineProps<{
+// submitting is held by the assembly layer (set to true during async save), dialog only renders loading state
+const props = defineProps<{
   editMode: boolean
   submitting: boolean
 }>()
@@ -77,6 +80,38 @@ const emit = defineEmits<{
 }>()
 
 const show = (field: string) => fieldVisible(form.value, field)
+
+// Debounced auto-suggestion: server input -> name suggestion
+const nameRef = computed({
+  get: () => form.value.name,
+  set: (val) => {
+    form.value.name = val
+  }
+})
+
+const {
+  isDirty: nameDirty,
+  onInput: onServerInput,
+  reset: resetNameSuggest
+} = useDebouncedSuggest(nameRef, async () => {
+  // Only suggest in create mode, when name is empty and not manually edited
+  if (props.editMode || form.value.name.trim()) return null
+  const server = form.value.server.trim()
+  if (!server) return null
+
+  const res = await client.get<unknown, { name: string; regionCode: string }>(
+    '/self-nodes/suggest',
+    { params: { server } }
+  )
+  return res.name || null
+})
+
+// Reset dirty flag and clear timer when dialog opens
+watch(visible, (open) => {
+  if (open) {
+    resetNameSuggest()
+  }
+})
 </script>
 
 <style scoped>

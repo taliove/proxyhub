@@ -44,7 +44,7 @@
     <el-dialog v-model="dialogVisible" :title="editMode ? '编辑机场' : '添加机场'" width="600px">
       <el-form :model="form" label-width="100px">
         <el-form-item label="名称">
-          <el-input v-model="form.name" placeholder="例如：机场A" />
+          <el-input v-model="form.name" placeholder="例如：机场A" @input="onNameInput" />
         </el-form-item>
         <el-form-item label="订阅 URL">
           <el-input v-model="form.url" placeholder="https://..." />
@@ -54,6 +54,7 @@
             v-model="form.abbr"
             placeholder="留空则自动生成(如 极速机场 → JS)"
             maxlength="16"
+            @input="abbrDirty = true"
           />
           <div class="form-hint">
             用于节点名称标准化(如 🇭🇰 香港 JS-01),留空按拼音/字母首字母自动生成
@@ -69,11 +70,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import type { Airport } from '@/types'
 import client from '@/api/client'
+import { useDebouncedSuggest } from '@/composables/useDebouncedSuggest'
 
 const airports = ref<Airport[]>([])
 const loading = ref(false)
@@ -82,6 +84,30 @@ const dialogVisible = ref(false)
 const editMode = ref(false)
 const editingId = ref<number | null>(null)
 const form = ref({ name: '', url: '', abbr: '' })
+
+// Debounced auto-suggestion: name input -> abbr suggestion
+const abbrRef = computed({
+  get: () => form.value.abbr,
+  set: (val) => {
+    form.value.abbr = val
+  }
+})
+
+const {
+  isDirty: abbrDirty,
+  onInput: onNameInput,
+  reset: resetAbbrSuggest
+} = useDebouncedSuggest(abbrRef, async () => {
+  const name = form.value.name.trim()
+  if (!name) {
+    form.value.abbr = ''
+    return null
+  }
+  const res = await client.get<unknown, { abbr: string }>('/airports/abbr-suggest', {
+    params: { name }
+  })
+  return res.abbr || ''
+})
 
 const loadAirports = async () => {
   loading.value = true
@@ -93,6 +119,7 @@ const openAddDialog = () => {
   editMode.value = false
   editingId.value = null
   form.value = { name: '', url: '', abbr: '' }
+  resetAbbrSuggest()
   dialogVisible.value = true
 }
 
@@ -100,6 +127,9 @@ const openEditDialog = (row: Airport) => {
   editMode.value = true
   editingId.value = row.id
   form.value = { name: row.name, url: row.url, abbr: row.abbr || '' }
+  // Existing abbr value indicates user-defined, mark as dirty to prevent overwrite
+  // Empty abbr (shown as "auto" in table) allows auto-fill
+  abbrDirty.value = !!row.abbr
   dialogVisible.value = true
 }
 
