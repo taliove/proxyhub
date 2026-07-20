@@ -259,6 +259,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 深度体检历史表（010_exam_history.sql）
+	if err := s.applyMigrationFile("010_exam_history.sql"); err != nil {
+		return err
+	}
+
 	// 初始化地区识别规则表
 	return s.InitRegionRules()
 }
@@ -365,6 +370,18 @@ CREATE TABLE IF NOT EXISTS distribution_nodes (
 
 CREATE INDEX IF NOT EXISTS idx_distribution_nodes_path ON distribution_nodes(distribution_path);
 CREATE INDEX IF NOT EXISTS idx_distribution_nodes_enabled ON distribution_nodes(enabled);
+`
+	case "010_exam_history.sql":
+		checkTable = "exam_history"
+		migrationSQL = `
+CREATE TABLE IF NOT EXISTS exam_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_key    TEXT NOT NULL,
+    report_json TEXT NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_exam_history_node ON exam_history(node_key, id DESC);
 `
 	default:
 		return fmt.Errorf("unknown migration file: %s", filename)
