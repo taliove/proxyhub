@@ -199,6 +199,36 @@ func dnsGeoCountry(geo string) string {
 	return strings.TrimSpace(strings.SplitN(geo, " - ", 2)[0])
 }
 
+// withEgressRetry 包裹出网三类探针,各自叠加网络类失败重试:传输抖动重试至多 examTransientMaxRetries 次,
+// 仅返回最后一次结果;明确负判定(IPv6 不可达,Error 空)与解析失败(非传输)绝不重试。ctx 取消则不再重试。
+// 三类各自独立重试,仍并行执行(retryResult 同步包在各自 closure 内,对 runEgressProbes 透明)。
+func withEgressRetry(probe EgressProbe) EgressProbe {
+	return EgressProbe{
+		IPv4: func(ctx context.Context) EgressIPv4 {
+			return retryResult(ctx, examTransientMaxRetries,
+				func() EgressIPv4 { return probe.IPv4(ctx) },
+				func(res EgressIPv4) bool { return isTransientNetError(res.Error) },
+			)
+		},
+		IPv6: func(ctx context.Context) EgressIPv6 {
+			return retryResult(ctx, examTransientMaxRetries,
+				func() EgressIPv6 { return probe.IPv6(ctx) },
+				// 有出口(Available)不重试;不可达(Error 空)是明确负判定不重试。
+				// 注意:classifyIPv6Egress 已把拨号类错误(reset/refused/no-route)归为"无 v6 出口"
+				// 的明确负判定(Error 空),仅 deadline/cancel 保留为 "IPv6 出口探测超时"。故实际能触发
+				// v6 重试的传输类信号只有超时 —— 这是既有判定语义的忠实反映,而非放弃其他传输类。
+				func(res EgressIPv6) bool { return !res.Available && isTransientNetError(res.Error) },
+			)
+		},
+		DNS: func(ctx context.Context) EgressDNS {
+			return retryResult(ctx, examTransientMaxRetries,
+				func() EgressDNS { return probe.DNS(ctx) },
+				func(res EgressDNS) bool { return isTransientNetError(res.Error) },
+			)
+		},
+	}
+}
+
 // egressStage 构造出网信息段:三类小请求并行探测,每完成一类推一行 egress,
 // 段末按出口国家接线 DNS 泄露判定,推 section_done + 聚合指标。
 func egressStage(probe EgressProbe, timeout time.Duration) examStage {

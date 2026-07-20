@@ -188,6 +188,83 @@ func TestNewUnlockProbe_UnknownKind(t *testing.T) {
 	}
 }
 
+// --- 解锁重试:网络类失败重试;判定结论(full/blocked/originals_only)绝不重试 ---
+
+// TestWithUnlockRetry_TransientRetried 传输类失败(Level 空 + 传输错误)先失败后成功:重试捞回,只返回最终判定。
+func TestWithUnlockRetry_TransientRetried(t *testing.T) {
+	calls := 0
+	probe := func(_ context.Context, target Target) Result {
+		calls++
+		if calls == 1 {
+			return Result{TargetName: target.Name, Error: "request original title failed: read tcp: connection reset by peer"}
+		}
+		return Result{TargetName: target.Name, Available: true, Level: LevelFull, Region: "US"}
+	}
+	res := withUnlockRetry(probe)(context.Background(), Target{Name: "OpenAI", Kind: KindOpenAI})
+	if res.Level != LevelFull || !res.Available {
+		t.Errorf("result = %+v, want recovered full", res)
+	}
+	if calls != 2 {
+		t.Errorf("probe calls = %d, want 2 (one retry)", calls)
+	}
+}
+
+// TestWithUnlockRetry_VerdictNotRetried 三种判定结论都绝不重试(即便 Available=false 的 blocked)。
+func TestWithUnlockRetry_VerdictNotRetried(t *testing.T) {
+	verdicts := []Result{
+		{Level: LevelFull, Available: true},
+		{Level: LevelOriginalsOnly, Available: true},
+		{Level: LevelBlocked, Available: false},
+	}
+	for _, v := range verdicts {
+		v := v
+		calls := 0
+		probe := func(_ context.Context, target Target) Result {
+			calls++
+			return Result{TargetName: target.Name, Available: v.Available, Level: v.Level}
+		}
+		res := withUnlockRetry(probe)(context.Background(), Target{Name: "T", Kind: KindNetflix})
+		if res.Level != v.Level {
+			t.Errorf("level = %q, want %q", res.Level, v.Level)
+		}
+		if calls != 1 {
+			t.Errorf("verdict %q retried (%d calls), want 1", v.Level, calls)
+		}
+	}
+}
+
+// TestWithUnlockRetry_InconclusiveNotRetried 非传输类失败(如状态码判定不确定)不重试。
+func TestWithUnlockRetry_InconclusiveNotRetried(t *testing.T) {
+	calls := 0
+	probe := func(_ context.Context, target Target) Result {
+		calls++
+		return Result{TargetName: target.Name, Error: "netflix classification inconclusive (status 500/500)"}
+	}
+	res := withUnlockRetry(probe)(context.Background(), Target{Name: "Netflix", Kind: KindNetflix})
+	if res.Error == "" {
+		t.Error("inconclusive result should keep its error")
+	}
+	if calls != 1 {
+		t.Errorf("non-transient failure retried (%d calls), want 1", calls)
+	}
+}
+
+// TestWithUnlockRetry_ExhaustsTransient 传输类失败始终不恢复:耗尽重试后仍返回失败。
+func TestWithUnlockRetry_ExhaustsTransient(t *testing.T) {
+	calls := 0
+	probe := func(_ context.Context, target Target) Result {
+		calls++
+		return Result{TargetName: target.Name, Error: "dial tcp: i/o timeout"}
+	}
+	res := withUnlockRetry(probe)(context.Background(), Target{Name: "OpenAI", Kind: KindOpenAI})
+	if res.Error == "" {
+		t.Error("exhausted transient should keep error")
+	}
+	if calls != examTransientMaxRetries+1 {
+		t.Errorf("probe calls = %d, want %d", calls, examTransientMaxRetries+1)
+	}
+}
+
 // TestUnlockErrorStage_EmitsErrorRows 降级段:探测器构造失败时逐目标推 error 行,不静默跳过整段。
 func TestUnlockErrorStage_EmitsErrorRows(t *testing.T) {
 	targets := DefaultUnlockTargets()
