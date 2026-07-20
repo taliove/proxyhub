@@ -293,5 +293,13 @@ func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	s.detectionService.ExamStream(r.Context(), node, emit)
+	report := s.detectionService.ExamStream(r.Context(), node, emit)
+
+	// 体检"成功完成"才落历史。语义钉死:中途失败(建会话失败 -> report.Stability==nil)
+	// 或被取消(ctx.Err()!=nil)一律不落盘,只有完整跑完稳定性段的报告入库。
+	if r.Context().Err() == nil && report.Stability != nil {
+		if err := s.st.SaveExamHistory(node.NodeKey(), report); err != nil {
+			s.logger.Warn("save exam history failed", "error", err)
+		}
+	}
 }
