@@ -84,3 +84,56 @@ func TestMigration_JobsIdempotent(t *testing.T) {
 		t.Fatalf("row lost across re-open: rec=%v err=%v", rec, err)
 	}
 }
+
+// TestStore_GetLatestJobByKindKey tests retrieval of the most recent job by kind and key.
+func TestStore_GetLatestJobByKindKey(t *testing.T) {
+	st := newTestStore(t)
+
+	// No job exists
+	rec, err := st.GetLatestJobByKindKey("retag_all", "nightly")
+	if err != nil {
+		t.Fatalf("GetLatestJobByKindKey on empty: %v", err)
+	}
+	if rec != nil {
+		t.Errorf("expected nil for non-existent job, got %+v", rec)
+	}
+
+	// Insert multiple jobs with same kind/key
+	js := st.Jobs()
+	id1, err := js.Insert("retag_all", "nightly", nil)
+	if err != nil {
+		t.Fatalf("Insert 1: %v", err)
+	}
+	if err := js.Finish(id1, jobs.StatusDone); err != nil {
+		t.Fatalf("Finish 1: %v", err)
+	}
+
+	id2, err := js.Insert("retag_all", "nightly", nil)
+	if err != nil {
+		t.Fatalf("Insert 2: %v", err)
+	}
+	if err := js.Finish(id2, jobs.StatusDone); err != nil {
+		t.Fatalf("Finish 2: %v", err)
+	}
+
+	// Should return the latest (id2)
+	rec, err = st.GetLatestJobByKindKey("retag_all", "nightly")
+	if err != nil {
+		t.Fatalf("GetLatestJobByKindKey: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("expected record, got nil")
+	}
+	if rec.ID != id2 {
+		t.Errorf("expected latest job id %d, got %d", id2, rec.ID)
+	}
+
+	// Different key should not match
+	rec, err = st.GetLatestJobByKindKey("retag_all", "other")
+	if err != nil {
+		t.Fatalf("GetLatestJobByKindKey with different key: %v", err)
+	}
+	if rec != nil {
+		t.Errorf("expected nil for different key, got %+v", rec)
+	}
+}

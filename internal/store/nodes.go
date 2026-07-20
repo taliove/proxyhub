@@ -102,6 +102,26 @@ func pruneStaleNodeTags(tx *sql.Tx) error {
 	return nil
 }
 
+// AllNodeKeys returns all node_key values in the pool (including stale nodes).
+// Used by batch operations that need to iterate over all nodes.
+func (s *Store) AllNodeKeys() ([]string, error) {
+	rows, err := s.db.Query(`SELECT node_key FROM nodes ORDER BY position`)
+	if err != nil {
+		return nil, fmt.Errorf("query node keys: %w", err)
+	}
+	defer rows.Close()
+
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan node key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
 // LoadNodePool 读取节点池快照，按 position 排序（stale 节点也返回，由调用方决定过滤）。
 func (s *Store) LoadNodePool() ([]*subscription.Node, error) {
 	rows, err := s.db.Query(`
