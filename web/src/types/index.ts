@@ -38,6 +38,7 @@ export interface Node {
   unlock_results?: Record<string, UnlockResult> // 多维解锁检测结果
   bandwidth_down_mbps?: number // 最近一次带宽测试下行
   bandwidth_up_mbps?: number // 最近一次带宽测试上行
+  tags?: string[] // 自动标签(见票据 21;后端透出前缺省,按空态处理)
 }
 
 export interface UnlockResult {

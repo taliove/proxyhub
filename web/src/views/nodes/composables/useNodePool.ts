@@ -1,4 +1,4 @@
-import { reactive, ref } from 'vue'
+import { ref } from 'vue'
 import type { Node, NodePage } from '@/types'
 import client from '@/api/client'
 
@@ -9,46 +9,30 @@ export interface RegionItem {
   Name: string
 }
 
-// 节点列表数据获取:分页/排序/参考数据(地区、机场来源)。
-// 筛选参数由调用方注入(activeFilterParams),避免与 useNodeFilters 互相依赖。
-export function useNodeList(activeFilterParams: () => Record<string, string>) {
+// 统一节点表在客户端做过滤/排序/分页(谓词见 predicates.ts),因此一次性取全量池。
+// 池规模有界(本地管理面,机场节点数量级为百),客户端处理开销可忽略。
+const POOL_PAGE_SIZE = 100000
+
+// useNodePool 拉取全量节点池 + 参考数据(地区、机场来源)。
+// 不再承担筛选/分页(下沉到 useNodeQuery + predicates),保持单一职责。
+export function useNodePool() {
   const nodes = ref<Node[]>([])
   const regions = ref<RegionItem[]>([])
   const airportSources = ref<string[]>([])
   const loading = ref(false)
   const lastUpdate = ref('')
-  const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
-  const sort = reactive({ by: 'latency', order: 'asc' })
 
   const load = async () => {
     loading.value = true
     try {
-      const params: Record<string, string | number> = {
-        page: pagination.page,
-        page_size: pagination.pageSize,
-        sort_by: sort.by,
-        sort_order: sort.order,
-        ...activeFilterParams()
-      }
-      const data = await client.get<unknown, NodePage>('/nodes', { params })
+      const data = await client.get<unknown, NodePage>('/nodes', {
+        params: { page: 1, page_size: POOL_PAGE_SIZE }
+      })
       nodes.value = data.nodes || []
-      pagination.total = data.total || 0
       lastUpdate.value = data.last_update || ''
     } finally {
       loading.value = false
     }
-  }
-
-  const onSortChange = ({ prop, order }: { prop: string; order: string | null }) => {
-    if (!order) {
-      sort.by = 'latency'
-      sort.order = 'asc'
-    } else {
-      sort.by = prop
-      sort.order = order === 'ascending' ? 'asc' : 'desc'
-    }
-    pagination.page = 1
-    load()
   }
 
   const loadRegions = async () => {
@@ -67,9 +51,7 @@ export function useNodeList(activeFilterParams: () => Record<string, string>) {
     airportSources,
     loading,
     lastUpdate,
-    pagination,
     load,
-    onSortChange,
     loadRegions,
     loadAirportSources
   }

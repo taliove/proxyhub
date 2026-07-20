@@ -43,7 +43,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Node } from '@/types'
 import client from '@/api/client'
 import { apiErrorMessage } from '../utils'
-import type { RegionItem } from '../composables/useNodeList'
+import type { RegionItem } from '../composables/useNodePool'
 
 defineProps<{ regions: RegionItem[] }>()
 
