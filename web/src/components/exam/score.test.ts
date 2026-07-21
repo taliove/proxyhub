@@ -261,4 +261,79 @@ describe('score — 体检总分计算', () => {
       expect(result.partial).toBe(true)
     })
   })
+
+  describe('可信度标记(unreliable)', () => {
+    it('出网全失败 → unreliable=true + 总分 0', () => {
+      const report: ExamReport = {
+        egress: {
+          ipv4: { error: 'timeout' },
+          ipv6: { available: false, error: 'timeout' },
+          dns: { error: 'timeout' }
+        } as any
+      }
+      const result = calculateExamScore(report)
+      expect(result.unreliable).toBe(true)
+      expect(result.total).toBe(0)
+      expect(result.partial).toBe(true)
+    })
+
+    it('IPv6 不可达(非 error)但 IPv4/DNS 成功 → reliable', () => {
+      const report: ExamReport = {
+        egress: {
+          ipv4: { ip: '203.0.113.7', country: 'US' },
+          ipv6: { available: false }, // 不可达非失败
+          dns: { resolver_ip: '8.8.8.8', resolver_geo: 'US' }
+        } as any,
+        stability: { score: 85 } as any
+      }
+      const result = calculateExamScore(report)
+      expect(result.unreliable).toBe(false)
+      expect(result.total).toBeGreaterThan(0)
+    })
+
+    it('缺出网段 → unreliable=true', () => {
+      const report: ExamReport = {
+        stability: { score: 85 } as any,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 50, ttfb_ms: 10 }]
+        }
+      }
+      const result = calculateExamScore(report)
+      expect(result.unreliable).toBe(true)
+      expect(result.partial).toBe(true)
+    })
+
+    it('有出网段且部分成功 → reliable', () => {
+      const report: ExamReport = {
+        egress: {
+          ipv4: { ip: '203.0.113.7', country: 'US' },
+          ipv6: { available: false },
+          dns: { resolver_ip: '8.8.8.8', resolver_geo: 'US' }
+        } as any,
+        stability: { score: 85 } as any
+      }
+      const result = calculateExamScore(report)
+      expect(result.unreliable).toBe(false)
+    })
+
+    it('完整报告 → reliable', () => {
+      const report: ExamReport = {
+        egress: {
+          ipv4: { ip: '203.0.113.7', country: 'US', hosting: false },
+          ipv6: { available: true, address: '2001:db8::1' },
+          dns: { resolver_ip: '8.8.8.8', resolver_geo: 'US', leak: false }
+        } as any,
+        stability: { score: 85 } as any,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 50, ttfb_ms: 10 }]
+        },
+        unlock: {
+          results: [{ target_name: 'Netflix', level: 'full' }] as any[]
+        }
+      }
+      const result = calculateExamScore(report)
+      expect(result.unreliable).toBe(false)
+      expect(result.partial).toBe(false)
+    })
+  })
 })

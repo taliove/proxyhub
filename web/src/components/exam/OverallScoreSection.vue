@@ -1,10 +1,13 @@
 <template>
-  <!-- 体检总分段:大评分环(总分 + 档位 + 随档位配色)+ 部分数据标注。
+  <!-- 体检总分段:大评分环(总分 + 档位 + 随档位配色)+ 部分数据标注 + 不可信标记。
        与稳定性分区的小环有视觉层级区分(更大、标题更醒目)。 -->
   <section class="overall-score-section">
     <div class="overall-score-header">
       <h3 class="overall-score-title">综合评分</h3>
-      <span v-if="scoreResult.partial" class="overall-score-partial">部分数据</span>
+      <div class="overall-score-badges">
+        <span v-if="scoreResult.unreliable" class="overall-score-unreliable">不可信</span>
+        <span v-else-if="scoreResult.partial" class="overall-score-partial">部分数据</span>
+      </div>
     </div>
     <div class="overall-score-body">
       <div class="overall-score-ring-wrap">
@@ -22,7 +25,7 @@
         </svg>
         <div class="overall-score-ring-center">
           <div class="overall-score-ring-score" :style="{ color: scoreColor }">
-            {{ Math.round(scoreResult.total) }}
+            {{ displayScore }}
           </div>
           <div class="overall-score-ring-label">{{ gradeText }}</div>
         </div>
@@ -56,6 +59,14 @@ const gradeText = computed(() => gradeLabel(scoreResult.value.grade))
 const ringOffset = computed(
   () => RING_CIRC * (1 - Math.max(0, Math.min(100, scoreResult.value.total)) / 100)
 )
+
+// 显示分数:进行中且无足够数据时显示"—",否则显示总分。
+const displayScore = computed(() => {
+  if (!props.terminal && scoreResult.value.partial) {
+    return '—'
+  }
+  return Math.round(scoreResult.value.total).toString()
+})
 </script>
 
 <style scoped>
@@ -77,11 +88,23 @@ const ringOffset = computed(
   font-weight: 600;
   color: var(--ph-text-primary);
 }
+.overall-score-badges {
+  display: flex;
+  gap: var(--ph-space-2);
+}
 .overall-score-partial {
   padding: 2px var(--ph-space-2);
   border-radius: var(--ph-radius-sm);
   background: var(--ph-bg-warning);
   color: var(--ph-warning);
+  font-size: var(--ph-text-xs);
+  font-weight: 500;
+}
+.overall-score-unreliable {
+  padding: 2px var(--ph-space-2);
+  border-radius: var(--ph-radius-sm);
+  background: var(--ph-bg-danger);
+  color: var(--ph-danger);
   font-size: var(--ph-text-xs);
   font-weight: 500;
 }

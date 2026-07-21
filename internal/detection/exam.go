@@ -84,6 +84,7 @@ type ExamOrchestrator struct {
 }
 
 // Run 串行执行各段(ctx 取消即停),完成后推 done 事件并返回报告。
+// 出网段全失败时短路:跳过后续段,推 error 终态帧,体检以"节点不可用"收口。
 func (o *ExamOrchestrator) Run(ctx context.Context, emit func(ExamEvent)) ExamReport {
 	var report ExamReport
 	for _, s := range o.stages {
@@ -91,9 +92,31 @@ func (o *ExamOrchestrator) Run(ctx context.Context, emit func(ExamEvent)) ExamRe
 			break
 		}
 		s.run(ctx, emit, &report)
+
+		// 出网段收口检查:三项全 error → 节点根本出不去,短路后续段。
+		if s.name == "egress" && egressAllFailed(report.Egress) {
+			emit(ExamEvent{Phase: "error", Error: "出网全失败: 节点不可用"})
+			break
+		}
 	}
 	emit(ExamEvent{Phase: "done", Report: &report})
 	return report
+}
+
+// egressAllFailed 判定出网三项是否全部失败(节点根本出不去):IPv4/IPv6/DNS 三项皆 error。
+// 注意:IPv6 不可达(Available=false, Error="")是明确负判定,不算失败。
+func egressAllFailed(egress *EgressMetrics) bool {
+	if egress == nil {
+		return false
+	}
+	// IPv4 失败:Error 非空。
+	ipv4Fail := egress.IPv4 != nil && egress.IPv4.Error != ""
+	// IPv6 失败:不可达(Available=false)但 Error 非空才算失败;不可达但 Error 空是明确负判定,非失败。
+	ipv6Fail := egress.IPv6 != nil && !egress.IPv6.Available && egress.IPv6.Error != ""
+	// DNS 失败:Error 非空。
+	dnsFail := egress.DNS != nil && egress.DNS.Error != ""
+
+	return ipv4Fail && ipv6Fail && dnsFail
 }
 
 // stabilityStage 构造稳定性采样段:1Hz 探测,逐样本推 sample,段末推 section_done + 指标。

@@ -31,12 +31,13 @@ export interface ExamScoreBreakdown {
   egress: ScoreItem
 }
 
-// 总分结果(总分 + 档位 + 分解 + 是否部分数据)。
+// 总分结果(总分 + 档位 + 分解 + 是否部分数据 + 可信度)。
 export interface ExamScoreResult {
   total: number // 0..100
   grade: ExamGrade
   breakdown: ExamScoreBreakdown
   partial: boolean // true 表示有段缺失,UI 需标注"部分数据"
+  unreliable: boolean // true 表示分数不可信(出网全失败或缺出网段)
 }
 
 // gradeFromScore 由 0-100 总分映射到五档。
@@ -142,6 +143,7 @@ export function calculateEgressScore(egress: ExamEgressMetrics): number {
 
 // calculateExamScore 汇总四项加权总分:稳定性 40% + 速度 25% + 解锁 20% + 出网 15%。
 // 缺段降级:只按有数据项归一化权重(权重和恒为 100%),标记 partial=true。
+// 不可信判定:出网全失败或缺出网段 → unreliable=true,总分强制 0。
 export function calculateExamScore(report: ExamReport): ExamScoreResult {
   // 默认权重(稳定性 40% + 速度 25% + 解锁 20% + 出网 15%)
   const defaultWeights = { stability: 0.4, speed: 0.25, unlock: 0.2, egress: 0.15 }
@@ -154,6 +156,11 @@ export function calculateExamScore(report: ExamReport): ExamScoreResult {
       ? calculateUnlockScore(report.unlock.results)
       : null
   const egressScore = report.egress ? calculateEgressScore(report.egress) : null
+
+  // 不可信判定:出网全失败或缺出网段 → unreliable=true。
+  const egressAllFailed = isEgressAllFailed(report.egress)
+  const missingEgress = !report.egress
+  const unreliable = egressAllFailed || missingEgress
 
   // 归一化权重:只对有数据项分配权重
   let totalWeight = 0
@@ -173,12 +180,15 @@ export function calculateExamScore(report: ExamReport): ExamScoreResult {
     egress: egressScore !== null ? defaultWeights.egress * normalize : 0
   }
 
-  // 加权总分
-  const total =
-    (stabilityScore ?? 0) * weights.stability +
-    (speedScore ?? 0) * weights.speed +
-    (unlockScore ?? 0) * weights.unlock +
-    (egressScore ?? 0) * weights.egress
+  // 加权总分:出网全失败时强制 0。
+  let total = 0
+  if (!egressAllFailed) {
+    total =
+      (stabilityScore ?? 0) * weights.stability +
+      (speedScore ?? 0) * weights.speed +
+      (unlockScore ?? 0) * weights.unlock +
+      (egressScore ?? 0) * weights.egress
+  }
 
   return {
     total: Math.max(0, Math.min(100, total)),
@@ -189,8 +199,23 @@ export function calculateExamScore(report: ExamReport): ExamScoreResult {
       unlock: { score: unlockScore, weight: weights.unlock },
       egress: { score: egressScore, weight: weights.egress }
     },
-    partial
+    partial,
+    unreliable
   }
+}
+
+// isEgressAllFailed 判定出网三项是否全部失败:IPv4/IPv6/DNS 三项皆 error。
+// 注意:IPv6 不可达(available=false, error 空)是明确负判定,不算失败。
+function isEgressAllFailed(egress: ExamEgressMetrics | undefined): boolean {
+  if (!egress) return false
+  // IPv4 失败:error 非空。
+  const ipv4Fail = egress.ipv4?.error ? true : false
+  // IPv6 失败:不可达(available=false)但 error 非空才算失败;不可达但 error 空是明确负判定,非失败。
+  const ipv6Fail = egress.ipv6 && !egress.ipv6.available && egress.ipv6.error ? true : false
+  // DNS 失败:error 非空。
+  const dnsFail = egress.dns?.error ? true : false
+
+  return ipv4Fail && ipv6Fail && dnsFail
 }
 
 // extractSpeedScore 从 report 提取基准行并计算速度得分;无基准或失败返回 null。
