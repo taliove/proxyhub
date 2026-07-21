@@ -36,6 +36,9 @@ type NodeSource interface {
 	// UpdateNodeTestResult 将单节点即时测试结果写回内存池（按 NodeKey 匹配）。
 	// 找到返回 true；池中无此节点返回 false。
 	UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool
+	// UpdateNodeIdentity 按 NodeKey 更新内存池中节点的身份字段(名称/地区)。
+	// name/region 为空表示本次不改该字段。找到返回 true；池中无此节点返回 false。
+	UpdateNodeIdentity(nodeKey, name, region string) bool
 }
 
 // Server HTTP 服务
@@ -178,9 +181,27 @@ func (s *Server) updateSelfHostedNodeRegion(nodeKey, countryCode string) error {
 		}
 		// Always overwrite region with egress country code
 		n.RegionCode = countryCode
-		return s.st.UpdateSelfHostedNode(n)
+		if err := s.st.UpdateSelfHostedNode(n); err != nil {
+			return err
+		}
+		// Sync memory pool region so /nodes reflects egress truth immediately
+		// (ticket 47); name unchanged here, pass empty to leave it.
+		s.syncSelfHostedNodeIdentity(nodeKey, "", countryCode)
+		return nil
 	}
 	return store.ErrNotFound
+}
+
+// syncSelfHostedNodeIdentity pushes a self-hosted node's new name/region into the
+// memory pool by NodeKey, so the admin /nodes list reflects renames and region
+// writebacks immediately instead of waiting for the next aggregation refresh
+// (ticket 47). name/region empty means "leave that field". No-op if the pool has
+// no such node (self-hosted node not yet merged into the pool).
+func (s *Server) syncSelfHostedNodeIdentity(nodeKey, name, regionCode string) {
+	if s.nodes == nil {
+		return
+	}
+	s.nodes.UpdateNodeIdentity(nodeKey, name, regionCode)
 }
 
 // RecoverJobs 重启恢复:把上次进程遗留的 running 任务恢复或标记中断。

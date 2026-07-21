@@ -148,6 +148,31 @@ func (a *Aggregator) UpdateNodeTestResult(nodeKey, mode string, available bool, 
 	return false
 }
 
+// UpdateNodeIdentity 按 NodeKey 更新内存池中节点的身份字段(名称/地区),
+// 使重命名与地区回写立即反映在 /nodes 列表,不必等下一轮聚合刷新。
+// name/region 为空表示"本次不改该字段"(region 回写只带 region,rename 只带 name)。
+// 不可变语义:命中后替换切片中的节点对象(浅拷贝再改),不原地改写旧指针,
+// 与 Nodes() 返回引用的并发读者隔离。找到并更新返回 true;池中无此节点返回 false。
+func (a *Aggregator) UpdateNodeIdentity(nodeKey, name, region string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i, n := range a.nodes {
+		if n.NodeKey() != nodeKey {
+			continue
+		}
+		updated := *n // 浅拷贝,避免原地改写旧对象
+		if name != "" {
+			updated.Name = name
+		}
+		if region != "" {
+			updated.Region = region
+		}
+		a.nodes[i] = &updated
+		return true
+	}
+	return false
+}
+
 // Run 定时执行聚合流水线
 func (a *Aggregator) Run(ctx context.Context) {
 	// 启动时立即跑一轮（除非“定时刷新”已关闭，见 ADR 0004）

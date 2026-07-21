@@ -95,6 +95,9 @@ func (s *Server) handleUpdateSelfNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// Sync memory pool so /nodes reflects the edited name/region immediately
+	// (ticket 47): no waiting for the next aggregation refresh.
+	s.syncSelfHostedNodeIdentity(n.ToNode().NodeKey(), n.Name, n.RegionCode)
 	regionResolved := n.RegionCode != "" && n.RegionCode != "Unknown"
 	writeJSON(w, map[string]any{"success": true, "region_resolved": regionResolved})
 }

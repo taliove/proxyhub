@@ -122,6 +122,9 @@ func (s *Server) refreshSelfHostedNodeNames(targetKeys map[string]bool) int {
 				s.logger.Warn("update self node after refresh failed", "nodeKey", nodeKey, "error", err)
 				continue
 			}
+			// Sync memory pool so /nodes reflects the new name/region immediately
+			// (ticket 47): no waiting for the next aggregation refresh.
+			s.syncSelfHostedNodeIdentity(nodeKey, n.Name, n.RegionCode)
 			updated++
 		}
 	}
