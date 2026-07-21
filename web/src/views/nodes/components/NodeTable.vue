@@ -210,7 +210,7 @@
             <el-button
               link
               type="primary"
-              :icon="QrCode"
+              :icon="Grid"
               title="二维码"
               :disabled="!canShare(row)"
               @click="emit('show-qr', row)"
@@ -235,7 +235,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, WarningFilled, DocumentCopy, QrCode } from '@element-plus/icons-vue'
+import { ArrowDown, WarningFilled, DocumentCopy, Grid } from '@element-plus/icons-vue'
 import { isSelfHosted } from '../utils'
 import { isGenericVariant, unlockDisplayRows, unlockSummary } from '../unlock'
 import { latencyText, nameCell, stateTags, tagsDisplay, type NodeExamSummary } from '../nodecells'
