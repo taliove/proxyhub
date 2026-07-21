@@ -111,6 +111,6 @@ CREATE TABLE IF NOT EXISTS node_overrides (
 
 ## 参考
 
-- [ADR 0009](0009-node-pool-model.md):节点池模型与刷新流程
+- [ADR 0009](0009-node-management-filter-whitelist.md):节点池模型与刷新流程
 - [ADR 0013](0013-node-management-pagination.md):节点管理分页与筛选
 - [design-node-exam](../design-node-exam.md):深度体检模型,不与节点快照混淆
