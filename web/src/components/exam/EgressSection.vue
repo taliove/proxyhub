@@ -174,11 +174,18 @@ const pendingText = (status: RowStatus): string =>
   gap: var(--ph-space-2);
 }
 .exam-egress-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 20px;
   padding: 0 var(--ph-space-2);
   border: 1px solid var(--ph-border-light);
-  border-radius: var(--ph-radius-full);
+  border-radius: 10px;
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .exam-egress-badge-ok {
   color: var(--ph-success);
