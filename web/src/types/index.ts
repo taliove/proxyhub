@@ -169,14 +169,14 @@ export interface ExamStabilityMetrics {
   score: number // 0..100
 }
 
-// 深度体检 - 单区测速结果(成功含 TTFB 与下行速率,失败仅 error)
-// 基准行额外含上行速率(up_mbps,仅基准行填充)
+// 深度体检 - 单区测速结果(成功含 TTFB、下行速率与上行速率,失败仅 error)
+// 下行失败则不测上行(up_mbps 为 0);下行成功但上行失败则 down_mbps 正常,error 标记上行问题
 export interface ExamRegionResult {
   code: string
   name: string
   ttfb_ms: number
   down_mbps: number
-  up_mbps?: number // 上行速率(仅基准行填充;缺失时降级不渲染)
+  up_mbps?: number // 上行速率(全区填充;上行失败时为 0 或缺失)
   error?: string
 }
 
