@@ -52,24 +52,22 @@ export interface TestRun {
  * Run airport test and return the test run result.
  */
 export async function runAirportTest(airportId: number, full = false): Promise<TestRun> {
-  const response = await client.post<TestRun>(`/airports/${airportId}/test`, { full })
-  return response.data
+  // 拦截器已解包 response.data(client.post 直接返回数据体)
+  return client.post<unknown, TestRun>(`/airports/${airportId}/test`, { full })
 }
 
 /**
  * Get a specific test run by ID.
  */
 export async function getTestRun(airportId: number, runId: number): Promise<TestRun> {
-  const response = await client.get<TestRun>(`/airports/${airportId}/test/runs/${runId}`)
-  return response.data
+  return client.get<unknown, TestRun>(`/airports/${airportId}/test/runs/${runId}`)
 }
 
 /**
  * List recent test runs for an airport.
  */
 export async function listTestRuns(airportId: number): Promise<TestRun[]> {
-  const response = await client.get<TestRun[]>(`/airports/${airportId}/test/runs`)
-  return response.data
+  return client.get<unknown, TestRun[]>(`/airports/${airportId}/test/runs`)
 }
 
 /**
