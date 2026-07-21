@@ -44,6 +44,13 @@
             </span>
           </el-form-item>
 
+          <el-form-item label="机场拉取并行度">
+            <el-input-number v-model="settings.fetch_concurrency" :min="1" :max="10" />
+            <span class="hint">
+              全量刷新时同时拉取的机场数(1-10,默认 4)。只作用于拉取阶段;健康检查并发独立配置。
+            </span>
+          </el-form-item>
+
           <!-- 地区白名单（新增） -->
           <el-form-item label="地区白名单">
             <RegionWhitelist />
@@ -237,6 +244,8 @@ const settings = ref({
   min_available_nodes: 10,
   // 订阅设置:字符串取值以匹配后端 map[string]string 契约
   scheduled_refresh_enabled: 'true',
+  // 机场拉取并行度(el-input-number 数字,保存时统一序列化为字符串;后端 1-10 clamp,默认 4)
+  fetch_concurrency: 4,
   filter_keywords: '',
   filter_whitelist: '',
   // 节点名称标准化(见 ADR 0012)

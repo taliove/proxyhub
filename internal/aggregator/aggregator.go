@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -411,7 +412,9 @@ func (a *Aggregator) execute(ctx context.Context, rl *runLog) {
 	a.checkAlerts(fetched.airportNodes, len(available))
 }
 
-// fetchAirports 拉取全部启用机场的订阅；单个机场失败不阻断，仅计入失败数
+// fetchAirports 拉取全部启用机场的订阅；单个机场失败不阻断，仅计入失败数。
+// 拉取按 fetchConcurrency() 的度并行(semaphore),结果按机场列表顺序归并,
+// 不随完成序漂移(事件按完成序写,带时间戳,顺序乱属正常)。
 func (a *Aggregator) fetchAirports(rl *runLog) (*fetchResult, error) {
 	airports, err := a.st.ListAirports()
 	if err != nil {
@@ -431,28 +434,81 @@ func (a *Aggregator) fetchAirports(rl *runLog) (*fetchResult, error) {
 		rl.event(levelInfo, stageFetch, fmt.Sprintf("开始拉取 %d 个机场", len(enabled)), nil)
 	}
 
+	concurrency := a.fetchConcurrency()
+	type outcome struct {
+		nodes []*subscription.Node
+		err   error
+	}
+	outcomes := make([]outcome, len(enabled))
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for i, airport := range enabled {
+		wg.Add(1)
+		go func(i int, airport *store.Airport) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			rl.event(levelInfo, stageFetch, fmt.Sprintf("拉取「%s」…", airport.Name), nil)
+			sub, err := a.fetcher.Fetch(airport.Name, airport.URL)
+			if err != nil {
+				a.logger.Warn("fetch airport failed", "airport", airport.Name, "error", err)
+				rl.event(levelWarn, stageFetch, fmt.Sprintf("「%s」拉取失败：%s", airport.Name, err.Error()),
+					map[string]any{"airport": airport.Name})
+				outcomes[i] = outcome{err: err}
+				return
+			}
+			a.logger.Info("fetched airport", "airport", airport.Name, "nodes", len(sub.Nodes))
+			rl.event(levelInfo, stageFetch, fmt.Sprintf("「%s」拉取成功，%d 个节点", airport.Name, len(sub.Nodes)),
+				map[string]any{"airport": airport.Name, "nodes": len(sub.Nodes)})
+			outcomes[i] = outcome{nodes: sub.Nodes}
+		}(i, airport)
+	}
+	wg.Wait()
+
 	result := &fetchResult{
 		airportNodes: make(map[string][]*subscription.Node),
 		enabled:      len(enabled),
 	}
-	for _, airport := range enabled {
-		rl.event(levelInfo, stageFetch, fmt.Sprintf("拉取「%s」…", airport.Name), nil)
-		sub, err := a.fetcher.Fetch(airport.Name, airport.URL)
-		if err != nil {
-			a.logger.Warn("fetch airport failed", "airport", airport.Name, "error", err)
-			rl.event(levelWarn, stageFetch, fmt.Sprintf("「%s」拉取失败：%s", airport.Name, err.Error()),
-				map[string]any{"airport": airport.Name})
+	for i, airport := range enabled {
+		o := outcomes[i]
+		if o.err != nil {
 			result.airportNodes[airport.Name] = nil
 			result.failed++
 			continue
 		}
-		result.airportNodes[airport.Name] = sub.Nodes
-		result.allNodes = append(result.allNodes, sub.Nodes...)
-		a.logger.Info("fetched airport", "airport", airport.Name, "nodes", len(sub.Nodes))
-		rl.event(levelInfo, stageFetch, fmt.Sprintf("「%s」拉取成功，%d 个节点", airport.Name, len(sub.Nodes)),
-			map[string]any{"airport": airport.Name, "nodes": len(sub.Nodes)})
+		result.airportNodes[airport.Name] = o.nodes
+		result.allNodes = append(result.allNodes, o.nodes...)
 	}
 	return result, nil
+}
+
+// 机场拉取并行度的取值边界(系统设置 fetch_concurrency,见 ticket 02)。
+const (
+	defaultFetchConcurrency = 4
+	minFetchConcurrency     = 1
+	maxFetchConcurrency     = 10
+)
+
+// fetchConcurrency 读取系统设置里的机场拉取并行度。
+// 缺失/非法值回退默认 4;越界 clamp 到 [1,10](1 = 退化为串行,与旧版行为一致)。
+func (a *Aggregator) fetchConcurrency() int {
+	settings, err := a.st.GetSystemSettings()
+	if err != nil {
+		a.logger.Warn("get system settings failed, using default fetch concurrency", "error", err)
+		return defaultFetchConcurrency
+	}
+	n, err := strconv.Atoi(settings["fetch_concurrency"])
+	if err != nil {
+		return defaultFetchConcurrency
+	}
+	if n < minFetchConcurrency {
+		return minFetchConcurrency
+	}
+	if n > maxFetchConcurrency {
+		return maxFetchConcurrency
+	}
+	return n
 }
 
 // checkHealth 健康检查所有节点,记录延迟到每个节点对象及 DB,返回可用节点列表(仅供告警统计)。
