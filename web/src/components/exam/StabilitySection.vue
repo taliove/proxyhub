@@ -65,7 +65,7 @@
             v-for="tick in xAxisTicks"
             :key="tick.value"
             :x="tick.x"
-            :y="SPARK_H"
+            :y="tick.y"
             class="axis-label axis-label-x"
             text-anchor="middle"
             dominant-baseline="hanging"
@@ -147,12 +147,17 @@ const jitterText = computed(() => formatMs(props.metrics?.jitter_ms))
 
 const layout = computed(() => computeSparklineLayout(props.samples, SPARK_W, SPARK_H))
 
+// Plot area bottom leaves room for the bottom gutter (lowest Y label half + X-axis label line).
+const plotHeight = computed(
+  () => SPARK_H - layout.value.plotAreaOffsetY - layout.value.gutterBottom
+)
+
 const sparkPath = computed(() =>
   buildSparklinePath(
     buildSparklinePoints(
       props.samples,
       SPARK_W,
-      SPARK_H,
+      layout.value.plotAreaOffsetY + plotHeight.value,
       layout.value.plotAreaOffsetX,
       layout.value.plotAreaOffsetY
     )
@@ -160,10 +165,21 @@ const sparkPath = computed(() =>
 )
 
 const yAxisTicks = computed(() =>
-  computeSparklineYAxis(props.samples, SPARK_H, layout.value.plotAreaOffsetY)
+  computeSparklineYAxis(
+    props.samples,
+    SPARK_H,
+    layout.value.plotAreaOffsetY,
+    layout.value.gutterBottom
+  )
 )
+// X-axis labels hang just below the plot bottom (inside the bottom gutter, above the viewBox edge).
 const xAxisTicks = computed(() =>
-  computeSparklineXAxis(props.samples, SPARK_W, layout.value.plotAreaOffsetX)
+  computeSparklineXAxis(
+    props.samples,
+    SPARK_W,
+    layout.value.plotAreaOffsetX,
+    layout.value.plotAreaOffsetY + plotHeight.value + 1
+  )
 )
 </script>
 

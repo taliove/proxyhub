@@ -118,7 +118,7 @@ describe('OverallScoreSection — 综合评分展示', () => {
     expect(wrapper.find('.overall-score-unreliable').exists()).toBe(false)
   })
 
-  it('进行中:稳定性 + 速度 + 出网(部分成功) → 显示渐进分数 + 部分数据标记', () => {
+  it('进行中:稳定性 + 速度 + 出网(缺解锁) → 渐进分数不归一化(缺段计 0)+ 部分数据标记', () => {
     const report: ExamReport = {
       stability: { score: 85 } as any,
       region_speed: {
@@ -134,13 +134,33 @@ describe('OverallScoreSection — 综合评分展示', () => {
       props: { report, terminal: false }
     })
 
-    // 三项归一化后约 87-90 分
+    // 进行中(progressive):缺解锁段(权重 0.2)直接计 0,不归一化。
+    // 稳定性 85×0.4 + 速度 90×0.25 + 出网 100×0.15 = 34 + 22.5 + 15 = 71.5 → 72。
     const score = parseInt(wrapper.find('.overall-score-ring-score').text())
-    expect(score).toBeGreaterThan(85)
-    expect(score).toBeLessThan(92)
+    expect(score).toBe(72)
     // 缺解锁段,显示部分数据
     expect(wrapper.find('.overall-score-partial').exists()).toBe(true)
     expect(wrapper.find('.overall-score-unreliable').exists()).toBe(false)
+  })
+
+  it('进行中 vs 完成态:同一份缺解锁报告,progressive 低于 normalized(由小到大爬升语义)', () => {
+    const report: ExamReport = {
+      stability: { score: 85 } as any,
+      region_speed: {
+        regions: [{ name: '基准', code: 'baseline', down_mbps: 50, up_mbps: 50, ttfb_ms: 10 }]
+      },
+      egress: {
+        ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
+        ipv6: { available: true, address: '2001::1' },
+        dns: { leak: false }
+      } as any
+    }
+    const inProgress = mount(OverallScoreSection, { props: { report, terminal: false } })
+    const finished = mount(OverallScoreSection, { props: { report, terminal: true } })
+    const progScore = parseInt(inProgress.find('.overall-score-ring-score').text())
+    const normScore = parseInt(finished.find('.overall-score-ring-score').text())
+    // 进行中缺段计 0(72),完成态归一化补齐到 ~89;progressive 严格更低。
+    expect(progScore).toBeLessThan(normScore)
   })
 
   it('历史报告卡:缺解锁段但有出网 → 显示渐进分数', () => {

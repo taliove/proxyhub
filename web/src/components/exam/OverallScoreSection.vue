@@ -53,7 +53,11 @@ const RING_CIRC = 2 * Math.PI * 70
 const cssVar = (name: string) =>
   getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 
-const scoreResult = computed(() => calculateExamScore(props.report))
+// 进行中(terminal=false)用 progressive:缺段计 0,分数由小到大爬升;
+// 完成态 / 历史报告卡(terminal=true)用 normalized:就已有维度给出公允满量程分。
+const scoreResult = computed(() =>
+  calculateExamScore(props.report, props.terminal ? 'normalized' : 'progressive')
+)
 const scoreColor = computed(() => cssVar(gradeColorVar(scoreResult.value.grade)) || '#059669')
 const gradeText = computed(() => gradeLabel(scoreResult.value.grade))
 const ringOffset = computed(
