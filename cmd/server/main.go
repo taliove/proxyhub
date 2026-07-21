@@ -132,17 +132,21 @@ func run(configPath string) error {
 
 // 数据保留策略（见 ADR 0010）
 const (
-	auditRetentionDays  = 90 // 审计日志保留天数
-	healthRetentionDays = 30 // 健康检查历史保留天数
-	maintenanceInterval = 24 * time.Hour
+	auditRetentionDays    = 90 // 审计日志保留天数
+	testRunsRetentionDays = 90 // 机场测试运行记录保留天数
+	healthRetentionDays   = 30 // 健康检查历史保留天数
+	maintenanceInterval   = 24 * time.Hour
 )
 
-// runMaintenance 定期清理过期数据（审计日志、健康历史）。
+// runMaintenance 定期清理过期数据（审计日志、测试运行记录、健康历史）。
 // 启动时立即跑一次，之后每 maintenanceInterval 一次，直到上下文取消。
 func runMaintenance(ctx context.Context, st *store.Store, logger *slog.Logger) {
 	prune := func() {
 		if err := st.PruneAuditLogs(time.Now().AddDate(0, 0, -auditRetentionDays)); err != nil {
 			logger.Warn("prune audit logs failed", "error", err)
+		}
+		if err := st.PruneAirportTestRuns(time.Now().AddDate(0, 0, -testRunsRetentionDays)); err != nil {
+			logger.Warn("prune airport test runs failed", "error", err)
 		}
 		if err := st.PruneHealth(healthRetentionDays); err != nil {
 			logger.Warn("prune health failed", "error", err)

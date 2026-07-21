@@ -59,3 +59,14 @@ func (s *Store) GetAirportTestRun(ctx context.Context, airportID, runID int64) (
 	run.IsFull = isFull == 1
 	return &run, nil
 }
+
+// PruneAirportTestRuns deletes test runs older than specified time (90-day retention).
+func (s *Store) PruneAirportTestRuns(olderThan time.Time) error {
+	cutoff := olderThan.UTC().Format("2006-01-02 15:04:05")
+	_, err := s.db.ExecContext(context.Background(),
+		`DELETE FROM airport_test_runs WHERE datetime(created_at) < datetime(?)`, cutoff)
+	if err != nil {
+		return fmt.Errorf("prune airport test runs: %w", err)
+	}
+	return nil
+}

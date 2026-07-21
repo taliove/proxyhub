@@ -14,19 +14,6 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
-// mockFetcher is a fake fetcher for testing.
-type mockFetcher struct {
-	response *subscription.Subscription
-	err      error
-}
-
-func (m *mockFetcher) Fetch(name, url string) (*subscription.Subscription, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.response, nil
-}
-
 func TestHandleAirportTest_Success(t *testing.T) {
 	nodes := []*subscription.Node{
 		{Name: "test-vmess", Type: "vmess", Server: "example.com", Port: 443, Source: "test-airport"},
@@ -34,20 +21,18 @@ func TestHandleAirportTest_Success(t *testing.T) {
 	}
 	srv, st := newTestServer(t, nodes)
 
-	airport, _ := st.CreateAirport("TestAirport", "https://example.com/sub")
+	// Mock subscription server
+	mockSub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return base64 encoded subscription with 2 nodes
+		content := `vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJhaWQiOjAsIm5ldCI6InRjcCIsInRscyI6InRscyIsInBzIjoiVGVzdCBWTWVzcyJ9
+ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:8080#Test%20SS`
+		w.Write([]byte(content))
+	}))
+	defer mockSub.Close()
 
-	// Inject mock fetcher
-	mockFetch := &mockFetcher{
-		response: &subscription.Subscription{
-			Name: "TestAirport",
-			URL:  "https://example.com/sub",
-			Nodes: []*subscription.Node{
-				{Name: "node1", Type: "vmess", Server: "example.com", Port: 443},
-				{Name: "node2", Type: "ss", Server: "example.com", Port: 8080},
-			},
-		},
-	}
-	srv.testOrchestrator = airporttest.NewOrchestrator(mockFetch, airporttest.NewStoreAdapter(st))
+	airport, _ := st.CreateAirport("TestAirport", mockSub.URL)
+
+	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st))
 
 	// Record node pool state before test
 	nodesBefore := srv.nodes.Nodes()
@@ -95,12 +80,10 @@ func TestHandleAirportTest_Success(t *testing.T) {
 
 func TestHandleAirportTest_FetchFailure(t *testing.T) {
 	srv, st := newTestServer(t, nil)
-	airport, _ := st.CreateAirport("BadAirport", "https://example.com/bad")
+	// URL that will fail to connect
+	airport, _ := st.CreateAirport("BadAirport", "http://localhost:1")
 
-	mockFetch := &mockFetcher{
-		err: fmt.Errorf("connection timeout"),
-	}
-	srv.testOrchestrator = airporttest.NewOrchestrator(mockFetch, airporttest.NewStoreAdapter(st))
+	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st))
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/airports/%d/test", airport.ID), nil)
 	w := httptest.NewRecorder()
@@ -125,7 +108,7 @@ func TestHandleAirportTest_FetchFailure(t *testing.T) {
 
 func TestHandleAirportTest_NotFound(t *testing.T) {
 	srv, st := newTestServer(t, nil)
-	srv.testOrchestrator = airporttest.NewOrchestrator(&mockFetcher{}, airporttest.NewStoreAdapter(st))
+	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/airports/99999/test", nil)
 	w := httptest.NewRecorder()
@@ -141,7 +124,7 @@ func TestHandleAirportTest_Disabled(t *testing.T) {
 	airport, _ := st.CreateAirport("DisabledAirport", "https://example.com/sub")
 	st.SetAirportEnabled(airport.ID, false)
 
-	srv.testOrchestrator = airporttest.NewOrchestrator(&mockFetcher{}, airporttest.NewStoreAdapter(st))
+	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st))
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/airports/%d/test", airport.ID), nil)
 	w := httptest.NewRecorder()

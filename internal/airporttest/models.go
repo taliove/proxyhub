@@ -3,14 +3,7 @@ package airporttest
 import (
 	"context"
 	"time"
-
-	"github.com/taliove/proxyhub/internal/subscription"
 )
-
-// SubscriptionFetcher abstracts subscription fetching for testing.
-type SubscriptionFetcher interface {
-	Fetch(name, url string) (*subscription.Subscription, error)
-}
 
 // RunStatus represents the status of a test run.
 type RunStatus string
@@ -45,8 +38,7 @@ type TestRun struct {
 
 // Orchestrator coordinates airport test execution.
 type Orchestrator struct {
-	fetcher SubscriptionFetcher
-	store   Store
+	store Store
 }
 
 // Store abstracts database operations for airport testing.
@@ -56,9 +48,8 @@ type Store interface {
 }
 
 // NewOrchestrator creates a new test orchestrator.
-func NewOrchestrator(fetcher SubscriptionFetcher, store Store) *Orchestrator {
+func NewOrchestrator(store Store) *Orchestrator {
 	return &Orchestrator{
-		fetcher: fetcher,
-		store:   store,
+		store: store,
 	}
 }
