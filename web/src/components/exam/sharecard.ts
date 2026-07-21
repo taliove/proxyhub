@@ -5,6 +5,7 @@ import type { ExamReport, ExamRegionResult, ExamUnlockResult } from '@/types'
 import { isBaselineRow, EXAM_UNLOCK_SLOTS } from './examrows'
 import { unlockLevel, unlockLabel, type UnlockLevel } from './unlock'
 import { ipv4Location } from './egress'
+import { calculateExamScore, type ExamScoreResult } from './score'
 
 export const MASK = '***'
 export const UNNAMED = '未命名节点'
@@ -45,8 +46,14 @@ export function formatExamTime(t: string | number | Date | undefined): string {
 }
 
 // shareScore 稳定性评分;无稳定性段返回 null(评分环不渲染)。
+// DEPRECATED:推荐改用 shareOverallScore 获取总分,此函数仅为向后兼容保留。
 export function shareScore(report: ExamReport): number | null {
   return report.stability ? report.stability.score : null
+}
+
+// shareOverallScore 体检总分(加权四项);返回完整评分结果(总分 + 档位 + 分解 + 部分标记)。
+export function shareOverallScore(report: ExamReport): ExamScoreResult {
+  return calculateExamScore(report)
 }
 
 // shareBaselineMbps 基准(Cloudflare 最近 POP)下行速率;无基准或失败返回 null。

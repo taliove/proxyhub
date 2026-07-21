@@ -18,7 +18,6 @@
         <svg class="share-ring" viewBox="0 0 120 120" aria-hidden="true">
           <circle class="share-ring-track" cx="60" cy="60" r="52" />
           <circle
-            v-if="score !== null"
             class="share-ring-arc"
             cx="60"
             cy="60"
@@ -30,7 +29,7 @@
         </svg>
         <div class="share-ring-center">
           <div class="share-ring-score" :style="{ color: scoreColor }">
-            {{ score === null ? '—' : score }}
+            {{ Math.round(score) }}
           </div>
           <div class="share-ring-label">{{ scoreText }}</div>
         </div>
@@ -111,11 +110,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ExamReport } from '@/types'
-import { scoreColorVar, scoreLabel } from './stability'
+import { gradeColorVar, gradeLabel } from './score'
 import {
   displayNodeName,
   formatExamTime,
-  shareScore,
+  shareOverallScore,
   shareBaselineMbps,
   shareBaselineUpMbps,
   shareRegionExtremes,
@@ -149,15 +148,14 @@ const cssVar = (name: string) =>
 const nodeLabel = computed(() => displayNodeName(props.nodeName, props.masked))
 const timeLabel = computed(() => formatExamTime(props.examTime))
 
-const score = computed(() => shareScore(props.report))
+const overallScore = computed(() => shareOverallScore(props.report))
+const score = computed(() => overallScore.value.total)
 const scoreColor = computed(() =>
-  score.value === null
-    ? cssVar('--ph-text-secondary') || '#64748b'
-    : cssVar(scoreColorVar(score.value)) || '#059669'
+  cssVar(gradeColorVar(overallScore.value.grade)) || '#059669'
 )
-const scoreText = computed(() => (score.value === null ? '未评分' : scoreLabel(score.value)))
+const scoreText = computed(() => gradeLabel(overallScore.value.grade))
 const ringOffset = computed(() =>
-  score.value === null ? RING_CIRC : RING_CIRC * (1 - Math.max(0, Math.min(100, score.value)) / 100)
+  RING_CIRC * (1 - Math.max(0, Math.min(100, score.value)) / 100)
 )
 const baseline = computed(() => shareBaselineMbps(props.report))
 const baselineDownText = computed(() =>
