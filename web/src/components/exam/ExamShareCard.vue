@@ -1,6 +1,6 @@
 <template>
   <!-- 分享卡海报:专为分享设计的独立版式。纯展示、零按钮,控件由外层 ExamShareDialog 承载。
-       两态:showAll=false(默认)显示脱敏摘要(打码节点名、无 IP、最佳/最差);
+       两态:showAll=false(默认)显示脱敏摘要(打码节点名、无 IP、最佳/最差、稳定性明细);
        showAll=true 显示全量版(完整节点名、全 IP、多地域全行表格、稳定性明细、出网全字段)。 -->
   <div class="share-card" :class="{ 'share-card-full': showAll }">
     <header class="share-head">
@@ -93,8 +93,8 @@
         </div>
       </div>
     </section>
-    <!-- 全量版:稳定性明细 -->
-    <section v-if="showAll && vm.stabilityDetails" class="share-block">
+    <!-- 稳定性明细:默认摘要版与全量版均显示(不含敏感信息) -->
+    <section v-if="vm.stabilityDetails" class="share-block">
       <div class="share-block-title">稳定性指标</div>
       <div class="share-stability-grid">
         <div class="share-stability-item">

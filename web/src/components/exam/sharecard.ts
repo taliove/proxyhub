@@ -248,13 +248,13 @@ export interface ShareViewModel {
   baselineUp: number | null
   regionSummary: { best: RegionExtreme | null; worst: RegionExtreme | null }
   allRegions?: ExamRegionResult[] // 仅全量版:多地域全行(除基准外)
-  stabilityDetails?: ExamStabilityMetrics // 仅全量版:稳定性明细指标
+  stabilityDetails?: ExamStabilityMetrics // 稳定性明细指标(摘要版+全量版均含,无敏感信息)
   unlockCells: UnlockCell[]
   egress: EgressSummary
 }
 
 // shareViewModel 分享卡统一视图模型派生函数:单一 showAll 开关控制摘要/全量两态。
-// showAll=false(默认):打码节点名、无 IP、多地域仅最佳/最差、无稳定性明细。
+// showAll=false(默认):打码节点名、无 IP、多地域仅最佳/最差、含稳定性明细(无敏感信息)。
 // showAll=true:完整节点名、全 IP/ASN、多地域全行、稳定性明细、出网全字段。
 export function shareViewModel(report: ExamReport, options: ShareViewModelOptions): ShareViewModel {
   const { showAll = false, nodeName, examTime, ingressIp } = options
@@ -268,6 +268,21 @@ export function shareViewModel(report: ExamReport, options: ShareViewModelOption
   const unlockCells = shareUnlockCells(report)
   const egress = shareEgressSummary(report, { showAll, ingressIp })
 
+  // 稳定性明细:摘要版+全量版均填充(不含节点名/IP,无敏感信息)
+  const stabilityDetails = report.stability
+    ? {
+        score: report.stability.score,
+        total: report.stability.total,
+        succeeded: report.stability.succeeded,
+        loss_rate: report.stability.loss_rate,
+        mean_ms: report.stability.mean_ms,
+        median_ms: report.stability.median_ms,
+        p95_ms: report.stability.p95_ms,
+        p99_ms: report.stability.p99_ms,
+        jitter_ms: report.stability.jitter_ms
+      }
+    : undefined
+
   const vm: ShareViewModel = {
     nodeLabel,
     timeLabel,
@@ -275,27 +290,15 @@ export function shareViewModel(report: ExamReport, options: ShareViewModelOption
     baselineDown,
     baselineUp,
     regionSummary,
+    stabilityDetails,
     unlockCells,
     egress
   }
 
-  // 全量版:额外派生多地域全行与稳定性明细
+  // 全量版:额外派生多地域全行
   if (showAll) {
     const regions = report.region_speed?.regions ?? []
     vm.allRegions = regions.filter((r) => !isBaselineRow(r) && !r.error)
-    vm.stabilityDetails = report.stability
-      ? {
-          score: report.stability.score,
-          total: report.stability.total,
-          succeeded: report.stability.succeeded,
-          loss_rate: report.stability.loss_rate,
-          mean_ms: report.stability.mean_ms,
-          median_ms: report.stability.median_ms,
-          p95_ms: report.stability.p95_ms,
-          p99_ms: report.stability.p99_ms,
-          jitter_ms: report.stability.jitter_ms
-        }
-      : undefined
   }
 
   return vm

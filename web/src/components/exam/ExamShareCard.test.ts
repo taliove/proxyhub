@@ -44,7 +44,7 @@ const mockReport: ExamReport = {
 }
 
 describe('ExamShareCard', () => {
-  it('默认(showAll=false):不渲染任何 IP/服务器地址,显示打码节点名与最佳/最差', () => {
+  it('默认(showAll=false):不渲染任何 IP/服务器地址,显示打码节点名与最佳/最差,含稳定性明细', () => {
     const wrapper = mount(ExamShareCard, {
       props: {
         report: mockReport,
@@ -73,9 +73,12 @@ describe('ExamShareCard', () => {
     // 无完整表格(列标题)
     expect(html).not.toContain('区域')
     expect(html).not.toContain('share-region-table')
-    // 无稳定性明细
-    expect(html).not.toContain('丢包率')
-    expect(html).not.toContain('平均延迟')
+    // 默认摘要版也渲染稳定性明细
+    expect(html).toContain('稳定性指标')
+    expect(html).toContain('丢包率')
+    expect(html).toContain('12.0%')
+    expect(html).toContain('平均延迟')
+    expect(html).toContain('50 ms')
   })
 
   it('showAll=true:渲染完整节点名、全 IP、多地域全行表格、稳定性明细、出网全字段', () => {
@@ -194,5 +197,19 @@ describe('ExamShareCard', () => {
     // 值文本完整渲染(不因换行被拆碎)
     expect(table.html()).toContain('80.0 Mbps')
     expect(table.html()).toContain('150.0 Mbps')
+  })
+
+  it('无稳定性数据时:不渲染稳定性明细区块', () => {
+    const reportWithoutStability = { ...mockReport, stability: undefined }
+    const wrapper = mount(ExamShareCard, {
+      props: {
+        report: reportWithoutStability,
+        nodeName: 'test',
+        examTime: new Date()
+      }
+    })
+    const html = wrapper.html()
+    expect(html).not.toContain('稳定性指标')
+    expect(html).not.toContain('丢包率')
   })
 })
