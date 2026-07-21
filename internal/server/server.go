@@ -1170,11 +1170,27 @@ func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
 		content = string(data)
 	}
 
+	// 预览明细与 /nodes 同源:附带最新解锁检测结果与自动标签(降级为空不阻塞)
+	previewKeys := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		previewKeys = append(previewKeys, n.NodeKey())
+	}
+	unlockResults, err := s.st.GetLatestDetectionResults(previewKeys)
+	if err != nil {
+		s.logger.Warn("get detection results for preview failed", "error", err)
+		unlockResults = nil
+	}
+	nodeTags, err := s.st.ListNodeTags(previewKeys)
+	if err != nil {
+		s.logger.Warn("get node tags for preview failed", "error", err)
+		nodeTags = nil
+	}
+
 	writeJSON(w, map[string]any{
 		"format": format,
 		"count":  len(nodes),
-		// 预览展示的是已过滤后的节点，均未被屏蔽，故传空屏蔽集;预览不附带检测结果
-		"nodes":   toNodeViews(nodes, nil, nil, nil),
+		// 预览展示的是已过滤后的节点，均未被屏蔽，故传空屏蔽集
+		"nodes":   toNodeViews(nodes, nil, unlockResults, nodeTags),
 		"content": content,
 	})
 }
