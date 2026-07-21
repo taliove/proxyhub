@@ -41,10 +41,11 @@ type Conditions struct {
 出网国家码走 `region:<CC>` 标签维度(来自体检出网段,见下)。二者是不同数据源的不同过滤。
 
 **标签词表**由 `internal/nodetag/derive.go` 固定:解锁(`nf-full`/`nf-originals`/`yt-premium`/
-`disney-plus`/`openai`/`claude`/`gemini`)、稳定(`stable-good`/`fair`/`poor`)、
+`disney-plus`/`openai`/`claude`/`gemini`)、稳定(`stable-good`/`stable-fair`/`stable-poor`)、
 出网质量(`fast`/`ipv6`/`hosting`/`residential`/`dns-leak`/`region:<CC>`)。
 前端 UI 把解锁/稳定/出网分组呈现,`region:<CC>` 等动态标签允许自行输入(allow-create),
-全部写入同一 `tags` 维度。
+全部写入同一 `tags` 维度。标签从测试结果派生、落库存储、按四个时机重算(为何落库而非读时现算、
+重算时机)见 [ADR 0023](adr/0023-auto-tag-derivation-persist-recompute.md)。
 
 ## 求值接入点(所见即所得)
 
