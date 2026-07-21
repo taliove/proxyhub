@@ -210,7 +210,7 @@ describe('shareUnlockCells', () => {
 })
 
 describe('shareEgressSummary', () => {
-  it('取 IPv4 地区与 DNS 泄露状态;默认不返回 IP', () => {
+  it('默认不返回任何 IP/服务器地址,仅返回地区与泄露状态', () => {
     const report = {
       egress: {
         ipv4: {
@@ -224,12 +224,15 @@ describe('shareEgressSummary', () => {
         dns: { resolver_ip: '8.8.8.8', resolver_geo: '美国', leak: true }
       }
     } as ExamReport
-    const s = shareEgressSummary(report)
+    const s = shareEgressSummary(report, { ingressIp: '1.2.3.4' })
     expect(s.ipv4Region).toBe('美国 · 加州 · 洛杉矶')
     expect(s.dnsLeak).toBe('leak')
-    expect(s.ipv4Address).toBeUndefined()
+    expect(s.egressIp).toBeUndefined()
+    expect(s.ingressIp).toBeUndefined()
+    expect(s.dnsResolver).toBeUndefined()
   })
-  it('showIp=true 时返回 IPv4 地址', () => {
+
+  it('showEgressIp=true 时返回出口 IPv4 地址', () => {
     const report = {
       egress: {
         ipv4: {
@@ -243,11 +246,77 @@ describe('shareEgressSummary', () => {
         dns: { resolver_ip: '8.8.8.8', resolver_geo: '美国', leak: false }
       }
     } as ExamReport
-    const s = shareEgressSummary(report, true)
-    expect(s.ipv4Address).toBe('203.0.113.7')
+    const s = shareEgressSummary(report, { showEgressIp: true })
+    expect(s.egressIp).toBe('203.0.113.7')
     expect(s.ipv4Region).toBe('美国 · 加州 · 洛杉矶')
     expect(s.dnsLeak).toBe('ok')
+    expect(s.ingressIp).toBeUndefined()
+    expect(s.dnsResolver).toBeUndefined()
   })
+
+  it('showIngressIp=true 时返回入口 IP(节点服务器地址)', () => {
+    const report = { egress: {} } as ExamReport
+    const s = shareEgressSummary(report, { showIngressIp: true, ingressIp: '1.2.3.4' })
+    expect(s.ingressIp).toBe('1.2.3.4')
+    expect(s.egressIp).toBeUndefined()
+    expect(s.dnsResolver).toBeUndefined()
+  })
+
+  it('showDns=true 时返回 DNS 解析器 IP + 地区', () => {
+    const report = {
+      egress: {
+        dns: { resolver_ip: '8.8.8.8', resolver_geo: '美国', leak: false }
+      }
+    } as ExamReport
+    const s = shareEgressSummary(report, { showDns: true })
+    expect(s.dnsResolver).toBe('8.8.8.8 (美国)')
+    expect(s.dnsLeak).toBe('ok')
+    expect(s.egressIp).toBeUndefined()
+    expect(s.ingressIp).toBeUndefined()
+  })
+
+  it('showDns=true 且解析器无地区:仅显示 IP', () => {
+    const report = {
+      egress: {
+        dns: { resolver_ip: '8.8.8.8', leak: false }
+      }
+    } as ExamReport
+    const s = shareEgressSummary(report, { showDns: true })
+    expect(s.dnsResolver).toBe('8.8.8.8')
+  })
+
+  it('三个开关全开:同时返回三个地址字段', () => {
+    const report = {
+      egress: {
+        ipv4: { ip: '203.0.113.7', country: '美国', proxy: false, hosting: true },
+        dns: { resolver_ip: '8.8.8.8', resolver_geo: '美国', leak: false }
+      }
+    } as ExamReport
+    const s = shareEgressSummary(report, {
+      showEgressIp: true,
+      showIngressIp: true,
+      showDns: true,
+      ingressIp: '1.2.3.4'
+    })
+    expect(s.egressIp).toBe('203.0.113.7')
+    expect(s.ingressIp).toBe('1.2.3.4')
+    expect(s.dnsResolver).toBe('8.8.8.8 (美国)')
+  })
+
+  it('DNS 泄露状态与 showDns 独立:状态始终返回,解析器详情受开关控制', () => {
+    const report = {
+      egress: {
+        dns: { resolver_ip: '8.8.8.8', resolver_geo: '美国', leak: true }
+      }
+    } as ExamReport
+    const s1 = shareEgressSummary(report, { showDns: false })
+    expect(s1.dnsLeak).toBe('leak')
+    expect(s1.dnsResolver).toBeUndefined()
+    const s2 = shareEgressSummary(report, { showDns: true })
+    expect(s2.dnsLeak).toBe('leak')
+    expect(s2.dnsResolver).toBe('8.8.8.8 (美国)')
+  })
+
   it('DNS 无泄露 -> ok;探测异常 -> unknown', () => {
     expect(shareEgressSummary({ egress: { dns: { leak: false } } } as ExamReport).dnsLeak).toBe(
       'ok'
@@ -256,14 +325,15 @@ describe('shareEgressSummary', () => {
       shareEgressSummary({ egress: { dns: { leak: false, error: 'x' } } } as ExamReport).dnsLeak
     ).toBe('unknown')
   })
-  it('IPv4 探测失败 -> 地区为空,无 IP', () => {
+
+  it('IPv4 探测失败 -> 地区为空,无出口 IP', () => {
     const report = { egress: { ipv4: { proxy: false, hosting: false, error: 'x' } } } as ExamReport
-    const s = shareEgressSummary(report, true)
+    const s = shareEgressSummary(report, { showEgressIp: true })
     expect(s.ipv4Region).toBe('')
-    expect(s.ipv4Address).toBeUndefined()
+    expect(s.egressIp).toBeUndefined()
   })
 
-  it('安全:默认态摘要不含出口 IP / 解析器 IP 等地址字段', () => {
+  it('安全:默认态摘要不含任何 IP/服务器地址', () => {
     const report = {
       egress: {
         ipv4: {
@@ -279,24 +349,32 @@ describe('shareEgressSummary', () => {
         dns: { resolver_ip: '8.8.8.8', resolver_geo: '美国', leak: false }
       }
     } as ExamReport
-    const serialized = JSON.stringify(shareEgressSummary(report, false))
+    const serialized = JSON.stringify(shareEgressSummary(report, { ingressIp: '1.2.3.4' }))
     expect(serialized).not.toContain('203.0.113.7')
     expect(serialized).not.toContain('8.8.8.8')
+    expect(serialized).not.toContain('1.2.3.4')
     expect(serialized).not.toContain('AS64500')
   })
-  it('安全:showIp=true 属用户明示,可序列化出 IP', () => {
+
+  it('安全:各开关打开属用户明示,对应字段可序列化', () => {
     const report = {
       egress: {
-        ipv4: {
-          ip: '203.0.113.7',
-          country: '美国',
-          proxy: false,
-          hosting: true
-        }
+        ipv4: { ip: '203.0.113.7', country: '美国', proxy: false, hosting: true },
+        dns: { resolver_ip: '8.8.8.8', resolver_geo: '美国', leak: false }
       }
     } as ExamReport
-    const serialized = JSON.stringify(shareEgressSummary(report, true))
-    expect(serialized).toContain('203.0.113.7')
+    const s1 = shareEgressSummary(report, { showEgressIp: true })
+    expect(JSON.stringify(s1)).toContain('203.0.113.7')
+    expect(JSON.stringify(s1)).not.toContain('8.8.8.8')
+    expect(JSON.stringify(s1)).not.toContain('1.2.3.4')
+
+    const s2 = shareEgressSummary(report, { showIngressIp: true, ingressIp: '1.2.3.4' })
+    expect(JSON.stringify(s2)).toContain('1.2.3.4')
+    expect(JSON.stringify(s2)).not.toContain('203.0.113.7')
+
+    const s3 = shareEgressSummary(report, { showDns: true })
+    expect(JSON.stringify(s3)).toContain('8.8.8.8')
+    expect(JSON.stringify(s3)).not.toContain('203.0.113.7')
   })
 })
 

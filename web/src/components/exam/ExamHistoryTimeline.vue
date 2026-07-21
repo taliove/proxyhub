@@ -67,6 +67,7 @@
       v-model:visible="shareVisible"
       :report="shareReport"
       :node-name="nodeName"
+      :node-server="nodeServer"
       :exam-time="shareExamTime"
     />
   </div>
@@ -87,10 +88,11 @@ const props = withDefaults(
   defineProps<{
     entries: ExamHistoryEntry[]
     loading?: boolean
-    // 分享卡展示用节点名(宿主抽屉可透传节点显示名);缺省时分享卡回落打码占位。
+    // 分享卡展示用节点名与服务器地址(宿主抽屉可透传节点显示名与 server);缺省时分享卡回落打码占位。
     nodeName?: string
+    nodeServer?: string
   }>(),
-  { loading: false, nodeName: '' }
+  { loading: false, nodeName: '', nodeServer: '' }
 )
 
 const emit = defineEmits<{ (e: 'exam'): void }>()

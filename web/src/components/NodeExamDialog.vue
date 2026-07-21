@@ -46,6 +46,7 @@
     v-model:visible="shareVisible"
     :report="shareReport"
     :node-name="nodeName"
+    :node-server="nodeServer"
     :exam-time="shareTime"
   />
 </template>
@@ -73,6 +74,7 @@ import type { ExamReport } from '@/types'
 
 const visible = ref(false)
 const nodeName = ref('')
+const nodeServer = ref('')
 const status = ref<ExamStreamStatus | 'idle'>('idle')
 const cancelling = ref(false)
 
@@ -156,9 +158,10 @@ const openShare = () => {
   shareVisible.value = true
 }
 
-const open = (p: { self_node_id?: number; node_key?: string }, name: string) => {
+const open = (p: { self_node_id?: number; node_key?: string }, name: string, server = '') => {
   payload = p
   nodeName.value = name
+  nodeServer.value = server
   // Reset state to prepare for new/reattached stream
   reset()
   visible.value = true
