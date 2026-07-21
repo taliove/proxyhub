@@ -8,7 +8,7 @@
 **只签入**:源代码、测试、构建脚本、迁移 SQL、长期文档(见 §3)、CI 配置。
 
 **永不签入**:
-- 运行时产物:`var/` 下的一切、`*.db`、`*.log`、`xray_config.json`、`config.yaml`、`dist/`、二进制
+- 运行时产物:`var/` 下的一切、`*.db`、`*.log`、`config.yaml`、`dist/`、二进制
 - 凭证:任何真实节点密码/UUID/token/订阅 URL —— 测试 fixture 一律用 `example.com` + 全零 UUID
 - 过程产物:合并分析、实施计划/总结/验证报告、AI 会话工作笔记、`.scratch/`、`.superpowers/`、spec-*.md(功能工作稿,归属 `.scratch/spec/`,见 §3)
 - 死备份:`*_old.*`、`*_backup.*`、注释掉的死代码文件
@@ -30,7 +30,6 @@ dist/            一切编译产物(二进制、release 包)—— 禁止写到�
 var/             一切本地运行态(gitignored)—— 禁止写到仓库根:
   var/data/      SQLite 数据库(默认 var/data/data.db)
   var/log/       服务日志、pid
-  var/xray/      生成的 xray_config.json(含会话凭证,绝不入库)
 .test/           集成测试脚手架的临时数据(gitignored)
 internal/*/testdata/  Go 惯例:包内测试 fixture
 ```
@@ -38,7 +37,7 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 **铁律**:
 - 仓库根只放入口与控制文件(`Makefile`、`install.sh`、`Dockerfile`、`go.mod`、`config.example.yaml`、`*.md`)。任何新文件出现在根目录都要先回答"为什么它属于根"。
 - 写文件先想归属:编译产物→`dist/`,运行态→`var/`,测试临时→`.test/` 或 `testdata/`,源码→按领域归位。
-- 代码里**禁止**把默认路径指向仓库根(如 `data.db`、`xray_config.json`);默认路径必须落在 `var/` 下,且写入方负责 `MkdirAll`(见 `store.Open`、`writeXrayConfig`)。
+- 代码里**禁止**把默认路径指向仓库根(如 `data.db`);默认路径必须落在 `var/` 下,且写入方负责 `MkdirAll`(见 `store.Open`)。
 - 生产环境路径(`/var/lib/proxyhub`、`/etc/proxyhub`、`/usr/local/bin`)只属于 `install.sh`/`proxyhubctl` 的领域,与开发布局互不污染。
 
 ## 3. 文档政策
@@ -105,7 +104,6 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 
 ## 7. 安全红线
 
-- Xray 任何入站必须 `listen: 127.0.0.1`(生成器 `internal/xray/config.go`,有测试断言 `internal/xray/xray_test.go`)
 - 不禁用 TLS 验证(无 `InsecureSkipVerify`、无 `--insecure`)
 - 管理面只走 Site Path + loopback;订阅地址 = 随机 path + token,公开但不可枚举
 - 签入前必过 `gitleaks`(配置见 `.gitleaks.toml`)

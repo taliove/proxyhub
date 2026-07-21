@@ -17,7 +17,7 @@ git diff --cached --stat
 逐项确认暂存内容,出现以下任何东西立即移出(并视情况加进 `.gitignore`):
 - 过程产物:合并分析、实施计划/总结/验证报告、AI 会话笔记、`.scratch/`、`spec-*.md`(功能工作稿,归 `.scratch/spec/`,禁止进 `docs/`)
 - 死备份:`*_old.*`、`*_backup.*`
-- 运行时产物:`*.db`、`*.log`、`xray_config.json`、`config.yaml`、`dist/`、二进制
+- 运行时产物:`*.db`、`*.log`、`config.yaml`、`dist/`、二进制
 - 大文件:任何 >500KB 的非资源文件都要质疑
 
 判断标准:这个文件对"下一个人理解系统"有帮助吗?

@@ -50,7 +50,7 @@ server:
 
 ### Q: 支持哪些代理协议?
 
-A: VMess、VLess、Trojan、Shadowsocks(通过内嵌 Xray-core 支持)。
+A: VMess、VLess、Trojan、Shadowsocks(通过内嵌 mihomo 内核支持)。
 
 ### Q: 如何添加自建节点?
 
@@ -64,15 +64,15 @@ A: 等待首次健康检查完成(启动后 15 分钟内)。查看日志:
 proxyhubctl logs --lines 100 | grep health
 ```
 
-## Xray 内核
+## 代理内核
 
-### Q: 内嵌 Xray 如何更新?
+### Q: 内嵌的代理内核如何更新?
 
-A: Xray-core 内嵌在 ProxyHub 二进制中。运行 `proxyhubctl update` 会同时更新 ProxyHub 和 Xray-core,无需单独更新。
+A: mihomo 内核内嵌在 ProxyHub 二进制中。运行 `proxyhubctl update` 会同时更新 ProxyHub 与内核,无需单独更新。
 
-### Q: 如何自定义 Xray 配置?
+### Q: 如何调整健康检查行为?
 
-A: `/etc/proxyhub/xray_config.json` 是 Xray 健康检查的配置文件,**不建议手动修改**,ProxyHub 会自动管理。如需调整健康检查行为,编辑 `/etc/proxyhub/config.yaml` 中的 `health_check` 部分。
+A: 内核配置由 ProxyHub 内部生成,无需也不应手动修改。如需调整健康检查行为,编辑 `/etc/proxyhub/config.yaml` 中的 `health_check` 部分。
 
 ## 获取帮助
 

@@ -23,11 +23,9 @@ actual code, not the commit message's claims.
   password/token/key in ANY file — especially test fixtures. Synthetic
   fixtures use `example.com` + all-zero UUIDs only. If a string "looks
   real", it is guilty until proven synthetic.
-- Runtime paths: default file paths must land under `var/` (data/log/xray),
+- Runtime paths: default file paths must land under `var/` (data/log),
   build artifacts under `dist/`. Any default path resolving to the
   repository root is a finding. Writers must `MkdirAll` their parents.
-- Xray inbounds: must set `listen: 127.0.0.1`. The config generator lives
-  at `internal/xray/config.go` (asserted in `internal/xray/xray_test.go`).
 - TLS verification: no `InsecureSkipVerify`, no `--insecure`, no disabled
   certificate checks.
 - Docs: no process artifacts (plans/summaries/merge analyses/dated

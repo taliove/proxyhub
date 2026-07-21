@@ -1,6 +1,6 @@
 # ProxyHub 生产部署指南
 
-ProxyHub 现已内嵌 Xray-core，无需单独下载或配置 Xray。单二进制文件包含完整的前后端和代理内核。
+ProxyHub 内嵌 mihomo 代理内核,无需单独下载或配置。单二进制文件包含完整的前后端和代理内核。
 
 ## 前置条件
 
@@ -17,7 +17,7 @@ ProxyHub 现已内嵌 Xray-core，无需单独下载或配置 Xray。单二进�
 
 - **内存**: 50-128MB（闲置 / 健康检查期间）
 - **CPU**: 1-5%（闲置）,10-20%（健康检查期间）
-- **磁盘**: 二进制约 20MB（含前端 + Xray-core),数据库随节点与统计数据增长
+- **磁盘**: 二进制约 20MB（含前端 + mihomo 内核),数据库随节点与统计数据增长
 - **并发健康检查**: 默认 30 个节点（可配置）
 - **检查间隔**: 默认 15 分钟（可配置）
 
@@ -97,7 +97,7 @@ install.sh --help
 ### 安装后文件结构
 
 ```
-/usr/local/bin/proxyhub          # 二进制文件（内嵌 Xray-core）
+/usr/local/bin/proxyhub          # 二进制文件（内嵌 mihomo 内核）
 /usr/local/bin/proxyhubctl       # 运维 CLI
 /etc/proxyhub/config.yaml        # 配置文件
 /var/lib/proxyhub/               # 数据目录
@@ -276,7 +276,7 @@ proxyhubctl show-info
 
 ## 性能调优
 
-ProxyHub 内嵌 Xray-core 用于健康检查（延迟测速和真实请求测试）。默认配置已优化，通常无需调整。
+ProxyHub 内嵌 mihomo 内核用于健康检查（延迟测速和真实请求测试）。默认配置已优化，通常无需调整。
 
 ### 对于大量节点（200+ 个）
 

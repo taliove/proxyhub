@@ -58,7 +58,7 @@ web/             前端 SPA 源码(vite 构建产物嵌入二进制)
 scripts/         install / release 运维脚本及测试套件
 docs/            长期文档
 dist/            编译产物(gitignored)
-var/             本地运行态(gitignored):data/ 数据库、log/ 日志、xray/ 生成的配置
+var/             本地运行态(gitignored):data/ 数据库、log/ 日志
 ```
 
 完整目录范式与"写文件先想归属"铁律见 CLAUDE.md §2。

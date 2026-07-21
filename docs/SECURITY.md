@@ -36,19 +36,18 @@ ProxyHub 不实现 TLS。所有 HTTPS 流量由 Caddy 终止，Caddy 自动管�
 - TCP 80/443 端口对外开放（Let's Encrypt ACME 挑战）
 - 域名 DNS 记录正确指向服务器
 
-### 无 Xray 端口暴露
+### 无代理内核端口暴露
 
-ProxyHub 内嵌 Xray-core 用于健康检查（延迟测速和真实请求测试）。Xray 不监听任何端口，不接受外部连接，不用于流量代理。
+ProxyHub 内嵌 mihomo 作为代理内核,仅用于健康检查(延迟测速和真实请求测试)。内核以拨号方式发起出站连接,不监听任何端口,不接受外部连接,不用于流量代理。
 
 **防护目标**:
-- 避免 Xray 端口被扫描器发现
-- 防止 Xray 配置错误导致的安全问题
+- 避免代理内核端口被扫描器发现
 - 降低攻击面
 
 **验证**:
 ```bash
-# 不应有 Xray 相关端口监听
-netstat -tulpn | grep xray  # 应无输出
+# 不应有代理内核相关端口监听(仅管理面 loopback 端口)
+netstat -tulpn | grep proxyhub
 ```
 
 ProxyHub 是**订阅聚合器**，不是流量代理。终端设备直接连接机场节点，不经过 ProxyHub。
@@ -259,7 +258,7 @@ proxy.example.com {
 
 ❌ **主机沦陷**: 如果攻击者获得 root 权限，可读取所有数据（包括解密备份）  
 ❌ **Caddy 漏洞**: 依赖 Caddy 项目的安全响应  
-❌ **供应链攻击**: 依赖 Go 模块和 Xray-core 的安全性  
+❌ **供应链攻击**: 依赖 Go 模块和 mihomo 内核的安全性  
 ❌ **社会工程**: 依赖运维人员的安全意识  
 ❌ **物理访问**: 依赖机房安全和 VPS 提供商  
 
@@ -335,7 +334,7 @@ ProxyHub 设计时未针对特定合规框架（GDPR、HIPAA、SOC 2），但提
 - [OWASP Top Ten](https://owasp.org/www-project-top-ten/)
 - [NIST SP 800-63B: Digital Identity Guidelines](https://pages.nist.gov/800-63-3/sp800-63b.html)
 - [Caddy Security Best Practices](https://caddyserver.com/docs/conventions#security)
-- [Xray-core Security Policy](https://github.com/XTLS/Xray-core/security/policy)
+- [mihomo Security](https://github.com/MetaCubeX/mihomo/security)
 
 ---
 
