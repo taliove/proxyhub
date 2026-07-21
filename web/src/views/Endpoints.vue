@@ -15,6 +15,7 @@
             <el-input :value="getSubscriptionUrl(row)" readonly>
               <template #append>
                 <el-button @click="copyUrl(row)">复制</el-button>
+                <el-button @click="showSubscriptionQR(row)">二维码</el-button>
               </template>
             </el-input>
           </template>
@@ -69,12 +70,10 @@
       </el-table>
     </el-card>
 
-    <!-- 访问统计详情:右侧抽屉展示某订阅地址的 IP 拉取明细 -->
     <el-drawer v-model="statsVisible" :title="`访问统计 - ${statsAlias}`" size="640px">
       <IPStatsTable v-if="statsEndpointId" :endpoint-id="statsEndpointId" />
     </el-drawer>
 
-    <!-- 创建对话框 -->
     <el-dialog v-model="dialogVisible" title="新建订阅地址" width="500px">
       <el-form :model="form">
         <el-form-item label="别名">
@@ -87,7 +86,6 @@
       </template>
     </el-dialog>
 
-    <!-- 命名设置对话框:按端点覆盖节点名称标准化(见 ADR 0012) -->
     <el-dialog v-model="nameConfigVisible" title="节点命名设置" width="560px">
       <el-form label-width="110px">
         <el-form-item label="标准化">
@@ -115,7 +113,6 @@
       </template>
     </el-dialog>
 
-    <!-- 节点范围对话框:配置本订阅地址的动态筛选条件(见 internal/subfilter) -->
     <EndpointConditionsDialog
       v-model="conditionsVisible"
       :endpoint="conditionsEndpoint"
@@ -127,6 +124,14 @@
       v-model="previewVisible"
       :endpoint="previewEndpointRow"
       :subscription-url="previewEndpointRow ? getSubscriptionUrl(previewEndpointRow) : ''"
+    />
+
+    <!-- 订阅地址二维码:扫码导入客户端 -->
+    <QRCodeDialog
+      ref="qrDialog"
+      v-model="qrVisible"
+      title="订阅地址二维码"
+      hint="使用客户端扫码即可导入订阅"
     />
   </div>
 </template>
@@ -140,14 +145,13 @@ import client from '@/api/client'
 import IPStatsTable from '@/components/IPStatsTable.vue'
 import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
 import EndpointPreviewDialog from '@/components/EndpointPreviewDialog.vue'
+import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { hasConditions } from '@/utils/conditions'
 
 const endpoints = ref<Endpoint[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
 const form = ref({ alias: '' })
-
-// 访问统计进右侧抽屉(详情容器唯一入口),替代原 el-table expand 展开行
 const statsVisible = ref(false)
 const statsEndpointId = ref<number | null>(null)
 const statsAlias = ref('')
@@ -158,7 +162,6 @@ const openStats = (row: Endpoint) => {
   statsVisible.value = true
 }
 
-// 行内「更多」下拉命令:启用/禁用、命名设置、节点范围、删除
 const onRowCommand = (cmd: string, row: Endpoint) => {
   if (cmd === 'toggle') toggleEndpoint(row)
   else if (cmd === 'name-config') openNameConfig(row)
@@ -202,7 +205,6 @@ const deleteEndpoint = async (row: Endpoint) => {
   loadEndpoints()
 }
 
-// 命名设置:按端点覆盖节点名称标准化
 const nameConfigVisible = ref(false)
 const nameConfigId = ref<number | null>(null)
 const nameConfigForm = ref<{ name_mode: '' | 'on' | 'off'; name_template: string }>({
@@ -228,8 +230,6 @@ const saveNameConfig = async () => {
   nameConfigVisible.value = false
   loadEndpoints()
 }
-
-// 节点范围:配置本订阅地址的动态筛选条件(见 internal/subfilter)。对话框逻辑收敛在子组件。
 const conditionsVisible = ref(false)
 const conditionsEndpoint = ref<Endpoint | null>(null)
 
@@ -246,6 +246,13 @@ const previewEndpointRow = ref<Endpoint | null>(null)
 const previewEndpoint = (row: Endpoint) => {
   previewEndpointRow.value = row
   previewVisible.value = true
+}
+const qrVisible = ref(false)
+const qrDialog = ref<InstanceType<typeof QRCodeDialog>>()
+
+const showSubscriptionQR = async (row: Endpoint) => {
+  const url = getSubscriptionUrl(row)
+  qrDialog.value?.show(url)
 }
 
 onMounted(loadEndpoints)

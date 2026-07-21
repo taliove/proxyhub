@@ -266,6 +266,8 @@ func (s *Server) Handler() http.Handler {
 
 	// 节点状态
 	mux.HandleFunc("GET /api/nodes", s.requireAuth(s.handleListNodes))
+	// 节点分享 URI 生成（用于生成二维码）
+	mux.HandleFunc("GET /api/nodes/{nodeKey}/share-uri", s.requireAuth(s.handleNodeShareURI))
 
 	// 机场节点屏蔽（按 NodeKey 精确拉黑，跨刷新持久）
 	mux.HandleFunc("POST /api/nodes/block", s.requireAuth(s.handleBlockNode))
