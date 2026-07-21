@@ -7,9 +7,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/taliove/proxyhub/internal/airporttest"
+	"github.com/taliove/proxyhub/internal/subscription"
 )
 
-// handleAirportTest executes diagnostic phase for an airport.
+// handleAirportTest executes diagnostic phase for an airport and triggers async test.
 func (s *Server) handleAirportTest(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/airports/")
 	idStr = strings.TrimSuffix(idStr, "/test")
@@ -37,6 +41,7 @@ func (s *Server) handleAirportTest(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&body)
 	}
 
+	// 阶段1:诊断(同步)
 	run, err := s.testOrchestrator.RunDiagnostic(
 		context.Background(),
 		airport.ID,
@@ -45,9 +50,25 @@ func (s *Server) handleAirportTest(w http.ResponseWriter, r *http.Request) {
 		body.Full,
 	)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("test execution failed: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("diagnostic failed: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	// 阶段2-4:异步执行(抽样 + 检活 + 评分)
+	// 解析诊断结果以获取节点
+	var diagResult airporttest.DiagnosticResult
+	json.Unmarshal([]byte(run.DimensionsJSON), &diagResult)
+
+	// 重新拉取节点(诊断已验证可拉取)
+	go func() {
+		ctx := context.Background()
+		sub, err := subscription.NewFetcher(30 * time.Second).Fetch(airport.Name, airport.URL)
+		if err != nil {
+			s.logger.Warn("async fetch failed", "airport", airport.Name, "error", err)
+			return
+		}
+		s.testOrchestrator.RunTest(ctx, run, sub.Nodes, &diagResult)
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(run)

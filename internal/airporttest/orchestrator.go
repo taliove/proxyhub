@@ -108,3 +108,74 @@ func (o *Orchestrator) persistFailedRun(ctx context.Context, run *TestRun, start
 	run.ID = id
 	return run, nil
 }
+
+// RunTest 执行完整测试流水线:诊断(已完成)→ 抽样 → 检活写回 → 评分。
+// 诊断已由 RunDiagnostic 完成,传入其返回的节点列表。
+// 返回更新后的 run(含 overall_score/dimensions_json)。
+func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, nodes []*subscription.Node, diagResult *DiagnosticResult) (*TestRun, error) {
+	// 节点池为空:直接完成,可用率维度为0
+	if len(nodes) == 0 {
+		score, dims := CalculateScore(nodes, diagResult.HTTPStatus, diagResult.ParseFailures, diagResult.NodeCount+diagResult.ParseFailures)
+		dimsJSON, _ := json.Marshal(dims)
+		scoreVal := score
+		run.Status = StatusCompleted
+		run.OverallScore = &scoreVal
+		run.DimensionsJSON = string(dimsJSON)
+		if err := o.store.UpdateTestRun(ctx, run); err != nil {
+			return nil, fmt.Errorf("update run: %w", err)
+		}
+		return run, nil
+	}
+
+	// 阶段1:抽样
+	run.Status = StatusChecking
+	if err := o.store.UpdateTestRun(ctx, run); err != nil {
+		return nil, fmt.Errorf("update to checking: %w", err)
+	}
+
+	sampled := SampleNodes(nodes, run.IsFull)
+	sampleParams := map[string]interface{}{
+		"full":         run.IsFull,
+		"total":        len(nodes),
+		"sampled":      len(sampled),
+		"checked":      0,
+		"total_sample": len(sampled),
+	}
+	paramsJSON, _ := json.Marshal(sampleParams)
+	run.SampleParams = string(paramsJSON)
+	if err := o.store.UpdateTestRun(ctx, run); err != nil {
+		return nil, fmt.Errorf("update sample params: %w", err)
+	}
+
+	// 阶段2:检活写回(复用全局健康检查路径)
+	if o.healthChecker != nil && o.poolWriter != nil {
+		results := o.healthChecker.CheckAll(ctx, sampled)
+		for i, r := range results {
+			// 写回节点池(复用 aggregator.UpdateNodeTestResult)
+			o.poolWriter.UpdateNodeTestResult(r.Node.NodeKey(), "quick", r.Available, r.Latency, 0, 0)
+			// 更新进度
+			sampleParams["checked"] = i + 1
+			paramsJSON, _ = json.Marshal(sampleParams)
+			run.SampleParams = string(paramsJSON)
+			o.store.UpdateTestRun(ctx, run)
+		}
+	}
+
+	// 阶段3:评分
+	run.Status = StatusScoring
+	if err := o.store.UpdateTestRun(ctx, run); err != nil {
+		return nil, fmt.Errorf("update to scoring: %w", err)
+	}
+
+	// 使用全池节点评分(不仅是样本,反映整体质量)
+	score, dims := CalculateScore(nodes, diagResult.HTTPStatus, diagResult.ParseFailures, diagResult.NodeCount+diagResult.ParseFailures)
+	dimsJSON, _ := json.Marshal(dims)
+	scoreVal := score
+	run.Status = StatusCompleted
+	run.OverallScore = &scoreVal
+	run.DimensionsJSON = string(dimsJSON)
+	if err := o.store.UpdateTestRun(ctx, run); err != nil {
+		return nil, fmt.Errorf("finalize run: %w", err)
+	}
+	return run, nil
+}

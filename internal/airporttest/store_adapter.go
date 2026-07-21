@@ -49,3 +49,19 @@ func (a *StoreAdapter) GetTestRun(ctx context.Context, airportID, runID int64) (
 		ErrorMessage:   storeRun.ErrorMessage,
 	}, nil
 }
+
+// UpdateTestRun updates an existing test run.
+func (a *StoreAdapter) UpdateTestRun(ctx context.Context, run *TestRun) error {
+	storeRun := &store.AirportTestRun{
+		ID:             run.ID,
+		AirportID:      run.AirportID,
+		CreatedAt:      run.CreatedAt,
+		SampleParams:   run.SampleParams,
+		IsFull:         run.IsFull,
+		Status:         string(run.Status),
+		OverallScore:   run.OverallScore,
+		DimensionsJSON: run.DimensionsJSON,
+		ErrorMessage:   run.ErrorMessage,
+	}
+	return a.s.UpdateAirportTestRun(ctx, storeRun)
+}

@@ -60,6 +60,19 @@ func (s *Store) GetAirportTestRun(ctx context.Context, airportID, runID int64) (
 	return &run, nil
 }
 
+// UpdateAirportTestRun updates an existing test run.
+func (s *Store) UpdateAirportTestRun(ctx context.Context, run *AirportTestRun) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE airport_test_runs
+		SET status = ?, overall_score = ?, dimensions_json = ?, error_message = ?
+		WHERE id = ?`,
+		run.Status, run.OverallScore, run.DimensionsJSON, run.ErrorMessage, run.ID)
+	if err != nil {
+		return fmt.Errorf("update test run: %w", err)
+	}
+	return nil
+}
+
 // PruneAirportTestRuns deletes test runs older than specified time (90-day retention).
 func (s *Store) PruneAirportTestRuns(olderThan time.Time) error {
 	cutoff := olderThan.UTC().Format("2006-01-02 15:04:05")
