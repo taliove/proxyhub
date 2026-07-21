@@ -53,6 +53,12 @@ func shareLink(node *subscription.Node) (string, error) {
 	}
 }
 
+// GenerateShareURI exports shareLink for API handlers to generate single node URI
+func GenerateShareURI(node *subscription.Node) (string, error) {
+	return shareLink(node)
+}
+
+
 func vmessLink(node *subscription.Node) (string, error) {
 	tls := ""
 	if node.TLS {

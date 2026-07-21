@@ -87,8 +87,26 @@
         <el-button type="primary" size="small" :disabled="detecting" @click="emit('detect', node)">
           检测此节点
         </el-button>
+        <el-button v-if="canShowNodeQR(node)" size="small" @click="showNodeQR(node)">
+          节点二维码
+        </el-button>
       </div>
     </template>
+
+    <!-- 节点二维码对话框 -->
+    <el-dialog v-model="qrVisible" title="节点分享二维码" width="400px">
+      <div v-if="qrLoading" class="qr-loading">生成二维码中...</div>
+      <div v-else-if="qrError" class="qr-error">
+        <el-alert type="error" :closable="false">{{ qrError }}</el-alert>
+      </div>
+      <div v-else class="qr-content">
+        <img v-if="qrDataUrl" :src="qrDataUrl" alt="节点分享二维码" class="qr-image" />
+        <div class="qr-hint">使用客户端扫码即可导入此节点</div>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="qrVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </el-drawer>
 </template>
 
@@ -98,6 +116,8 @@ import type { ExamHistoryEntry, Node } from '@/types'
 import { isGenericVariant, unlockDisplayRows } from '../unlock'
 import { fetchExamHistory } from '@/api/exam'
 import ExamHistoryTimeline from '@/components/exam/ExamHistoryTimeline.vue'
+import { generateQRCode, getNodeShareURI } from '@/composables/useQRCode'
+import client from '@/api/client'
 
 const visible = defineModel<boolean>({ required: true })
 
@@ -138,6 +158,51 @@ watch(
   },
   { immediate: true }
 )
+
+// 节点二维码
+const qrVisible = ref(false)
+const qrLoading = ref(false)
+const qrError = ref('')
+const qrDataUrl = ref('')
+
+const canShowNodeQR = (node: Node): boolean => {
+  // Show QR button if node has share_link or backend can generate
+  const uri = getNodeShareURI(node)
+  return uri !== null || node.source === 'self-hosted'
+}
+
+const showNodeQR = async (node: Node) => {
+  qrVisible.value = true
+  qrLoading.value = true
+  qrError.value = ''
+  qrDataUrl.value = ''
+
+  try {
+    let uri = getNodeShareURI(node)
+
+    // If no share_link, try backend generation for self-hosted
+    if (!uri && node.source === 'self-hosted') {
+      try {
+        const res: { uri: string } = await client.get(
+          `/nodes/${encodeURIComponent(node.node_key)}/share-uri`
+        )
+        uri = res.uri
+      } catch (err) {
+        throw new Error(`无法生成节点分享链接: ${err}`)
+      }
+    }
+
+    if (!uri) {
+      throw new Error('该节点不支持生成分享链接')
+    }
+
+    qrDataUrl.value = await generateQRCode(uri)
+  } catch (err) {
+    qrError.value = `${err}`
+  } finally {
+    qrLoading.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -175,5 +240,26 @@ watch(
 .bw-label {
   font-size: var(--ph-text-sm);
   color: var(--ph-text-secondary);
+}
+.qr-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--ph-space-4) 0;
+}
+.qr-image {
+  max-width: 100%;
+  border: 1px solid var(--el-border-color);
+  border-radius: var(--ph-radius-lg);
+}
+.qr-hint {
+  margin-top: var(--ph-space-3);
+  font-size: var(--ph-text-sm);
+  color: var(--ph-text-secondary);
+}
+.qr-loading,
+.qr-error {
+  text-align: center;
+  padding: var(--ph-space-4) 0;
 }
 </style>

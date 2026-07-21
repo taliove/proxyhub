@@ -50,6 +50,7 @@ export interface Node {
   bandwidth_down_mbps?: number // 最近一次带宽测试下行
   bandwidth_up_mbps?: number // 最近一次带宽测试上行
   tags?: string[] // 自动标签(见票据 21;后端透出前缺省,按空态处理)
+  share_link?: string // 节点分享链接(机场节点从订阅解析时保留原始链接)
 }
 
 export interface UnlockResult {
