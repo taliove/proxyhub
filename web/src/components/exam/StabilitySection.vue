@@ -38,23 +38,55 @@
     </div>
 
     <!-- 延迟序列 sparkline(只画成功样本;丢包点不连线)。历史报告无采样序列,不渲染。 -->
-    <svg
-      v-if="showSparkline"
-      class="exam-sparkline"
-      :viewBox="`0 0 ${SPARK_W} ${SPARK_H}`"
-      preserveAspectRatio="none"
-    >
-      <polyline
-        v-if="sparkPath"
-        :points="sparkPath"
-        fill="none"
-        :stroke="sparkColor"
-        stroke-width="2"
-        stroke-linejoin="round"
-        stroke-linecap="round"
-      />
-      <text v-else x="50%" y="50%" class="exam-spark-empty" text-anchor="middle">等待采样…</text>
-    </svg>
+    <div v-if="showSparkline" class="exam-sparkline-container">
+      <svg
+        class="exam-sparkline"
+        :viewBox="`0 0 ${SPARK_W} ${SPARK_H}`"
+        preserveAspectRatio="xMidYMid meet"
+      >
+        <!-- Y-axis ticks (latency scale) -->
+        <g v-if="yAxisTicks.length > 0" class="y-axis">
+          <text
+            v-for="tick in yAxisTicks"
+            :key="tick.value"
+            :x="0"
+            :y="tick.y"
+            class="axis-label axis-label-y"
+            text-anchor="start"
+            dominant-baseline="middle"
+          >
+            {{ tick.label }}
+          </text>
+        </g>
+
+        <!-- X-axis ticks (time scale) -->
+        <g v-if="xAxisTicks.length > 0" class="x-axis">
+          <text
+            v-for="tick in xAxisTicks"
+            :key="tick.value"
+            :x="tick.x"
+            :y="SPARK_H"
+            class="axis-label axis-label-x"
+            text-anchor="middle"
+            dominant-baseline="hanging"
+          >
+            {{ tick.label }}
+          </text>
+        </g>
+
+        <!-- Sparkline polyline -->
+        <polyline
+          v-if="sparkPath"
+          :points="sparkPath"
+          fill="none"
+          :stroke="sparkColor"
+          stroke-width="2"
+          stroke-linejoin="round"
+          stroke-linecap="round"
+        />
+        <text v-else x="50%" y="50%" class="exam-spark-empty" text-anchor="middle">等待采样…</text>
+      </svg>
+    </div>
 
     <el-alert v-if="error" type="error" :closable="false" :title="error" class="exam-error" />
   </section>
@@ -71,6 +103,7 @@ import {
   buildSparklinePoints,
   buildSparklinePath
 } from './stability'
+import { computeSparklineYAxis, computeSparklineXAxis } from './sparklineaxes'
 
 const SPARK_W = 300
 const SPARK_H = 56
@@ -111,6 +144,9 @@ const jitterText = computed(() => formatMs(props.metrics?.jitter_ms))
 const sparkPath = computed(() =>
   buildSparklinePath(buildSparklinePoints(props.samples, SPARK_W, SPARK_H))
 )
+
+const yAxisTicks = computed(() => computeSparklineYAxis(props.samples, SPARK_H))
+const xAxisTicks = computed(() => computeSparklineXAxis(props.samples, SPARK_W))
 </script>
 
 <style scoped>
@@ -168,11 +204,30 @@ const sparkPath = computed(() =>
   font-size: var(--ph-text-md);
   font-weight: 600;
 }
+.exam-sparkline-container {
+  margin-top: var(--ph-space-4);
+  width: 100%;
+  aspect-ratio: 300 / 70;
+  max-height: 80px;
+}
 .exam-sparkline {
   width: 100%;
-  height: 56px;
-  margin-top: var(--ph-space-4);
+  height: 100%;
   display: block;
+}
+.axis-label {
+  font-size: 9px;
+  fill: var(--ph-text-tertiary);
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+.axis-label-y {
+  transform: translateX(2px);
+}
+.axis-label-x {
+  transform: translateY(2px);
 }
 .exam-spark-empty {
   font-size: 12px;
