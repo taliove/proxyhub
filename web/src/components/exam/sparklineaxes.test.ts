@@ -131,4 +131,71 @@ describe('computeSparklineLayout', () => {
     expect(layout.gutterLeft).toBeGreaterThan(15)
     expect(layout.gutterLeft).toBeLessThan(35)
   })
+
+  it('reserves a bottom gutter for X-axis labels + lowest Y label half', () => {
+    const samples = [sample(0, 50), sample(1, 100)]
+    const layout = computeSparklineLayout(samples, 300, 56)
+    // Bottom gutter holds one 9px label line plus half the Y label height.
+    expect(layout.gutterBottom).toBeGreaterThan(9)
+    expect(layout.gutterBottom).toBeLessThan(20)
+  })
+
+  it('no samples → zero bottom gutter', () => {
+    const layout = computeSparklineLayout([], 300, 56)
+    expect(layout.gutterBottom).toBe(0)
+  })
+})
+
+describe('axis clipping — all tick labels stay inside the viewBox', () => {
+  const VB_H = 56
+  const VB_W = 300
+
+  it('lowest Y tick (e.g. "0 ms") sits above the viewBox bottom by its label half-height', () => {
+    const samples = [sample(0, 0), sample(1, 100)]
+    const layout = computeSparklineLayout(samples, VB_W, VB_H)
+    const ticks = computeSparklineYAxis(samples, VB_H, layout.plotAreaOffsetY, layout.gutterBottom)
+    // Lowest tick is the max y (bottom-most). It must clear the viewBox floor by >= half a label,
+    // so a middle-baseline label is not clipped at the bottom.
+    const lowest = Math.max(...ticks.map((t) => t.y))
+    expect(lowest).toBeLessThanOrEqual(VB_H - 4) // ~half of 9px font
+    // And the "0 ms" label is actually present and drawn inside the box.
+    const zero = ticks.find((t) => t.value === 0)
+    expect(zero).toBeDefined()
+    expect(zero!.y).toBeLessThanOrEqual(VB_H)
+  })
+
+  it('highest Y tick has room above for its upper half (>= top padding)', () => {
+    const samples = [sample(0, 0), sample(1, 100)]
+    const layout = computeSparklineLayout(samples, VB_W, VB_H)
+    const ticks = computeSparklineYAxis(samples, VB_H, layout.plotAreaOffsetY, layout.gutterBottom)
+    const highest = Math.min(...ticks.map((t) => t.y))
+    expect(highest).toBeGreaterThanOrEqual(layout.plotAreaOffsetY - 0.01)
+    expect(highest).toBeGreaterThanOrEqual(4) // upper half not clipped at top
+  })
+
+  it('X-axis labels hang inside the bottom gutter, not past the viewBox floor', () => {
+    const samples = [sample(0, 50), sample(5, 60), sample(10, 70)]
+    const layout = computeSparklineLayout(samples, VB_W, VB_H)
+    const plotBottom = VB_H - layout.gutterBottom
+    const xTicks = computeSparklineXAxis(samples, VB_W, layout.plotAreaOffsetX, plotBottom + 1)
+    xTicks.forEach((t) => {
+      expect(t.y).toBeGreaterThanOrEqual(plotBottom) // below the plot
+      // hanging baseline + one line of text must fit before the floor
+      expect(t.y + 9).toBeLessThanOrEqual(VB_H + 0.01)
+    })
+  })
+
+  it('same-latency degenerate case: bottom tick still clears the floor', () => {
+    const samples = [sample(0, 50), sample(1, 50), sample(2, 50)]
+    const layout = computeSparklineLayout(samples, VB_W, VB_H)
+    const ticks = computeSparklineYAxis(samples, VB_H, layout.plotAreaOffsetY, layout.gutterBottom)
+    const lowest = Math.max(...ticks.map((t) => t.y))
+    expect(lowest).toBeLessThanOrEqual(VB_H - 4)
+  })
+
+  it('X-axis ticks carry a y coordinate', () => {
+    const samples = [sample(0, 50), sample(5, 60), sample(10, 70)]
+    const ticks = computeSparklineXAxis(samples, VB_W, 0, 44)
+    ticks.forEach((t) => expect(t.y).toBe(44))
+  })
 })

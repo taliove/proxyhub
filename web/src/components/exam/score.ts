@@ -141,10 +141,21 @@ export function calculateEgressScore(egress: ExamEgressMetrics): number {
   return Math.max(0, score)
 }
 
+// 评分模式:
+// - 'normalized'(默认):缺段按有数据项归一化权重(权重和恒为 100%)。用于完成态 /
+//   历史报告卡 / 分享卡——已定型的报告即便缺段,也应就已有维度给出公允的满量程分。
+// - 'progressive':缺段计 0 分(不归一化)。用于体检进行中的实时评分——分数由小到大爬升,
+//   段逐项到达才逐步累加(出网满分只贡献 15,四段全到才可能满分)。
+// 两种模式在四段全有数据时完全等价(归一化因子为 1)。
+export type ExamScoreMode = 'normalized' | 'progressive'
+
 // calculateExamScore 汇总四项加权总分:稳定性 40% + 速度 25% + 解锁 20% + 出网 15%。
-// 缺段降级:只按有数据项归一化权重(权重和恒为 100%),标记 partial=true。
-// 不可信判定:出网全失败或缺出网段 → unreliable=true,总分强制 0。
-export function calculateExamScore(report: ExamReport): ExamScoreResult {
+// 缺段处理由 mode 决定(见 ExamScoreMode);任一模式都标记 partial=true(有段缺失)。
+// 不可信判定:出网全失败或缺出网段 → unreliable=true,总分强制 0(与 mode 无关)。
+export function calculateExamScore(
+  report: ExamReport,
+  mode: ExamScoreMode = 'normalized'
+): ExamScoreResult {
   // 默认权重(稳定性 40% + 速度 25% + 解锁 20% + 出网 15%)
   const defaultWeights = { stability: 0.4, speed: 0.25, unlock: 0.2, egress: 0.15 }
 
@@ -162,7 +173,7 @@ export function calculateExamScore(report: ExamReport): ExamScoreResult {
   const missingEgress = !report.egress
   const unreliable = egressAllFailed || missingEgress
 
-  // 归一化权重:只对有数据项分配权重
+  // 有数据项的权重和(用于 partial 判定与 normalized 模式的归一化因子)。
   let totalWeight = 0
   if (stabilityScore !== null) totalWeight += defaultWeights.stability
   if (speedScore !== null) totalWeight += defaultWeights.speed
@@ -171,8 +182,9 @@ export function calculateExamScore(report: ExamReport): ExamScoreResult {
 
   const partial = totalWeight < 0.999 // 有段缺失(浮点容差)
 
-  // 归一化权重:如果权重和 <100%,按比例放大
-  const normalize = totalWeight > 0 ? 1 / totalWeight : 0
+  // normalized:权重和 <100% 时按比例放大到 100%(缺段被其余段补齐)。
+  // progressive:归一化因子恒为 1,缺段的默认权重份额直接损失(计 0),分数由小到大爬升。
+  const normalize = mode === 'progressive' ? 1 : totalWeight > 0 ? 1 / totalWeight : 0
   const weights = {
     stability: stabilityScore !== null ? defaultWeights.stability * normalize : 0,
     speed: speedScore !== null ? defaultWeights.speed * normalize : 0,

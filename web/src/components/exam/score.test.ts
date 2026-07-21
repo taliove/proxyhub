@@ -483,4 +483,178 @@ describe('score — 体检总分计算', () => {
       expect(score4).toBeGreaterThanOrEqual(score3) // 出网满分时增长,扣分时可能减少
     })
   })
+
+  describe("渐进模式(mode='progressive'):缺段计 0,由小到大爬升", () => {
+    it('仅出网段满分 → 只贡献 15 分量级(不归一化到 100)', () => {
+      // 出网满分但缺其余三段:progressive 下只累加 100×0.15=15。
+      const report: ExamReport = {
+        egress: {
+          ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
+          ipv6: { available: true, address: '2001::1' },
+          dns: { leak: false }
+        } as any
+      }
+      const result = calculateExamScore(report, 'progressive')
+      expect(result.total).toBeCloseTo(15, 1)
+      expect(result.partial).toBe(true)
+      expect(result.unreliable).toBe(false)
+    })
+
+    it('对比:同一份仅出网满分报告在 normalized 下爬到 100(误导),progressive 只有 15', () => {
+      const report: ExamReport = {
+        egress: {
+          ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
+          ipv6: { available: true, address: '2001::1' },
+          dns: { leak: false }
+        } as any
+      }
+      expect(calculateExamScore(report, 'normalized').total).toBeCloseTo(100, 1)
+      expect(calculateExamScore(report, 'progressive').total).toBeCloseTo(15, 1)
+    })
+
+    it('四段全满分 → progressive 与 normalized 等价(=满分量级)', () => {
+      const report: ExamReport = {
+        stability: { score: 100 } as any,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 100, up_mbps: 50, ttfb_ms: 5 }]
+        },
+        unlock: {
+          results: [
+            { target_name: 'Netflix', level: 'full' },
+            { target_name: 'YouTube Premium', level: 'full' },
+            { target_name: 'Disney+', level: 'full' },
+            { target_name: 'OpenAI', level: 'full' },
+            { target_name: 'Claude', level: 'full' },
+            { target_name: 'Gemini', level: 'full' }
+          ] as any[]
+        },
+        egress: {
+          ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
+          ipv6: { available: true, address: '2001::1' },
+          dns: { leak: false }
+        } as any
+      }
+      const prog = calculateExamScore(report, 'progressive')
+      const norm = calculateExamScore(report, 'normalized')
+      expect(prog.total).toBe(norm.total)
+      expect(prog.total).toBe(100) // 稳定性 40 + 速度 25 + 解锁 20 + 出网 15
+      expect(prog.partial).toBe(false)
+    })
+
+    it('四段全有数据(非满分)→ progressive 与 normalized 数值等价', () => {
+      const report: ExamReport = {
+        stability: { score: 85 } as any,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 50, up_mbps: 50, ttfb_ms: 10 }]
+        },
+        unlock: {
+          results: [
+            { target_name: 'Netflix', level: 'full' },
+            { target_name: 'YouTube Premium', level: 'full' },
+            { target_name: 'Disney+', level: 'originals_only' },
+            { target_name: 'OpenAI', level: 'full' },
+            { target_name: 'Claude', level: 'blocked' },
+            { target_name: 'Gemini', level: 'full' }
+          ] as any[]
+        },
+        egress: {
+          ipv4: { ip: '1.2.3.4', hosting: true, proxy: false },
+          ipv6: { available: false },
+          dns: { leak: false }
+        } as any
+      }
+      expect(calculateExamScore(report, 'progressive').total).toBeCloseTo(
+        calculateExamScore(report, 'normalized').total,
+        5
+      )
+    })
+
+    it('段逐项到达 → 分数严格由小到大爬升(未到达段计 0)', () => {
+      // 帧1:仅稳定性满分 → 40。
+      const r1: ExamReport = { stability: { score: 100 } as any }
+      // 帧2:+速度满分 → 40 + 25 = 65。
+      const r2: ExamReport = {
+        ...r1,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 100, ttfb_ms: 5 }]
+        }
+      }
+      // 帧3:+解锁满分 → 65 + 20 = 85。
+      const r3: ExamReport = {
+        ...r2,
+        unlock: {
+          results: [
+            { target_name: 'Netflix', level: 'full' },
+            { target_name: 'YouTube Premium', level: 'full' },
+            { target_name: 'Disney+', level: 'full' },
+            { target_name: 'OpenAI', level: 'full' },
+            { target_name: 'Claude', level: 'full' },
+            { target_name: 'Gemini', level: 'full' }
+          ] as any[]
+        }
+      }
+      // 帧4:+出网满分 → 85 + 15 = 100。
+      const r4: ExamReport = {
+        ...r3,
+        egress: {
+          ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
+          ipv6: { available: true, address: '2001::1' },
+          dns: { leak: false }
+        } as any
+      }
+      const s1 = calculateExamScore(r1, 'progressive').total
+      const s2 = calculateExamScore(r2, 'progressive').total
+      const s3 = calculateExamScore(r3, 'progressive').total
+      const s4 = calculateExamScore(r4, 'progressive').total
+      expect(s1).toBeCloseTo(40, 1)
+      expect(s2).toBeCloseTo(65, 1)
+      expect(s3).toBeCloseTo(85, 1)
+      expect(s4).toBeCloseTo(100, 1)
+      // 严格单调爬升(全满分序列)。
+      expect(s2).toBeGreaterThan(s1)
+      expect(s3).toBeGreaterThan(s2)
+      expect(s4).toBeGreaterThan(s3)
+    })
+
+    it('progressive 仍保留 partial 标记与出网全失败强制 0 规则', () => {
+      // 缺段 → partial 保留。
+      const partialReport: ExamReport = {
+        stability: { score: 80 } as any,
+        egress: {
+          ipv4: { ip: '1.2.3.4', hosting: false },
+          ipv6: { available: true },
+          dns: { leak: false }
+        } as any
+      }
+      expect(calculateExamScore(partialReport, 'progressive').partial).toBe(true)
+
+      // 出网全失败 → 强制 0、unreliable。
+      const failedReport: ExamReport = {
+        stability: { score: 90 } as any,
+        egress: {
+          ipv4: { error: 'timeout' },
+          ipv6: { available: false, error: 'timeout' },
+          dns: { error: 'timeout' }
+        } as any
+      }
+      const failed = calculateExamScore(failedReport, 'progressive')
+      expect(failed.total).toBe(0)
+      expect(failed.unreliable).toBe(true)
+    })
+
+    it("默认 mode 为 'normalized'(向后兼容:显式 normalized 与省略参数一致)", () => {
+      const report: ExamReport = {
+        stability: { score: 80 } as any,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 100, ttfb_ms: 5 }]
+        },
+        egress: {
+          ipv4: { ip: '1.2.3.4', hosting: false },
+          ipv6: { available: true },
+          dns: { leak: false }
+        } as any
+      }
+      expect(calculateExamScore(report).total).toBe(calculateExamScore(report, 'normalized').total)
+    })
+  })
 })
