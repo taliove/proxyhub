@@ -60,10 +60,11 @@ const ringOffset = computed(
   () => RING_CIRC * (1 - Math.max(0, Math.min(100, scoreResult.value.total)) / 100)
 )
 
-// 显示分数:进行中且无足够数据时显示"—",否则显示总分。
+// 显示分数:进行中时显示渐进分数(随段到达增长),完成后显示最终分数。
+// 不可信时显示 0。
 const displayScore = computed(() => {
-  if (!props.terminal && scoreResult.value.partial) {
-    return '—'
+  if (scoreResult.value.unreliable) {
+    return '0'
   }
   return Math.round(scoreResult.value.total).toString()
 })

@@ -103,7 +103,11 @@ import {
   buildSparklinePoints,
   buildSparklinePath
 } from './stability'
-import { computeSparklineYAxis, computeSparklineXAxis } from './sparklineaxes'
+import {
+  computeSparklineYAxis,
+  computeSparklineXAxis,
+  computeSparklineLayout
+} from './sparklineaxes'
 
 const SPARK_W = 300
 const SPARK_H = 56
@@ -141,12 +145,26 @@ const p95Text = computed(() => formatMs(props.metrics?.p95_ms))
 const p99Text = computed(() => formatMs(props.metrics?.p99_ms))
 const jitterText = computed(() => formatMs(props.metrics?.jitter_ms))
 
+const layout = computed(() => computeSparklineLayout(props.samples, SPARK_W, SPARK_H))
+
 const sparkPath = computed(() =>
-  buildSparklinePath(buildSparklinePoints(props.samples, SPARK_W, SPARK_H))
+  buildSparklinePath(
+    buildSparklinePoints(
+      props.samples,
+      SPARK_W,
+      SPARK_H,
+      layout.value.plotAreaOffsetX,
+      layout.value.plotAreaOffsetY
+    )
+  )
 )
 
-const yAxisTicks = computed(() => computeSparklineYAxis(props.samples, SPARK_H))
-const xAxisTicks = computed(() => computeSparklineXAxis(props.samples, SPARK_W))
+const yAxisTicks = computed(() =>
+  computeSparklineYAxis(props.samples, SPARK_H, layout.value.plotAreaOffsetY)
+)
+const xAxisTicks = computed(() =>
+  computeSparklineXAxis(props.samples, SPARK_W, layout.value.plotAreaOffsetX)
+)
 </script>
 
 <style scoped>

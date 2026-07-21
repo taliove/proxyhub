@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { computeSparklineYAxis, computeSparklineXAxis } from './sparklineaxes'
+import {
+  computeSparklineYAxis,
+  computeSparklineXAxis,
+  computeSparklineLayout
+} from './sparklineaxes'
 import type { ExamStabilitySample } from '@/types'
 
 const sample = (seq: number, latency: number, ok = true): ExamStabilitySample => ({
@@ -81,5 +85,50 @@ describe('computeSparklineXAxis', () => {
   it('handles only failed samples', () => {
     const samples = [sample(0, 50, false), sample(1, 60, false)]
     expect(computeSparklineXAxis(samples, 300)).toEqual([])
+  })
+})
+
+describe('computeSparklineLayout', () => {
+  it('calculates gutter width from max Y-axis label', () => {
+    const samples = [sample(0, 999), sample(1, 1000)]
+    const layout = computeSparklineLayout(samples, 300, 56)
+    // "1000 ms" is longest label, should need ~35-40px gutter
+    expect(layout.gutterLeft).toBeGreaterThan(30)
+    expect(layout.gutterLeft).toBeLessThan(50)
+    expect(layout.plotAreaOffsetX).toBe(layout.gutterLeft)
+  })
+
+  it('no samples → zero gutter', () => {
+    const layout = computeSparklineLayout([], 300, 56)
+    expect(layout.gutterLeft).toBe(0)
+    expect(layout.plotAreaOffsetX).toBe(0)
+    expect(layout.plotAreaOffsetY).toBe(0)
+  })
+
+  it('reserves top padding for Y-axis labels', () => {
+    const samples = [sample(0, 50), sample(1, 100)]
+    const layout = computeSparklineLayout(samples, 300, 56)
+    // Should have small top padding for label half-height
+    expect(layout.plotAreaOffsetY).toBeGreaterThan(0)
+    expect(layout.plotAreaOffsetY).toBeLessThan(10)
+  })
+
+  it('returns consistent structure', () => {
+    const samples = [sample(0, 50)]
+    const layout = computeSparklineLayout(samples, 300, 56)
+    expect(layout).toHaveProperty('gutterLeft')
+    expect(layout).toHaveProperty('plotAreaOffsetX')
+    expect(layout).toHaveProperty('plotAreaOffsetY')
+    expect(typeof layout.gutterLeft).toBe('number')
+    expect(typeof layout.plotAreaOffsetX).toBe('number')
+    expect(typeof layout.plotAreaOffsetY).toBe('number')
+  })
+
+  it('small latency values need smaller gutter', () => {
+    const samples = [sample(0, 5), sample(1, 15)]
+    const layout = computeSparklineLayout(samples, 300, 56)
+    // "20 ms" or similar short label
+    expect(layout.gutterLeft).toBeGreaterThan(15)
+    expect(layout.gutterLeft).toBeLessThan(35)
   })
 })
