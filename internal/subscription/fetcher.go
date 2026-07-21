@@ -100,6 +100,10 @@ func (f *Fetcher) parse(content, source string) ([]*Node, error) {
 			continue
 		}
 
+		// 保留原始分享 URI,供 share-uri 端点原样回放节点二维码(见 ticket 56)。
+		// line 已是 TrimSpace 后的完整原始链接;含凭证,只落到 Node.RawLink(json:"-")。
+		node.RawLink = line
+
 		nodes = append(nodes, node)
 	}
 
