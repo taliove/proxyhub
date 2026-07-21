@@ -29,8 +29,9 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200">
+        <el-table-column label="操作" width="280">
           <template #default="{ row }">
+            <el-button link type="primary" @click="openTestDialog(row)">测试</el-button>
             <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
             <el-button link @click="toggleAirport(row)">
               {{ row.enabled ? '禁用' : '启用' }}
@@ -66,6 +67,8 @@
         <el-button type="primary" @click="submitForm">{{ editMode ? '保存' : '添加' }}</el-button>
       </template>
     </el-dialog>
+
+    <AirportTestDialog v-model="testDialogVisible" :airport="testingAirport" />
   </div>
 </template>
 
@@ -76,6 +79,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import type { Airport } from '@/types'
 import client from '@/api/client'
 import { useDebouncedSuggest } from '@/composables/useDebouncedSuggest'
+import AirportTestDialog from '@/components/AirportTestDialog.vue'
 
 const airports = ref<Airport[]>([])
 const loading = ref(false)
@@ -84,6 +88,10 @@ const dialogVisible = ref(false)
 const editMode = ref(false)
 const editingId = ref<number | null>(null)
 const form = ref({ name: '', url: '', abbr: '' })
+
+// Test dialog state
+const testDialogVisible = ref(false)
+const testingAirport = ref<Airport | null>(null)
 
 // Debounced auto-suggestion: name input -> abbr suggestion
 const abbrRef = computed({
@@ -121,6 +129,11 @@ const openAddDialog = () => {
   form.value = { name: '', url: '', abbr: '' }
   resetAbbrSuggest()
   dialogVisible.value = true
+}
+
+const openTestDialog = (airport: Airport) => {
+  testingAirport.value = airport
+  testDialogVisible.value = true
 }
 
 const openEditDialog = (row: Airport) => {
