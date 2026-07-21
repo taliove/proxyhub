@@ -1,6 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { generateQRCode, getNodeShareURI } from './useQRCode'
+import { getNodeShareLink } from './useNodeShare'
 import type { Node } from '@/types'
+
+vi.mock('./useNodeShare', () => ({
+  getNodeShareLink: vi.fn()
+}))
 
 describe('useQRCode', () => {
   describe('generateQRCode', () => {
@@ -21,7 +26,7 @@ describe('useQRCode', () => {
   })
 
   describe('getNodeShareURI', () => {
-    it('should use share_link when available (airport node)', () => {
+    it('should call backend API via getNodeShareLink', async () => {
       const node = {
         name: 'Test HK 01',
         display_name: '🇭🇰 香港 机场-01',
@@ -36,16 +41,19 @@ describe('useQRCode', () => {
         available: true,
         node_key: 'example.com:443',
         blocked: false,
-        stale: false,
-        share_link:
-          'vless://00000000-0000-0000-0000-000000000000@example.com:443?type=tcp&security=tls#Test%20HK%2001'
-      } as Node & { share_link: string }
+        stale: false
+      } as Node
 
-      const uri = getNodeShareURI(node)
-      expect(uri).toBe(node.share_link)
+      const mockUri =
+        'vless://00000000-0000-0000-0000-000000000000@example.com:443?type=tcp&security=tls#Test%20HK%2001'
+      vi.mocked(getNodeShareLink).mockResolvedValueOnce(mockUri)
+
+      const uri = await getNodeShareURI(node)
+      expect(uri).toBe(mockUri)
+      expect(getNodeShareLink).toHaveBeenCalledWith(node)
     })
 
-    it('should generate URI via backend for self-hosted node without share_link', () => {
+    it('should work for self-hosted nodes', async () => {
       const node = {
         name: 'Self Node',
         display_name: 'Self Node',
@@ -63,11 +71,14 @@ describe('useQRCode', () => {
         stale: false
       } as Node
 
-      const uri = getNodeShareURI(node)
-      expect(uri).toBeNull() // Backend endpoint needed
+      const mockUri = 'vless://self-hosted-uri'
+      vi.mocked(getNodeShareLink).mockResolvedValueOnce(mockUri)
+
+      const uri = await getNodeShareURI(node)
+      expect(uri).toBe(mockUri)
     })
 
-    it('should return null when no share_link and not generatable', () => {
+    it('should throw error for unsupported protocol', async () => {
       const node = {
         name: 'Unknown Node',
         display_name: 'Unknown',
@@ -85,8 +96,10 @@ describe('useQRCode', () => {
         stale: false
       } as Node
 
-      const uri = getNodeShareURI(node)
-      expect(uri).toBeNull()
+      const error = new Error('Unsupported protocol')
+      vi.mocked(getNodeShareLink).mockRejectedValueOnce(error)
+
+      await expect(getNodeShareURI(node)).rejects.toThrow('Unsupported protocol')
     })
   })
 })

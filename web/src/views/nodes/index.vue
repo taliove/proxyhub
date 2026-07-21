@@ -68,6 +68,8 @@
       @unblock="unblockNode"
       @refresh-name="refreshNameOne"
       @test="runTest"
+      @copy-link="copyNodeShareLink"
+      @show-qr="showNodeQR"
     />
 
     <NodeDetailDrawer
@@ -95,6 +97,12 @@
     <SelfNodeImportDialog v-model="importDialogVisible" @imported="onImported" />
     <BandwidthTestDialog ref="bwDialog" />
     <NodeExamDialog ref="examDialog" />
+    <QRCodeDialog
+      ref="qrDialog"
+      v-model="qrDialogVisible"
+      title="节点分享二维码"
+      hint="使用客户端扫码即可导入此节点"
+    />
   </el-card>
 </template>
 
@@ -104,6 +112,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useNodeTest } from '@/composables/useNodeTest'
 import BandwidthTestDialog from '@/components/BandwidthTestDialog.vue'
 import NodeExamDialog from '@/components/NodeExamDialog.vue'
+import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import NodeFilterBar from './components/NodeFilterBar.vue'
 import NodeGlobalActions from './components/NodeGlobalActions.vue'
 import NodeBatchBar from './components/NodeBatchBar.vue'
@@ -126,6 +135,7 @@ import { buildUnifiedRows, selfNodeIndex, type UnifiedNode } from './selfmerge'
 import { tagsOf, unlockTargetsOf } from './nodecells'
 import { emptyForm, type SelfNodeForm } from './self-node-utils'
 import { formatTime, SELF_HOSTED } from './utils'
+import { copyNodeLink, getNodeShareLink } from '@/composables/useNodeShare'
 
 const router = useRouter()
 const route = useRoute()
@@ -242,6 +252,9 @@ const openOverride = (row: UnifiedNode) => overrideDialog.value?.open(row)
 // 单节点测试:自建按 self_node_id、机场按 node_key(与后端 handleTestNode 一致)。
 const bwDialog = ref<InstanceType<typeof BandwidthTestDialog> | null>(null)
 const examDialog = ref<InstanceType<typeof NodeExamDialog> | null>(null)
+const qrDialog = ref<InstanceType<typeof QRCodeDialog> | null>(null)
+const qrDialogVisible = ref(false)
+
 const testTarget = (row: UnifiedNode) =>
   row.self_node_id != null ? { self_node_id: row.self_node_id } : { node_key: row.node_key }
 const openExam = (node: UnifiedNode) =>
@@ -338,6 +351,19 @@ const onDeleteSelf = async (row: UnifiedNode) => {
   if (!sn) return
   await deleteSelf(sn)
   await loadPool()
+}
+
+// 节点分享:复制链接与二维码
+const copyNodeShareLink = async (node: UnifiedNode) => {
+  await copyNodeLink(node)
+}
+const showNodeQR = async (node: UnifiedNode) => {
+  try {
+    const uri = await getNodeShareLink(node)
+    qrDialog.value?.show(uri)
+  } catch {
+    // Error already handled by getNodeShareLink via ElMessage
+  }
 }
 
 // 深链:?source=<来源> 预选来源筛选;兼容旧的 ?tab=self -> 自建。

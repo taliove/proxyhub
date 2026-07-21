@@ -1,4 +1,5 @@
 import QRCode from 'qrcode'
+import { getNodeShareLink } from './useNodeShare'
 import type { Node } from '@/types'
 
 /**
@@ -24,21 +25,12 @@ export async function generateQRCode(text: string): Promise<string> {
 }
 
 /**
- * Get node share URI for QR code generation
- * For airport nodes: use share_link from subscription if available
- * For self-hosted nodes: need backend API to generate
+ * Get node share URI for QR code generation (legacy wrapper)
+ * Now calls backend API for all nodes
  * @param node Node object
- * @returns Share URI string or null if not available
+ * @returns Share URI string
+ * @throws Error if protocol unsupported or backend fails
  */
-export function getNodeShareURI(node: Node): string | null {
-  // Extended Node type may have share_link from subscription parse
-  const nodeWithLink = node as Node & { share_link?: string }
-
-  if (nodeWithLink.share_link) {
-    return nodeWithLink.share_link
-  }
-
-  // For nodes without share_link, we need backend generation
-  // This will be handled by calling /api/nodes/{node_key}/share-uri
-  return null
+export async function getNodeShareURI(node: Node): Promise<string> {
+  return await getNodeShareLink(node)
 }
