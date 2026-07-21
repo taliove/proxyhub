@@ -101,7 +101,7 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 
 - 每次签入前:`make check`(vet + Go 测试 + shell 套件 + 前端 lint)
 - 推送前:`make check` 全量 + `make build` 验证完整构建
-- 既有失败 3 处(2 个默认模板测试 + `TestHandleTestNode_MissingTarget`,处置待定见 backlog):已在 `make test` 中显式隔离(`-skip`,Makefile 有注释清单);`make test-all` 可跑全量(预期红,用于完整性审计)。**不许通过改测试让它们消失**,也不许扩大隔离名单。
+- 测试套件保持全绿,无隔离名单。2026-07-21 起,原 3 处既有失败已按维护者决策清零(模板断言改为从模板内容推导;nodetest 缺失目标拆分 400/404 语义)。**不许用 `-skip` 或改测试来掩盖真实回归**;发现失败先定位原因,再决定修代码还是修断言。
 
 ## 7. 安全红线
 

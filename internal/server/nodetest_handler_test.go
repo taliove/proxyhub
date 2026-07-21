@@ -50,3 +50,21 @@ func TestHandleTestNode_MissingTarget(t *testing.T) {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
 }
+
+// 给了目标但解析不到:语义是"资源不存在",返回 404(与未给目标的 400 区分)。
+func TestHandleTestNode_UnresolvableTarget(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	cases := map[string]map[string]any{
+		"node_key 不存在":    {"node_key": "example.com:443", "mode": "quick"},
+		"self_node_id 不存在": {"self_node_id": 99999, "mode": "quick"},
+	}
+	for name, payload := range cases {
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest(http.MethodPost, "/api/nodes/test", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		srv.handleTestNode(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: status = %d, want 404", name, w.Code)
+		}
+	}
+}

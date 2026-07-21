@@ -340,30 +340,73 @@ func TestRenderTemplate_EmptyTemplate(t *testing.T) {
 }
 
 func TestDefaultTemplate_Valid(t *testing.T) {
-	// 内嵌的默认模板必须可被渲染，且产出完整字段
-	data, err := RenderTemplate(DefaultTemplate(), sampleNodes())
+	// 内嵌默认模板必须可渲染,且产出结构与模板自身一致。
+	// 断言从模板内容推导(首组名、顶层段),不硬编码规模数字——模板再调整不会炸同类问题。
+	raw := DefaultTemplate()
+	var tmplDoc clashDoc
+	if err := yaml.Unmarshal([]byte(raw), &tmplDoc); err != nil {
+		t.Fatalf("embedded default template is not valid YAML: %v", err)
+	}
+	if len(tmplDoc.ProxyGroups) == 0 {
+		t.Fatal("default template declares no proxy-groups")
+	}
+
+	data, err := RenderTemplate(raw, sampleNodes())
 	if err != nil {
 		t.Fatalf("RenderTemplate(DefaultTemplate) error = %v", err)
 	}
 	doc := parseClash(t, data)
 
-	if len(doc.Hosts) == 0 {
-		t.Error("default template produced no hosts")
+	// 模板声明了的顶层段,渲染后必须保留
+	if len(tmplDoc.DNS) > 0 && len(doc.DNS) == 0 {
+		t.Error("dns section declared in template but missing after render")
 	}
-	if len(doc.DNS) == 0 {
-		t.Error("default template produced no dns")
+	if len(tmplDoc.Hosts) > 0 && len(doc.Hosts) == 0 {
+		t.Error("hosts section declared in template but missing after render")
 	}
-	if len(doc.ProxyGroups) < 40 {
-		t.Errorf("default template proxy-groups = %d, want >= 40", len(doc.ProxyGroups))
+
+	// 首组是 select 组、引用全部节点占位符,永远非空,裁剪不会改变它;
+	// 渲染结果的首组必须与模板声明的首组同名
+	if len(doc.ProxyGroups) == 0 {
+		t.Fatal("default template produced no proxy-groups")
 	}
-	if len(doc.Rules) < 1000 {
-		t.Errorf("default template rules = %d, want >= 1000", len(doc.Rules))
+	if doc.ProxyGroups[0].Name != tmplDoc.ProxyGroups[0].Name {
+		t.Errorf("first group = %q, want template's first group %q",
+			doc.ProxyGroups[0].Name, tmplDoc.ProxyGroups[0].Name)
 	}
+
+	// 4 个 sample 节点必须全部注入
 	if len(doc.Proxies) != 4 {
-		t.Errorf("default template proxies = %d, want 4 (injected nodes)", len(doc.Proxies))
+		t.Errorf("proxies = %d, want 4 (injected nodes)", len(doc.Proxies))
 	}
-	// 第一个组（手动切换）应包含全部注入节点
-	if !strings.Contains(doc.ProxyGroups[0].Name, "手动切换") {
-		t.Errorf("first group = %q, want 手动切换", doc.ProxyGroups[0].Name)
+
+	// 裁剪完整性:存活组必须全部非空,规则引用的组必须存在(或为 DIRECT)
+	groupNames := map[string]bool{"DIRECT": true}
+	for _, g := range doc.ProxyGroups {
+		if len(g.Proxies) == 0 {
+			t.Errorf("group %q has empty proxies after prune", g.Name)
+		}
+		groupNames[g.Name] = true
+	}
+	if len(doc.Rules) == 0 {
+		t.Fatal("default template produced no rules")
+	}
+	for _, r := range doc.Rules {
+		parts := strings.Split(r, ",")
+		if len(parts) < 2 {
+			t.Errorf("malformed rule %q", r)
+			continue
+		}
+		target := parts[len(parts)-1]
+		if target == "no-resolve" { // IP-CIDR,...,GROUP,no-resolve
+			target = parts[len(parts)-2]
+		}
+		if !groupNames[target] {
+			t.Errorf("rule %q references unknown group %q", r, target)
+		}
+	}
+	// 必须有 MATCH 兜底规则收尾
+	if last := doc.Rules[len(doc.Rules)-1]; !strings.HasPrefix(last, "MATCH,") {
+		t.Errorf("last rule = %q, want MATCH catch-all", last)
 	}
 }

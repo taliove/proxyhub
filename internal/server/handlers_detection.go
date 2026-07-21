@@ -128,6 +128,11 @@ func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
 		req.Mode = "quick"
 	}
 
+	// 未给目标是参数错误(400);给了但解析不到才是资源不存在(404)
+	if req.SelfNodeID <= 0 && req.NodeKey == "" {
+		http.Error(w, "missing target: self_node_id or node_key required", http.StatusBadRequest)
+		return
+	}
 	node := s.resolveTestNode(req.SelfNodeID, req.NodeKey)
 	if node == nil {
 		http.NotFound(w, r)

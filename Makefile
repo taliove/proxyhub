@@ -9,13 +9,6 @@ VERSION?=dev
 BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
 LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
 
-# Quarantined pre-existing failures (decision pending in the project
-# backlog; do NOT "fix" by editing these tests):
-#   - TestDefaultTemplate_Valid / TestSubscription_UsesTemplate
-#     (assert the old full-size template; the shipped template was slimmed)
-#   - TestHandleTestNode_MissingTarget (handler returns 404, test wants 400)
-KNOWN_FAILING=TestDefaultTemplate_Valid|TestSubscription_UsesTemplate|TestHandleTestNode_MissingTarget
-
 help: ## 显示帮助信息
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
@@ -53,11 +46,11 @@ build-all: geoip-check build-frontend ## 构建所有平台
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o dist/windows-amd64/$(BINARY_NAME).exe ./cmd/server
 	@echo "✅ 多平台构建完成"
 
-test: geoip-check ## 运行所有测试(隔离 3 处既有失败;全量含它们用 test-all)
-	go test -skip '$(KNOWN_FAILING)' ./...
+test: geoip-check ## 运行所有测试
+	go test ./...
 
-test-all: geoip-check ## 运行全部测试(含 3 处既有失败,预期红,用于完整性审计)
-	-go test ./...
+test-all: geoip-check ## 运行全部测试(与 test 等价,保留作完整性审计入口)
+	go test ./...
 
 test-v: geoip-check ## 运行测试（详细输出）
 	go test -v ./...

@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/taliove/proxyhub/internal/generator"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -148,8 +149,8 @@ func TestTemplateAPI_Reset(t *testing.T) {
 	}
 }
 
-// TestSubscription_UsesTemplate 端到端验证 /sub 输出基于模板渲染，
-// 包含 hosts/dns/proxy-groups/rules 与动态注入的 proxies。
+// TestSubscription_UsesTemplate 端到端验证 /sub 输出基于模板渲染:
+// 首组与内嵌默认模板声明的首组一致(断言从模板推导),且节点已动态注入。
 func TestSubscription_UsesTemplate(t *testing.T) {
 	srv, st := newTestServer(t, templateNodes())
 	h := srv.Handler()
@@ -164,9 +165,8 @@ func TestSubscription_UsesTemplate(t *testing.T) {
 	}
 
 	var doc struct {
-		Hosts       map[string]string `yaml:"hosts"`
-		DNS         map[string]any    `yaml:"dns"`
-		Proxies     []map[string]any  `yaml:"proxies"`
+		DNS         map[string]any   `yaml:"dns"`
+		Proxies     []map[string]any `yaml:"proxies"`
 		ProxyGroups []struct {
 			Name    string   `yaml:"name"`
 			Proxies []string `yaml:"proxies"`
@@ -177,19 +177,30 @@ func TestSubscription_UsesTemplate(t *testing.T) {
 		t.Fatalf("subscription output is not valid YAML: %v", err)
 	}
 
-	if len(doc.Hosts) == 0 {
-		t.Error("subscription missing hosts (template not applied)")
-	}
+	// 模板被应用的证据:dns 段存在,且首组与默认模板声明的首组同名
 	if len(doc.DNS) == 0 {
 		t.Error("subscription missing dns (template not applied)")
 	}
-	if len(doc.Rules) < 100 {
-		t.Errorf("subscription rules = %d, want many (default template not applied)", len(doc.Rules))
+	var tmplDoc struct {
+		ProxyGroups []struct {
+			Name string `yaml:"name"`
+		} `yaml:"proxy-groups"`
 	}
+	if err := yaml.Unmarshal([]byte(generator.DefaultTemplate()), &tmplDoc); err != nil {
+		t.Fatalf("default template is not valid YAML: %v", err)
+	}
+	if len(doc.ProxyGroups) == 0 {
+		t.Fatal("subscription produced no proxy-groups")
+	}
+	if doc.ProxyGroups[0].Name != tmplDoc.ProxyGroups[0].Name {
+		t.Errorf("first group = %q, want default template's first group %q",
+			doc.ProxyGroups[0].Name, tmplDoc.ProxyGroups[0].Name)
+	}
+
+	// 节点注入:2 个测试节点出现在 proxies,且至少一个组引用节点名
 	if len(doc.Proxies) != 2 {
 		t.Errorf("subscription proxies = %d, want 2 (nodes not injected)", len(doc.Proxies))
 	}
-	// 至少有一个组包含注入的节点名
 	found := false
 	for _, g := range doc.ProxyGroups {
 		for _, p := range g.Proxies {
@@ -200,6 +211,13 @@ func TestSubscription_UsesTemplate(t *testing.T) {
 	}
 	if !found {
 		t.Error("injected node name 香港优选 not found in any proxy-group")
+	}
+
+	// 规则非空且有 MATCH 兜底
+	if len(doc.Rules) == 0 {
+		t.Error("subscription produced no rules (template not applied)")
+	} else if last := doc.Rules[len(doc.Rules)-1]; !strings.HasPrefix(last, "MATCH,") {
+		t.Errorf("last rule = %q, want MATCH catch-all", last)
 	}
 }
 
