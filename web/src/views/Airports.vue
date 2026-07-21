@@ -108,6 +108,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import type { Airport } from '@/types'
@@ -121,6 +122,7 @@ import { scoreColor, testTimeRelative, scoreDisplay } from './airport-test-utils
 
 const airports = ref<Airport[]>([])
 const loading = ref(false)
+const router = useRouter()
 const refreshing = ref(false)
 const dialogVisible = ref(false)
 const editMode = ref(false)
@@ -205,10 +207,11 @@ const refreshNodes = async () => {
   refreshing.value = true
   try {
     await client.post('/aggregator/refresh')
-    ElMessage.success('节点刷新任务已启动，请稍后查看节点状态')
+    ElMessage.success('刷新任务已启动,正在打开任务中心')
+    router.push({ name: 'Jobs' })
   } catch (error) {
     if ((error as { response?: { status?: number } })?.response?.status === 409) {
-      ElMessage.warning('已有刷新任务在进行中，请稍候再试')
+      ElMessage.warning('与进行中的单机场刷新冲突,请稍候再试')
     } else {
       ElMessage.error('刷新失败')
     }

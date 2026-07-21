@@ -27,6 +27,8 @@ type RefreshJobParams struct {
 	Trigger string `json:"trigger"` // manual / scheduled / startup
 	// AirportID 单机场刷新的机场 id;0 = 全量。
 	AirportID int64 `json:"airport_id,omitempty"`
+	// AirportName 单机场刷新的机场名(展示用,发起时尽力填充;空不影响执行)
+	AirportName string `json:"airport_name,omitempty"`
 }
 
 // refreshJobKey 任务 key:全量 "all",单机场 "airport-<id>"。
@@ -186,7 +188,14 @@ func (a *Aggregator) startRefresh(trigger string, airportID int64) (int64, strin
 	if conflictKey, ok := a.refreshConflict(key); ok {
 		return 0, key, false, fmt.Errorf("%w: running key %s", ErrRefreshConflict, conflictKey)
 	}
-	params, err := json.Marshal(RefreshJobParams{Trigger: trigger, AirportID: airportID})
+	// 单机场任务带上机场名供任务中心展示(尽力而为,查不到不影响发起)
+	var airportName string
+	if airportID > 0 {
+		if ap, err := a.st.GetAirportByID(airportID); err == nil {
+			airportName = ap.Name
+		}
+	}
+	params, err := json.Marshal(RefreshJobParams{Trigger: trigger, AirportID: airportID, AirportName: airportName})
 	if err != nil {
 		return 0, key, false, fmt.Errorf("marshal refresh params: %w", err)
 	}

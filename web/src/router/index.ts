@@ -55,10 +55,9 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '流量统计', icon: 'TrendCharts', divider: true }
       },
       {
+        // 独立刷新日志入口已撤(ticket 05):刷新历史并入任务中心,旧链接重定向
         path: 'refresh-log',
-        name: 'RefreshLog',
-        component: () => import('@/views/refresh-log/index.vue'),
-        meta: { title: '同步日志', icon: 'Refresh' }
+        redirect: 'jobs'
       },
       {
         path: 'audit',

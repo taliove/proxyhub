@@ -8,12 +8,18 @@
           <span>任务中心</span>
           <div class="header-actions">
             <span v-if="polling" class="muted">运行中,自动刷新</span>
+            <el-select v-model="sourceFilter" class="source-filter" size="small">
+              <el-option label="手动发起" value="手动" />
+              <el-option label="定时" value="定时" />
+              <el-option label="启动" value="启动" />
+              <el-option label="全部来源" value="" />
+            </el-select>
             <el-button :loading="loading" @click="reload">刷新</el-button>
           </div>
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="jobs" @row-click="openDetail">
+      <el-table v-loading="loading" :data="filteredJobs" @row-click="openDetail">
         <el-table-column label="任务" min-width="140">
           <template #default="{ row }">{{ kindLabel(row.kind) }}</template>
         </el-table-column>
@@ -45,7 +51,11 @@
         </el-table-column>
       </el-table>
 
-      <el-empty v-if="!loading && jobs.length === 0" description="暂无任务记录" :image-size="60" />
+      <el-empty
+        v-if="!loading && filteredJobs.length === 0"
+        description="暂无任务记录"
+        :image-size="60"
+      />
     </el-card>
 
     <JobDetailDialog v-model="detailVisible" :job="detailJob" />
@@ -53,15 +63,23 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listJobs, cancelJob, type Job } from '@/api/jobs'
-import { kindLabel, statusMeta, isRunning, parseProgress, scopeLabel } from './jobmeta'
+import { kindLabel, statusMeta, isRunning, parseProgress, scopeLabel, jobTrigger } from './jobmeta'
 import ScheduleCard from './ScheduleCard.vue'
 import JobDetailDialog from './JobDetailDialog.vue'
 
 const jobs = ref<Job[]>([])
 const loading = ref(false)
+
+// 来源筛选:默认只显示手动发起的任务(定时/启动的刷新任务不刷屏),可切换查看
+const sourceFilter = ref('手动')
+const filteredJobs = computed(() =>
+  sourceFilter.value === ''
+    ? jobs.value
+    : jobs.value.filter((j) => jobTrigger(j) === sourceFilter.value)
+)
 const polling = ref(false)
 let pollTimer: number | null = null
 
@@ -144,5 +162,8 @@ onUnmounted(stopPolling)
 }
 :deep(.el-table__row) {
   cursor: pointer;
+}
+.source-filter {
+  width: 110px;
 }
 </style>

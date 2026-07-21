@@ -20,6 +20,44 @@
         </el-descriptions-item>
       </el-descriptions>
 
+      <!-- 刷新任务:关联 refresh_runs 的统计与每机场事件流 -->
+      <template v-if="job.kind === 'refresh'">
+        <el-divider content-position="left">刷新详情</el-divider>
+        <div v-if="refreshLoading" class="muted">加载刷新记录…</div>
+        <template v-else-if="refreshRun">
+          <el-descriptions :column="3" border size="small" class="refresh-stats">
+            <el-descriptions-item label="拉取节点">{{
+              refreshRun.total_nodes
+            }}</el-descriptions-item>
+            <el-descriptions-item label="可用">{{
+              refreshRun.available_nodes
+            }}</el-descriptions-item>
+            <el-descriptions-item label="最终入池">{{
+              refreshRun.final_nodes
+            }}</el-descriptions-item>
+            <el-descriptions-item label="开始">{{ refreshRun.started_at }}</el-descriptions-item>
+            <el-descriptions-item label="结束" :span="2">
+              {{ refreshRun.finished_at || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item v-if="refreshRun.error" label="备注" :span="3">
+              {{ refreshRun.error }}
+            </el-descriptions-item>
+          </el-descriptions>
+          <el-timeline v-if="refreshEvents.length" class="refresh-events">
+            <el-timeline-item
+              v-for="ev in refreshEvents"
+              :key="ev.id"
+              :type="eventTagType(ev.level)"
+              :timestamp="formatEventTime(ev.created_at)"
+              size="small"
+            >
+              {{ ev.message }}
+            </el-timeline-item>
+          </el-timeline>
+        </template>
+        <div v-else class="muted">暂无关联刷新记录(任务刚启动或记录已滚动清理)</div>
+      </template>
+
       <!-- 参数:key 列表可能数百个,默认折叠 -->
       <el-collapse v-if="paramsText" class="params-block">
         <el-collapse-item :title="`启动参数${nodeCount !== null ? `(节点数 ${nodeCount})` : ''}`">
@@ -31,8 +69,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { Job } from '@/api/jobs'
+import { findRefreshRunByJob, getRefreshRun } from '@/api/refresh'
+import type { RefreshRun, RefreshEvent } from '@/types'
 import {
   kindLabel,
   statusMeta,
@@ -42,8 +82,8 @@ import {
   scopeLabel
 } from './jobmeta'
 
-// 任务详情弹框:展示 jobs 表全字段 + 启动参数(折叠)。
-// 数据直接取列表行(已含 params),不重复请求。
+// 任务详情弹框:展示 jobs 表全字段 + 启动参数(折叠);
+// kind=refresh 时追加关联 refresh_runs 的统计与事件流(按 job_id 反查)。
 const visible = defineModel<boolean>({ required: true })
 
 const props = defineProps<{
@@ -61,6 +101,51 @@ const paramsText = computed(() => {
     return props.job.params
   }
 })
+
+// 刷新详情:run 记录异步创建,反查失败时短重试几次
+const refreshRun = ref<RefreshRun | null>(null)
+const refreshEvents = ref<RefreshEvent[]>([])
+const refreshLoading = ref(false)
+
+const loadRefreshDetail = async (jobId: number) => {
+  refreshLoading.value = true
+  refreshRun.value = null
+  refreshEvents.value = []
+  try {
+    let run: RefreshRun | null = null
+    for (let i = 0; i < 5 && !run; i++) {
+      run = await findRefreshRunByJob(jobId)
+      if (!run) await new Promise((resolve) => setTimeout(resolve, 400))
+    }
+    if (run) {
+      refreshRun.value = run
+      const detail = await getRefreshRun(run.id)
+      refreshEvents.value = detail.events || []
+    }
+  } catch {
+    // 详情加载失败不阻塞弹框主信息
+  } finally {
+    refreshLoading.value = false
+  }
+}
+
+watch(
+  () => [props.job?.id, visible.value] as const,
+  ([jobId, vis]) => {
+    if (vis && jobId && props.job?.kind === 'refresh') {
+      loadRefreshDetail(jobId)
+    }
+  },
+  { immediate: true }
+)
+
+const eventTagType = (level: string): 'primary' | 'success' | 'warning' | 'danger' | 'info' => {
+  if (level === 'error') return 'danger'
+  if (level === 'warn') return 'warning'
+  return 'info'
+}
+
+const formatEventTime = (ts: string) => (ts.length > 19 ? ts.slice(11, 19) : ts)
 </script>
 
 <style scoped>
@@ -82,5 +167,13 @@ const paramsText = computed(() => {
 .muted {
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-sm);
+}
+.refresh-stats {
+  margin-bottom: var(--ph-space-3);
+}
+.refresh-events {
+  max-height: 320px;
+  overflow: auto;
+  padding-left: 2px;
 }
 </style>

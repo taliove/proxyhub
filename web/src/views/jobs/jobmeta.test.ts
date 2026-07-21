@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { kindLabel, statusMeta, isRunning, parseProgress, parseCursor, scopeLabel } from './jobmeta'
+import {
+  kindLabel,
+  statusMeta,
+  isRunning,
+  parseProgress,
+  parseCursor,
+  scopeLabel,
+  jobTrigger
+} from './jobmeta'
 
 describe('kindLabel', () => {
   it('已知 kind 映射中文名', () => {
@@ -129,5 +137,40 @@ describe('scopeLabel', () => {
   it('exam 及其他 kind 原样显示 key', () => {
     expect(scopeLabel({ kind: 'exam', key: 'example.com:443' })).toBe('example.com:443')
     expect(scopeLabel({ kind: 'mystery', key: 'k1' })).toBe('k1')
+  })
+})
+
+describe('scopeLabel - refresh kind', () => {
+  it('全量刷新显示全部机场', () => {
+    expect(scopeLabel({ kind: 'refresh', key: 'all', params: '{"trigger":"manual"}' })).toBe(
+      '全部机场'
+    )
+  })
+  it('单机场刷新优先用 params 里的机场名', () => {
+    expect(
+      scopeLabel({
+        kind: 'refresh',
+        key: 'airport-3',
+        params: '{"trigger":"manual","airport_id":3,"airport_name":"极速"}'
+      })
+    ).toBe('单机场「极速」')
+  })
+  it('单机场无机场名时回退 key', () => {
+    expect(scopeLabel({ kind: 'refresh', key: 'airport-3', params: '{"trigger":"manual"}' })).toBe(
+      '单机场 airport-3'
+    )
+  })
+})
+
+describe('jobTrigger', () => {
+  it('refresh 按 params.trigger 映射', () => {
+    expect(jobTrigger({ kind: 'refresh', params: '{"trigger":"scheduled"}' })).toBe('定时')
+    expect(jobTrigger({ kind: 'refresh', params: '{"trigger":"startup"}' })).toBe('启动')
+    expect(jobTrigger({ kind: 'refresh', params: '{"trigger":"manual"}' })).toBe('手动')
+  })
+  it('refresh 无 trigger 或非 refresh kind 一律手动', () => {
+    expect(jobTrigger({ kind: 'refresh' })).toBe('手动')
+    expect(jobTrigger({ kind: 'batch_detection' })).toBe('手动')
+    expect(jobTrigger({ kind: 'exam', params: 'not-json' })).toBe('手动')
   })
 })

@@ -7,7 +7,8 @@ const KIND_LABELS: Record<string, string> = {
   exam: '单节点体检',
   batch_exam: '批量体检',
   batch_detection: '批量解锁检测',
-  retag_all: '晚间标签重算'
+  retag_all: '晚间标签重算',
+  refresh: '刷新'
 }
 
 // kindLabel 返回 kind 的中文名;未知 kind 原样返回(不掩盖新类型)。
@@ -63,6 +64,9 @@ export function parseCursor(cursor: string | undefined): number | null {
 export interface JobParams {
   node_keys?: string[]
   scope?: string // "all" / "query" / "selected"(2026-07 起写入;旧任务无此字段)
+  trigger?: string // refresh kind: manual / scheduled / startup
+  airport_id?: number // refresh 单机场
+  airport_name?: string // refresh 单机场(展示用)
 }
 
 // parseJobParams 解析 params JSON 串;空/非法返回 null。
@@ -93,7 +97,28 @@ export function scopeLabel(job: { kind: string; key: string; params?: string }):
     }
     case 'retag_all':
       return '全部节点'
+    case 'refresh': {
+      // 刷新:全量 key=all -> 全部机场;单机场 key=airport-<id> -> 机场名(params 尽力填充)
+      if (job.key === 'all') return '全部机场'
+      const p = parseJobParams(job.params)
+      return p?.airport_name ? `单机场「${p.airport_name}」` : `单机场 ${job.key}`
+    }
     default:
       return job.key
   }
+}
+
+// TRIGGER_LABELS 触发来源 -> 中文标签(refresh kind 的 params.trigger;
+// 其他 kind 都是用户手动发起,一律归"手动")。
+const TRIGGER_LABELS: Record<string, string> = {
+  manual: '手动',
+  scheduled: '定时',
+  startup: '启动'
+}
+
+// jobTrigger 归一化任务来源标签;未记录 trigger 的一律"手动"。
+export function jobTrigger(job: { kind: string; params?: string }): string {
+  if (job.kind !== 'refresh') return '手动'
+  const t = parseJobParams(job.params)?.trigger
+  return (t && TRIGGER_LABELS[t]) || '手动'
 }
