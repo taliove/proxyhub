@@ -1,0 +1,265 @@
+// 体检总分纯函数的单元测试(加权四项:稳定性 40% + 速度 25% + 解锁 20% + 出网质量 15%)。
+import { describe, it, expect } from 'vitest'
+import {
+  calculateExamScore,
+  calculateSpeedScore,
+  calculateUnlockScore,
+  calculateEgressScore,
+  gradeFromScore
+} from './score'
+import type { ExamReport } from '@/types'
+
+describe('score — 体检总分计算', () => {
+  describe('calculateSpeedScore', () => {
+    it('基准下行对数映射边界值', () => {
+      expect(calculateSpeedScore({ down_mbps: 100, up_mbps: undefined })).toBe(100)
+      expect(calculateSpeedScore({ down_mbps: 50, up_mbps: undefined })).toBe(85)
+      expect(calculateSpeedScore({ down_mbps: 25, up_mbps: undefined })).toBe(70)
+      expect(calculateSpeedScore({ down_mbps: 10, up_mbps: undefined })).toBe(50)
+      expect(calculateSpeedScore({ down_mbps: 5, up_mbps: undefined })).toBe(30)
+      expect(calculateSpeedScore({ down_mbps: 1, up_mbps: undefined })).toBe(10)
+    })
+
+    it('基准下行中间插值', () => {
+      // 50M 到 100M 之间线性插值:50M=85,100M=100,区间长度 15
+      const score75 = calculateSpeedScore({ down_mbps: 75, up_mbps: undefined })
+      expect(score75).toBeCloseTo(92.5, 1)
+
+      // 10M 到 25M 之间:10M=50,25M=70,区间长度 20
+      const score15 = calculateSpeedScore({ down_mbps: 15, up_mbps: undefined })
+      expect(score15).toBeCloseTo(56.7, 1)
+    })
+
+    it('上行微调 ±5 分', () => {
+      // 下行 50M(=85 分),上行 50M 再 +5 → 90
+      expect(calculateSpeedScore({ down_mbps: 50, up_mbps: 50 })).toBe(90)
+
+      // 下行 50M(=85 分),上行 5M 再 −5 → 80
+      expect(calculateSpeedScore({ down_mbps: 50, up_mbps: 5 })).toBe(80)
+
+      // 上行缺失时不微调
+      expect(calculateSpeedScore({ down_mbps: 50, up_mbps: undefined })).toBe(85)
+    })
+
+    it('下行低于 1M 按 0 分计', () => {
+      expect(calculateSpeedScore({ down_mbps: 0.5, up_mbps: undefined })).toBe(0)
+      expect(calculateSpeedScore({ down_mbps: 0, up_mbps: undefined })).toBe(0)
+    })
+
+    it('下行高于 100M 封顶 100 分', () => {
+      expect(calculateSpeedScore({ down_mbps: 150, up_mbps: undefined })).toBe(100)
+      expect(calculateSpeedScore({ down_mbps: 500, up_mbps: 100 })).toBe(100) // +5 也不超 100
+    })
+  })
+
+  describe('calculateUnlockScore', () => {
+    it('6 目标全 full = 100 分', () => {
+      const results = [
+        { target_name: 'Netflix', level: 'full' },
+        { target_name: 'YouTube Premium', level: 'full' },
+        { target_name: 'Disney+', level: 'full' },
+        { target_name: 'OpenAI', level: 'full' },
+        { target_name: 'Claude', level: 'full' },
+        { target_name: 'Gemini', level: 'full' }
+      ] as any[]
+      expect(calculateUnlockScore(results)).toBe(100)
+    })
+
+    it('6 目标全 originals_only = 50 分', () => {
+      const results = [
+        { target_name: 'Netflix', level: 'originals_only' },
+        { target_name: 'YouTube Premium', level: 'originals_only' },
+        { target_name: 'Disney+', level: 'originals_only' },
+        { target_name: 'OpenAI', level: 'originals_only' },
+        { target_name: 'Claude', level: 'originals_only' },
+        { target_name: 'Gemini', level: 'originals_only' }
+      ] as any[]
+      expect(calculateUnlockScore(results)).toBe(50)
+    })
+
+    it('6 目标全 blocked/error = 0 分', () => {
+      const results = [
+        { target_name: 'Netflix', level: 'blocked' },
+        { target_name: 'YouTube Premium', error: 'timeout' },
+        { target_name: 'Disney+', level: 'blocked' },
+        { target_name: 'OpenAI', error: 'network' },
+        { target_name: 'Claude', level: 'blocked' },
+        { target_name: 'Gemini', error: 'failed' }
+      ] as any[]
+      expect(calculateUnlockScore(results)).toBe(0)
+    })
+
+    it('混合档位取均值', () => {
+      // 3 full(=1) + 2 originals_only(=0.5) + 1 blocked(=0) → (3+1)/6 = 66.67
+      const results = [
+        { target_name: 'Netflix', level: 'full' },
+        { target_name: 'YouTube Premium', level: 'full' },
+        { target_name: 'Disney+', level: 'full' },
+        { target_name: 'OpenAI', level: 'originals_only' },
+        { target_name: 'Claude', level: 'originals_only' },
+        { target_name: 'Gemini', level: 'blocked' }
+      ] as any[]
+      expect(calculateUnlockScore(results)).toBeCloseTo(66.67, 1)
+    })
+
+    it('空数组返回 0 分', () => {
+      expect(calculateUnlockScore([])).toBe(0)
+    })
+  })
+
+  describe('calculateEgressScore', () => {
+    it('完美出网:无泄露 + 住宅 IP + 有 IPv6 = 100 分', () => {
+      const egress = {
+        ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
+        ipv6: { available: true, address: '2001::1' },
+        dns: { leak: false }
+      }
+      expect(calculateEgressScore(egress as any)).toBe(100)
+    })
+
+    it('DNS 泄露 −30 分', () => {
+      const egress = {
+        ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
+        ipv6: { available: true, address: '2001::1' },
+        dns: { leak: true }
+      }
+      expect(calculateEgressScore(egress as any)).toBe(70)
+    })
+
+    it('机房 IP −15 分', () => {
+      const egress = {
+        ipv4: { ip: '1.2.3.4', hosting: true, proxy: false },
+        ipv6: { available: true },
+        dns: { leak: false }
+      }
+      expect(calculateEgressScore(egress as any)).toBe(85)
+    })
+
+    it('无 IPv6 −10 分', () => {
+      const egress = {
+        ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
+        ipv6: { available: false },
+        dns: { leak: false }
+      }
+      expect(calculateEgressScore(egress as any)).toBe(90)
+    })
+
+    it('叠加扣分:DNS 泄露 + 机房 + 无 IPv6 → 45 分', () => {
+      const egress = {
+        ipv4: { ip: '1.2.3.4', hosting: true, proxy: false },
+        ipv6: { available: false },
+        dns: { leak: true }
+      }
+      expect(calculateEgressScore(egress as any)).toBe(45)
+    })
+
+    it('保底 0 分', () => {
+      const egress = {
+        ipv4: { error: 'failed' },
+        ipv6: { available: false },
+        dns: { error: 'timeout' }
+      }
+      expect(calculateEgressScore(egress as any)).toBeGreaterThanOrEqual(0)
+    })
+  })
+
+  describe('gradeFromScore', () => {
+    it('档位边界', () => {
+      expect(gradeFromScore(100)).toBe('excellent')
+      expect(gradeFromScore(90)).toBe('excellent')
+      expect(gradeFromScore(89)).toBe('good')
+      expect(gradeFromScore(75)).toBe('good')
+      expect(gradeFromScore(74)).toBe('fair')
+      expect(gradeFromScore(60)).toBe('fair')
+      expect(gradeFromScore(59)).toBe('poor')
+      expect(gradeFromScore(40)).toBe('poor')
+      expect(gradeFromScore(39)).toBe('very_poor')
+      expect(gradeFromScore(0)).toBe('very_poor')
+    })
+  })
+
+  describe('calculateExamScore — 加权汇总', () => {
+    it('完整四段:稳定性 40% + 速度 25% + 解锁 20% + 出网 15% = 权重和 100%', () => {
+      const report: ExamReport = {
+        stability: { score: 85 } as any,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 50, up_mbps: 50, ttfb_ms: 10 }]
+        },
+        unlock: {
+          results: [
+            { target_name: 'Netflix', level: 'full' },
+            { target_name: 'YouTube Premium', level: 'full' },
+            { target_name: 'Disney+', level: 'full' },
+            { target_name: 'OpenAI', level: 'full' },
+            { target_name: 'Claude', level: 'full' },
+            { target_name: 'Gemini', level: 'full' }
+          ] as any[]
+        },
+        egress: {
+          ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
+          ipv6: { available: true, address: '2001::1' },
+          dns: { leak: false }
+        } as any
+      }
+      const result = calculateExamScore(report)
+      // 稳定性 85×0.4=34,速度 90×0.25=22.5,解锁 100×0.2=20,出网 100×0.15=15 → 91.5
+      expect(result.total).toBeCloseTo(91.5, 1)
+      expect(result.grade).toBe('excellent')
+      expect(result.partial).toBe(false)
+      expect(result.breakdown.stability.score).toBe(85)
+      expect(result.breakdown.stability.weight).toBe(0.4)
+      expect(result.breakdown.speed.score).toBe(90)
+      expect(result.breakdown.speed.weight).toBe(0.25)
+      expect(result.breakdown.unlock.score).toBe(100)
+      expect(result.breakdown.unlock.weight).toBe(0.2)
+      expect(result.breakdown.egress.score).toBe(100)
+      expect(result.breakdown.egress.weight).toBe(0.15)
+    })
+
+    it('缺段降级:无解锁段时三项归一化(权重和仍为 100%),partial=true', () => {
+      const report: ExamReport = {
+        stability: { score: 80 } as any,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 100, ttfb_ms: 5 }]
+        },
+        egress: {
+          ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
+          ipv6: { available: true },
+          dns: { leak: false }
+        } as any
+      }
+      const result = calculateExamScore(report)
+      // 原权重和 40%+25%+15%=80%,归一化:稳定性 40/80=0.5,速度 25/80=0.3125,出网 15/80=0.1875
+      // 稳定性 80×0.5=40,速度 100×0.3125=31.25,出网 100×0.1875=18.75 → 90
+      expect(result.total).toBeCloseTo(90, 1)
+      expect(result.partial).toBe(true)
+      expect(result.breakdown.stability.weight).toBeCloseTo(0.5, 2)
+      expect(result.breakdown.speed.weight).toBeCloseTo(0.3125, 2)
+      expect(result.breakdown.unlock.score).toBeNull()
+      expect(result.breakdown.unlock.weight).toBe(0)
+      expect(result.breakdown.egress.weight).toBeCloseTo(0.1875, 2)
+    })
+
+    it('只有稳定性段:权重归一化为 100%', () => {
+      const report: ExamReport = {
+        stability: { score: 90 } as any
+      }
+      const result = calculateExamScore(report)
+      expect(result.total).toBe(90)
+      expect(result.partial).toBe(true)
+      expect(result.breakdown.stability.weight).toBe(1.0)
+      expect(result.breakdown.speed.score).toBeNull()
+      expect(result.breakdown.unlock.score).toBeNull()
+      expect(result.breakdown.egress.score).toBeNull()
+    })
+
+    it('空报告返回 0 分', () => {
+      const report: ExamReport = {}
+      const result = calculateExamScore(report)
+      expect(result.total).toBe(0)
+      expect(result.grade).toBe('very_poor')
+      expect(result.partial).toBe(true)
+    })
+  })
+})
+
