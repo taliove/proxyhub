@@ -24,7 +24,11 @@ type ScoreDimensions struct {
 }
 
 // CalculateScore 计算综合评分(0-100)及维度明细。
-// 权重:可用率50% + 延迟30% + 拉取健康10% + 地区覆盖10%。
+//
+// 正常权重(URL可达,HTTP 2xx):可用率50% + 延迟30% + 拉取健康10% + 地区覆盖10%。
+// 重归一权重(URL不可达,HTTP非2xx):可用率5/9(55.56%) + 延迟3/9(33.33%) + 地区覆盖1/9(11.11%)。
+// 拉取健康维度标记N/A,其权重按比例重分配到其余三维度,保证总分仍为0-100。
+//
 // nodes为空时返回零分与空维度(无错误,符合"机场无节点"的既定行为)。
 func CalculateScore(nodes []*subscription.Node, httpStatus, parseFailures, totalLines int) (float64, *ScoreDimensions) {
 	dims := &ScoreDimensions{
@@ -38,7 +42,26 @@ func CalculateScore(nodes []*subscription.Node, httpStatus, parseFailures, total
 		return 0, dims
 	}
 
-	// 可用率维度(50%):可用节点数/总节点数 * 50
+	// 判断是否需要重归一(URL不可达)
+	fetchHealthAvailable := httpStatus >= 200 && httpStatus < 300
+
+	// 原始权重
+	availabilityWeight := 50.0
+	latencyWeight := 30.0
+	fetchHealthWeight := 10.0
+	regionWeight := 10.0
+
+	// 重归一:拉取健康N/A时,将其10%按原比例分配到其余三维度
+	// 原比例 availability:latency:region = 50:30:10 = 5:3:1
+	// 重分配后: 5/9*100 : 3/9*100 : 1/9*100 = 55.56 : 33.33 : 11.11
+	if !fetchHealthAvailable {
+		availabilityWeight = 5.0 / 9.0 * 100
+		latencyWeight = 3.0 / 9.0 * 100
+		regionWeight = 1.0 / 9.0 * 100
+		fetchHealthWeight = 0
+	}
+
+	// 可用率维度:可用节点数/总节点数 * weight
 	availableCount := 0
 	var latencies []int
 	regionSet := make(map[string]bool)
@@ -54,21 +77,23 @@ func CalculateScore(nodes []*subscription.Node, httpStatus, parseFailures, total
 	}
 	dims.AvailableNodes = availableCount
 	availabilityRate := float64(availableCount) / float64(len(nodes))
-	dims.AvailabilityScore = availabilityRate * 50
+	dims.AvailabilityScore = availabilityRate * availabilityWeight
 
-	// 延迟维度(30%):平均延迟与P95延迟分别贡献15分
-	// 映射函数(线性):mean≤100ms满分15,≥1000ms零分;P95同理
-	// 公式:score = max(0, 15 * (1000 - latency) / 900)
+	// 延迟维度:平均延迟与P95延迟各占延迟权重的一半
+	// 映射函数(线性):mean≤100ms满分,≥1000ms零分;P95同理
+	// 公式:score = max(0, (latencyWeight/2) * (1000 - latency) / 900)
 	if len(latencies) > 0 {
+		halfLatencyWeight := latencyWeight / 2
+
 		// 计算平均延迟
 		sum := 0
 		for _, l := range latencies {
 			sum += l
 		}
 		dims.MeanLatency = float64(sum) / float64(len(latencies))
-		meanScore := math.Max(0, 15*(1000-dims.MeanLatency)/900)
-		if meanScore > 15 {
-			meanScore = 15
+		meanScore := math.Max(0, halfLatencyWeight*(1000-dims.MeanLatency)/900)
+		if meanScore > halfLatencyWeight {
+			meanScore = halfLatencyWeight
 		}
 
 		// 计算P95延迟(排序后取95分位)
@@ -80,38 +105,42 @@ func CalculateScore(nodes []*subscription.Node, httpStatus, parseFailures, total
 			p95Index = len(sortedLatencies) - 1
 		}
 		dims.P95Latency = float64(sortedLatencies[p95Index])
-		p95Score := math.Max(0, 15*(1000-dims.P95Latency)/900)
-		if p95Score > 15 {
-			p95Score = 15
+		p95Score := math.Max(0, halfLatencyWeight*(1000-dims.P95Latency)/900)
+		if p95Score > halfLatencyWeight {
+			p95Score = halfLatencyWeight
 		}
 		dims.LatencyScore = meanScore + p95Score
 	}
 
-	// 拉取健康维度(10%):HTTP 2xx且解析成功率
-	// HTTP非2xx零分;2xx时按解析成功率计算
-	if httpStatus >= 200 && httpStatus < 300 {
+	// 拉取健康维度:HTTP 2xx且解析成功率
+	// HTTP非2xx时此维度N/A(权重已重归一到其他维度)
+	if fetchHealthAvailable {
 		if totalLines > 0 {
 			parseSuccessCount := totalLines - parseFailures
 			dims.ParseSuccessRate = float64(parseSuccessCount) / float64(totalLines)
-			dims.FetchHealthScore = dims.ParseSuccessRate * 10
+			dims.FetchHealthScore = dims.ParseSuccessRate * fetchHealthWeight
 		} else {
-			dims.FetchHealthScore = 10 // 无行数信息默认满分
+			dims.FetchHealthScore = fetchHealthWeight // 无行数信息默认满分
 		}
 	}
 
-	// 地区覆盖维度(10%):覆盖地区数
-	// 优先区(HK/SG/US)各2分,其他区各1分,上限10分
+	// 地区覆盖维度:覆盖地区数
+	// 优先区(HK/SG/US)各2分,其他区各1分,上限10分(原始分)
+	// 实际得分按重归一后的权重缩放
 	dims.RegionCount = len(regionSet)
+	rawRegionScore := 0.0
 	for region := range regionSet {
 		if _, isPriority := PriorityRegions[region]; isPriority {
-			dims.RegionScore += 2
+			rawRegionScore += 2
 		} else {
-			dims.RegionScore += 1
+			rawRegionScore += 1
 		}
 	}
-	if dims.RegionScore > 10 {
-		dims.RegionScore = 10
+	if rawRegionScore > 10 {
+		rawRegionScore = 10
 	}
+	// 按权重缩放:原始10分对应regionWeight分
+	dims.RegionScore = rawRegionScore * (regionWeight / 10.0)
 
 	overall := dims.AvailabilityScore + dims.LatencyScore + dims.FetchHealthScore + dims.RegionScore
 	return overall, dims

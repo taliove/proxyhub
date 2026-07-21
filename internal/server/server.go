@@ -111,7 +111,8 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		cfg.HealthCheck.TestURL,
 		cfg.HealthCheck.Concurrent,
 	))
-	s.testOrchestrator = airporttest.NewOrchestrator(storeAdapter, healthChecker, nodes)
+	poolOps := airporttest.NewStorePoolAdapter(st, geo)
+	s.testOrchestrator = airporttest.NewOrchestratorWithPoolOps(storeAdapter, healthChecker, nodes, poolOps)
 
 	return s
 }

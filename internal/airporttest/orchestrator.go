@@ -109,13 +109,62 @@ func (o *Orchestrator) persistFailedRun(ctx context.Context, run *TestRun, start
 	return run, nil
 }
 
-// RunTest 执行完整测试流水线:诊断(已完成)→ 抽样 → 检活写回 → 评分。
-// 诊断已由 RunDiagnostic 完成,传入其返回的节点列表。
+// RunTest 执行完整测试流水线:诊断(已完成)→ [条件:池空且URL通则upsert] → 抽样 → 检活写回 → 评分。
+//
+// 新流水线(pool-first):
+//  1. 诊断已由 RunDiagnostic/handler 完成(diagResult 含 HTTP 状态)
+//  2. 分支判断(需 poolOps 支持):
+//     A. 池有该机场节点:直接用池节点测试,诊断结果仅作信息(URL不通不阻断)
+//     B. 池无该机场节点:
+//        - URL通(diagResult.HTTPStatus 2xx):upsert 拉到的节点入池,再测试
+//        - URL不通:failed,error_message 明确("订阅URL不可达且池内无已同步节点")
+//  3. 评分:URL不通时拉取健康N/A,权重重归一(可用率5/9+延迟3/9+地区1/9)
+//
+// airportName 用于 poolOps.LoadPoolBySource 匹配池内节点(按 nodes.source 字段)。
 // 返回更新后的 run(含 overall_score/dimensions_json)。
-func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, nodes []*subscription.Node, diagResult *DiagnosticResult) (*TestRun, error) {
-	// 节点池为空:直接完成,可用率维度为0
-	if len(nodes) == 0 {
-		score, dims := CalculateScore(nodes, diagResult.HTTPStatus, diagResult.ParseFailures, diagResult.NodeCount+diagResult.ParseFailures)
+func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName string, fetchedNodes []*subscription.Node, diagResult *DiagnosticResult) (*TestRun, error) {
+	urlReachable := diagResult.HTTPStatus >= 200 && diagResult.HTTPStatus < 300
+
+	// 决定测试哪批节点:优先用池,池空时条件入池
+	var nodesToTest []*subscription.Node
+	poolHasNodes := false
+
+	if o.poolOps != nil {
+		// 查询池中该机场节点
+		poolNodes, err := o.poolOps.LoadPoolBySource(airportName)
+		if err != nil {
+			return nil, fmt.Errorf("load pool by source: %w", err)
+		}
+		poolHasNodes = len(poolNodes) > 0
+
+		if poolHasNodes {
+			// 分支A:池有节点,直接测试(URL不通不阻断)
+			nodesToTest = poolNodes
+		} else {
+			// 分支B:池无节点
+			if !urlReachable || len(fetchedNodes) == 0 {
+				// URL不通或拉取失败:run failed
+				run.Status = StatusFailed
+				run.ErrorMessage = "subscription URL unreachable and no synced nodes in pool"
+				if err := o.store.UpdateTestRun(ctx, run); err != nil {
+					return nil, fmt.Errorf("update failed run: %w", err)
+				}
+				return run, nil
+			}
+			// URL通且有节点:upsert入池
+			if err := o.poolOps.UpsertAirportNodes(airportName, fetchedNodes); err != nil {
+				return nil, fmt.Errorf("upsert airport nodes: %w", err)
+			}
+			nodesToTest = fetchedNodes
+		}
+	} else {
+		// 无poolOps(兼容旧测试):用传入节点
+		nodesToTest = fetchedNodes
+	}
+
+	// 节点为空:完成,零分(仅在池空+URL不通已fail时不会走到这)
+	if len(nodesToTest) == 0 {
+		score, dims := CalculateScore(nodesToTest, diagResult.HTTPStatus, diagResult.ParseFailures, diagResult.NodeCount+diagResult.ParseFailures)
 		dimsJSON, _ := json.Marshal(dims)
 		scoreVal := score
 		run.Status = StatusCompleted
@@ -133,10 +182,10 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, nodes []*subsc
 		return nil, fmt.Errorf("update to checking: %w", err)
 	}
 
-	sampled := SampleNodes(nodes, run.IsFull)
+	sampled := SampleNodes(nodesToTest, run.IsFull)
 	sampleParams := map[string]interface{}{
 		"full":         run.IsFull,
-		"total":        len(nodes),
+		"total":        len(nodesToTest),
 		"sampled":      len(sampled),
 		"checked":      0,
 		"total_sample": len(sampled),
@@ -153,6 +202,9 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, nodes []*subsc
 		for i, r := range results {
 			// 写回节点池(复用 aggregator.UpdateNodeTestResult)
 			o.poolWriter.UpdateNodeTestResult(r.Node.NodeKey(), "quick", r.Available, r.Latency, 0, 0)
+			// 同时更新内存中的节点状态,供评分使用
+			r.Node.Available = r.Available
+			r.Node.Latency = r.Latency
 			// 更新进度
 			sampleParams["checked"] = i + 1
 			paramsJSON, _ = json.Marshal(sampleParams)
@@ -167,8 +219,9 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, nodes []*subsc
 		return nil, fmt.Errorf("update to scoring: %w", err)
 	}
 
-	// 使用全池节点评分(不仅是样本,反映整体质量)
-	score, dims := CalculateScore(nodes, diagResult.HTTPStatus, diagResult.ParseFailures, diagResult.NodeCount+diagResult.ParseFailures)
+	// 使用全部测试节点评分(不仅是样本,反映整体质量)
+	// CalculateScore 内部按 httpStatus 自动重归一权重
+	score, dims := CalculateScore(nodesToTest, diagResult.HTTPStatus, diagResult.ParseFailures, diagResult.NodeCount+diagResult.ParseFailures)
 	dimsJSON, _ := json.Marshal(dims)
 	scoreVal := score
 	run.Status = StatusCompleted
