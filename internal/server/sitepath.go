@@ -6,14 +6,9 @@ import (
 	"strings"
 )
 
-// distPrefix 是流量分发数据面的命名空间前缀,独立于 Site Path 边界存在,
-// 不受管理面前缀约束(见 production-release 02:do not break distribution)。
-const distPrefix = "/dist"
-
 // sitePathMiddleware 在配置了 Site Path 时强制管理面路径边界:
 //
 //   - /<site-path>/ 下的请求:剥掉前缀后下放给 mux(管理 UI / API / 订阅照常工作)
-//   - /dist 及其子路径:分发数据面原样放行,不剥前缀
 //   - /、缺前缀、前缀之外的请求:一律返回普通 404(不暴露服务存在)
 //
 // 未配置 Site Path(开发/CI)时完全透传,行为与现状一致。
@@ -32,13 +27,6 @@ func (s *Server) sitePathMiddleware(next http.Handler) http.Handler {
 		}
 
 		p := r.URL.Path
-
-		// 分发数据面保留自己的命名空间前缀
-		if p == distPrefix || strings.HasPrefix(p, distPrefix+"/") {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		prefix := "/" + sitePath
 		var stripped string
 		switch {
