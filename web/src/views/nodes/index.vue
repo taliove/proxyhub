@@ -65,6 +65,7 @@
       @delete-self="onDeleteSelf"
       @block="blockNode"
       @unblock="unblockNode"
+      @refresh-name="refreshNameOne"
       @test="runTest"
     />
 
@@ -184,7 +185,8 @@ const {
   unblockNode,
   blockSelected,
   unblockSelected,
-  refreshNamesSelected
+  refreshNamesSelected,
+  refreshNameOne
 } = useNodeBatch(reload)
 const { testing, testNode } = useNodeTest()
 
