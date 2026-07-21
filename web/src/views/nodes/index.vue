@@ -52,6 +52,7 @@
       :page-size="pagination.pageSize"
       :total="total"
       :exam-summaries="examSummaries"
+      :running-exam-keys="runningExamKeys"
       @selection-change="onSelectionChange"
       @sort-change="onSortChange"
       @page-change="setPage"
@@ -117,6 +118,7 @@ import { useNodeBatch } from './composables/useNodeBatch'
 import { useBatchExam } from './composables/useBatchExam'
 import { useSelfNodes } from './composables/useSelfNodes'
 import { useExamSummaries } from './composables/useExamSummaries'
+import { useRunningExams } from './composables/useRunningExams'
 import { buildUnifiedRows, selfNodeIndex, type UnifiedNode } from './selfmerge'
 import { tagsOf, unlockTargetsOf } from './nodecells'
 import { emptyForm, type SelfNodeForm } from './self-node-utils'
@@ -204,6 +206,11 @@ const {
   cancel: cancelExam
 } = useBatchExam(reloadExam)
 const examSelected = () => startBatchExam(selectableSelection.value.map((n) => n.node_key))
+
+// 进行中的 exam 任务:轮询任务中心,提取 kind=exam + status=running 的 key 集合。
+// 用于在节点行显示"查看进度"而非"深度体检"按钮。
+const { runningExamKeys } = useRunningExams()
+
 const triggerCleanupDetection = (onComplete: () => void) =>
   trigger({ type: 'all' }, onComplete, '检测已启动,完成后自动刷新失败列表')
 

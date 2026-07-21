@@ -3,9 +3,10 @@
     v-model="visible"
     width="960px"
     class="exam-dialog"
-    :close-on-click-modal="!running"
-    :close-on-press-escape="!running"
-    :show-close="!running"
+    :close-on-click-modal="true"
+    :close-on-press-escape="true"
+    :show-close="true"
+    @close="onClose"
     @closed="onClosed"
   >
     <!-- 头部:标题 + 三态标签(连接中/体检中/重连中/完成/已取消/连接失败)。 -->
@@ -51,6 +52,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { ElMessage } from 'element-plus'
 import type {
   ExamEvent,
   ExamStabilityMetrics,
@@ -157,8 +159,10 @@ const openShare = () => {
 const open = (p: { self_node_id?: number; node_key?: string }, name: string) => {
   payload = p
   nodeName.value = name
+  // Reset state to prepare for new/reattached stream
   reset()
   visible.value = true
+  // runExam without force: attaches to existing task if running, or starts new if none
   runExam()
 }
 
@@ -237,13 +241,36 @@ const rerun = () => {
   runExam(true)
 }
 
+const onClose = () => {
+  // When closing during exam, show toast about background continuation
+  if (running.value) {
+    ElMessage({
+      message: '体检任务将在后台继续运行,可随时回来查看进度',
+      type: 'info',
+      duration: 3000
+    })
+  }
+}
+
 const onClosed = () => {
+  // Dispose stream (closes SSE connection) but does NOT cancel the task
   stream?.dispose()
   stream = null
   if (!running.value) reset()
 }
 
-defineExpose({ open })
+defineExpose({
+  open,
+  onClose,
+  onClosed,
+  visible,
+  running,
+  terminal,
+  samples,
+  regions,
+  unlockResults,
+  rerun
+})
 </script>
 
 <style scoped>
