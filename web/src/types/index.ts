@@ -28,6 +28,9 @@ export interface Airport {
   abbr: string
   enabled: boolean
   created_at: string
+  last_test_score?: number | null
+  last_test_at?: string | null
+  last_test_status?: string | null
 }
 
 export interface Node {

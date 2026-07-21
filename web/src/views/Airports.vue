@@ -22,6 +22,26 @@
           </template>
         </el-table-column>
         <el-table-column prop="url" label="订阅 URL" show-overflow-tooltip />
+        <el-table-column label="最近测试" width="180">
+          <template #default="{ row }">
+            <div v-if="row.last_test_score !== null && row.last_test_score !== undefined">
+              <el-tag
+                :type="getScoreColor(row.last_test_score, row.last_test_status)"
+                size="small"
+                class="score-tag clickable"
+                @click="openTestDialog(row)"
+              >
+                {{ formatScore(row.last_test_score) }}
+              </el-tag>
+              <span class="test-time">{{ formatTestTime(row.last_test_at) }}</span>
+            </div>
+            <span v-else-if="row.last_test_status === 'failed'" class="failed-test">
+              <el-tag type="info" size="small">测试失败</el-tag>
+              <span class="test-time">{{ formatTestTime(row.last_test_at) }}</span>
+            </span>
+            <span v-else class="no-test">-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="enabled" label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'">
@@ -89,6 +109,7 @@ import { useDebouncedSuggest } from '@/composables/useDebouncedSuggest'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { getAirportQRContent } from './airport-utils'
 import AirportTestDialog from '@/components/AirportTestDialog.vue'
+import { scoreColor, testTimeRelative, scoreDisplay } from './airport-test-utils'
 
 const airports = ref<Airport[]>([])
 const loading = ref(false)
@@ -206,6 +227,21 @@ const showQRCode = (airport: Airport) => {
   qrDialog.value?.show(content)
 }
 
+// Format test score color based on value
+const getScoreColor = (score: number | null | undefined, status?: string | null) => {
+  return scoreColor(score, status)
+}
+
+// Format test score for display
+const formatScore = (score: number | null | undefined) => {
+  return scoreDisplay(score)
+}
+
+// Format test time as relative time
+const formatTestTime = (isoTime: string | null | undefined) => {
+  return testTimeRelative(isoTime)
+}
+
 onMounted(loadAirports)
 </script>
 
@@ -224,5 +260,19 @@ onMounted(loadAirports)
   font-size: var(--ph-text-xs);
   line-height: 1.5;
   margin-top: var(--ph-space-1);
+}
+.score-tag {
+  margin-right: var(--ph-space-1);
+}
+.score-tag.clickable {
+  cursor: pointer;
+}
+.test-time {
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-xs);
+}
+.failed-test,
+.no-test {
+  color: var(--ph-text-secondary);
 }
 </style>
