@@ -169,11 +169,13 @@ export interface ExamStabilityMetrics {
 }
 
 // 深度体检 - 单区测速结果(成功含 TTFB 与下行速率,失败仅 error)
+// 基准行额外含上行速率(up_mbps,仅基准行填充)
 export interface ExamRegionResult {
   code: string
   name: string
   ttfb_ms: number
   down_mbps: number
+  up_mbps?: number
   error?: string
 }
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptrace"
+	"strings"
 	"time"
 
 	"github.com/taliove/proxyhub/internal/subscription"
@@ -83,11 +84,13 @@ var examRegions = []Region{
 }
 
 // RegionResult 单区测速结果:成功时含 TTFB 与下行速率,失败时仅 Error 非空。
+// 基准行额外含上行速率(UpMbps,仅基准行填充,区域行为 0)。
 type RegionResult struct {
 	Code     string  `json:"code"`
 	Name     string  `json:"name"`
 	TTFBms   int     `json:"ttfb_ms"`
 	DownMbps float64 `json:"down_mbps"`
+	UpMbps   float64 `json:"up_mbps,omitempty"`
 	Error    string  `json:"error,omitempty"`
 }
 
@@ -164,19 +167,68 @@ func (d *Detector) defaultRegionSpeedProbe(node *subscription.Node) (RegionSpeed
 }
 
 // measureRegionSpeed 测量单区:建连取 TTFB,再下载 slice 时长的切片算下行速率。
+// 基准行额外测量上行(Cloudflare __up,与下行独立成败)。
 // 单区独立硬超时(hard)防卡死;任何失败返回带 Error 的结果,不 panic。
 func measureRegionSpeed(ctx context.Context, client *http.Client, r Region, slice, hard time.Duration) RegionResult {
+	// 基准行用 Cloudflare __down,回退点复用 downloadFallbackURLs(与带宽段同源)。
+	// 区域行已有固定 URL,不需回退,传单元素数组(兼容统一接口)。
+	fallbackURLs := []string{r.URL}
+	if r.Code == "baseline" {
+		fallbackURLs = downloadFallbackURLs
+	}
+	res := measureRegionSpeedWithFallback(ctx, client, r, slice, hard, fallbackURLs)
+
+	// 基准行额外测上行(下行失败不拖垮上行,独立成败)。
+	if r.Code == "baseline" && res.Error == "" {
+		upMbps, upErr := measureBaselineUplink(ctx, client, upstreamUploadURL, slice, hard)
+		if upErr == nil {
+			res.UpMbps = upMbps
+		}
+		// 上行失败不覆盖下行成功,但记录上行 error(在 Error 字段追加)。
+		if upErr != nil {
+			res.Error = fmt.Sprintf("uplink: %v", classifyRegionError(upErr))
+		}
+	}
+	return res
+}
+
+// measureRegionSpeedWithFallback 带回退的单区测量:遇 403/死链时依次尝试 fallbackURLs。
+// 返回首个成功结果;全失败返回最后一个 error(分类后)。
+func measureRegionSpeedWithFallback(ctx context.Context, client *http.Client, r Region, slice, hard time.Duration, fallbackURLs []string) RegionResult {
 	rctx, cancel := context.WithTimeout(ctx, hard)
 	defer cancel()
 
-	ttfb, body, err := openRegionDownload(rctx, client, r.URL)
-	if err != nil {
-		return RegionResult{Code: r.Code, Name: r.Name, Error: err.Error()}
-	}
-	defer body.Close()
+	var lastErr error
+	for _, url := range fallbackURLs {
+		if url == "" {
+			continue
+		}
+		ttfb, body, err := openRegionDownload(rctx, client, url)
+		if err != nil {
+			lastErr = err
+			continue // 连接失败/403 → 试下一个
+		}
+		mbps, n, drainErr := drainForDuration(body, slice)
+		body.Close()
 
-	mbps, n, drainErr := drainForDuration(body, slice)
-	return regionDownloadResult(r, ttfb, mbps, n, drainErr)
+		// 判定:读取中途真实失败(非 deadline)且样本不足 → 继续尝试下一个点。
+		// 死链校验:连接成功但内容不足 minValidDownloadBytes → 标记死链并回退。
+		if drainErr != nil && n < minValidDownloadBytes {
+			lastErr = drainErr
+			continue
+		}
+		if n < minValidDownloadBytes {
+			lastErr = errDeadLink
+			continue
+		}
+		// 成功(样本足够)或硬超时但已读够数据。
+		return regionDownloadResult(r, ttfb, mbps, n, drainErr)
+	}
+	// 全失败:返回分类后的 error。
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no fallback URLs available")
+	}
+	return RegionResult{Code: r.Code, Name: r.Name, Error: classifyRegionError(lastErr)}
 }
 
 // regionDownloadResult 由下行读取结果构造单区结果:
@@ -184,7 +236,7 @@ func measureRegionSpeed(ctx context.Context, client *http.Client, r Region, slic
 // 否则按已读字节算速率视为成功(硬超时切断但样本已足够时仍给出部分速率,与上行测速对称)。
 func regionDownloadResult(r Region, ttfb time.Duration, mbps float64, n int64, err error) RegionResult {
 	if err != nil && n < minValidDownloadBytes {
-		return RegionResult{Code: r.Code, Name: r.Name, Error: fmt.Sprintf("下行读取失败: %v", err)}
+		return RegionResult{Code: r.Code, Name: r.Name, Error: classifyRegionError(err)}
 	}
 	return RegionResult{
 		Code:     r.Code,
@@ -192,6 +244,75 @@ func regionDownloadResult(r Region, ttfb time.Duration, mbps float64, n int64, e
 		TTFBms:   int(ttfb.Milliseconds()),
 		DownMbps: mbps,
 	}
+}
+
+// errDeadLink 死链/占位响应标记(内容低于阈值)。
+var errDeadLink = fmt.Errorf("dead link")
+
+// classifyRegionError 将失败原因分类为具体错误文案(状态码/超时/死链/传输错误)。
+func classifyRegionError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if err == context.DeadlineExceeded {
+		return "timeout: 连接超时"
+	}
+	if err == errDeadLink {
+		return "deadlink: 测速点无效"
+	}
+	// HTTP 状态码错误:从 fmt.Errorf("status %d", code) 提取。
+	msg := err.Error()
+	if strings.HasPrefix(msg, "status ") {
+		code := strings.TrimPrefix(msg, "status ")
+		return fmt.Sprintf("HTTP %s", code)
+	}
+	// 其他传输错误。
+	return fmt.Sprintf("transport: %v", err)
+}
+
+// upstreamUploadURL Cloudflare 上行测速点(与 __down 对称,baselineRegion 用)。
+const upstreamUploadURL = "https://speed.cloudflare.com/__up"
+
+// measureBaselineUplink 测量基准上行:持续 POST 数据流 slice 时长,速率 = 已写字节 / 实际耗时。
+// 请求体到 slice 时长(或 maxBytes 上限)自动 EOF,POST 随之结束。hard 是防卡死的硬上限。
+// 与 bandwidth_stream.streamUpload 语义对齐:硬超时但已上传够数据时用已写字节算速率。
+func measureBaselineUplink(ctx context.Context, client *http.Client, url string, slice, hard time.Duration) (float64, error) {
+	uctx, cancel := context.WithTimeout(ctx, hard)
+	defer cancel()
+
+	start := time.Now()
+	// 数据源:到 slice 时长或 maxBytes 上限即 EOF(时长优先)。
+	maxBytes := 100 * 1024 * 1024 // 100MB 上限,快节点也只跑 slice 时长
+	dataSrc := &durationReader{deadline: start.Add(slice), remaining: int64(maxBytes)}
+
+	req, err := http.NewRequestWithContext(uctx, http.MethodPost, url, dataSrc)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", bandwidthUserAgent)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	// 不设 ContentLength → Go 用 chunked 传输,body EOF 时请求自然结束
+
+	resp, err := client.Do(req)
+	elapsed := time.Since(start).Seconds()
+	if elapsed <= 0 {
+		elapsed = 0.001
+	}
+	total := maxBytes - int(dataSrc.remaining)
+	if err != nil {
+		// 硬超时但已上传够数据 → 用已写字节算平均速率。
+		if uctx.Err() == context.DeadlineExceeded && int64(total) > minValidDownloadBytes {
+			return float64(total*8) / elapsed / 1e6, nil
+		}
+		return 0, err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	if int64(total) < minValidDownloadBytes {
+		return 0, fmt.Errorf("上行数据不足(%d 字节)", total)
+	}
+	return float64(total*8) / elapsed / 1e6, nil
 }
 
 // openRegionDownload 发起 GET 并经 httptrace 采到首字节时间(TTFB);非 200 视为错误。

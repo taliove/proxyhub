@@ -310,7 +310,7 @@ func TestRegionSpeedErrorStage_EmitsErrorRows(t *testing.T) {
 var errBoom = fmt.Errorf("boom")
 
 func TestMeasureRegionSpeed_SuccessAndError(t *testing.T) {
-	body := strings.Repeat("x", 256*1024)
+	body := strings.Repeat("x", 600*1024) // > minValidDownloadBytes
 	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(body))
 	}))
