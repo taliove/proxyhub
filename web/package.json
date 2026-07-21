@@ -23,6 +23,7 @@
     "html-to-image": "^1.11.13",
     "monaco-editor": "^0.52.2",
     "pinia": "^2.1.0",
+    "qrcode": "^1.5.4",
     "vue": "^3.4.0",
     "vue-echarts": "^7.0.3",
     "vue-router": "^4.2.0"
