@@ -154,11 +154,14 @@ const openDetail = (row: RefreshRun) => {
 const toggleData = (eventId: number) => {
   openData[eventId] = !openData[eventId]
 }
+// 刷新已任务化(ticket 03):POST 返回 jobId,refresh_runs 记录异步创建,
+// 需按 job_id 反查 run 再轮询;ticket 05 将整体迁入任务中心。
 const refreshNow = async () => {
   refreshing.value = true
   try {
-    const resp = (await client.post('/aggregator/refresh')) as { ok: boolean; runId: number }
-    startPolling(resp.runId)
+    const resp = (await client.post('/aggregator/refresh')) as { ok: boolean; jobId: number }
+    const runId = await waitRunByJobId(resp.jobId)
+    if (runId !== null) startPolling(runId)
   } catch (e) {
     if (isConflict(e)) {
       ElMessage.warning('已有刷新任务在进行中，已定位到该记录')
@@ -168,6 +171,18 @@ const refreshNow = async () => {
   } finally {
     refreshing.value = false
   }
+}
+
+// waitRunByJobId 轮询刷新记录列表,找到关联该任务的 run 后返回其 id(超时返回 null)。
+const waitRunByJobId = async (jobId: number): Promise<number | null> => {
+  const deadline = Date.now() + 10000
+  while (Date.now() < deadline) {
+    await loadRuns()
+    const run = runs.value.find((r) => r.job_id === jobId)
+    if (run) return run.id
+    await new Promise((resolve) => setTimeout(resolve, 300))
+  }
+  return null
 }
 
 const startPolling = (runId: number) => {
@@ -180,6 +195,7 @@ const startPolling = (runId: number) => {
     id: runId,
     status: 'running',
     trigger: 'manual',
+    job_id: 0,
     total_nodes: 0,
     available_nodes: 0,
     final_nodes: 0,

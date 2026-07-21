@@ -298,6 +298,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 刷新任务化:refresh_runs 关联 jobs 任务 id(ticket 03,刷新迁入 jobs 运行时)
+	if err := s.addColumnIfMissing("refresh_runs", "job_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
 	// 初始化地区识别规则表
 	return s.InitRegionRules()
 }

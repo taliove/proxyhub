@@ -7,7 +7,7 @@ import (
 func TestCreateRefreshRun(t *testing.T) {
 	s := newTestStore(t)
 
-	run, err := s.CreateRefreshRun(RefreshTriggerManual)
+	run, err := s.CreateRefreshRun(RefreshTriggerManual, 0)
 	if err != nil {
 		t.Fatalf("CreateRefreshRun() error = %v", err)
 	}
@@ -29,7 +29,7 @@ func TestCreateRefreshRun(t *testing.T) {
 func TestFinishRefreshRun(t *testing.T) {
 	s := newTestStore(t)
 
-	run, _ := s.CreateRefreshRun(RefreshTriggerScheduled)
+	run, _ := s.CreateRefreshRun(RefreshTriggerScheduled, 0)
 	if err := s.FinishRefreshRun(run.ID, RefreshStatusPartial, 100, 60, 30, "1 个机场失败"); err != nil {
 		t.Fatalf("FinishRefreshRun() error = %v", err)
 	}
@@ -63,7 +63,7 @@ func TestGetRefreshRun_NotFound(t *testing.T) {
 func TestAppendAndListRefreshEvents(t *testing.T) {
 	s := newTestStore(t)
 
-	run, _ := s.CreateRefreshRun(RefreshTriggerManual)
+	run, _ := s.CreateRefreshRun(RefreshTriggerManual, 0)
 	events := []struct{ level, stage, message, data string }{
 		{"info", "fetch", "开始拉取机场 A", ""},
 		{"warn", "fetch", "机场 B 拉取失败", `{"error":"status 401"}`},
@@ -94,8 +94,8 @@ func TestAppendAndListRefreshEvents(t *testing.T) {
 func TestListRefreshRuns_OrderAndLimit(t *testing.T) {
 	s := newTestStore(t)
 
-	first, _ := s.CreateRefreshRun(RefreshTriggerStartup)
-	second, _ := s.CreateRefreshRun(RefreshTriggerManual)
+	first, _ := s.CreateRefreshRun(RefreshTriggerStartup, 0)
+	second, _ := s.CreateRefreshRun(RefreshTriggerManual, 0)
 
 	runs, err := s.ListRefreshRuns(10)
 	if err != nil {
@@ -121,7 +121,7 @@ func TestRefreshRunCleanup_KeepsRecent(t *testing.T) {
 	// 写满超过上限的 run，每个带一条事件
 	var firstID int64
 	for i := 0; i < MaxRefreshRuns+5; i++ {
-		run, err := s.CreateRefreshRun(RefreshTriggerScheduled)
+		run, err := s.CreateRefreshRun(RefreshTriggerScheduled, 0)
 		if err != nil {
 			t.Fatalf("CreateRefreshRun() error = %v", err)
 		}

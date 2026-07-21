@@ -45,14 +45,17 @@ func TestManualRefresh_ReturnsRunID(t *testing.T) {
 	}
 
 	var resp struct {
-		OK    bool  `json:"ok"`
-		RunID int64 `json:"runId"`
+		OK      bool   `json:"ok"`
+		JobID   int64  `json:"jobId"`
+		Kind    string `json:"kind"`
+		Key     string `json:"key"`
+		Started bool   `json:"started"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if !resp.OK || resp.RunID != 42 {
-		t.Errorf("resp = %+v, want ok=true runId=42", resp)
+	if !resp.OK || resp.JobID != 42 || resp.Kind != "refresh" || resp.Key != "all" || !resp.Started {
+		t.Errorf("resp = %+v, want ok=true jobId=42 kind=refresh key=all started=true", resp)
 	}
 	if got := srv.nodes.(*fakeNodes).lastTrigger; got != store.RefreshTriggerManual {
 		t.Errorf("trigger = %s, want manual", got)
@@ -73,7 +76,7 @@ func TestManualRefresh_InternalError(t *testing.T) {
 
 func TestManualRefresh_ConflictWhenInProgress(t *testing.T) {
 	srv, _ := newTestServer(t, nil)
-	srv.nodes.(*fakeNodes).refreshErr = aggregator.ErrRefreshInProgress
+	srv.nodes.(*fakeNodes).refreshErr = aggregator.ErrRefreshConflict
 	h := srv.Handler()
 	cookie := authedCookie(t, h)
 
@@ -88,8 +91,8 @@ func TestRefreshRuns_ListAndDetail(t *testing.T) {
 	h := srv.Handler()
 	cookie := authedCookie(t, h)
 
-	first, _ := st.CreateRefreshRun(store.RefreshTriggerStartup)
-	second, _ := st.CreateRefreshRun(store.RefreshTriggerManual)
+	first, _ := st.CreateRefreshRun(store.RefreshTriggerStartup, 0)
+	second, _ := st.CreateRefreshRun(store.RefreshTriggerManual, 0)
 	st.AppendRefreshEvent(second.ID, "info", "fetch", "拉取「机场A」…", "")
 	st.AppendRefreshEvent(second.ID, "warn", "fetch", "「机场A」拉取失败", `{"airport":"机场A"}`)
 	st.FinishRefreshRun(second.ID, store.RefreshStatusFailed, 0, 0, 0, "1/1 机场拉取失败")

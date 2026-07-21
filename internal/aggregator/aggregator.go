@@ -8,18 +8,16 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/taliove/proxyhub/internal/config"
 	"github.com/taliove/proxyhub/internal/filter"
 	"github.com/taliove/proxyhub/internal/healthcheck"
+	"github.com/taliove/proxyhub/internal/jobs"
+	"github.com/taliove/proxyhub/internal/poolops"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
-
-// ErrRefreshInProgress 已有一轮刷新在进行中
-var ErrRefreshInProgress = errors.New("refresh already in progress")
 
 // 刷新事件级别
 const (
@@ -57,8 +55,16 @@ type Aggregator struct {
 	nodes      []*subscription.Node
 	lastUpdate time.Time
 
-	// refreshing 保证同一时刻只有一轮刷新在跑
-	refreshing atomic.Bool
+	// refreshJobs 刷新任务运行时(jobs kind=refresh;单实例/取消/中断标记)。
+	// 取代旧的 refreshing atomic 锁,互斥细化到机场级(见 refresh_job.go)。
+	refreshJobs *jobs.Manager
+	// poolOps 单机场 upsert 口径(单机场刷新复用,见 ticket 01/04)
+	poolOps *poolops.StoreAdapter
+
+	// refreshStartMu 串行化"冲突检查+发起任务"临界区(机场级互斥的 TOCTOU 防护)
+	refreshStartMu sync.Mutex
+	// singleUpsertMu 串行化单机场刷新的池写(并行拉取允许,写池不允许)
+	singleUpsertMu sync.Mutex
 
 	// 告警冷却：同一问题只告警一次，恢复后清除
 	alerted map[string]bool
@@ -88,6 +94,23 @@ func New(cfg *config.Config, alerter Notifier, st *store.Store, logger *slog.Log
 		logger:     logger,
 		recognizer: recognizer,
 		alerted:    make(map[string]bool),
+	}
+	// 刷新任务运行时:注册 refresh kind,恢复遗留 running 为 interrupted。
+	// 用 RecoverOwn 而非 Recover:多 Manager 共存,不误标其他运行时续跑的任务。
+	a.poolOps = poolops.NewStoreAdapter(st)
+	a.refreshJobs = jobs.NewManager(
+		st.Jobs(),
+		jobs.WithErrorHandler(func(err error) {
+			logger.Warn("refresh job runtime error", "error", err)
+		}),
+	)
+	a.refreshJobs.Register(&refreshKind{agg: a})
+	if err := a.refreshJobs.RecoverOwn(); err != nil {
+		logger.Error("refresh jobs recover failed", "error", err)
+	}
+	// 启动即收口上进程残留的 running 刷新记录(本进程还没开始跑,running 必是死进程残留)
+	if err := st.FailRunningRefreshRuns("process restarted"); err != nil {
+		logger.Warn("fail stale running refresh runs failed", "error", err)
 	}
 	a.restoreNodePool()
 	return a
@@ -174,11 +197,11 @@ func (a *Aggregator) UpdateNodeIdentity(nodeKey, name, region string) bool {
 	return false
 }
 
-// Run 定时执行聚合流水线
+// Run 定时执行聚合流水线(经 jobs 运行时发起刷新任务)
 func (a *Aggregator) Run(ctx context.Context) {
 	// 启动时立即跑一轮（除非“定时刷新”已关闭，见 ADR 0004）
 	if a.autoRefreshEnabled() {
-		if err := a.RunOnce(ctx, store.RefreshTriggerStartup); err != nil {
+		if _, _, _, err := a.StartRefreshJob(store.RefreshTriggerStartup); err != nil {
 			a.logger.Error("initial aggregation failed", "error", err)
 		}
 	} else {
@@ -198,12 +221,15 @@ func (a *Aggregator) Run(ctx context.Context) {
 				a.logger.Debug("scheduled refresh disabled, skipping tick")
 				continue
 			}
-			if err := a.RunOnce(ctx, store.RefreshTriggerScheduled); err != nil {
-				if errors.Is(err, ErrRefreshInProgress) {
-					a.logger.Info("scheduled aggregation skipped: refresh in progress")
-				} else {
-					a.logger.Error("aggregation failed", "error", err)
-				}
+			// 撞车跳过:已有全量进行中(附加)或与单机场刷新冲突,本轮不再发起
+			_, _, started, err := a.StartRefreshJob(store.RefreshTriggerScheduled)
+			switch {
+			case errors.Is(err, ErrRefreshConflict):
+				a.logger.Info("scheduled aggregation skipped: conflicting refresh in progress")
+			case err != nil:
+				a.logger.Error("aggregation failed", "error", err)
+			case !started:
+				a.logger.Info("scheduled aggregation skipped: refresh already running")
 			}
 		}
 	}
@@ -220,42 +246,17 @@ func (a *Aggregator) autoRefreshEnabled() bool {
 	return settings["scheduled_refresh_enabled"] != "false"
 }
 
-// RunOnce 同步执行一轮完整的聚合流水线，并写入刷新记录
+// RunOnce 同步执行一轮完整的聚合流水线，并写入刷新记录。
+// 内部路径(测试/直接调用):自身无任何互斥,调用方自负并发安全
+// (生产路径一律走 jobs 运行时的 kind+key 单实例,见 refresh_job.go)。
 func (a *Aggregator) RunOnce(ctx context.Context, trigger string) error {
-	if !a.refreshing.CompareAndSwap(false, true) {
-		return ErrRefreshInProgress
-	}
-	defer a.refreshing.Store(false)
-
-	rl, err := a.newRunLog(trigger)
+	rl, err := a.newRunLog(trigger, 0)
 	if err != nil {
 		// 刷新记录写不进去不阻断聚合，仅丢失本次日志
 		a.logger.Warn("create refresh run failed, continuing without refresh log", "error", err)
 	}
 	a.execute(ctx, rl)
 	return nil
-}
-
-// TriggerRefresh 异步启动一轮刷新，立即返回刷新记录 ID
-func (a *Aggregator) TriggerRefresh(ctx context.Context, trigger string) (int64, error) {
-	if !a.refreshing.CompareAndSwap(false, true) {
-		return 0, ErrRefreshInProgress
-	}
-
-	// 手动刷新必须拿到记录 ID 供前端轮询，创建失败即整体失败
-	rl, err := a.newRunLog(trigger)
-	if err != nil {
-		a.refreshing.Store(false)
-		return 0, fmt.Errorf("create refresh run: %w", err)
-	}
-
-	go func() {
-		defer a.refreshing.Store(false)
-		// 请求上下文会随响应结束被取消，异步刷新使用独立上下文
-		a.execute(context.Background(), rl)
-	}()
-
-	return rl.runID, nil
 }
 
 // runLog 一次刷新的结构化事件记录器；runID 为 0 时所有写入降级为 no-op
@@ -265,10 +266,11 @@ type runLog struct {
 	runID  int64
 }
 
-// newRunLog 创建刷新记录；失败时返回可安全使用的 no-op 记录器和错误，由调用方决定是否降级
-func (a *Aggregator) newRunLog(trigger string) (*runLog, error) {
+// newRunLog 创建刷新记录；失败时返回可安全使用的 no-op 记录器和错误，由调用方决定是否降级。
+// jobID 为关联的 jobs 任务 id(任务化刷新回填;直接 RunOnce 传 0)。
+func (a *Aggregator) newRunLog(trigger string, jobID int64) (*runLog, error) {
 	rl := &runLog{st: a.st, logger: a.logger}
-	run, err := a.st.CreateRefreshRun(trigger)
+	run, err := a.st.CreateRefreshRun(trigger, jobID)
 	if err != nil {
 		return rl, err
 	}
@@ -317,7 +319,7 @@ type fetchResult struct {
 func (a *Aggregator) execute(ctx context.Context, rl *runLog) {
 	a.logger.Info("aggregation started")
 
-	fetched, err := a.fetchAirports(rl)
+	fetched, err := a.fetchAirports(ctx, rl)
 	if err != nil {
 		a.logger.Error("list airports failed", "error", err)
 		rl.event(levelError, stageFetch, "读取机场列表失败："+err.Error(), nil)
@@ -397,7 +399,12 @@ func (a *Aggregator) execute(ctx context.Context, rl *runLog) {
 
 	status := store.RefreshStatusSuccess
 	errMsg := ""
-	if fetched.failed > 0 {
+	switch {
+	case ctx.Err() != nil:
+		// 取消:中断于当前阶段,已拉取部分照常入池(不回滚)
+		status = store.RefreshStatusCancelled
+		errMsg = "cancelled"
+	case fetched.failed > 0:
 		errMsg = fmt.Sprintf("%d/%d 机场拉取失败", fetched.failed, fetched.enabled)
 		if fetched.failed == fetched.enabled {
 			status = store.RefreshStatusFailed
@@ -415,7 +422,7 @@ func (a *Aggregator) execute(ctx context.Context, rl *runLog) {
 // fetchAirports 拉取全部启用机场的订阅；单个机场失败不阻断，仅计入失败数。
 // 拉取按 fetchConcurrency() 的度并行(semaphore),结果按机场列表顺序归并,
 // 不随完成序漂移(事件按完成序写,带时间戳,顺序乱属正常)。
-func (a *Aggregator) fetchAirports(rl *runLog) (*fetchResult, error) {
+func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog) (*fetchResult, error) {
 	airports, err := a.st.ListAirports()
 	if err != nil {
 		return nil, err
@@ -446,8 +453,14 @@ func (a *Aggregator) fetchAirports(rl *runLog) (*fetchResult, error) {
 		wg.Add(1)
 		go func(i int, airport *store.Airport) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			// 取消=中断当前拉取:不再启动新拉取(进行中的由 fetcher 超时兜底跑完)
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				outcomes[i] = outcome{err: ctx.Err()}
+				return
+			}
 
 			rl.event(levelInfo, stageFetch, fmt.Sprintf("拉取「%s」…", airport.Name), nil)
 			sub, err := a.fetcher.Fetch(airport.Name, airport.URL)
@@ -474,7 +487,10 @@ func (a *Aggregator) fetchAirports(rl *runLog) (*fetchResult, error) {
 		o := outcomes[i]
 		if o.err != nil {
 			result.airportNodes[airport.Name] = nil
-			result.failed++
+			// 取消导致未启动的拉取不计入失败(不是机场坏了)
+			if !errors.Is(o.err, context.Canceled) && !errors.Is(o.err, context.DeadlineExceeded) {
+				result.failed++
+			}
 			continue
 		}
 		result.airportNodes[airport.Name] = o.nodes

@@ -1,6 +1,7 @@
 package aggregator
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -68,7 +69,7 @@ func TestFetchAirports_ParallelBeatsSerial(t *testing.T) {
 		t.Fatalf("SetSetting() error = %v", err)
 	}
 	start := time.Now()
-	if _, err := agg.fetchAirports(rl); err != nil {
+	if _, err := agg.fetchAirports(context.Background(), rl); err != nil {
 		t.Fatalf("fetchAirports() error = %v", err)
 	}
 	parallel := time.Since(start)
@@ -81,7 +82,7 @@ func TestFetchAirports_ParallelBeatsSerial(t *testing.T) {
 		t.Fatalf("SetSetting() error = %v", err)
 	}
 	start = time.Now()
-	if _, err := agg.fetchAirports(rl); err != nil {
+	if _, err := agg.fetchAirports(context.Background(), rl); err != nil {
 		t.Fatalf("fetchAirports() error = %v", err)
 	}
 	serial := time.Since(start)
@@ -107,7 +108,7 @@ func TestFetchAirports_OrderStableRegardlessOfCompletion(t *testing.T) {
 		t.Fatalf("SetSetting() error = %v", err)
 	}
 
-	result, err := agg.fetchAirports(&runLog{})
+	result, err := agg.fetchAirports(context.Background(), &runLog{})
 	if err != nil {
 		t.Fatalf("fetchAirports() error = %v", err)
 	}
@@ -134,7 +135,7 @@ func TestFetchAirports_FailureIsolation(t *testing.T) {
 		t.Fatalf("SetSetting() error = %v", err)
 	}
 
-	result, err := agg.fetchAirports(&runLog{})
+	result, err := agg.fetchAirports(context.Background(), &runLog{})
 	if err != nil {
 		t.Fatalf("fetchAirports() error = %v", err)
 	}

@@ -3,7 +3,6 @@ package aggregator
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -26,6 +25,12 @@ func newTestAggregator(t *testing.T) (*Aggregator, *store.Store) {
 	}
 	t.Cleanup(func() { st.Close() })
 
+	return newTestAggregatorWithStore(t, st), st
+}
+
+// newTestAggregatorWithStore 在既有 store 上新建 Aggregator(模拟进程重启后的状态)。
+func newTestAggregatorWithStore(t *testing.T, st *store.Store) *Aggregator {
+	t.Helper()
 	cfg := &config.Config{}
 	cfg.HealthCheck.Timeout.Latency = 200 * time.Millisecond
 	cfg.HealthCheck.Timeout.Request = 200 * time.Millisecond
@@ -34,7 +39,7 @@ func newTestAggregator(t *testing.T) (*Aggregator, *store.Store) {
 	cfg.Filter.Deduplicate = true
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(cfg, nil, st, logger), st
+	return New(cfg, nil, st, logger)
 }
 
 // subscriptionServer 返回一个提供有效订阅（1 个 trojan 节点）的测试服务器
@@ -179,63 +184,6 @@ func TestRunOnce_AllFailed_PreservesPool(t *testing.T) {
 	runs, _ := st.ListRefreshRuns(1)
 	if runs[0].Status != store.RefreshStatusFailed {
 		t.Errorf("Status = %s, want failed", runs[0].Status)
-	}
-}
-
-func TestTriggerRefresh_AsyncAndRejectsConcurrent(t *testing.T) {
-	agg, st := newTestAggregator(t)
-
-	release := make(chan struct{})
-	content := base64.StdEncoding.EncodeToString([]byte("trojan://pw@127.0.0.1:1#HK 01"))
-	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-release
-		w.Write([]byte(content))
-	}))
-	defer slow.Close()
-	st.CreateAirport("慢机场", slow.URL)
-
-	runID, err := agg.TriggerRefresh(context.Background(), store.RefreshTriggerManual)
-	if err != nil {
-		t.Fatalf("TriggerRefresh() error = %v", err)
-	}
-	if runID == 0 {
-		t.Fatal("runID should not be 0")
-	}
-
-	// 进行中时再次触发应被拒绝
-	if _, err := agg.TriggerRefresh(context.Background(), store.RefreshTriggerManual); !errors.Is(err, ErrRefreshInProgress) {
-		t.Errorf("second trigger err = %v, want ErrRefreshInProgress", err)
-	}
-
-	run, err := st.GetRefreshRun(runID)
-	if err != nil {
-		t.Fatalf("GetRefreshRun() error = %v", err)
-	}
-	if run.Status != store.RefreshStatusRunning {
-		t.Errorf("Status = %s, want running", run.Status)
-	}
-
-	close(release)
-
-	// 等待异步刷新完成
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		run, _ = st.GetRefreshRun(runID)
-		if run.Status != store.RefreshStatusRunning {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("refresh did not finish in time")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if run.Status != store.RefreshStatusSuccess {
-		t.Errorf("final Status = %s, want success", run.Status)
-	}
-
-	// 完成后可以再次触发
-	if _, err := agg.TriggerRefresh(context.Background(), store.RefreshTriggerManual); err != nil {
-		t.Errorf("trigger after finish err = %v", err)
 	}
 }
 

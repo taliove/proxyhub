@@ -114,7 +114,8 @@ export interface SystemSettings {
 export interface RefreshRun {
   id: number
   trigger: string // manual | scheduled | startup
-  status: string // running | success | partial | failed
+  status: string // running | success | partial | failed | cancelled
+  job_id: number // 关联的 jobs 任务 id(0 = 任务化前的旧记录)
   total_nodes: number
   available_nodes: number
   final_nodes: number

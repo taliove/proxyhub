@@ -33,9 +33,12 @@ import (
 type NodeSource interface {
 	Nodes() []*subscription.Node
 	LastUpdate() time.Time
-	// TriggerRefresh 异步启动一轮刷新，返回刷新记录 ID；
-	// 已有刷新进行中时返回 aggregator.ErrRefreshInProgress
-	TriggerRefresh(ctx context.Context, trigger string) (int64, error)
+	// StartRefreshJob 经 jobs 运行时发起全量刷新任务(trigger 记入 params)。
+	// 返回 jobs 行 id/任务 key/是否新启动;同 key 重复触发附加到进行中任务,
+	// 与进行中的单机场刷新冲突时返回 aggregator.ErrRefreshConflict。
+	StartRefreshJob(trigger string) (jobID int64, key string, started bool, err error)
+	// CancelRefresh 取消指定 key 的刷新任务;无进行中任务返回 false。
+	CancelRefresh(key string) bool
 	// UpdateNodeTestResult 将单节点即时测试结果写回内存池（按 NodeKey 匹配）。
 	// 找到返回 true；池中无此节点返回 false。
 	UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool

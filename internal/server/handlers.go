@@ -281,12 +281,13 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stats)
 }
 
-// handleManualRefresh 异步触发一轮聚合刷新，返回刷新记录 ID 供前端查询进度
+// handleManualRefresh 经 jobs 运行时发起全量刷新任务,返回任务信息供前端进任务中心查看。
+// 同 key 重复触发按单实例附加(不再 409);与进行中的单机场刷新冲突时返回 409。
 func (s *Server) handleManualRefresh(w http.ResponseWriter, r *http.Request) {
-	runID, err := s.nodes.TriggerRefresh(r.Context(), store.RefreshTriggerManual)
+	jobID, key, started, err := s.nodes.StartRefreshJob(store.RefreshTriggerManual)
 	if err != nil {
-		if errors.Is(err, aggregator.ErrRefreshInProgress) {
-			http.Error(w, "refresh already in progress", http.StatusConflict)
+		if errors.Is(err, aggregator.ErrRefreshConflict) {
+			http.Error(w, "conflicts with a running single-airport refresh", http.StatusConflict)
 			return
 		}
 		s.logger.Error("trigger refresh failed", "error", err)
@@ -294,10 +295,13 @@ func (s *Server) handleManualRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logger.Info("manual refresh triggered", "run_id", runID)
+	s.logger.Info("manual refresh triggered", "job_id", jobID, "key", key, "started", started)
 	writeJSON(w, map[string]any{
-		"ok":    true,
-		"runId": runID,
+		"ok":      true,
+		"jobId":   jobID,
+		"kind":    "refresh",
+		"key":     key,
+		"started": started,
 	})
 }
 

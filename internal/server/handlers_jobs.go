@@ -95,6 +95,8 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		if s.examJobs != nil {
 			cancelled = s.examJobs.Cancel(key)
 		}
+	case "refresh":
+		cancelled = s.nodes.CancelRefresh(key)
 	default:
 		http.Error(w, "unknown kind", http.StatusBadRequest)
 		return

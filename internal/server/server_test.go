@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"embed"
 	"encoding/json"
 	"log/slog"
@@ -24,20 +23,22 @@ import (
 // fakeNodes 实现 NodeSource
 type fakeNodes struct {
 	nodes       []*subscription.Node
-	refreshErr  error // TriggerRefresh 返回的错误（模拟刷新进行中等场景）
+	refreshErr  error // StartRefreshJob 返回的错误（模拟刷新冲突等场景）
 	lastTrigger string
 }
 
 func (f *fakeNodes) Nodes() []*subscription.Node { return f.nodes }
 func (f *fakeNodes) LastUpdate() time.Time       { return time.Now() }
 
-func (f *fakeNodes) TriggerRefresh(_ context.Context, trigger string) (int64, error) {
+func (f *fakeNodes) StartRefreshJob(trigger string) (int64, string, bool, error) {
 	f.lastTrigger = trigger
 	if f.refreshErr != nil {
-		return 0, f.refreshErr
+		return 0, "all", false, f.refreshErr
 	}
-	return 42, nil
+	return 42, "all", true, nil
 }
+
+func (f *fakeNodes) CancelRefresh(string) bool { return true }
 
 func (f *fakeNodes) UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool {
 	// 测试 mock：查找并更新节点，模拟真实行为

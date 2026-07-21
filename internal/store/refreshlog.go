@@ -19,6 +19,8 @@ const (
 	RefreshStatusSuccess = "success"
 	RefreshStatusPartial = "partial"
 	RefreshStatusFailed  = "failed"
+	// RefreshStatusCancelled 任务被取消(中断于当前阶段,已拉取部分照常入池)
+	RefreshStatusCancelled = "cancelled"
 )
 
 // MaxRefreshRuns 刷新历史保留条数，超出后按最旧清理（事件一并删除）
@@ -28,6 +30,8 @@ const MaxRefreshRuns = 50
 type RefreshRun struct {
 	ID             int64      `json:"id"`
 	Trigger        string     `json:"trigger"`
+	// JobID 关联的 jobs 表任务 id(刷新任务化后回填;0 = 任务化前的旧记录或未关联)
+	JobID          int64      `json:"job_id"`
 	Status         string     `json:"status"`
 	TotalNodes     int        `json:"total_nodes"`
 	AvailableNodes int        `json:"available_nodes"`
@@ -48,8 +52,9 @@ type RefreshEvent struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// CreateRefreshRun 新建一条刷新记录，并在同一事务内清理超限的旧记录
-func (s *Store) CreateRefreshRun(trigger string) (*RefreshRun, error) {
+// CreateRefreshRun 新建一条刷新记录，并在同一事务内清理超限的旧记录。
+// jobID 为关联的 jobs 任务 id(刷新任务化),无关联传 0。
+func (s *Store) CreateRefreshRun(trigger string, jobID int64) (*RefreshRun, error) {
 	now := time.Now()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -58,8 +63,8 @@ func (s *Store) CreateRefreshRun(trigger string) (*RefreshRun, error) {
 	defer tx.Rollback()
 
 	result, err := tx.Exec(
-		`INSERT INTO refresh_runs (trigger_type, status, started_at) VALUES (?, ?, ?)`,
-		trigger, RefreshStatusRunning, now)
+		`INSERT INTO refresh_runs (trigger_type, status, job_id, started_at) VALUES (?, ?, ?, ?)`,
+		trigger, RefreshStatusRunning, jobID, now)
 	if err != nil {
 		return nil, fmt.Errorf("insert refresh run: %w", err)
 	}
@@ -78,6 +83,7 @@ func (s *Store) CreateRefreshRun(trigger string) (*RefreshRun, error) {
 	return &RefreshRun{
 		ID:        id,
 		Trigger:   trigger,
+		JobID:     jobID,
 		Status:    RefreshStatusRunning,
 		StartedAt: now,
 	}, nil
@@ -99,7 +105,7 @@ func (s *Store) FinishRefreshRun(id int64, status string, total, available, fina
 // GetRefreshRun 获取单条刷新记录
 func (s *Store) GetRefreshRun(id int64) (*RefreshRun, error) {
 	row := s.db.QueryRow(
-		`SELECT id, trigger_type, status, total_nodes, available_nodes, final_nodes, error, started_at, finished_at
+		`SELECT id, trigger_type, status, total_nodes, available_nodes, final_nodes, error, started_at, finished_at, job_id
 		 FROM refresh_runs WHERE id = ?`, id)
 	run, err := scanRefreshRun(row)
 	if err == sql.ErrNoRows {
@@ -114,7 +120,7 @@ func (s *Store) GetRefreshRun(id int64) (*RefreshRun, error) {
 // ListRefreshRuns 按时间倒序列出刷新记录
 func (s *Store) ListRefreshRuns(limit int) ([]*RefreshRun, error) {
 	rows, err := s.db.Query(
-		`SELECT id, trigger_type, status, total_nodes, available_nodes, final_nodes, error, started_at, finished_at
+		`SELECT id, trigger_type, status, total_nodes, available_nodes, final_nodes, error, started_at, finished_at, job_id
 		 FROM refresh_runs ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query refresh runs: %w", err)
@@ -185,11 +191,24 @@ func scanRefreshRun(row rowScanner) (*RefreshRun, error) {
 	var finishedAt sql.NullTime
 	if err := row.Scan(&run.ID, &run.Trigger, &run.Status,
 		&run.TotalNodes, &run.AvailableNodes, &run.FinalNodes,
-		&run.Error, &run.StartedAt, &finishedAt); err != nil {
+		&run.Error, &run.StartedAt, &finishedAt, &run.JobID); err != nil {
 		return nil, err
 	}
 	if finishedAt.Valid {
 		run.FinishedAt = &finishedAt.Time
 	}
 	return &run, nil
+}
+
+// FailRunningRefreshRuns 把仍处于 running 的刷新记录标记为失败。
+// 进程启动时调用:任何 running 行都是上一个已死进程的残留(本进程还没开始跑),
+// 不清理会永久卡在 running 展示。
+func (s *Store) FailRunningRefreshRuns(errMsg string) error {
+	_, err := s.db.Exec(
+		`UPDATE refresh_runs SET status = ?, error = ?, finished_at = ? WHERE status = ?`,
+		RefreshStatusFailed, errMsg, time.Now(), RefreshStatusRunning)
+	if err != nil {
+		return fmt.Errorf("fail running refresh runs: %w", err)
+	}
+	return nil
 }

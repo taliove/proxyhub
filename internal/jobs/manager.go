@@ -206,8 +206,29 @@ func (m *Manager) OpenForce(kind, key string, params json.RawMessage) (*Subscrip
 	return m.open(kind, key, params, true)
 }
 
+// OpenID 启动或附加(kind,key)任务,返回持久化行 ID 与是否本次新启动。
+// 供调用方拿到任务 id 做关联(如刷新任务回填 refresh_runs.job_id);
+// rowID=0 表示持久化失败退化为纯内存任务。
+func (m *Manager) OpenID(kind, key string, params json.RawMessage) (rowID int64, started bool, err error) {
+	return m.openID(kind, key, params, false)
+}
+
+// OpenIDForce 同 OpenID,但对已收口的旧任务强制重开(进行中的仍按附加)。
+// 适合"再点一次就再跑一轮"的触发语义(如刷新)。
+func (m *Manager) OpenIDForce(kind, key string, params json.RawMessage) (rowID int64, started bool, err error) {
+	return m.openID(kind, key, params, true)
+}
+
+func (m *Manager) openID(kind, key string, params json.RawMessage, force bool) (int64, bool, error) {
+	j, created, err := m.startOrAttach(kind, key, params, force)
+	if err != nil {
+		return 0, false, err
+	}
+	return j.id, created, nil
+}
+
 func (m *Manager) open(kind, key string, params json.RawMessage, force bool) (*Subscription, error) {
-	j, err := m.startOrAttach(kind, key, params, force)
+	j, _, err := m.startOrAttach(kind, key, params, force)
 	if err != nil {
 		return nil, err
 	}
@@ -216,14 +237,14 @@ func (m *Manager) open(kind, key string, params json.RawMessage, force bool) (*S
 }
 
 // startOrAttach 无任务(或已过期)则启动新任务,否则返回现有任务。
-// force 仅对已收口的旧任务生效:丢弃并重开。
-func (m *Manager) startOrAttach(kind, key string, params json.RawMessage, force bool) (*job, error) {
+// force 仅对已收口的旧任务生效:丢弃并重开。created 报告是否本次新启动。
+func (m *Manager) startOrAttach(kind, key string, params json.RawMessage, force bool) (*job, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	k, ok := m.kinds[kind]
 	if !ok {
-		return nil, fmt.Errorf("jobs: unknown kind %q", kind)
+		return nil, false, fmt.Errorf("jobs: unknown kind %q", kind)
 	}
 
 	m.sweepLocked(m.now())
@@ -233,7 +254,7 @@ func (m *Manager) startOrAttach(kind, key string, params json.RawMessage, force 
 		if force && j.isDone() {
 			delete(m.jobs, id)
 		} else {
-			return j, nil
+			return j, false, nil
 		}
 	}
 
@@ -257,7 +278,7 @@ func (m *Manager) startOrAttach(kind, key string, params json.RawMessage, force 
 		s.OnStart(key)
 	}
 	go m.runJob(j, params, "")
-	return j, nil
+	return j, true, nil
 }
 
 func (m *Manager) newJob(k Kind, key string, rowID int64) *job {
@@ -340,6 +361,24 @@ func (m *Manager) runJob(j *job, params json.RawMessage, cursor string) {
 	}
 }
 
+// RunningKeys 返回内存中进行中的指定 kind 任务的 key 列表。
+// 持久化是尽力而为(Insert 失败退化为纯内存任务),做跨 key 互斥判断时
+// 必须以内存态为准(DB 为辅),否则纯内存任务对互斥检查完全隐身。
+func (m *Manager) RunningKeys(kind string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var keys []string
+	for id, j := range m.jobs {
+		if id.kind != kind {
+			continue
+		}
+		if !j.isDone() {
+			keys = append(keys, id.key)
+		}
+	}
+	return keys
+}
+
 // Cancel 取消(kind,key)任务:无任务或已收口返回 false。
 func (m *Manager) Cancel(kind, key string) bool {
 	m.mu.Lock()
@@ -373,6 +412,18 @@ func (m *Manager) sweepLocked(now time.Time) {
 // Recover 重启恢复:加载所有 running 记录,可续跑的 kind 从游标续跑,
 // 否则(单发任务或 kind 未注册)标记 interrupted。须在注册所有 kind 之后、对外服务之前调用。
 func (m *Manager) Recover() error {
+	return m.recover(false)
+}
+
+// RecoverOwn 只恢复本 Manager 已注册 kind 的遗留 running 任务,其他 kind 的记录原样跳过。
+// Recover 会把未注册 kind 的 running 记录标 interrupted——多 Manager 共存时
+// (retag/batch_detection/exam 各有 Manager)会误标别的运行时正在续跑的任务,
+// 新 Manager 应一律用 RecoverOwn。
+func (m *Manager) RecoverOwn() error {
+	return m.recover(true)
+}
+
+func (m *Manager) recover(ownOnly bool) error {
 	if m.store == nil {
 		return nil
 	}
@@ -383,6 +434,10 @@ func (m *Manager) Recover() error {
 	for _, rec := range records {
 		m.mu.Lock()
 		k, registered := m.kinds[rec.Kind]
+		if !registered && ownOnly {
+			m.mu.Unlock()
+			continue
+		}
 		if !registered || !k.Resumable() {
 			m.mu.Unlock()
 			if err := m.store.Finish(rec.ID, StatusInterrupted); err != nil {
