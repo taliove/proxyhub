@@ -134,6 +134,27 @@ func TestParseSkipsMetadataLines(t *testing.T) {
 	}
 }
 
+// TestParsePreservesRawLink 验证订阅解析为每个节点保留原始分享 URI(ticket 56)。
+func TestParsePreservesRawLink(t *testing.T) {
+	f := &Fetcher{}
+	vless := "vless://00000000-0000-0000-0000-000000000000@node1.example.com:443?type=tcp&security=tls#%F0%9F%87%AD%F0%9F%87%B0%20HK01"
+	trojan := "trojan://00000000-0000-0000-0000-000000000000@node2.example.com:443#%F0%9F%87%AF%F0%9F%87%B5%20JP01"
+	content := vless + "\n" + trojan
+	nodes, err := f.parse(content, "test")
+	if err != nil {
+		t.Fatalf("parse() error = %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("parse() = %d nodes, want 2", len(nodes))
+	}
+	if nodes[0].RawLink != vless {
+		t.Errorf("nodes[0].RawLink = %q, want %q", nodes[0].RawLink, vless)
+	}
+	if nodes[1].RawLink != trojan {
+		t.Errorf("nodes[1].RawLink = %q, want %q", nodes[1].RawLink, trojan)
+	}
+}
+
 func TestParseSubscription(t *testing.T) {
 	// Test整体订阅解析：base64外壳 + 内部多个SS节点
 	// 这是机场返回的原始 base64（需要先解码一层才能得到 ss:// 行）

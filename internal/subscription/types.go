@@ -45,6 +45,13 @@ type Node struct {
 	// 真实检测时间戳(区分 TCP 快检 vs 真实代理检测)
 	DetectionLastCheck time.Time `json:"detection_last_check,omitempty"`
 
+	// RawLink 保留订阅解析时的原始分享 URI(含凭证)。仅供 share-uri 端点按原样
+	// 回放节点二维码,避免走生成器重造丢失机场特有参数(见 ticket 56)。
+	// json:"-" 确保它绝不出现在 /nodes 视图或任何 JSON 序列化输出;同理禁止写入日志。
+	// 解析失败的节点不产生 Node,故此字段对它们天然为空。不持久化到 nodes 表
+	// (与 DisplayName 同类,仅进程内有效;重启后下一轮刷新重新填充)。
+	RawLink string `json:"-"`
+
 	// Stale 标记节点从机场订阅中消失(保留待清理,订阅生成时排除)
 	Stale bool `json:"stale,omitempty"`
 	// LastSeen 最近一次在 fetch 中出现的时间(stale=true 时有意义)

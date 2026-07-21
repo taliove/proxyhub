@@ -30,12 +30,18 @@ func (s *Server) handleNodeShareURI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate share URI using generator package
-	uri, err := generator.GenerateShareURI(targetNode)
-	if err != nil {
-		s.logger.Error("generate share URI failed", "node_key", nodeKey, "error", err)
-		http.Error(w, "failed to generate share URI", http.StatusInternalServerError)
-		return
+	// Prefer the original share URI preserved at subscription parse time (ticket 56):
+	// it carries airport-specific params the generator may drop. Fall back to the
+	// generator when absent (self-hosted nodes, or pool restored before this field existed).
+	uri := targetNode.RawLink
+	if uri == "" {
+		var err error
+		uri, err = generator.GenerateShareURI(targetNode)
+		if err != nil {
+			s.logger.Error("generate share URI failed", "node_key", nodeKey, "error", err)
+			http.Error(w, "failed to generate share URI", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	writeJSON(w, map[string]string{"uri": uri})
