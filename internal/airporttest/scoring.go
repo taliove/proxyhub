@@ -2,6 +2,7 @@ package airporttest
 
 import (
 	"math"
+	"sort"
 
 	"github.com/taliove/proxyhub/internal/subscription"
 )
@@ -70,17 +71,10 @@ func CalculateScore(nodes []*subscription.Node, httpStatus, parseFailures, total
 			meanScore = 15
 		}
 
-		// 计算P95延迟(简化:排序后取95分位)
+		// 计算P95延迟(排序后取95分位)
 		sortedLatencies := make([]int, len(latencies))
 		copy(sortedLatencies, latencies)
-		// 简单冒泡排序
-		for i := 0; i < len(sortedLatencies); i++ {
-			for j := i + 1; j < len(sortedLatencies); j++ {
-				if sortedLatencies[i] > sortedLatencies[j] {
-					sortedLatencies[i], sortedLatencies[j] = sortedLatencies[j], sortedLatencies[i]
-				}
-			}
-		}
+		sort.Ints(sortedLatencies)
 		p95Index := int(float64(len(sortedLatencies)) * 0.95)
 		if p95Index >= len(sortedLatencies) {
 			p95Index = len(sortedLatencies) - 1

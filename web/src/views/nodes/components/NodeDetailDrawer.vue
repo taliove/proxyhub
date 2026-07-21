@@ -116,8 +116,8 @@ import type { ExamHistoryEntry, Node } from '@/types'
 import { isGenericVariant, unlockDisplayRows } from '../unlock'
 import { fetchExamHistory } from '@/api/exam'
 import ExamHistoryTimeline from '@/components/exam/ExamHistoryTimeline.vue'
-import { generateQRCode, getNodeShareURI } from '@/composables/useQRCode'
-import { canGenerateShareLink } from '@/composables/useNodeShare'
+import { generateQRCode } from '@/composables/useQRCode'
+import { canGenerateShareLink, getNodeShareLink } from '@/composables/useNodeShare'
 
 const visible = defineModel<boolean>({ required: true })
 
@@ -176,7 +176,7 @@ const showNodeQR = async (node: Node) => {
   qrDataUrl.value = ''
 
   try {
-    const uri = await getNodeShareURI(node)
+    const uri = await getNodeShareLink(node)
     qrDataUrl.value = await generateQRCode(uri)
   } catch (err) {
     qrError.value = err instanceof Error ? err.message : String(err)

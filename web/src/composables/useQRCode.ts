@@ -1,6 +1,4 @@
 import QRCode from 'qrcode'
-import { getNodeShareLink } from './useNodeShare'
-import type { Node } from '@/types'
 
 /**
  * Generate QR code data URL from text content
@@ -22,15 +20,4 @@ export async function generateQRCode(text: string): Promise<string> {
   } catch (err) {
     throw new Error(`Failed to generate QR code: ${err}`)
   }
-}
-
-/**
- * Get node share URI for QR code generation (legacy wrapper)
- * Now calls backend API for all nodes
- * @param node Node object
- * @returns Share URI string
- * @throws Error if protocol unsupported or backend fails
- */
-export async function getNodeShareURI(node: Node): Promise<string> {
-  return await getNodeShareLink(node)
 }
