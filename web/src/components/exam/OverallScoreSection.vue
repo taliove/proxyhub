@@ -53,8 +53,8 @@ const cssVar = (name: string) =>
 const scoreResult = computed(() => calculateExamScore(props.report))
 const scoreColor = computed(() => cssVar(gradeColorVar(scoreResult.value.grade)) || '#059669')
 const gradeText = computed(() => gradeLabel(scoreResult.value.grade))
-const ringOffset = computed(() =>
-  RING_CIRC * (1 - Math.max(0, Math.min(100, scoreResult.value.total)) / 100)
+const ringOffset = computed(
+  () => RING_CIRC * (1 - Math.max(0, Math.min(100, scoreResult.value.total)) / 100)
 )
 </script>
 

@@ -82,10 +82,7 @@ export function gradeColorVar(grade: ExamGrade): string {
 
 // calculateSpeedScore 速度评分:基准下行对数映射(锚点间线性插值)+ 上行 ±5 微调。
 // 输入:基准行的 down_mbps 与可选 up_mbps(无基准行或失败返回 null,外层调用者处理)。
-export function calculateSpeedScore(baseline: {
-  down_mbps: number
-  up_mbps?: number
-}): number {
+export function calculateSpeedScore(baseline: { down_mbps: number; up_mbps?: number }): number {
   const { down_mbps, up_mbps } = baseline
   // 低于最低锚点(1M)按 0 分计
   if (down_mbps < SPEED_ANCHORS[SPEED_ANCHORS.length - 1].mbps) return 0
@@ -206,5 +203,3 @@ function extractSpeedScore(report: ExamReport): number | null {
     up_mbps: baseline.up_mbps
   })
 }
-
-

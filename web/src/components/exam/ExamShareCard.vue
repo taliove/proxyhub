@@ -150,13 +150,9 @@ const timeLabel = computed(() => formatExamTime(props.examTime))
 
 const overallScore = computed(() => shareOverallScore(props.report))
 const score = computed(() => overallScore.value.total)
-const scoreColor = computed(() =>
-  cssVar(gradeColorVar(overallScore.value.grade)) || '#059669'
-)
+const scoreColor = computed(() => cssVar(gradeColorVar(overallScore.value.grade)) || '#059669')
 const scoreText = computed(() => gradeLabel(overallScore.value.grade))
-const ringOffset = computed(() =>
-  RING_CIRC * (1 - Math.max(0, Math.min(100, score.value)) / 100)
-)
+const ringOffset = computed(() => RING_CIRC * (1 - Math.max(0, Math.min(100, score.value)) / 100))
 const baseline = computed(() => shareBaselineMbps(props.report))
 const baselineDownText = computed(() =>
   baseline.value === null ? '—' : `${baseline.value.toFixed(1)} Mbps`

@@ -122,67 +122,12 @@
       @saved="loadEndpoints"
     />
 
-    <!-- 预览对话框:所见即所得,与真实订阅走同一条节点池→关键词过滤→生成链 -->
-    <el-dialog v-model="previewVisible" title="订阅预览" width="820px">
-      <div class="preview-toolbar">
-        <el-radio-group v-model="previewFormat" @change="loadPreview">
-          <el-radio-button label="clash">Clash</el-radio-button>
-          <el-radio-button label="v2ray">V2Ray</el-radio-button>
-        </el-radio-group>
-        <span class="preview-hint">
-          共 {{ preview.count }} 个节点(已应用关键词过滤,与终端拉取到的完全一致)
-        </span>
-      </div>
-
-      <el-table v-loading="previewLoading" :data="preview.nodes" height="260" size="small">
-        <el-table-column label="名称" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.display_name || row.name }}</template>
-        </el-table-column>
-        <el-table-column prop="region" label="地区" width="80" />
-        <el-table-column prop="latency" label="延迟(ms)" width="90" />
-        <el-table-column label="解锁" width="120">
-          <template #default="{ row }">
-            <div v-if="row.unlock_results" class="unlock-badges">
-              <el-tag
-                v-for="(result, target) in row.unlock_results"
-                :key="target"
-                :type="result.available ? 'success' : 'info'"
-                size="small"
-                class="unlock-badge"
-              >
-                {{ target }}
-              </el-tag>
-            </div>
-            <span v-else class="no-unlock">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="source" label="来源" width="100" show-overflow-tooltip />
-        <el-table-column label="可用" width="80">
-          <template #default="{ row }">
-            <el-tag :type="row.available ? 'success' : 'info'" size="small">
-              {{ row.available ? '可用' : '不可用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <el-input
-        v-model="preview.content"
-        type="textarea"
-        :rows="8"
-        readonly
-        placeholder="(无节点内容)"
-        class="preview-content"
-      />
-
-      <template #footer>
-        <div class="preview-footer">
-          <el-button @click="copySubscriptionLink">复制订阅链接</el-button>
-          <el-button :disabled="!preview.content" @click="copyPreview">复制订阅内容</el-button>
-          <el-button type="primary" @click="previewVisible = false">关闭</el-button>
-        </div>
-      </template>
-    </el-dialog>
+    <!-- 预览对话框:所见即所得,与真实订阅走同一条节点池→条件过滤→生成链 -->
+    <EndpointPreviewDialog
+      v-model="previewVisible"
+      :endpoint="previewEndpointRow"
+      :subscription-url="previewEndpointRow ? getSubscriptionUrl(previewEndpointRow) : ''"
+    />
   </div>
 </template>
 
@@ -194,6 +139,7 @@ import type { Endpoint } from '@/types'
 import client from '@/api/client'
 import IPStatsTable from '@/components/IPStatsTable.vue'
 import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
+import EndpointPreviewDialog from '@/components/EndpointPreviewDialog.vue'
 import { hasConditions } from '@/utils/conditions'
 
 const endpoints = ref<Endpoint[]>([])
@@ -292,60 +238,14 @@ const openConditions = (row: Endpoint) => {
   conditionsVisible.value = true
 }
 
-// 预览:随时查看某订阅地址当前会下发的订阅内容与节点清单,不产生拉取统计
+// 预览:随时查看某订阅地址当前会下发的订阅内容与节点清单,不产生拉取统计。
+// 对话框实现收敛在 EndpointPreviewDialog,本页只持有打开状态与目标端点。
 const previewVisible = ref(false)
-const previewLoading = ref(false)
-const previewFormat = ref<'clash' | 'v2ray'>('clash')
-const previewEndpointId = ref<number | null>(null)
-interface PreviewNode {
-  name: string
-  display_name?: string
-  region?: string
-  latency?: number
-  source?: string
-  available: boolean
-  unlock_results?: Record<string, { available: boolean; level?: string }>
-  tags?: string[]
-}
+const previewEndpointRow = ref<Endpoint | null>(null)
 
-const preview = ref<{ count: number; content: string; nodes: PreviewNode[] }>({
-  count: 0,
-  content: '',
-  nodes: []
-})
-
-const loadPreview = async () => {
-  if (previewEndpointId.value == null) return
-  previewLoading.value = true
-  try {
-    preview.value = await client.get(
-      `/endpoints/${previewEndpointId.value}/preview?format=${previewFormat.value}`
-    )
-  } finally {
-    previewLoading.value = false
-  }
-}
-
-const previewEndpoint = async (row: Endpoint) => {
-  previewEndpointId.value = row.id
-  previewFormat.value = 'clash'
+const previewEndpoint = (row: Endpoint) => {
+  previewEndpointRow.value = row
   previewVisible.value = true
-  await loadPreview()
-}
-
-const copyPreview = () => {
-  navigator.clipboard.writeText(preview.value.content)
-  ElMessage.success('已复制订阅内容')
-}
-
-const copySubscriptionLink = () => {
-  if (previewEndpointId.value == null) return
-  const endpoint = endpoints.value.find((e) => e.id === previewEndpointId.value)
-  if (endpoint) {
-    const url = getSubscriptionUrl(endpoint)
-    navigator.clipboard.writeText(url)
-    ElMessage.success('已复制订阅链接')
-  }
 }
 
 onMounted(loadEndpoints)
@@ -365,40 +265,10 @@ onMounted(loadEndpoints)
 .danger-item {
   color: var(--ph-danger);
 }
-.preview-toolbar {
-  display: flex;
-  align-items: center;
-  margin-bottom: var(--ph-space-3);
-}
-.preview-hint {
-  margin-left: var(--ph-space-3);
-  font-size: var(--ph-text-xs);
-  color: var(--ph-text-secondary);
-}
-.preview-content {
-  margin-top: var(--ph-space-3);
-}
 .cfg-hint {
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
   line-height: 1.5;
   margin-top: var(--ph-space-1);
-}
-.unlock-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ph-space-1);
-}
-.unlock-badge {
-  font-size: var(--ph-text-xs);
-}
-.no-unlock {
-  color: var(--ph-text-secondary);
-  font-size: var(--ph-text-xs);
-}
-.preview-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--ph-space-2);
 }
 </style>
