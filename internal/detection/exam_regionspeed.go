@@ -12,10 +12,13 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
-// 多地域测速段默认参数。每区下载一个约 5s 的切片测下行速率,单区硬超时防卡死。
+// 多地域测速段默认参数。每区下载一个约 5s 的切片测下行速率,上传一个约 4s 的切片测上行速率,
+// 单区硬超时防卡死。上下行独立成败:上行失败不拖垮下行,下行失败则跳过上行。
 const (
-	regionSliceDurationSec = 5 // 每区下载切片时长(秒)
-	regionHardTimeoutSec   = 8 // 单区硬超时上限(秒):含建连 + TTFB + 切片,防链路卡死
+	regionSliceDurationSec       = 5 // 每区下载切片时长(秒)
+	regionUplinkSliceDurationSec = 4 // 每区上传切片时长(秒),略短于下行以控制总时长
+	regionHardTimeoutSec         = 8 // 单区下行硬超时上限(秒):含建连 + TTFB + 切片,防链路卡死
+	regionUplinkHardTimeoutSec   = 6 // 单区上行硬超时上限(秒):上行通常比下行快,超时可短些
 	// examRegionMaxRetries 单区(含基准)测速失败后的最大重试次数。
 	// 高延迟链路(4s+)上单次探测易偶发超时,多区一半被误判为失败;失败后自动重试这么多次,
 	// 仍失败才标 error(重试期间不 emit 中间失败态,见 withRegionRetry)。区域探测无判定结论,
@@ -83,14 +86,14 @@ var examRegions = []Region{
 	{Code: "in_mumbai", Name: "孟买", URL: "https://speedtest.mumbai1.linode.com/100MB-mumbai1.bin"},
 }
 
-// RegionResult 单区测速结果:成功时含 TTFB 与下行速率,失败时仅 Error 非空。
-// 基准行额外含上行速率(UpMbps,仅基准行填充,区域行为 0)。
+// RegionResult 单区测速结果:成功时含 TTFB、下行速率与上行速率,失败时仅 Error 非空。
+// 下行失败则不测上行(UpMbps 为 0);下行成功但上行失败则 DownMbps 正常,Error 标记上行问题。
 type RegionResult struct {
 	Code     string  `json:"code"`
 	Name     string  `json:"name"`
 	TTFBms   int     `json:"ttfb_ms"`
 	DownMbps float64 `json:"down_mbps"`
-	UpMbps   float64 `json:"up_mbps,omitempty"`
+	UpMbps   float64 `json:"up_mbps,omitempty"` // 全区填充;上行失败时为 0
 	Error    string  `json:"error,omitempty"`
 }
 
@@ -159,16 +162,16 @@ func (d *Detector) defaultRegionSpeedProbe(node *subscription.Node) (RegionSpeed
 		return nil, err
 	}
 	client := &http.Client{Transport: &http.Transport{DialContext: adapter.DialContext}}
-	slice := time.Duration(regionSliceDurationSec) * time.Second
-	hard := time.Duration(regionHardTimeoutSec) * time.Second
+	downSlice := time.Duration(regionSliceDurationSec) * time.Second
+	downHard := time.Duration(regionHardTimeoutSec) * time.Second
 	return func(ctx context.Context, r Region) RegionResult {
-		return measureRegionSpeed(ctx, client, r, slice, hard)
+		return measureRegionSpeed(ctx, client, r, downSlice, downHard)
 	}, nil
 }
 
 // measureRegionSpeed 测量单区:建连取 TTFB,再下载 slice 时长的切片算下行速率。
-// 基准行额外测量上行(Cloudflare __up,与下行独立成败)。
-// 单区独立硬超时(hard)防卡死;任何失败返回带 Error 的结果,不 panic。
+// 下行成功后接测上行(POST 切片),上下行独立成败:上行失败不拖垮下行(Error 仅标记上行问题),
+// 下行失败则跳过上行。单区独立硬超时(hard)防卡死;任何失败返回带 Error 的结果,不 panic。
 func measureRegionSpeed(ctx context.Context, client *http.Client, r Region, slice, hard time.Duration) RegionResult {
 	// 基准行用 Cloudflare __down,回退点复用 downloadFallbackURLs(与带宽段同源)。
 	// 区域行已有固定 URL,不需回退,传单元素数组(兼容统一接口)。
@@ -178,16 +181,21 @@ func measureRegionSpeed(ctx context.Context, client *http.Client, r Region, slic
 	}
 	res := measureRegionSpeedWithFallback(ctx, client, r, slice, hard, fallbackURLs)
 
-	// 基准行额外测上行(下行失败不拖垮上行,独立成败)。
-	if r.Code == "baseline" && res.Error == "" {
-		upMbps, upErr := measureBaselineUplink(ctx, client, upstreamUploadURL, slice, hard)
-		if upErr == nil {
-			res.UpMbps = upMbps
-		}
-		// 上行失败不覆盖下行成功,但记录上行 error(在 Error 字段追加)。
-		if upErr != nil {
-			res.Error = fmt.Sprintf("uplink: %v", classifyRegionError(upErr))
-		}
+	// 下行失败 -> 跳过上行测量
+	if res.Error != "" {
+		return res
+	}
+
+	// 下行成功 -> 接测上行(基准与区域均测),上行失败不覆盖下行成功。
+	upSlice := time.Duration(regionUplinkSliceDurationSec) * time.Second
+	upHard := time.Duration(regionUplinkHardTimeoutSec) * time.Second
+	upURL := determineUplinkURL(r)
+	upMbps, upErr := measureRegionUplink(ctx, client, upURL, upSlice, upHard)
+	if upErr == nil {
+		res.UpMbps = upMbps
+	} else {
+		// 上行失败:记录在 Error 字段(下行成功,Error 原本为空)
+		res.Error = fmt.Sprintf("uplink: %v", classifyRegionError(upErr))
 	}
 	return res
 }
@@ -270,13 +278,20 @@ func classifyRegionError(err error) string {
 	return fmt.Sprintf("transport: %v", err)
 }
 
-// upstreamUploadURL Cloudflare 上行测速点(与 __down 对称,baselineRegion 用)。
+// upstreamUploadURL Cloudflare 上行测速点(与 __down 对称,基准行与区域行均可用)。
 const upstreamUploadURL = "https://speed.cloudflare.com/__up"
 
-// measureBaselineUplink 测量基准上行:持续 POST 数据流 slice 时长,速率 = 已写字节 / 实际耗时。
+// determineUplinkURL 决定单区上行测速点:基准行与区域行均用 Cloudflare __up(全球 Anycast,
+// 自动路由到最近 POP,与下行对称)。未来可扩展为区域行用区域同源端点(如 Linode __up),
+// 当前统一用 Cloudflare 保持简单且覆盖面广。
+func determineUplinkURL(r Region) string {
+	return upstreamUploadURL
+}
+
+// measureRegionUplink 测量单区上行:持续 POST 数据流 slice 时长,速率 = 已写字节 / 实际耗时。
 // 请求体到 slice 时长(或 maxBytes 上限)自动 EOF,POST 随之结束。hard 是防卡死的硬上限。
-// 与 bandwidth_stream.streamUpload 语义对齐:硬超时但已上传够数据时用已写字节算速率。
-func measureBaselineUplink(ctx context.Context, client *http.Client, url string, slice, hard time.Duration) (float64, error) {
+// 与 measureBaselineUplink 语义对齐:硬超时但已上传够数据时用已写字节算速率。
+func measureRegionUplink(ctx context.Context, client *http.Client, url string, slice, hard time.Duration) (float64, error) {
 	uctx, cancel := context.WithTimeout(ctx, hard)
 	defer cancel()
 
@@ -313,6 +328,11 @@ func measureBaselineUplink(ctx context.Context, client *http.Client, url string,
 		return 0, fmt.Errorf("上行数据不足(%d 字节)", total)
 	}
 	return float64(total*8) / elapsed / 1e6, nil
+}
+
+// measureBaselineUplink 已废弃,由 measureRegionUplink 统一替代(保留以兼容现有测试)。
+func measureBaselineUplink(ctx context.Context, client *http.Client, url string, slice, hard time.Duration) (float64, error) {
+	return measureRegionUplink(ctx, client, url, slice, hard)
 }
 
 // openRegionDownload 发起 GET 并经 httptrace 采到首字节时间(TTFB);非 200 视为错误。

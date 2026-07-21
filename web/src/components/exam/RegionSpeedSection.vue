@@ -12,7 +12,7 @@
           <th>区域</th>
           <th>延迟</th>
           <th>下行</th>
-          <th v-if="hasBaseline">上行</th>
+          <th>上行</th>
           <th>状态</th>
         </tr>
       </thead>
@@ -26,7 +26,7 @@
           <td class="exam-region-name">{{ r.name }}</td>
           <td>{{ ttfbText(r) }}</td>
           <td>{{ downText(r) }}</td>
-          <td v-if="hasBaseline">{{ upText(r) }}</td>
+          <td>{{ upText(r) }}</td>
           <td :class="`exam-region-status exam-region-status-${r.status}`">
             {{ statusText(r.status) }}
           </td>
@@ -57,7 +57,6 @@ const rows = computed<RegionRow[]>(() => buildRegionRows(props.regions, props.ac
 const settledCount = computed(
   () => rows.value.filter((r) => r.status === 'ok' || r.status === 'error').length
 )
-const hasBaseline = computed(() => rows.value.some((r) => r.baseline))
 
 // 数值列:已结算给格式化值,失败给「-」,未到达给「—」。
 const ttfbText = (r: RegionRow): string =>
@@ -65,9 +64,11 @@ const ttfbText = (r: RegionRow): string =>
 const downText = (r: RegionRow): string =>
   r.status === 'ok' ? formatMbps(r.result?.down_mbps) : r.status === 'error' ? '-' : '—'
 const upText = (r: RegionRow): string => {
-  // 上行仅基准行有值;区域行为空(不展示)。
-  if (!r.baseline) return ''
-  return r.status === 'ok' ? formatMbps(r.result?.up_mbps) : r.status === 'error' ? '-' : '—'
+  // 上行全区填充;成功展示速率,失败或无数据显示「-」,未到达显示「—」。
+  if (r.status === 'waiting') return '—'
+  if (r.status === 'error') return '-'
+  // 已结算(ok):有值显示,无值或为 0 显示「-」(上行失败或历史报告兼容)
+  return r.result?.up_mbps ? formatMbps(r.result.up_mbps) : '-'
 }
 
 const statusText = (status: RowStatus): string => {

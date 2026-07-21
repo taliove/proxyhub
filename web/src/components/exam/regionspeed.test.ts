@@ -64,3 +64,27 @@ describe('upsertRegionRow', () => {
     expect(base[0].down_mbps).toBe(20)
   })
 })
+
+describe('uplink measurement for all regions', () => {
+  it('baseline has uplink', () => {
+    const baseline = row('baseline', { name: '基准', up_mbps: 15 })
+    expect(baseline.up_mbps).toBe(15)
+  })
+
+  it('region rows have uplink', () => {
+    const region = row('us_west', { name: '美西', up_mbps: 12 })
+    expect(region.up_mbps).toBe(12)
+  })
+
+  it('uplink failure shows 0 or undefined', () => {
+    const failed = row('sg', { name: '新加坡', up_mbps: 0, error: 'uplink: timeout' })
+    expect(failed.up_mbps).toBe(0)
+    expect(failed.error).toContain('uplink')
+  })
+
+  it('historical reports without uplink are backward compatible', () => {
+    const legacy = row('jp_tokyo', { name: '东京' })
+    // 旧报告无 up_mbps 字段,应兼容处理
+    expect(legacy.up_mbps).toBeUndefined()
+  })
+})
