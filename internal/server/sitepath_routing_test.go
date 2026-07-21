@@ -132,9 +132,10 @@ func TestSitePath_WrongPrefixReturns404(t *testing.T) {
 	}
 }
 
-// TestSitePath_MiddlewareRewritesAndDistCarveOut 用哨兵 handler 直接验证中间件:
-// 前缀路径改写后下放、/dist 命名空间原样放行、其余 404。
-func TestSitePath_MiddlewareRewritesAndDistCarveOut(t *testing.T) {
+// TestSitePath_MiddlewareRewritesNonPrefix404 用哨兵 handler 直接验证中间件:
+// 前缀路径改写后下放、其余(含已废弃的 /dist 命名空间)一律 404。
+// /dist 曾是流量分发数据面的放行豁免,分发删除后豁免亦移除,/dist 不再可达。
+func TestSitePath_MiddlewareRewritesNonPrefix404(t *testing.T) {
 	srv, st := newTestServer(t, nil)
 	if err := st.SetSitePath(testSitePath); err != nil {
 		t.Fatalf("SetSitePath: %v", err)
@@ -155,12 +156,12 @@ func TestSitePath_MiddlewareRewritesAndDistCarveOut(t *testing.T) {
 		wantCode int
 		wantPath string // 仅 wantCode=204 时校验:下放给 mux 的路径
 	}{
-		{"/dist", http.StatusNoContent, "/dist"},
-		{"/dist/node-a/ws", http.StatusNoContent, "/dist/node-a/ws"},
 		{"/" + testSitePath + "/api/status", http.StatusNoContent, "/api/status"},
 		{"/" + testSitePath + "/", http.StatusNoContent, "/"},
 		{"/" + testSitePath, http.StatusNoContent, "/"},
-		{"/distx", http.StatusNotFound, ""}, // /dist 必须是路径段边界
+		{"/dist", http.StatusNotFound, ""},           // 豁免已移除:/dist 不再放行
+		{"/dist/node-a/ws", http.StatusNotFound, ""}, // 豁免已移除:/dist 子路径不再放行
+		{"/distx", http.StatusNotFound, ""},          // 前缀之外一律 404
 		{"/", http.StatusNotFound, ""},
 		{"/api/status", http.StatusNotFound, ""},
 	}
