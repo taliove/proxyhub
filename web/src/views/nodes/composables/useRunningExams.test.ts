@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { useRunningExams } from './useRunningExams'
 import * as jobsApi from '@/api/jobs'
-import type { Job } from '@/api/jobs'
+import type { Job, JobStatus } from '@/api/jobs'
 import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 
@@ -12,7 +12,7 @@ const POLL_MS = 15
 
 const flush = (ms = 60) => new Promise((r) => setTimeout(r, ms))
 
-const job = (id: number, kind: string, key: string, status: string): Job => ({
+const job = (id: number, kind: string, key: string, status: JobStatus): Job => ({
   id,
   kind,
   key,
