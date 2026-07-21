@@ -1,6 +1,6 @@
 <template>
   <el-dropdown trigger="click" @command="(cmd: string) => emit('command', cmd)">
-    <el-button size="small">
+    <el-button>
       全局操作
       <el-icon class="el-icon--right"><ArrowDown /></el-icon>
     </el-button>

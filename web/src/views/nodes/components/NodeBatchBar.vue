@@ -1,8 +1,12 @@
 <template>
   <div class="batch-bar">
     <span class="muted">已选 {{ count }} 项</span>
-    <el-button type="warning" size="small" @click="emit('block')">屏蔽选中</el-button>
-    <el-button size="small" @click="emit('unblock')">取消屏蔽</el-button>
+    <el-button type="warning" size="small" :disabled="blockableCount === 0" @click="emit('block')">
+      屏蔽选中
+    </el-button>
+    <el-button size="small" :disabled="blockableCount === 0" @click="emit('unblock')">
+      取消屏蔽
+    </el-button>
     <el-button type="primary" size="small" :disabled="detecting" @click="emit('detect')">
       检测选中
     </el-button>
@@ -19,10 +23,12 @@
 
 <script setup lang="ts">
 // 上下文批量栏:仅当选中数 > 0 时由装配层渲染,只承载针对选中集的操作。
-// 屏蔽可逆(取消屏蔽存在),用 warning 不用 danger(危险色纪律)。
+// count 为全量选中(含自建);屏蔽仅对机场节点有意义(自建不可屏蔽),
+// blockableCount = 0 时屏蔽按钮禁用。屏蔽可逆,用 warning 不用 danger(危险色纪律)。
 // 批量体检复用 jobs 轮询做轻量进度(完成 x/N,可取消),不接 SSE。
 defineProps<{
   count: number
+  blockableCount: number
   detecting: boolean
   examining: boolean
   examCompleted: number

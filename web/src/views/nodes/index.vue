@@ -32,8 +32,9 @@
     />
 
     <NodeBatchBar
-      v-if="selectableSelection.length > 0"
-      :count="selectableSelection.length"
+      v-if="selection.length > 0"
+      :count="selection.length"
+      :blockable-count="selectableSelection.length"
       :detecting="detecting"
       :examining="examining"
       :exam-completed="examCompleted"
@@ -190,6 +191,7 @@ const { summaries: examSummaries, reload: reloadExam } = useExamSummaries(pagedN
 
 const { running: detecting, trigger, cancel } = useNodeDetection()
 const {
+  selection,
   selectableSelection,
   onSelectionChange,
   blockNode,
@@ -207,11 +209,11 @@ const detect = (scope: DetectionScope) =>
     await reload()
     reloadExam()
   })
+// 检测/体检作用于全部选中(含自建,后端按 node_key 在池中匹配);屏蔽仍限机场节点。
 const detectSelected = () =>
-  detect({ type: 'selected', node_keys: selectableSelection.value.map((n) => n.node_key) })
+  detect({ type: 'selected', node_keys: selection.value.map((n) => n.node_key) })
 const detectOne = (node: UnifiedNode) => detect({ type: 'selected', node_keys: [node.node_key] })
 const cancelDetection = () => cancel(reload)
-
 // 批量体检:对选中集启动,完成后刷新体检摘要(复用 jobs 轮询,不接 SSE)。
 const {
   running: examining,
@@ -220,7 +222,7 @@ const {
   start: startBatchExam,
   cancel: cancelExam
 } = useBatchExam(reloadExam)
-const examSelected = () => startBatchExam(selectableSelection.value.map((n) => n.node_key))
+const examSelected = () => startBatchExam(selection.value.map((n) => n.node_key))
 
 // 进行中的 exam 任务:轮询任务中心,提取 kind=exam + status=running 的 key 集合。
 // 用于在节点行显示"查看进度"而非"深度体检"按钮。
