@@ -14,8 +14,10 @@
           <template #default="{ row }">
             <el-input :value="getSubscriptionUrl(row)" readonly>
               <template #append>
-                <el-button @click="copyUrl(row)">复制</el-button>
-                <el-button @click="showSubscriptionQR(row)">二维码</el-button>
+                <div class="url-actions">
+                  <el-button @click="copyUrl(row)">复制</el-button>
+                  <el-button @click="showSubscriptionQR(row)">二维码</el-button>
+                </div>
               </template>
             </el-input>
           </template>
@@ -268,6 +270,22 @@ onMounted(loadEndpoints)
   display: inline-flex;
   align-items: center;
   gap: var(--ph-space-2);
+}
+/* append 槽内容器:EP 默认给 append 内 el-button 设 flex:1 + margin:0 -20px(单按钮填满),
+   多按钮会重叠;容器改为整体撑满 append(负边距抵消内边距),按钮均分宽度并填满高度 */
+.url-actions {
+  display: flex;
+  align-self: stretch;
+  margin: 0 -20px;
+}
+.url-actions .el-button {
+  flex: 1;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+.url-actions .el-button + .el-button {
+  border-left: 1px solid var(--el-border-color);
 }
 .danger-item {
   color: var(--ph-danger);
