@@ -57,7 +57,9 @@ func withUnlockRetry(probe UnlockProbe) UnlockProbe {
 	return func(ctx context.Context, target Target) Result {
 		return retryResult(ctx, examTransientMaxRetries,
 			func() Result { return probe(ctx, target) },
-			func(res Result) bool { return res.Level == "" && isTransientNetError(res.Error) },
+			// 判定结论(Level 非空)绝不重试;仅传输抖动重试:结构化优先(cause),文本兜底(Error)。
+			// 与出网/区域三段统一经 retryableTransient。
+			func(res Result) bool { return res.Level == "" && retryableTransient(res.cause, res.Error) },
 		)
 	}
 }

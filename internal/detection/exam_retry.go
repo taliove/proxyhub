@@ -14,9 +14,9 @@ import (
 // 判定结论(full/blocked/originals_only)与解析失败绝不重试,仅传输抖动重试。
 const examTransientMaxRetries = 1
 
-// transientNetTokens 传输类错误的稳定子串标记(按小写正文匹配)。探针失败经字符串 Error 返回
-// (判定器不改、重试包在调用侧),故按错误文本识别传输抖动:超时/连接重置/EOF/拒绝/不可达。
-// 命中即视为可重试的网络抖动;判定结论(状态码类)与解析失败不含这些标记,不会误重试。
+// transientNetTokens 传输类错误的稳定子串标记(按小写正文匹配)。这是结构化判定的兜底:
+// 首选 isTransientNetErr(errors.Is/As,见 exam_transient.go),仅当探针未透传结构化 cause 时
+// 才退化到此文本匹配。命中即视为可重试的网络抖动;判定结论(状态码类)与解析失败不含这些标记。
 var transientNetTokens = []string{
 	"timeout",                // i/o timeout、http client timeout
 	"deadline exceeded",      // context.DeadlineExceeded
@@ -31,7 +31,8 @@ var transientNetTokens = []string{
 	"超时",                     // IPv6 出口探测超时(纯中文提示,无 Go 错误串)
 }
 
-// isTransientNetError 判断探针结果的错误文本是否为传输类(网络抖动)失败。
+// isTransientNetError 判断探针结果的错误文本是否为传输类(网络抖动)失败。文本兜底路径:
+// 结构化判定不可达(探针未透传 cause)时才走此匹配;首选 isTransientNetErr(结构化)。
 // 空串(成功)返回 false;判定结论类文本(如 "status 403"、"classification inconclusive")与
 // 解析失败文本不含传输标记,返回 false —— 保证判定结论绝不触发重试。
 func isTransientNetError(msg string) bool {

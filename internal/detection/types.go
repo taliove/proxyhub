@@ -45,6 +45,9 @@ type Result struct {
 	// Level/Region 仅专用解锁判定填充;generic 结果留空,序列化省略,保证响应零变化。
 	Level  string `json:"level,omitempty"`  // 解锁级别:full/originals_only/blocked
 	Region string `json:"region,omitempty"` // 命中区域国家码(如 US/HK)
+	// cause 传输失败的结构化底层错误(仅请求类失败填充;判定结论/解析失败为 nil)。
+	// 不序列化,供解锁段重试分类器经 errors.Is/As 结构化判定(文本 Error 退化为兜底)。
+	cause error
 }
 
 // TestResult 单节点即时测试结果(quick/real/bandwidth 三档共用)。

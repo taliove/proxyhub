@@ -45,7 +45,9 @@ func checkYouTubePremium(ctx context.Context, client *http.Client, node *subscri
 	status, body, err := youtubeFetch(ctx, client)
 	res.Latency = int(time.Since(start).Milliseconds())
 	if err != nil {
+		// 传输失败:透传结构化 cause,文本 Error 保留原文案。
 		res.Error = fmt.Sprintf("request failed: %v", err)
+		res.cause = err
 		return res
 	}
 

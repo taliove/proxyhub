@@ -56,10 +56,12 @@ func (p *ProxyAdapter) DialContext(ctx context.Context, network, address string)
 		DstPort: uint16(port),
 	}
 
-	// 通过 mihomo adapter 建立代理连接
+	// 通过 mihomo adapter 建立代理连接。拨号失败是传输类抖动(reset/refused/超时/EOF),
+	// 打结构化 transient 标记从此边界透传:上层重试分类器经 errors.Is 判定,不依赖错误文本。
+	// 上面的地址/端口解析失败是配置错误(非传输),不标记,绝不误重试。
 	conn, err := p.proxy.DialContext(ctx, metadata)
 	if err != nil {
-		return nil, fmt.Errorf("dial via proxy: %w", err)
+		return nil, markTransient(fmt.Errorf("dial via proxy: %w", err))
 	}
 
 	return conn, nil
