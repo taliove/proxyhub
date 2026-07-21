@@ -112,34 +112,38 @@ func (s *Server) onExamComplete(nodeKey string, report detection.ExamReport) {
 	s.writebackRegionIfNeeded(nodeKey, report)
 }
 
-// writebackRegionIfNeeded 回写节点地区:若节点 region 为空/Unknown 且体检获得出网国家码,
-// 则用国家码更新节点 region(机场节点更新内存池,自建节点更新数据库 self_hosted_nodes 表)。
-// 已有非空非 Unknown 的 region 不覆盖。无出网信息不操作。best-effort,失败记日志不阻断。
+// writebackRegionIfNeeded writes back node region from exam egress data.
+// Egress country code is the real exit point (ground truth), while GeoIP is just a guess.
+// Therefore, when egress data is available, ALWAYS overwrite the node's region with it,
+// even if the node already has a non-empty region value (which may be an incorrect GeoIP guess).
+// Nodes are updated in memory pool (airport nodes) or database (self-hosted nodes).
+// No egress data means no writeback. Best-effort: failures are logged but don't block exam completion.
 func (s *Server) writebackRegionIfNeeded(nodeKey string, report detection.ExamReport) {
-	// 无出网信息或无国家码直接返回
+	// No egress info or no country code - cannot writeback
 	if report.Egress == nil || report.Egress.IPv4 == nil || report.Egress.IPv4.CountryCode == "" {
 		return
 	}
 
 	countryCode := report.Egress.IPv4.CountryCode
 
-	// 尝试更新机场节点(内存池)
+	// Try updating airport node (memory pool)
 	if s.updateAirportNodeRegion(nodeKey, countryCode) {
 		return
 	}
 
-	// 尝试更新自建节点(数据库)
+	// Try updating self-hosted node (database)
 	if err := s.updateSelfHostedNodeRegion(nodeKey, countryCode); err != nil {
-		// 404 表示节点不在自建表(可能已删除或是机场节点但内存池已刷新),静默忽略
+		// 404 means node not in self-hosted table (may have been deleted or is airport node with refreshed pool), silently ignore
 		if err != store.ErrNotFound {
 			s.logger.Warn("writeback self-hosted node region failed", "nodeKey", nodeKey, "error", err)
 		}
 	}
 }
 
-// updateAirportNodeRegion 尝试更新机场节点的 region(内存池,通过 NodeSource 遍历)。
-// 只更新 region 为空或 "Unknown" 的节点;找到并更新返回 true,未找到返回 false。
-// 机场节点 region 存在内存池里,持久化看存储模型(当前 nodes 表不存 region,由刷新重建)。
+// updateAirportNodeRegion attempts to update an airport node's region (memory pool, by traversing NodeSource).
+// ALWAYS overwrites region with egress country code (egress is ground truth, existing region may be wrong GeoIP guess).
+// Returns true if node found and updated, false if not found.
+// Airport node region lives in memory pool; persistence depends on storage model (currently nodes table doesn't store region, rebuilt on refresh).
 func (s *Server) updateAirportNodeRegion(nodeKey, countryCode string) bool {
 	if s.nodes == nil {
 		return false
@@ -148,23 +152,21 @@ func (s *Server) updateAirportNodeRegion(nodeKey, countryCode string) bool {
 		if n.NodeKey() != nodeKey {
 			continue
 		}
-		// 自建节点跳过(由 updateSelfHostedNodeRegion 处理)
+		// Skip self-hosted nodes (handled by updateSelfHostedNodeRegion)
 		if n.Source == subscription.SourceSelfHosted {
 			return false
 		}
-		// 只回写空/Unknown
-		if n.Region != "" && n.Region != "Unknown" {
-			return true // 找到节点但无需更新
-		}
+		// Always overwrite region with egress country code
 		n.Region = countryCode
 		return true
 	}
 	return false
 }
 
-// updateSelfHostedNodeRegion 尝试更新自建节点的 region_code(数据库 self_hosted_nodes 表)。
-// 按 server:port 定位节点(NodeKey 不含 SNI 对自建节点足够),只更新空/Unknown,已有值跳过。
-// 未找到返回 store.ErrNotFound。
+// updateSelfHostedNodeRegion attempts to update a self-hosted node's region_code (database self_hosted_nodes table).
+// Located by server:port (NodeKey without SNI is sufficient for self-hosted nodes).
+// ALWAYS overwrites region with egress country code (egress is ground truth, existing region may be wrong GeoIP guess).
+// Returns store.ErrNotFound if not found.
 func (s *Server) updateSelfHostedNodeRegion(nodeKey, countryCode string) error {
 	nodes, err := s.st.ListAllSelfHostedNodes()
 	if err != nil {
@@ -174,10 +176,7 @@ func (s *Server) updateSelfHostedNodeRegion(nodeKey, countryCode string) error {
 		if n.ToNode().NodeKey() != nodeKey {
 			continue
 		}
-		// 只回写空/Unknown
-		if n.RegionCode != "" && n.RegionCode != "Unknown" {
-			return nil
-		}
+		// Always overwrite region with egress country code
 		n.RegionCode = countryCode
 		return s.st.UpdateSelfHostedNode(n)
 	}

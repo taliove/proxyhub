@@ -9,7 +9,7 @@ import (
 )
 
 // TestOnExamComplete_WritebackRegionAirportNode tests that exam completion
-// writes back egress country code to airport nodes with empty/Unknown region.
+// always writes back egress country code to airport nodes (egress is ground truth).
 func TestOnExamComplete_WritebackRegionAirportNode(t *testing.T) {
 	t.Run("empty region gets egress country", func(t *testing.T) {
 		testNode := &subscription.Node{
@@ -66,29 +66,29 @@ func TestOnExamComplete_WritebackRegionAirportNode(t *testing.T) {
 		}
 	})
 
-	t.Run("existing region not overwritten", func(t *testing.T) {
+	t.Run("existing region gets overwritten with egress", func(t *testing.T) {
 		testNode := &subscription.Node{
 			Name:   "test-node",
 			Server: "example.com",
 			Port:   443,
-			Region: "HK",
+			Region: "HK", // Old GeoIP guess or previous value
 		}
 		s, _ := newTestServer(t, []*subscription.Node{testNode})
 
 		report := detection.ExamReport{
 			Egress: &detection.EgressMetrics{
 				IPv4: &detection.EgressIPv4{
-					CountryCode: "JP",
+					CountryCode: "JP", // Real egress country
 				},
 			},
 		}
 
 		s.onExamComplete("example.com:443", report)
 
-		// Region should remain unchanged
+		// Egress country (ground truth) should overwrite old region
 		nodes := s.nodes.Nodes()
-		if nodes[0].Region != "HK" {
-			t.Errorf("expected region HK preserved, got %s", nodes[0].Region)
+		if nodes[0].Region != "JP" {
+			t.Errorf("expected region JP (from egress), got %s", nodes[0].Region)
 		}
 	})
 
@@ -114,7 +114,7 @@ func TestOnExamComplete_WritebackRegionAirportNode(t *testing.T) {
 }
 
 // TestOnExamComplete_WritebackRegionSelfHostedNode tests that exam completion
-// writes back egress country code to self-hosted nodes via store update.
+// always writes back egress country code to self-hosted nodes (egress is ground truth).
 func TestOnExamComplete_WritebackRegionSelfHostedNode(t *testing.T) {
 	t.Run("self-hosted node empty region gets updated", func(t *testing.T) {
 		// Create self-hosted node with empty region
@@ -193,14 +193,14 @@ func TestOnExamComplete_WritebackRegionSelfHostedNode(t *testing.T) {
 		}
 	})
 
-	t.Run("self-hosted existing region not overwritten", func(t *testing.T) {
+	t.Run("self-hosted existing region gets overwritten with egress", func(t *testing.T) {
 		node := &store.SelfHostedNode{
 			Name:       "self-node",
 			Protocol:   "vmess",
 			Server:     "00000000-0000-0000-0000-000000000000.example.com",
 			Port:       443,
 			UUID:       "00000000-0000-0000-0000-000000000000",
-			RegionCode: "FR",
+			RegionCode: "FR", // Old GeoIP guess
 			Enabled:    true,
 		}
 
@@ -213,7 +213,7 @@ func TestOnExamComplete_WritebackRegionSelfHostedNode(t *testing.T) {
 		report := detection.ExamReport{
 			Egress: &detection.EgressMetrics{
 				IPv4: &detection.EgressIPv4{
-					CountryCode: "US",
+					CountryCode: "US", // Real egress country
 				},
 			},
 		}
@@ -224,8 +224,8 @@ func TestOnExamComplete_WritebackRegionSelfHostedNode(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if nodes[0].RegionCode != "FR" {
-			t.Errorf("expected region FR preserved, got %s", nodes[0].RegionCode)
+		if nodes[0].RegionCode != "US" {
+			t.Errorf("expected region US (from egress), got %s", nodes[0].RegionCode)
 		}
 	})
 }

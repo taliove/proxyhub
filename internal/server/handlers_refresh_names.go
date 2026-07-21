@@ -82,7 +82,8 @@ func (s *Server) refreshAirportNodeNames(targetKeys map[string]bool) int {
 	return len(toRefresh)
 }
 
-// refreshSelfHostedNodeNames re-runs GeoIP resolution and applies region-based naming for self-hosted nodes.
+// refreshSelfHostedNodeNames re-runs region resolution and applies region-based naming for self-hosted nodes.
+// Region resolution priority: latest exam egress > offline GeoIP > preserve existing.
 // For nodes with known region: always renames to "自建{region}" format, overwriting custom names.
 // For nodes with Unknown/empty region: preserves existing name.
 // Returns count of nodes updated.
@@ -100,10 +101,10 @@ func (s *Server) refreshSelfHostedNodeNames(targetKeys map[string]bool) int {
 			continue
 		}
 
-		// Re-run region resolution
+		// Re-run region resolution with priority: egress > GeoIP > preserve
 		oldRegion := n.RegionCode
 		oldName := n.Name
-		n.RegionCode = s.resolveSelfNodeRegion(n)
+		n.RegionCode = s.resolveNodeRegion(nodeKey, n.RegionCode, n)
 
 		// Apply region-based naming: if region is known, always rename to standard format
 		if n.RegionCode != "" && n.RegionCode != "Unknown" {
