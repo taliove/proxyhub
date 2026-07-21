@@ -277,6 +277,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/nodes/batch-block", s.requireAuth(s.handleBatchBlockNodes))
 	mux.HandleFunc("POST /api/nodes/batch-unblock", s.requireAuth(s.handleBatchUnblockNodes))
 
+	// 批量刷新名称：重跑地区识别+标准化
+	mux.HandleFunc("POST /api/nodes/refresh-names", s.requireAuth(s.handleRefreshNames))
+
 	// 自建节点管理（增/改/删/启停）
 	mux.HandleFunc("GET /api/self-nodes", s.requireAuth(s.handleListSelfNodes))
 	mux.HandleFunc("GET /api/self-nodes/suggest", s.requireAuth(s.handleSuggestSelfNode))

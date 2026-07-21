@@ -9,6 +9,7 @@
     <el-button size="small" :disabled="examining || count === 0" @click="emit('exam')">
       批量体检
     </el-button>
+    <el-button size="small" @click="emit('refresh-names')">刷新名称</el-button>
     <span v-if="examining" class="muted exam-progress">
       体检中 {{ examCompleted }}/{{ examTotal }}
       <el-button link type="warning" size="small" @click="emit('cancel-exam')">取消</el-button>
@@ -34,6 +35,7 @@ const emit = defineEmits<{
   (e: 'detect'): void
   (e: 'exam'): void
   (e: 'cancel-exam'): void
+  (e: 'refresh-names'): void
 }>()
 </script>
 
