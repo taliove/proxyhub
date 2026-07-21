@@ -30,6 +30,14 @@
             <span v-if="item.unlockSummary" class="exam-timeline-unlock">{{
               item.unlockSummary
             }}</span>
+            <button
+              type="button"
+              class="exam-timeline-share"
+              :title="'分享体检'"
+              @click.stop="openShare(item.id)"
+            >
+              <el-icon><Share /></el-icon>
+            </button>
             <el-icon class="exam-timeline-caret" :class="{ 'is-open': item.id === selectedId }">
               <ArrowRight />
             </el-icon>
@@ -53,16 +61,25 @@
         </el-button>
       </div>
     </template>
+
+    <!-- 分享对话框:点击任一时间线条目的分享按钮即可唤起 -->
+    <ExamShareDialog
+      v-model:visible="shareVisible"
+      :report="shareReport"
+      :node-name="nodeName"
+      :exam-time="shareExamTime"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ArrowRight } from '@element-plus/icons-vue'
+import { ArrowRight, Share } from '@element-plus/icons-vue'
 import type { ExamHistoryEntry } from '@/types'
 import { buildTimelineItems, type ExamTimelineItem } from './examhistory'
 import type { ScoreLevel } from './stability'
 import ExamReportCard from './ExamReportCard.vue'
+import ExamShareDialog from './ExamShareDialog.vue'
 
 const PAGE = 10
 
@@ -88,6 +105,17 @@ const selectedReport = computed(
   () => props.entries.find((e) => e.id === selectedId.value)?.report ?? null
 )
 
+// 分享对话框状态:点击任一时间线条目的分享按钮即可唤起,无需先展开报告卡。
+const shareVisible = ref(false)
+const shareId = ref<number | null>(null)
+const shareReport = computed(
+  () => props.entries.find((e) => e.id === shareId.value)?.report ?? null
+)
+const shareExamTime = computed(() => {
+  const entry = props.entries.find((e) => e.id === shareId.value)
+  return entry?.created_at ?? ''
+})
+
 // 数据换节点/刷新时,重置展开与分页,避免残留上一个节点的选中态。
 watch(
   () => props.entries,
@@ -102,6 +130,11 @@ const toggle = (id: number) => {
 }
 const showMore = () => {
   visibleCount.value += PAGE
+}
+
+const openShare = (id: number) => {
+  shareId.value = id
+  shareVisible.value = true
 }
 
 const tagType = (level: ScoreLevel): 'success' | 'warning' | 'danger' => {
@@ -171,6 +204,25 @@ const tagType = (level: ScoreLevel): 'success' | 'warning' | 'danger' => {
 .exam-timeline-unlock {
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
+}
+.exam-timeline-share {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin-left: var(--ph-space-1);
+  background: none;
+  border: none;
+  border-radius: var(--ph-radius-sm);
+  cursor: pointer;
+  color: var(--ph-text-secondary);
+  transition: all 0.15s ease;
+}
+.exam-timeline-share:hover {
+  background: var(--ph-bg-hover);
+  color: var(--ph-color-primary);
 }
 .exam-timeline-caret {
   margin-left: auto;
