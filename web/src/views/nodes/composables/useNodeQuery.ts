@@ -4,22 +4,37 @@ import {
   filterNodes,
   sortNodes,
   type NodeFilterCriteria,
+  type NodeFilterContext,
   type SortOrder
 } from '../predicates'
+import { scoreLevel, type ScoreLevel } from '@/components/exam/stability'
 import type { UnifiedNode } from '../selfmerge'
 
 // useNodeQuery 在客户端对统一行集执行 筛选 → 排序 → 分页,全部经 predicates.ts。
 // 状态是结构化条件对象(criteria),与将来的订阅动态查询共享同一谓词模块(票据 23)。
 //
-// 稳定性分档筛选依赖体检派生数据(不在节点自身);为避免"过滤→分页→按页取体检→
-// 回填分档→再过滤"的反馈环,本层不注入 bandByKey(criteria.stabilityBand 暂不在 UI 透出,
-// 谓词已就绪,待后端在节点视图透出稳定性分后可无缝接入,思路同标签票据 21)。
+// 稳定性分档筛选(票据 54)依赖体检派生的稳定性分——后端已在 /nodes 视图直接透出
+// 每节点 stability_score(思路同标签票据 21),故本层直接由行集派生分档,无需按页拉体检、
+// 也就没有"过滤→分页→取体检→回填→再过滤"的反馈环。无分节点不进 bandByKey,谓词按不命中处理。
 export function useNodeQuery(rows: Ref<UnifiedNode[]>) {
   const criteria = reactive<NodeFilterCriteria>(emptyCriteria())
   const sort = reactive<{ by: string; order: SortOrder }>({ by: 'latency', order: 'asc' })
   const pagination = reactive({ page: 1, pageSize: 20 })
 
-  const filtered = computed<UnifiedNode[]>(() => filterNodes(rows.value, criteria) as UnifiedNode[])
+  // 由节点自带的 stability_score 派生分档(node_key -> good/fair/poor);无分节点不出现。
+  const filterContext = computed<NodeFilterContext>(() => {
+    const bandByKey: Record<string, ScoreLevel | undefined> = {}
+    for (const n of rows.value) {
+      if (typeof n.stability_score === 'number') {
+        bandByKey[n.node_key] = scoreLevel(n.stability_score)
+      }
+    }
+    return { bandByKey }
+  })
+
+  const filtered = computed<UnifiedNode[]>(
+    () => filterNodes(rows.value, criteria, filterContext.value) as UnifiedNode[]
+  )
   const sorted = computed<UnifiedNode[]>(
     () => sortNodes(filtered.value, sort.by, sort.order) as UnifiedNode[]
   )

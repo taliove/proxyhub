@@ -796,12 +796,16 @@ type nodeView struct {
 	BandwidthUpMbps   float64 `json:"bandwidth_up_mbps,omitempty"`
 	// 自动标签(从测试结果派生:解锁/出网/质量),无标签时省略
 	Tags []string `json:"tags,omitempty"`
+	// 最近一次体检的稳定性分(0..100)。指针 + omitempty:无体检记录时省略;
+	// 分数 0 是合法的"差"档,指针非空即透出(不与"无分"混淆)。用于稳定性分档筛选(票据 54)。
+	StabilityScore *int `json:"stability_score,omitempty"`
 }
 
 // toNodeViews 把节点池转换为对外视图列表。blocked 为屏蔽名单，用于标记每个节点是否已被屏蔽。
 // unlockResults 为每个节点的多维检测结果(可为 nil,表示不附带)。
 // nodeTags 为每个节点的自动标签(可为 nil,表示不附带)。
-func toNodeViews(nodes []*subscription.Node, blocked map[string]bool, unlockResults map[string][]store.DetectionResultView, nodeTags map[string][]string) []nodeView {
+// stabilityScores 为每个节点最近体检的稳定性分(可为 nil,表示不附带;无该 key 表示无体检记录)。
+func toNodeViews(nodes []*subscription.Node, blocked map[string]bool, unlockResults map[string][]store.DetectionResultView, nodeTags map[string][]string, stabilityScores map[string]int) []nodeView {
 	views := make([]nodeView, 0, len(nodes))
 	for _, n := range nodes {
 		key := n.NodeKey()
@@ -816,6 +820,13 @@ func toNodeViews(nodes []*subscription.Node, blocked map[string]bool, unlockResu
 		// 附加自动标签(无记录时留空,JSON omitempty 省略)
 		if nodeTags != nil {
 			view.Tags = nodeTags[key]
+		}
+		// 附加稳定性分(有体检记录才透出;分数 0 合法,取指针避免 omitempty 吞 0)
+		if stabilityScores != nil {
+			if score, ok := stabilityScores[key]; ok {
+				s := score
+				view.StabilityScore = &s
+			}
 		}
 		// 附加多维检测结果
 		if unlockResults != nil {
@@ -882,9 +893,16 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		nodeTags = nil
 	}
 
+	// 查当前页节点最近体检的稳定性分(供前端稳定性分档筛选;降级为空不阻塞)
+	stabilityScores, err := s.st.LatestExamScores(pageKeys)
+	if err != nil {
+		s.logger.Warn("get exam scores failed", "error", err)
+		stabilityScores = nil
+	}
+
 	writeJSON(w, map[string]any{
 		"last_update": s.nodes.LastUpdate(),
-		"nodes":       toNodeViews(res.Nodes, blocked, unlockResults, nodeTags),
+		"nodes":       toNodeViews(res.Nodes, blocked, unlockResults, nodeTags, stabilityScores),
 		"total":       res.Total,
 		"page":        res.Page,
 		"page_size":   res.PageSize,
@@ -1215,7 +1233,7 @@ func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
 		"format": format,
 		"count":  len(nodes),
 		// 预览展示的是已过滤后的节点，均未被屏蔽，故传空屏蔽集
-		"nodes":   toNodeViews(nodes, nil, unlockResults, nodeTags),
+		"nodes":   toNodeViews(nodes, nil, unlockResults, nodeTags, nil),
 		"content": content,
 	})
 }

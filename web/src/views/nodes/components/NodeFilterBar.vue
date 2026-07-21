@@ -67,6 +67,11 @@
       >
         <el-option v-for="u in unlockTargets" :key="u" :label="u" :value="u" />
       </el-select>
+      <el-select v-model="stabilityBandStr" placeholder="稳定性" clearable class="ctl-sm">
+        <el-option label="优" value="good" />
+        <el-option label="良" value="fair" />
+        <el-option label="差" value="poor" />
+      </el-select>
     </div>
   </div>
 </template>
@@ -76,6 +81,7 @@ import { computed, ref } from 'vue'
 import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import { NODE_TYPES, SELF_HOSTED } from '../utils'
 import type { RegionItem } from '../composables/useNodePool'
+import type { ScoreLevel } from '@/components/exam/stability'
 import { tagLabel } from '@/utils/taglabels'
 
 // 结构化筛选条件的双向绑定(父层持有 criteria,child 只按字段收发,不改 props)。
@@ -89,6 +95,7 @@ const blocked = defineModel<boolean | null>('blocked', { required: true })
 const stale = defineModel<boolean | null>('stale', { required: true })
 const tags = defineModel<string[]>('tags', { required: true })
 const unlock = defineModel<string[]>('unlock', { required: true })
+const stabilityBand = defineModel<ScoreLevel | null>('stabilityBand', { required: true })
 
 defineProps<{
   regions: RegionItem[]
@@ -113,6 +120,15 @@ const triProxy = (model: { value: boolean | null }) =>
 const availableStr = triProxy(available)
 const blockedStr = triProxy(blocked)
 const staleStr = triProxy(stale)
+
+// 稳定性分档 <-> el-select 字符串:清空(el-select 发 '')归一为 null(不筛选),
+// 保证 criteria.stabilityBand 严格 ScoreLevel | null,不混入空串。
+const stabilityBandStr = computed<string>({
+  get: () => stabilityBand.value ?? '',
+  set: (v) => {
+    stabilityBand.value = v === '' ? null : (v as ScoreLevel)
+  }
+})
 
 const more = ref(false)
 </script>

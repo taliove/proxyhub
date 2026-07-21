@@ -22,6 +22,7 @@
       v-model:stale="criteria.stale"
       v-model:tags="criteria.tags"
       v-model:unlock="criteria.unlock"
+      v-model:stability-band="criteria.stabilityBand"
       :regions="regions"
       :sources="airportSources"
       :tag-options="tagOptions"

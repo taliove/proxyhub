@@ -88,6 +88,59 @@ func (s *Store) LatestExamHistory(nodeKey string) (*ExamHistoryEntry, error) {
 	return &entry, nil
 }
 
+// LatestExamScores 批量取多个节点最近一次体检的稳定性分,返回 map[nodeKey]score。
+// 每节点只取最新一条(id 最大);无体检记录、或报告无稳定性段的节点不出现在结果中
+// (调用方按"缺省=无分"处理,同 ListNodeTags 的空态约定)。
+// 分数 0 是合法的"差"档,保留在结果中(不与"无分"混淆)。
+func (s *Store) LatestExamScores(nodeKeys []string) (map[string]int, error) {
+	result := make(map[string]int)
+	if len(nodeKeys) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, len(nodeKeys))
+	args := make([]any, len(nodeKeys))
+	for i, k := range nodeKeys {
+		placeholders[i] = "?"
+		args[i] = k
+	}
+
+	// 子查询取每节点最大 id(=最近一条),外层回连取报告 JSON。
+	in := joinPlaceholders(placeholders)
+	query := fmt.Sprintf(`
+		SELECT node_key, report_json FROM exam_history
+		WHERE id IN (
+			SELECT MAX(id) FROM exam_history
+			WHERE node_key IN (%s)
+			GROUP BY node_key
+		)`, in)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query latest exam scores: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			nodeKey    string
+			reportJSON string
+		)
+		if err := rows.Scan(&nodeKey, &reportJSON); err != nil {
+			return nil, fmt.Errorf("scan latest exam score: %w", err)
+		}
+		var report detection.ExamReport
+		if err := json.Unmarshal([]byte(reportJSON), &report); err != nil {
+			return nil, fmt.Errorf("unmarshal exam report: %w", err)
+		}
+		// 只对含稳定性段的报告透出分数;无该段的节点视为"无分"。
+		if report.Stability != nil {
+			result[nodeKey] = report.Stability.Score
+		}
+	}
+	return result, rows.Err()
+}
+
 // ListExamHistory 返回某节点体检历史(时间倒序);无记录返回空切片。
 func (s *Store) ListExamHistory(nodeKey string) ([]ExamHistoryEntry, error) {
 	rows, err := s.db.Query(`

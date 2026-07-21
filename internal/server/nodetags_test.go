@@ -17,7 +17,7 @@ func TestToNodeViews_TagsPassthrough(t *testing.T) {
 		tagged.NodeKey(): {"nf-full", "region:US", "fast"},
 	}
 
-	views := toNodeViews([]*subscription.Node{tagged, bare}, nil, nil, tags)
+	views := toNodeViews([]*subscription.Node{tagged, bare}, nil, nil, tags, nil)
 	if len(views) != 2 {
 		t.Fatalf("views len = %d, want 2", len(views))
 	}
@@ -32,7 +32,7 @@ func TestToNodeViews_TagsPassthrough(t *testing.T) {
 // TestToNodeViews_NilTags 标签 map 为 nil(降级路径)不 panic,所有节点零标签。
 func TestToNodeViews_NilTags(t *testing.T) {
 	node := &subscription.Node{Name: "hk01", Server: "a.example.com", Port: 443, Type: "vmess"}
-	views := toNodeViews([]*subscription.Node{node}, nil, nil, nil)
+	views := toNodeViews([]*subscription.Node{node}, nil, nil, nil, nil)
 	if len(views[0].Tags) != 0 {
 		t.Errorf("nil tags map should yield empty tags, got %v", views[0].Tags)
 	}

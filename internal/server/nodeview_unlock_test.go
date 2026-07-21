@@ -21,7 +21,7 @@ func TestToNodeViews_UnlockLevelRegionPassthrough(t *testing.T) {
 		},
 	}
 
-	views := toNodeViews([]*subscription.Node{node}, nil, unlock, nil)
+	views := toNodeViews([]*subscription.Node{node}, nil, unlock, nil, nil)
 	if len(views) != 1 {
 		t.Fatalf("views len = %d, want 1", len(views))
 	}
