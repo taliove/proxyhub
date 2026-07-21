@@ -3,9 +3,15 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/taliove/proxyhub/internal/subscription"
 )
+
+// StaleRetentionDays 下架(stale)节点保留天数。机场订阅中消失的节点先标记 stale
+// 保留一段时间(期间复活可 carry-forward 检测状态),超期才物理删除,防止无限累积。
+const StaleRetentionDays = 7
 
 // SaveNodePool 以 NodeKey 为唯一 ID 进行 upsert，保留检测状态并标记消失节点为 stale。
 // 相比旧版（DELETE + 全量 INSERT），upsert 修复了刷新抹掉真实检测结果的 bug。
@@ -25,6 +31,10 @@ func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
 	if len(nodes) == 0 {
 		// 空池：全标记 stale，清理所有死节点标签后提交
 		if err := pruneStaleNodeTags(tx); err != nil {
+			return err
+		}
+		// 空池不豁免超期清理：历史 stale 节点到期照样删除
+		if err := purgeExpiredStaleNodes(tx, time.Now()); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -86,8 +96,59 @@ func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
 		return err
 	}
 
+	// 清理超期 stale 节点:下架超过 StaleRetentionDays 的节点物理删除,防无限累积。
+	if err := purgeExpiredStaleNodes(tx, time.Now()); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit node pool: %w", err)
+	}
+	return nil
+}
+
+// purgeExpiredStaleNodes 删除下架超过 StaleRetentionDays 的节点(在 SaveNodePool 事务内调用)。
+//
+// last_seen 在库中是 Go time 格式串(如 "2026-07-20 17:57:05.013304 +0800 CST"),
+// SQLite datetime() 无法解析、裸串比较依赖时区巧合,故必须在 Go 侧解析后比较。
+// 有意不级联删 node_overrides/node_blocks/exam_history:保留期内节点复活时这些仍应生效;
+// 超期删除后若同 key 节点再次复活,旧 override/block 会重新生效(接受此语义)。
+func purgeExpiredStaleNodes(tx *sql.Tx, now time.Time) error {
+	cutoff := now.AddDate(0, 0, -StaleRetentionDays)
+
+	rows, err := tx.Query(`SELECT node_key, last_seen FROM nodes WHERE stale = 1`)
+	if err != nil {
+		return fmt.Errorf("query stale nodes: %w", err)
+	}
+	defer rows.Close()
+
+	var expired []string
+	for rows.Next() {
+		var key string
+		var lastSeen *string
+		if err := rows.Scan(&key, &lastSeen); err != nil {
+			return fmt.Errorf("scan stale node: %w", err)
+		}
+		ts := parseTimeOrZero(lastSeen)
+		// 解析失败/无 last_seen 的保守保留(不误删)
+		if !ts.IsZero() && ts.Before(cutoff) {
+			expired = append(expired, key)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate stale nodes: %w", err)
+	}
+	if len(expired) == 0 {
+		return nil
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(expired)), ",")
+	args := make([]any, len(expired))
+	for i, k := range expired {
+		args[i] = k
+	}
+	if _, err := tx.Exec(`DELETE FROM nodes WHERE node_key IN (`+placeholders+`)`, args...); err != nil {
+		return fmt.Errorf("delete expired stale nodes: %w", err)
 	}
 	return nil
 }

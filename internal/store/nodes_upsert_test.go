@@ -162,6 +162,72 @@ func TestNodePool_UpsertOrderStable(t *testing.T) {
 	}
 }
 
+// TestNodePool_PurgeExpiredStaleNodes 验证下架超过保留期的节点被物理删除,
+// 保留期内的 stale 节点与 active 节点不受影响。
+func TestNodePool_PurgeExpiredStaleNodes(t *testing.T) {
+	st := newTestStore(t)
+
+	expired := time.Now().AddDate(0, 0, -(StaleRetentionDays + 1)).Truncate(time.Second)
+	recent := time.Now().AddDate(0, 0, -(StaleRetentionDays - 1)).Truncate(time.Second)
+
+	pool := []*subscription.Node{
+		{Name: "在架", Type: "ss", Server: "1.1.1.1", Port: 8388, Source: "机场A"},
+		{Name: "刚下架", Type: "ss", Server: "2.2.2.2", Port: 8388, Source: "机场A", Stale: true, LastSeen: recent},
+		{Name: "下架超期", Type: "ss", Server: "3.3.3.3", Port: 8388, Source: "机场A", Stale: true, LastSeen: expired},
+		{Name: "下架无时间", Type: "ss", Server: "4.4.4.4", Port: 8388, Source: "机场A", Stale: true},
+	}
+	if err := st.SaveNodePool(pool); err != nil {
+		t.Fatalf("SaveNodePool() error = %v", err)
+	}
+
+	got, err := st.LoadNodePool()
+	if err != nil {
+		t.Fatalf("LoadNodePool() error = %v", err)
+	}
+
+	names := make(map[string]bool, len(got))
+	for _, n := range got {
+		names[n.Name] = true
+	}
+	if names["下架超期"] {
+		t.Errorf("超期 stale 节点应被删除,仍存在")
+	}
+	for _, want := range []string{"在架", "刚下架", "下架无时间"} {
+		if !names[want] {
+			t.Errorf("节点 %q 应保留,实际被删", want)
+		}
+	}
+}
+
+// TestNodePool_PurgeExpiredStaleNodesEmptyPool 验证空池保存同样触发超期清理。
+func TestNodePool_PurgeExpiredStaleNodesEmptyPool(t *testing.T) {
+	st := newTestStore(t)
+
+	// 先种入一个保留期内的 stale 节点(首轮保存不会被清理)
+	recent := time.Now().Add(-time.Hour).Truncate(time.Second)
+	pool := []*subscription.Node{
+		{Name: "下架节点", Type: "ss", Server: "3.3.3.3", Port: 8388, Source: "机场A", Stale: true, LastSeen: recent},
+	}
+	if err := st.SaveNodePool(pool); err != nil {
+		t.Fatalf("SaveNodePool() seed error = %v", err)
+	}
+
+	// 把 last_seen 改到保留期之前(与写入方同走 driver 时间绑定)
+	expired := time.Now().AddDate(0, 0, -(StaleRetentionDays + 1))
+	if _, err := st.db.Exec(`UPDATE nodes SET last_seen = ?`, expired); err != nil {
+		t.Fatalf("backdate last_seen error = %v", err)
+	}
+
+	// 空池保存:节点全标记 stale,超期的应被物理删除
+	if err := st.SaveNodePool(nil); err != nil {
+		t.Fatalf("SaveNodePool(nil) error = %v", err)
+	}
+	got, _ := st.LoadNodePool()
+	if len(got) != 0 {
+		t.Fatalf("空池保存后超期 stale 节点应被删,剩余 %d 个", len(got))
+	}
+}
+
 // TestNodePool_BandwidthRoundtrip 验证带宽测试结果持久化回环
 func TestNodePool_BandwidthRoundtrip(t *testing.T) {
 	st := newTestStore(t)

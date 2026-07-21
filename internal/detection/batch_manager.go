@@ -41,9 +41,10 @@ func NewBatchDetectionManager(
 }
 
 // Trigger 启动批量检测任务:nodeKeys 指定待检测节点(空表示全量检测)。
+// scope 为触发范围标记("all"/"query"/"selected"),仅记录进 params 供任务中心展示。
 // 已有任务在运行时返回错误;附加订阅用 Subscribe。
-func (m *BatchDetectionManager) Trigger(nodeKeys []string) error {
-	params := batchDetectionParams{NodeKeys: nodeKeys}
+func (m *BatchDetectionManager) Trigger(nodeKeys []string, scope string) error {
+	params := batchDetectionParams{NodeKeys: nodeKeys, Scope: scope}
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {
 		return fmt.Errorf("marshal params: %w", err)

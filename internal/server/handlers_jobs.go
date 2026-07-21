@@ -10,13 +10,14 @@ import (
 
 // JobInfo 通用任务信息(供任务中心展示)。
 type JobInfo struct {
-	ID        int64       `json:"id"`
-	Kind      string      `json:"kind"`
-	Key       string      `json:"key"`
-	Status    jobs.Status `json:"status"`
-	Cursor    string      `json:"cursor,omitempty"` // 游标进度
-	CreatedAt string      `json:"created_at"`
-	UpdatedAt string      `json:"updated_at"`
+	ID        int64           `json:"id"`
+	Kind      string          `json:"kind"`
+	Key       string          `json:"key"`
+	Status    jobs.Status     `json:"status"`
+	Cursor    string          `json:"cursor,omitempty"` // 游标进度
+	Params    json.RawMessage `json:"params,omitempty"` // 启动参数(前端据此生成可读范围标识)
+	CreatedAt string          `json:"created_at"`
+	UpdatedAt string          `json:"updated_at"`
 }
 
 // handleListJobs GET /api/jobs 列出所有任务(从 jobs 表读取)。
@@ -53,6 +54,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 			Key:       rec.Key,
 			Status:    rec.Status,
 			Cursor:    rec.Cursor,
+			Params:    rec.Params,
 			CreatedAt: rec.CreatedAt.Format("2006-01-02 15:04:05"),
 			UpdatedAt: rec.UpdatedAt.Format("2006-01-02 15:04:05"),
 		})
@@ -138,6 +140,7 @@ func (s *Server) handleGetJobDetail(w http.ResponseWriter, r *http.Request) {
 		Key:       rec.Key,
 		Status:    rec.Status,
 		Cursor:    rec.Cursor,
+		Params:    rec.Params,
 		CreatedAt: rec.CreatedAt.Format("2006-01-02 15:04:05"),
 		UpdatedAt: rec.UpdatedAt.Format("2006-01-02 15:04:05"),
 	}

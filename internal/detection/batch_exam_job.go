@@ -29,6 +29,8 @@ type BatchExamEvent struct {
 // batchExamParams 批量体检参数:节点 key 列表。凭证不入库,活节点经内存旁路传递。
 type batchExamParams struct {
 	NodeKeys []string `json:"node_keys"`
+	// Scope 触发范围标记("all"/"selected"),仅用于任务中心展示,不影响执行语义
+	Scope string `json:"scope,omitempty"`
 }
 
 // SimplifiedExamRunner 运行精简体检:出网 + 稳定性 + 基准下行,跳过多地域 8 区与解锁。
@@ -206,14 +208,15 @@ func NewBatchExamJobManager(runSimplified SimplifiedExamRunner, onComplete func(
 }
 
 // Start 启动批量体检任务:nodeKeys 为空则对全部节点体检。返回任务 key(供订阅/取消)。
-// nodes 是活节点列表(含凭证),存入内存旁路。
-func (m *BatchExamJobManager) Start(nodeKeys []string, nodes []*subscription.Node) (string, error) {
+// nodes 是活节点列表(含凭证),存入内存旁路。scope 为触发范围标记("all"/"selected"),
+// 仅记录进 params 供任务中心展示。
+func (m *BatchExamJobManager) Start(nodeKeys []string, nodes []*subscription.Node, scope string) (string, error) {
 	// 活节点存内存旁路
 	for _, n := range nodes {
 		m.kind.nodes.Store(n.NodeKey(), n)
 	}
 
-	params, err := json.Marshal(batchExamParams{NodeKeys: nodeKeys})
+	params, err := json.Marshal(batchExamParams{NodeKeys: nodeKeys, Scope: scope})
 	if err != nil {
 		return "", fmt.Errorf("batch_exam: marshal params: %w", err)
 	}

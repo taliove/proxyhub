@@ -13,6 +13,8 @@ import (
 type batchDetectionParams struct {
 	// NodeKeys 指定节点列表(空表示全量检测)
 	NodeKeys []string `json:"node_keys,omitempty"`
+	// Scope 触发范围标记("all"/"query"/"selected"),仅用于任务中心展示,不影响执行语义
+	Scope string `json:"scope,omitempty"`
 }
 
 // batchDetectionEvent 批量检测事件(SSE 推送格式)。

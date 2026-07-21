@@ -293,6 +293,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 机场测试运行记录表（014_airport_test_runs.sql）
+	if err := s.applyMigrationFile("014_airport_test_runs.sql"); err != nil {
+		return err
+	}
+
 	// 初始化地区识别规则表
 	return s.InitRegionRules()
 }
@@ -439,6 +444,25 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_kind_key ON jobs(kind, key, id DESC);
+`
+	case "014_airport_test_runs.sql":
+		checkTable = "airport_test_runs"
+		migrationSQL = `
+CREATE TABLE IF NOT EXISTS airport_test_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    airport_id INTEGER NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    sample_params TEXT NOT NULL DEFAULT '{}',
+    is_full INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    overall_score REAL,
+    dimensions_json TEXT NOT NULL DEFAULT '{}',
+    error_message TEXT,
+    FOREIGN KEY(airport_id) REFERENCES airports(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_airport_test_runs_airport ON airport_test_runs(airport_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_airport_test_runs_created ON airport_test_runs(created_at);
 `
 	default:
 		return fmt.Errorf("unknown migration file: %s", filename)

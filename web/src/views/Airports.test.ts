@@ -1,14 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Airport } from '@/types'
-
-/**
- * Extract airport subscription URL for QR code display
- * @param airport Airport object containing subscription URL
- * @returns Airport subscription URL
- */
-export function getAirportQRContent(airport: Airport): string {
-  return airport.url
-}
+import { getAirportQRContent } from './airport-utils'
 
 describe('Airports QR Code', () => {
   describe('getAirportQRContent', () => {

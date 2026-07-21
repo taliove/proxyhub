@@ -77,8 +77,8 @@ func (ds *DetectionServiceJobs) TriggerDetection(_ context.Context, scope Detect
 		nodeKeys[i] = n.NodeKey()
 	}
 
-	// 启动任务(通过 BatchDetectionManager)
-	if err := ds.batchMgr.Trigger(nodeKeys); err != nil {
+	// 启动任务(通过 BatchDetectionManager);scope.Type 记入 params 供任务中心展示范围
+	if err := ds.batchMgr.Trigger(nodeKeys, scope.Type); err != nil {
 		return fmt.Errorf("start batch detection: %w", err)
 	}
 

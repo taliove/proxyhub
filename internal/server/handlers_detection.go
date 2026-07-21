@@ -417,7 +417,9 @@ func (s *Server) handleBatchExam(w http.ResponseWriter, r *http.Request) {
 
 	// node_keys 为空时对全部节点体检
 	nodeKeys := req.NodeKeys
+	scope := "selected"
 	if len(nodeKeys) == 0 {
+		scope = "all"
 		for _, n := range s.nodes.Nodes() {
 			nodeKeys = append(nodeKeys, n.NodeKey())
 		}
@@ -434,7 +436,7 @@ func (s *Server) handleBatchExam(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	key, err := s.batchExamJobs.Start(nodeKeys, nodes)
+	key, err := s.batchExamJobs.Start(nodeKeys, nodes, scope)
 	if err != nil {
 		s.logger.Error("start batch exam failed", "error", err)
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": err.Error()})

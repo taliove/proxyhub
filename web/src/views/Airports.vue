@@ -29,8 +29,9 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260">
+        <el-table-column label="操作" width="280">
           <template #default="{ row }">
+            <el-button link type="primary" @click="openTestDialog(row)">测试</el-button>
             <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
             <el-button link @click="toggleAirport(row)">
               {{ row.enabled ? '禁用' : '启用' }}
@@ -74,6 +75,7 @@
       title="机场订阅二维码"
       hint="扫码导入该机场原始订阅(未经过 ProxyHub 聚合)"
     />
+    <AirportTestDialog v-model="testDialogVisible" :airport="testingAirport" />
   </div>
 </template>
 
@@ -85,7 +87,8 @@ import type { Airport } from '@/types'
 import client from '@/api/client'
 import { useDebouncedSuggest } from '@/composables/useDebouncedSuggest'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
-import { getAirportQRContent } from './Airports.test'
+import { getAirportQRContent } from './airport-utils'
+import AirportTestDialog from '@/components/AirportTestDialog.vue'
 
 const airports = ref<Airport[]>([])
 const loading = ref(false)
@@ -98,6 +101,10 @@ const form = ref({ name: '', url: '', abbr: '' })
 // QR Code dialog
 const qrDialogVisible = ref(false)
 const qrDialog = ref<InstanceType<typeof QRCodeDialog> | null>(null)
+
+// Test dialog state
+const testDialogVisible = ref(false)
+const testingAirport = ref<Airport | null>(null)
 
 // Debounced auto-suggestion: name input -> abbr suggestion
 const abbrRef = computed({
@@ -135,6 +142,11 @@ const openAddDialog = () => {
   form.value = { name: '', url: '', abbr: '' }
   resetAbbrSuggest()
   dialogVisible.value = true
+}
+
+const openTestDialog = (airport: Airport) => {
+  testingAirport.value = airport
+  testDialogVisible.value = true
 }
 
 const openEditDialog = (row: Airport) => {

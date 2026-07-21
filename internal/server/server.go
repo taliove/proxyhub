@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/taliove/proxyhub/internal/airporttest"
 	"github.com/taliove/proxyhub/internal/config"
 	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/filter"
@@ -54,6 +55,7 @@ type Server struct {
 	geo              *geoip.Resolver
 	examJobs         *detection.ExamJobManager
 	batchExamJobs    *detection.BatchExamJobManager
+	testOrchestrator *airporttest.Orchestrator
 	// self-node region resolution seams: real by default, overridable in tests
 	// to drive the suggest/save paths without touching DNS or the embedded DB.
 	lookupHost    func(host string) ([]string, error)
@@ -283,6 +285,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/airports/{id}", s.requireAuth(s.handleUpdateAirport))
 	mux.HandleFunc("POST /api/airports/{id}/toggle", s.requireAuth(s.handleToggleAirport))
 	mux.HandleFunc("DELETE /api/airports/{id}", s.requireAuth(s.handleDeleteAirport))
+
+	// 机场测试（诊断+抽样检活+评分）
+	mux.HandleFunc("POST /api/airports/{id}/test", s.requireAuth(s.handleAirportTest))
+	mux.HandleFunc("GET /api/airports/{id}/test/runs/{runId}", s.requireAuth(s.handleGetAirportTestRun))
 
 	// 节点状态
 	mux.HandleFunc("GET /api/nodes", s.requireAuth(s.handleListNodes))
