@@ -85,3 +85,38 @@ sample(逐采样点) -> section_done(metrics) -> region(逐区) -> section_done(
 
 - 依赖 `internal/detection`(会话、采样器、测速器、解锁判定)与 `internal/store`(历史读写),不反向依赖 server 层以外。
 - 解锁判定层与批量检测共享 `Result` 与 kind 注册表;体检只是它的另一个调用点。
+
+## NodeKey Upsert Carry-Forward 规则
+
+节点刷新时,通过 `internal/subscription.MergePool` 将旧池节点的状态合并到新池。匹配键为 `NodeKey()`(`server:port[:SNI]`),合并规则:
+
+### Carry-Forward 字段清单
+
+从旧节点保留到新节点的字段(新节点 fetch 不提供):
+
+- **检测状态**:`DetectionLastCheck` / `Available` / `Latency` — 真实检测确认过的可用性与延迟,不被 TCP 快速判定覆盖
+- **带宽结果**:`BandwidthDownMbps` / `BandwidthUpMbps` / `BandwidthCheck` — 最近一次带宽测试结果
+- **用户覆盖**:`DisplayName` 覆盖(来自 `node_overrides` 表,通过 `aggregator.execute` 应用) — 机场节点用户改名/改地区跨刷新保留
+
+### 不 Carry-Forward 的字段
+
+从新节点覆盖的字段(fetch 提供,每轮更新):
+
+- **连接参数**:`Server` / `Port` / `Password` / `UUID` / `Network` / `TLS` / `SNI` / 所有协议特定字段 — 机场可能更新节点配置,必须用新值
+- **原始元数据**:`Name`(机场原名) / `Region`(地区识别结果,每轮重跑) / `Source` / `AirportID`
+
+### Stale 生命周期
+
+机场订阅本轮未返回的节点(fetch 结果中无匹配 NodeKey):
+
+1. **标记阶段**:`Stale=true`,`LastSeen` 保持上次出现时间,节点仍留在池中(不删除)
+2. **订阅排除**:serve-time 订阅生成(`internal/subscription/generator.go`)过滤掉 `Stale=true` 节点,不下发给客户端
+3. **状态页可见**:前端节点列表显示 stale 标记(置灰行),用户可查看完整信息与历史
+4. **手动清理**:通过 `/api/nodes/cleanup` 批量屏蔽或删除,需用户二次确认
+5. **不自动过期**:不实现定时 GC,避免误删用户仍想保留测试的节点
+
+**自建节点永不 stale**:不来自 fetch,由 `internal/subscription.InjectSelfNodes` 注入,用户通过 `self_nodes` 表显式管理启停/删除。
+
+### 深度体检结果不混入节点快照
+
+多地域测速(`RegionSpeedMetrics`)与解锁判定(`UnlockMetrics`)属于深度体检(`ExamReport`),存储在独立表 `exam_history`,不写入 `nodes` 表,不参与 carry-forward。节点快照只保留轻量检测状态(可用性/延迟/带宽),深度体检有独立历史查询接口(`/api/nodes/exam/history`)。
