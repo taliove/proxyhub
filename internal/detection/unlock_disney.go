@@ -53,7 +53,9 @@ func checkDisneyPlus(ctx context.Context, client *http.Client, node *subscriptio
 	status, body, err := disneyFetch(ctx, client)
 	res.Latency = int(time.Since(start).Milliseconds())
 	if err != nil {
+		// 传输失败:透传结构化 cause,文本 Error 保留原文案。
 		res.Error = fmt.Sprintf("request failed: %v", err)
+		res.cause = err
 		return res
 	}
 

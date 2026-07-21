@@ -46,6 +46,9 @@ type EgressIPv4 struct {
 	Proxy       bool   `json:"proxy"`         // 疑似代理/VPN 出口
 	Hosting     bool   `json:"hosting"`       // 机房/数据中心 IP(非住宅)
 	Error       string `json:"error,omitempty"`
+	// cause 传输失败的结构化底层错误(仅请求类失败填充;解析失败/成功为 nil)。
+	// 不序列化,供重试分类器经 errors.Is/As 结构化判定(文本 Error 退化为兜底)。
+	cause error
 }
 
 // EgressIPv6 IPv6 出口信息:Available 有出口且 Address 非空;不可达则 Available=false 且 Error 空;
@@ -54,6 +57,8 @@ type EgressIPv6 struct {
 	Available bool   `json:"available"`
 	Address   string `json:"address,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// cause 结构化底层错误(仅超时/取消这类探测异常填充;不可达负判定与解析失败为 nil)。不序列化。
+	cause error
 }
 
 // EgressDNS 出口 DNS 信息:解析器 IP 与归属地;Leak 为与出口国家不一致的疑似 DNS 泄露标记。
@@ -62,6 +67,8 @@ type EgressDNS struct {
 	ResolverGeo string `json:"resolver_geo,omitempty"` // 归属地(如 "United States - Example DNS")
 	Leak        bool   `json:"leak"`                   // 疑似 DNS 泄露(解析器国家 != 出口国家)
 	Error       string `json:"error,omitempty"`
+	// cause 传输失败的结构化底层错误(仅请求类失败填充;解析失败/成功为 nil)。不序列化。
+	cause error
 }
 
 // EgressMetrics 出网信息段聚合结果:三类各一份(探测失败时对应子项的 Error 非空)。
@@ -150,23 +157,24 @@ func withEgressRetry(probe EgressProbe) EgressProbe {
 		IPv4: func(ctx context.Context) EgressIPv4 {
 			return retryResult(ctx, examTransientMaxRetries,
 				func() EgressIPv4 { return probe.IPv4(ctx) },
-				func(res EgressIPv4) bool { return isTransientNetError(res.Error) },
+				// 结构化优先(cause),文本兜底(Error);解锁/出网/区域三段统一经 retryableTransient。
+				func(res EgressIPv4) bool { return retryableTransient(res.cause, res.Error) },
 			)
 		},
 		IPv6: func(ctx context.Context) EgressIPv6 {
 			return retryResult(ctx, examTransientMaxRetries,
 				func() EgressIPv6 { return probe.IPv6(ctx) },
-				// 有出口(Available)不重试;不可达(Error 空)是明确负判定不重试。
+				// 有出口(Available)不重试;不可达(Error 空、cause nil)是明确负判定不重试。
 				// 注意:classifyIPv6Egress 已把拨号类错误(reset/refused/no-route)归为"无 v6 出口"
-				// 的明确负判定(Error 空),仅 deadline/cancel 保留为 "IPv6 出口探测超时"。故实际能触发
+				// 的明确负判定(不带 cause),仅 deadline/cancel 保留为探测超时(带 cause)。故实际能触发
 				// v6 重试的传输类信号只有超时 —— 这是既有判定语义的忠实反映,而非放弃其他传输类。
-				func(res EgressIPv6) bool { return !res.Available && isTransientNetError(res.Error) },
+				func(res EgressIPv6) bool { return !res.Available && retryableTransient(res.cause, res.Error) },
 			)
 		},
 		DNS: func(ctx context.Context) EgressDNS {
 			return retryResult(ctx, examTransientMaxRetries,
 				func() EgressDNS { return probe.DNS(ctx) },
-				func(res EgressDNS) bool { return isTransientNetError(res.Error) },
+				func(res EgressDNS) bool { return retryableTransient(res.cause, res.Error) },
 			)
 		},
 	}
@@ -179,7 +187,8 @@ func newEgressProbe(client *http.Client) EgressProbe {
 		IPv4: func(ctx context.Context) EgressIPv4 {
 			_, body, err := getProbe(ctx, client, egressIPv4URL)
 			if err != nil {
-				return EgressIPv4{Error: fmt.Sprintf("请求失败: %v", err)}
+				// 传输失败:透传结构化 cause(供重试分类器结构化判定),文本 Error 保留原文案。
+				return EgressIPv4{Error: fmt.Sprintf("请求失败: %v", err), cause: err}
 			}
 			res, perr := parseIPv4Egress(body)
 			if perr != nil {
@@ -194,7 +203,8 @@ func newEgressProbe(client *http.Client) EgressProbe {
 		DNS: func(ctx context.Context) EgressDNS {
 			_, body, err := getProbe(ctx, client, egressDNSURL)
 			if err != nil {
-				return EgressDNS{Error: fmt.Sprintf("请求失败: %v", err)}
+				// 传输失败:透传结构化 cause,文本 Error 保留原文案。
+				return EgressDNS{Error: fmt.Sprintf("请求失败: %v", err), cause: err}
 			}
 			res, perr := parseDNSEgress(body)
 			if perr != nil {
@@ -289,10 +299,13 @@ func firstNonEmpty(vals ...string) string {
 // 合法 v6 正文 -> 有出口给地址;拿到响应但非合法 v6 -> 解析失败(Error 非空,与不可达区分)。
 func classifyIPv6Egress(body string, reqErr error) EgressIPv6 {
 	if reqErr != nil {
-		// 超时/取消不是"节点无 IPv6"的证据(可能只是本轮没测完),标为探测异常而非负判定。
+		// 超时/取消不是"节点无 IPv6"的证据(可能只是本轮没测完),标为探测异常而非负判定,
+		// 透传结构化 cause 供重试分类器结构化判定(文本 "超时" 退化为兜底)。
 		if errors.Is(reqErr, context.DeadlineExceeded) || errors.Is(reqErr, context.Canceled) {
-			return EgressIPv6{Available: false, Error: "IPv6 出口探测超时"}
+			return EgressIPv6{Available: false, Error: "IPv6 出口探测超时", cause: reqErr}
 		}
+		// 其余请求错误(拨号失败/无路由)是"无 IPv6 出口"的明确负判定(Error 空、cause 不带):
+		// 这是既有判定语义,不当作可重试传输抖动,故刻意不透传 cause。
 		return EgressIPv6{Available: false}
 	}
 	addr := strings.TrimSpace(body)

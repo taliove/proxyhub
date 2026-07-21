@@ -108,12 +108,15 @@ func netflixChecker(ctx context.Context, client *http.Client, node *subscription
 
 	nonStatus, nonBody, err := fetchNetflixTitle(ctx, client, netflixNonOriginalTitle)
 	if err != nil {
+		// 传输失败:透传结构化 cause,文本 Error 保留原文案。
 		result.Error = fmt.Sprintf("request non-original title failed: %v", err)
+		result.cause = err
 		return result
 	}
 	origStatus, origBody, err := fetchNetflixTitle(ctx, client, netflixOriginalTitle)
 	if err != nil {
 		result.Error = fmt.Sprintf("request original title failed: %v", err)
+		result.cause = err
 		return result
 	}
 

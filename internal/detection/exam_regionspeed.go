@@ -2,6 +2,7 @@ package detection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -258,14 +259,16 @@ func regionDownloadResult(r Region, ttfb time.Duration, mbps float64, n int64, e
 var errDeadLink = fmt.Errorf("dead link")
 
 // classifyRegionError 将失败原因分类为具体错误文案(状态码/超时/死链/传输错误)。
+// 用 errors.Is 而非 == 做结构化匹配:被包裹的 deadline(如经 markTransient 的拨号超时)
+// 仍正确归为超时,不因错误措辞/包装层变化而漏判(与三段统一的结构化优先原则一致)。
 func classifyRegionError(err error) string {
 	if err == nil {
 		return ""
 	}
-	if err == context.DeadlineExceeded {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout: 连接超时"
 	}
-	if err == errDeadLink {
+	if errors.Is(err, errDeadLink) {
 		return "deadlink: 测速点无效"
 	}
 	// HTTP 状态码错误:从 fmt.Errorf("status %d", code) 提取。
