@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { useRunningExams } from './useRunningExams'
 import * as jobsApi from '@/api/jobs'
 import type { Job } from '@/api/jobs'
@@ -7,21 +7,30 @@ import { mount } from '@vue/test-utils'
 
 vi.mock('@/api/jobs')
 
-describe('useRunningExams', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-  })
+// 测试用真实定时器 + 注入短轮询间隔(假定时器与 async load 叠加会自旋)。
+const POLL_MS = 15
 
+const flush = (ms = 60) => new Promise((r) => setTimeout(r, ms))
+
+const job = (id: number, kind: string, key: string, status: string): Job => ({
+  id,
+  kind,
+  key,
+  status,
+  created_at: '2026-07-20T10:00:00Z',
+  updated_at: '2026-07-20T10:00:00Z'
+})
+
+describe('useRunningExams', () => {
   afterEach(() => {
     vi.restoreAllMocks()
-    vi.useRealTimers()
   })
 
   const mountComposable = () => {
     let result: ReturnType<typeof useRunningExams> | null = null
     const TestComponent = defineComponent({
       setup() {
-        result = useRunningExams()
+        result = useRunningExams(POLL_MS)
         return () => h('div')
       }
     })
@@ -30,108 +39,59 @@ describe('useRunningExams', () => {
   }
 
   it('loads running exam jobs and extracts keys', async () => {
-    const mockJobs: Job[] = [
-      {
-        id: 1,
-        kind: 'exam',
-        key: 'node1.example.com:443',
-        status: 'running',
-        created_at: '2026-07-20T10:00:00Z',
-        updated_at: '2026-07-20T10:00:00Z'
-      },
-      {
-        id: 2,
-        kind: 'exam',
-        key: 'node2.example.com:443',
-        status: 'done',
-        created_at: '2026-07-20T09:00:00Z',
-        updated_at: '2026-07-20T09:30:00Z'
-      },
-      {
-        id: 3,
-        kind: 'batch_exam',
-        key: 'batch-001',
-        status: 'running',
-        created_at: '2026-07-20T08:00:00Z',
-        updated_at: '2026-07-20T10:00:00Z'
-      },
-      {
-        id: 4,
-        kind: 'exam',
-        key: 'node3.example.com:443',
-        status: 'running',
-        created_at: '2026-07-20T10:05:00Z',
-        updated_at: '2026-07-20T10:05:00Z'
-      }
-    ]
+    vi.mocked(jobsApi.listJobs).mockResolvedValue([
+      job(1, 'exam', 'node1.example.com:443', 'running'),
+      job(2, 'exam', 'node2.example.com:443', 'done'),
+      job(3, 'batch_exam', 'batch-001', 'running'),
+      job(4, 'exam', 'node3.example.com:443', 'running')
+    ])
 
-    vi.mocked(jobsApi.listJobs).mockResolvedValue(mockJobs)
+    const { wrapper, result } = mountComposable()
+    await flush()
 
-    const { result } = mountComposable()
-    await vi.runAllTimersAsync()
-
-    // Should only include running exam jobs, not done or batch_exam
     expect(result.runningExamKeys.value.size).toBe(2)
     expect(result.runningExamKeys.value.has('node1.example.com:443')).toBe(true)
     expect(result.runningExamKeys.value.has('node3.example.com:443')).toBe(true)
     expect(result.runningExamKeys.value.has('node2.example.com:443')).toBe(false)
     expect(result.runningExamKeys.value.has('batch-001')).toBe(false)
+    wrapper.unmount()
   })
 
-  it('polls every 10 seconds', async () => {
+  it('polls on the injected interval', async () => {
     vi.mocked(jobsApi.listJobs).mockResolvedValue([])
 
-    mountComposable()
+    const { wrapper } = mountComposable()
+    await flush()
 
-    // Initial load
-    await vi.runAllTimersAsync()
-    expect(jobsApi.listJobs).toHaveBeenCalledTimes(1)
-
-    // Advance 10s
-    await vi.advanceTimersByTimeAsync(10000)
-    expect(jobsApi.listJobs).toHaveBeenCalledTimes(2)
-
-    // Advance another 10s
-    await vi.advanceTimersByTimeAsync(10000)
-    expect(jobsApi.listJobs).toHaveBeenCalledTimes(3)
+    const calls = vi.mocked(jobsApi.listJobs).mock.calls.length
+    expect(calls).toBeGreaterThanOrEqual(2) // 立即一次 + 至少一次轮询
+    wrapper.unmount()
   })
 
   it('handles API errors gracefully', async () => {
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.mocked(jobsApi.listJobs).mockRejectedValue(new Error('Network error'))
 
-    const { result } = mountComposable()
-    await vi.runAllTimersAsync()
+    const { wrapper, result } = mountComposable()
+    await flush(40)
 
-    // Should not crash, set should be empty
     expect(result.runningExamKeys.value.size).toBe(0)
     expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load running exams:', expect.any(Error))
+    wrapper.unmount()
   })
 
   it('reload method triggers immediate update', async () => {
-    const mockJobs: Job[] = [
-      {
-        id: 1,
-        kind: 'exam',
-        key: 'node1.example.com:443',
-        status: 'running',
-        created_at: '2026-07-20T10:00:00Z',
-        updated_at: '2026-07-20T10:00:00Z'
-      }
-    ]
+    vi.mocked(jobsApi.listJobs).mockResolvedValue([
+      job(1, 'exam', 'node1.example.com:443', 'running')
+    ])
 
-    vi.mocked(jobsApi.listJobs).mockResolvedValue(mockJobs)
-
-    const { result } = mountComposable()
-    await vi.runAllTimersAsync()
-
+    const { wrapper, result } = mountComposable()
+    await flush()
     expect(result.runningExamKeys.value.size).toBe(1)
 
-    // Change mock data
     vi.mocked(jobsApi.listJobs).mockResolvedValue([])
-
-    // Manual reload
     await result.reload()
     expect(result.runningExamKeys.value.size).toBe(0)
+    wrapper.unmount()
   })
 })

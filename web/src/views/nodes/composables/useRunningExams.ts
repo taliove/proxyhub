@@ -5,7 +5,7 @@ import type { Job } from '@/api/jobs'
 // useRunningExams 轮询任务中心,提取进行中的 exam 任务 key 集合(node_key)。
 // 用于在节点行显示"查看进度"而非"深度体检"按钮。
 // 轮询间隔 10s,页面可见时执行。
-export function useRunningExams() {
+export function useRunningExams(intervalMs = 10000) {
   const runningExamKeys = ref<Set<string>>(new Set())
   let timer: ReturnType<typeof setInterval> | null = null
 
@@ -23,7 +23,7 @@ export function useRunningExams() {
 
   const startPolling = () => {
     load() // 立即加载一次
-    timer = setInterval(load, 10000) // 每 10s 轮询
+    timer = setInterval(load, intervalMs) // 周期轮询(默认 10s,测试可注入更短间隔)
   }
 
   const stopPolling = () => {
