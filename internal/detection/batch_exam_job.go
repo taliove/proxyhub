@@ -246,5 +246,5 @@ func (m *BatchExamJobManager) Cancel(key string) bool {
 
 // RecoverInterrupted 重启恢复:批量体检可续跑,从游标续跑。
 func (m *BatchExamJobManager) RecoverInterrupted() error {
-	return m.mgr.Recover()
+	return m.mgr.RecoverOwn()
 }

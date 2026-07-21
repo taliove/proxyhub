@@ -296,6 +296,11 @@ func (s *Server) handleManualRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.Info("manual refresh triggered", "job_id", jobID, "key", key, "started", started)
+	writeRefreshJobResponse(w, jobID, key, started)
+}
+
+// writeRefreshJobResponse 刷新任务响应(全量/单机场入口共用)。
+func writeRefreshJobResponse(w http.ResponseWriter, jobID int64, key string, started bool) {
 	writeJSON(w, map[string]any{
 		"ok":      true,
 		"jobId":   jobID,
@@ -383,11 +388,5 @@ func (s *Server) handleAirportRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.Info("airport refresh triggered", "airport_id", id, "job_id", jobID, "started", started)
-	writeJSON(w, map[string]any{
-		"ok":      true,
-		"jobId":   jobID,
-		"kind":    "refresh",
-		"key":     key,
-		"started": started,
-	})
+	writeRefreshJobResponse(w, jobID, key, started)
 }

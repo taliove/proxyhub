@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/taliove/proxyhub/internal/config"
@@ -255,7 +256,7 @@ func (a *Aggregator) RunOnce(ctx context.Context, trigger string) error {
 		// 刷新记录写不进去不阻断聚合，仅丢失本次日志
 		a.logger.Warn("create refresh run failed, continuing without refresh log", "error", err)
 	}
-	a.execute(ctx, rl)
+	a.execute(ctx, rl, nil)
 	return nil
 }
 
@@ -315,11 +316,12 @@ type fetchResult struct {
 	failed       int // 拉取失败的机场数
 }
 
-// execute 聚合流水线：拉取 → 健康检查 → 过滤 → 注入自建节点 → 更新节点池 → 告警
-func (a *Aggregator) execute(ctx context.Context, rl *runLog) {
+// execute 聚合流水线：拉取 → 健康检查 → 过滤 → 注入自建节点 → 更新节点池 → 告警。
+// progress 为任务游标回调(已完成机场数;RunOnce 直接调用传 nil)。
+func (a *Aggregator) execute(ctx context.Context, rl *runLog, progress func(string)) {
 	a.logger.Info("aggregation started")
 
-	fetched, err := a.fetchAirports(ctx, rl)
+	fetched, err := a.fetchAirports(ctx, rl, progress)
 	if err != nil {
 		a.logger.Error("list airports failed", "error", err)
 		rl.event(levelError, stageFetch, "读取机场列表失败："+err.Error(), nil)
@@ -345,6 +347,13 @@ func (a *Aggregator) execute(ctx context.Context, rl *runLog) {
 		return
 	}
 
+	// 取消:只对成功拉取的机场做 MergePool 入池,未拉取的机场节点原样保留。
+	// 直接走全量 MergePool 会把未拉取机场的节点全部标 stale(见 code-review 发现)。
+	if ctx.Err() != nil {
+		a.mergePartialOnCancel(rl, fetched)
+		return
+	}
+
 	// 地区识别：从节点名提取地区代码，填充 Region 字段
 	a.recognizeRegions(rl, fetched.allNodes)
 
@@ -365,23 +374,7 @@ func (a *Aggregator) execute(ctx context.Context, rl *runLog) {
 	mergedPool := subscription.MergePool(oldPool, allNodes)
 
 	// 应用覆盖层（机场节点的 display_name/region 编辑）
-	if overrides, err := a.st.ListNodeOverrides(); err == nil {
-		for _, n := range mergedPool {
-			if n.Source == subscription.SourceSelfHosted {
-				continue // 自建节点不走覆盖层
-			}
-			if override, exists := overrides[n.NodeKey()]; exists {
-				if override.DisplayName != "" {
-					n.DisplayName = override.DisplayName
-				}
-				if override.Region != "" {
-					n.Region = override.Region
-				}
-			}
-		}
-	} else {
-		a.logger.Warn("load node overrides failed", "error", err)
-	}
+	a.applyOverrides(mergedPool)
 
 	a.mu.Lock()
 	a.nodes = mergedPool
@@ -399,12 +392,7 @@ func (a *Aggregator) execute(ctx context.Context, rl *runLog) {
 
 	status := store.RefreshStatusSuccess
 	errMsg := ""
-	switch {
-	case ctx.Err() != nil:
-		// 取消:中断于当前阶段,已拉取部分照常入池(不回滚)
-		status = store.RefreshStatusCancelled
-		errMsg = "cancelled"
-	case fetched.failed > 0:
+	if fetched.failed > 0 {
 		errMsg = fmt.Sprintf("%d/%d 机场拉取失败", fetched.failed, fetched.enabled)
 		if fetched.failed == fetched.enabled {
 			status = store.RefreshStatusFailed
@@ -422,7 +410,7 @@ func (a *Aggregator) execute(ctx context.Context, rl *runLog) {
 // fetchAirports 拉取全部启用机场的订阅；单个机场失败不阻断，仅计入失败数。
 // 拉取按 fetchConcurrency() 的度并行(semaphore),结果按机场列表顺序归并,
 // 不随完成序漂移(事件按完成序写,带时间戳,顺序乱属正常)。
-func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog) (*fetchResult, error) {
+func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress func(string)) (*fetchResult, error) {
 	airports, err := a.st.ListAirports()
 	if err != nil {
 		return nil, err
@@ -443,22 +431,30 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog) (*fetchResul
 
 	concurrency := a.fetchConcurrency()
 	type outcome struct {
-		nodes []*subscription.Node
-		err   error
+		nodes   []*subscription.Node
+		err     error
+		skipped bool // 取消导致未启动(不是机场故障,不计入失败)
 	}
 	outcomes := make([]outcome, len(enabled))
 	sem := make(chan struct{}, concurrency)
+	var completed atomic.Int64
 	var wg sync.WaitGroup
+	reportProgress := func() {
+		if progress != nil {
+			progress(strconv.FormatInt(completed.Add(1), 10))
+		}
+	}
 	for i, airport := range enabled {
 		wg.Add(1)
 		go func(i int, airport *store.Airport) {
 			defer wg.Done()
+			defer reportProgress()
 			// 取消=中断当前拉取:不再启动新拉取(进行中的由 fetcher 超时兜底跑完)
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				outcomes[i] = outcome{err: ctx.Err()}
+				outcomes[i] = outcome{skipped: true}
 				return
 			}
 
@@ -485,12 +481,13 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog) (*fetchResul
 	}
 	for i, airport := range enabled {
 		o := outcomes[i]
+		if o.skipped {
+			result.airportNodes[airport.Name] = nil
+			continue
+		}
 		if o.err != nil {
 			result.airportNodes[airport.Name] = nil
-			// 取消导致未启动的拉取不计入失败(不是机场坏了)
-			if !errors.Is(o.err, context.Canceled) && !errors.Is(o.err, context.DeadlineExceeded) {
-				result.failed++
-			}
+			result.failed++
 			continue
 		}
 		result.airportNodes[airport.Name] = o.nodes
@@ -671,4 +668,71 @@ func (a *Aggregator) recognizeRegions(rl *runLog, nodes []*subscription.Node) {
 	rl.event(levelInfo, stageFetch, fmt.Sprintf("地区识别完成：%d 个节点分布于 %d 个地区",
 		len(nodes), len(regionStats)), map[string]any{"regions": regionStats})
 	a.logger.Info("region recognition completed", "nodes", len(nodes), "regions", len(regionStats), "stats", regionStats)
+}
+
+// applyOverrides 应用机场节点覆盖层(display_name/region 编辑);自建节点豁免。
+func (a *Aggregator) applyOverrides(pool []*subscription.Node) {
+	overrides, err := a.st.ListNodeOverrides()
+	if err != nil {
+		a.logger.Warn("load node overrides failed", "error", err)
+		return
+	}
+	for _, n := range pool {
+		if n.Source == subscription.SourceSelfHosted {
+			continue // 自建节点不走覆盖层
+		}
+		if override, exists := overrides[n.NodeKey()]; exists {
+			if override.DisplayName != "" {
+				n.DisplayName = override.DisplayName
+			}
+			if override.Region != "" {
+				n.Region = override.Region
+			}
+		}
+	}
+}
+
+// mergePartialOnCancel 取消时的部分入池:只对成功拉取的机场做 MergePool
+// (carry-forward + stale 标记只作用于这些机场),未拉取的机场节点原样保留——
+// 取消不等于"那些机场消失了",标 stale 会让整个池在订阅里消失。
+func (a *Aggregator) mergePartialOnCancel(rl *runLog, fetched *fetchResult) {
+	a.recognizeRegions(rl, fetched.allNodes)
+
+	fetchedSources := make(map[string]bool)
+	for name, nodes := range fetched.airportNodes {
+		if nodes != nil {
+			fetchedSources[name] = true
+		}
+	}
+
+	a.mu.RLock()
+	oldPool := a.nodes
+	a.mu.RUnlock()
+	var oldOfFetched, rest []*subscription.Node
+	for _, n := range oldPool {
+		if fetchedSources[n.Source] {
+			oldOfFetched = append(oldOfFetched, n)
+		} else {
+			rest = append(rest, n)
+		}
+	}
+
+	merged := subscription.MergePool(oldOfFetched, fetched.allNodes)
+	a.applyOverrides(merged)
+	newPool := append(merged, rest...)
+
+	a.mu.Lock()
+	a.nodes = newPool
+	a.lastUpdate = time.Now()
+	a.mu.Unlock()
+
+	if err := a.st.SaveNodePool(newPool); err != nil {
+		a.logger.Warn("persist node pool failed", "error", err)
+	}
+
+	rl.event(levelWarn, stageDone,
+		fmt.Sprintf("刷新已取消：%d 个机场已拉取部分照常入池，未拉取机场保持原状", len(fetchedSources)),
+		map[string]any{"fetched_airports": len(fetchedSources)})
+	rl.finish(store.RefreshStatusCancelled, len(fetched.allNodes), 0, len(newPool), "cancelled")
+	a.checkAlerts(fetched.airportNodes, 0)
 }

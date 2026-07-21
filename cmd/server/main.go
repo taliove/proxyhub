@@ -246,7 +246,7 @@ func initJobsRuntime(st *store.Store, logger *slog.Logger) (*jobs.Manager, *jobs
 	mgr.Register(jobs.NewRetagAllKind(st))
 
 	// 恢复重启前未完成的 resumable 任务
-	if err := mgr.Recover(); err != nil {
+	if err := mgr.RecoverOwn(); err != nil {
 		logger.Error("jobs recover failed", "error", err)
 	}
 

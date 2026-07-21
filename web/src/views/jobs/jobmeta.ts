@@ -116,8 +116,10 @@ const TRIGGER_LABELS: Record<string, string> = {
   startup: '启动'
 }
 
-// jobTrigger 归一化任务来源标签;未记录 trigger 的一律"手动"。
+// jobTrigger 归一化任务来源标签;refresh 读 params.trigger,retag_all 是晚间
+// 定时调度固定归"定时",其余 kind 都是用户手动发起归"手动"。
 export function jobTrigger(job: { kind: string; params?: string }): string {
+  if (job.kind === 'retag_all') return '定时'
   if (job.kind !== 'refresh') return '手动'
   const t = parseJobParams(job.params)?.trigger
   return (t && TRIGGER_LABELS[t]) || '手动'

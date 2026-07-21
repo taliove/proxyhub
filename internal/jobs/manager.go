@@ -206,14 +206,8 @@ func (m *Manager) OpenForce(kind, key string, params json.RawMessage) (*Subscrip
 	return m.open(kind, key, params, true)
 }
 
-// OpenID 启动或附加(kind,key)任务,返回持久化行 ID 与是否本次新启动。
-// 供调用方拿到任务 id 做关联(如刷新任务回填 refresh_runs.job_id);
-// rowID=0 表示持久化失败退化为纯内存任务。
-func (m *Manager) OpenID(kind, key string, params json.RawMessage) (rowID int64, started bool, err error) {
-	return m.openID(kind, key, params, false)
-}
-
-// OpenIDForce 同 OpenID,但对已收口的旧任务强制重开(进行中的仍按附加)。
+// OpenIDForce 启动或附加(kind,key)任务:进行中的仍按附加,已收口的旧任务强制重开。
+// 返回持久化行 ID 与是否本次新启动;rowID=0 表示持久化失败退化为纯内存任务。
 // 适合"再点一次就再跑一轮"的触发语义(如刷新)。
 func (m *Manager) OpenIDForce(kind, key string, params json.RawMessage) (rowID int64, started bool, err error) {
 	return m.openID(kind, key, params, true)

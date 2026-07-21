@@ -69,7 +69,7 @@ func TestFetchAirports_ParallelBeatsSerial(t *testing.T) {
 		t.Fatalf("SetSetting() error = %v", err)
 	}
 	start := time.Now()
-	if _, err := agg.fetchAirports(context.Background(), rl); err != nil {
+	if _, err := agg.fetchAirports(context.Background(), rl, nil); err != nil {
 		t.Fatalf("fetchAirports() error = %v", err)
 	}
 	parallel := time.Since(start)
@@ -82,7 +82,7 @@ func TestFetchAirports_ParallelBeatsSerial(t *testing.T) {
 		t.Fatalf("SetSetting() error = %v", err)
 	}
 	start = time.Now()
-	if _, err := agg.fetchAirports(context.Background(), rl); err != nil {
+	if _, err := agg.fetchAirports(context.Background(), rl, nil); err != nil {
 		t.Fatalf("fetchAirports() error = %v", err)
 	}
 	serial := time.Since(start)
@@ -108,7 +108,7 @@ func TestFetchAirports_OrderStableRegardlessOfCompletion(t *testing.T) {
 		t.Fatalf("SetSetting() error = %v", err)
 	}
 
-	result, err := agg.fetchAirports(context.Background(), &runLog{})
+	result, err := agg.fetchAirports(context.Background(), &runLog{}, nil)
 	if err != nil {
 		t.Fatalf("fetchAirports() error = %v", err)
 	}
@@ -135,7 +135,7 @@ func TestFetchAirports_FailureIsolation(t *testing.T) {
 		t.Fatalf("SetSetting() error = %v", err)
 	}
 
-	result, err := agg.fetchAirports(context.Background(), &runLog{})
+	result, err := agg.fetchAirports(context.Background(), &runLog{}, nil)
 	if err != nil {
 		t.Fatalf("fetchAirports() error = %v", err)
 	}

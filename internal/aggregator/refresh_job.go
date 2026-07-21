@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/taliove/proxyhub/internal/jobs"
-	"github.com/taliove/proxyhub/internal/poolops"
 	"github.com/taliove/proxyhub/internal/store"
 )
 
@@ -48,7 +46,7 @@ type refreshKind struct {
 func (k *refreshKind) Name() string    { return refreshJobKindName }
 func (k *refreshKind) Resumable() bool { return false }
 
-func (k *refreshKind) Run(ctx context.Context, params json.RawMessage, _ string, _ func(json.RawMessage), _ func(string)) error {
+func (k *refreshKind) Run(ctx context.Context, params json.RawMessage, _ string, _ func(json.RawMessage), progress func(string)) error {
 	var p RefreshJobParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return fmt.Errorf("parse refresh params: %w", err)
@@ -59,18 +57,18 @@ func (k *refreshKind) Run(ctx context.Context, params json.RawMessage, _ string,
 	if p.AirportID > 0 {
 		return k.runSingle(ctx, &p)
 	}
-	return k.runFull(ctx, &p)
+	return k.runFull(ctx, &p, progress)
 }
 
 // runFull 全量刷新:完整聚合流水线(拉取→地区识别→健康检查→合并入池)。
 // 取消时 execute 内部中断于当前阶段,已拉取部分照常入池,refresh_runs 记 cancelled。
-func (k *refreshKind) runFull(ctx context.Context, p *RefreshJobParams) error {
+func (k *refreshKind) runFull(ctx context.Context, p *RefreshJobParams, progress func(string)) error {
 	rl, err := k.agg.newRunLog(p.Trigger, k.agg.findRunningJobID(refreshKeyAll))
 	if err != nil {
 		// 刷新记录写不进去不阻断聚合,仅丢失本次日志
 		k.agg.logger.Warn("create refresh run failed, continuing without refresh log", "error", err)
 	}
-	k.agg.execute(ctx, rl)
+	k.agg.execute(ctx, rl, progress)
 	return ctx.Err()
 }
 
@@ -109,13 +107,16 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 
 	// 池写串行化:不同机场的单机场刷新允许并行拉取,但 UpsertAirportNodes
 	// 是"读全池-改本机场-写全池",并行写会丢更新(lost update);串行代价低(纯 DB 操作)
-	k.agg.singleUpsertMu.Lock()
-	upsertErr := k.agg.poolOps.UpsertAirportNodes(airport.Name, sub.Nodes)
-	if upsertErr == nil {
+	upsertErr := func() error {
+		k.agg.singleUpsertMu.Lock()
+		defer k.agg.singleUpsertMu.Unlock()
+		if err := k.agg.poolOps.UpsertAirportNodes(airport.Name, sub.Nodes); err != nil {
+			return err
+		}
 		// 内存池回填(DB 已是新状态;读失败不阻断,下轮全量刷新自愈)
 		k.agg.restoreNodePool()
-	}
-	k.agg.singleUpsertMu.Unlock()
+		return nil
+	}()
 	if upsertErr != nil {
 		rl.finish(store.RefreshStatusFailed, len(sub.Nodes), 0, 0, upsertErr.Error())
 		return fmt.Errorf("upsert airport nodes: %w", upsertErr)
@@ -210,14 +211,4 @@ func (a *Aggregator) startRefresh(trigger string, airportID int64) (int64, strin
 // CancelRefresh 取消指定 key 的刷新任务;无进行中任务返回 false。
 func (a *Aggregator) CancelRefresh(key string) bool {
 	return a.refreshJobs.Cancel(refreshJobKindName, key)
-}
-
-// RefreshJobs 暴露刷新任务管理器(供 server 取消分发等)。
-func (a *Aggregator) RefreshJobs() *jobs.Manager {
-	return a.refreshJobs
-}
-
-// PoolOps 暴露单机场池操作(供 airporttest 等复用同一口径)。
-func (a *Aggregator) PoolOps() poolops.Operations {
-	return a.poolOps
 }

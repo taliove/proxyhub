@@ -11,6 +11,7 @@ import (
 
 	"github.com/taliove/proxyhub/internal/jobs"
 	"github.com/taliove/proxyhub/internal/store"
+	"github.com/taliove/proxyhub/internal/subscription"
 )
 
 // gatedSubscriptionServer 返回可闸门控制的订阅服务器:close(release) 前请求一直阻塞。
@@ -333,4 +334,72 @@ func gatedSubscriptionServerNamed(t *testing.T, release <-chan struct{}, addr, m
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// TestMergePartialOnCancel_UnfetchedAirportsNotMarkedStale 回归测试:取消全量刷新时,
+// 未拉取(被取消)的机场节点不得标 stale(曾整池 stale 导致订阅空池)。
+// 直接单测 mergePartialOnCancel(并发时序在集成层不可控,见开发记录)。
+func TestMergePartialOnCancel_UnfetchedAirportsNotMarkedStale(t *testing.T) {
+	agg, st := newTestAggregator(t)
+
+	// 预置:机场X/机场Y 的旧节点都在池中。X 的旧节点与 X 订阅返回的同 key(carry-forward);
+	// Y 的旧节点端口与 Y 订阅返回的不同——若 Y 被错误并入 MergePool 它必 stale。
+	oldX := &subscription.Node{Name: "X 01", Type: "trojan", Server: "127.0.0.1", Port: 1, Password: "pw", Region: "HK", Source: "机场X"}
+	oldY := &subscription.Node{Name: "Y old", Type: "trojan", Server: "127.0.0.1", Port: 5, Password: "pw", Region: "HK", Source: "机场Y"}
+	if err := st.SaveNodePool([]*subscription.Node{oldX, oldY}); err != nil {
+		t.Fatalf("SaveNodePool() error = %v", err)
+	}
+	agg.restoreNodePool()
+
+	// 构造取消时刻的拉取结果:X 拉成功,Y 未启动(skipped,airportNodes[Y]=nil)
+	newX := &subscription.Node{Name: "X 01", Type: "trojan", Server: "127.0.0.1", Port: 1, Password: "pw", Region: "HK", Source: "机场X"}
+	fetched := &fetchResult{
+		airportNodes: map[string][]*subscription.Node{
+			"机场X": {newX},
+			"机场Y": nil,
+		},
+		allNodes: []*subscription.Node{newX},
+		enabled:  2,
+	}
+
+	agg.mergePartialOnCancel(&runLog{}, fetched)
+
+	// Y(未拉取):旧节点原样保留且不 stale(取消 ≠ 机场消失)
+	var nodeY *subscription.Node
+	var nodeX *subscription.Node
+	for _, n := range agg.Nodes() {
+		switch n.Source {
+		case "机场Y":
+			nodeY = n
+		case "机场X":
+			nodeX = n
+		}
+	}
+	if nodeY == nil {
+		t.Fatal("机场Y old node missing from pool after cancel")
+	}
+	if nodeY.Stale {
+		t.Error("机场Y node marked stale after cancel, want preserved active")
+	}
+	if nodeX == nil || nodeX.Stale {
+		t.Errorf("机场X node = %+v, want present and active (fetched)", nodeX)
+	}
+
+	// 持久化同样正确(下轮 restore 读到的也是不 stale 的 Y)
+	reloaded, err := st.LoadNodePool()
+	if err != nil {
+		t.Fatalf("LoadNodePool() error = %v", err)
+	}
+	for _, n := range reloaded {
+		if n.Source == "机场Y" && n.Stale {
+			t.Error("机场Y node stale in DB after cancel, want preserved")
+		}
+	}
+}
+
+// closedChan 返回已关闭的 channel(闸门立即放行)。
+func closedChan() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
 }

@@ -168,9 +168,12 @@ describe('jobTrigger', () => {
     expect(jobTrigger({ kind: 'refresh', params: '{"trigger":"startup"}' })).toBe('启动')
     expect(jobTrigger({ kind: 'refresh', params: '{"trigger":"manual"}' })).toBe('手动')
   })
-  it('refresh 无 trigger 或非 refresh kind 一律手动', () => {
+  it('refresh 无 trigger 或手动类 kind 一律手动', () => {
     expect(jobTrigger({ kind: 'refresh' })).toBe('手动')
     expect(jobTrigger({ kind: 'batch_detection' })).toBe('手动')
     expect(jobTrigger({ kind: 'exam', params: 'not-json' })).toBe('手动')
+  })
+  it('retag_all 是晚间定时调度,归定时', () => {
+    expect(jobTrigger({ kind: 'retag_all' })).toBe('定时')
   })
 })

@@ -289,5 +289,5 @@ func (m *ExamJobManager) SweepExpired() {
 // RecoverInterrupted 重启恢复:体检为单发任务,重启时仍 running 的记录一律标记 interrupted。
 // 由 main 在服务启动前调用(须在管理器构造之后,即 kind 已注册)。
 func (m *ExamJobManager) RecoverInterrupted() error {
-	return m.mgr.Recover()
+	return m.mgr.RecoverOwn()
 }

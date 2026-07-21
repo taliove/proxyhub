@@ -74,7 +74,7 @@ func (m *BatchDetectionManager) Subscribe() *jobs.Subscription {
 
 // Recover 重启恢复:加载 running 任务并从游标续跑。
 func (m *BatchDetectionManager) Recover() error {
-	return m.mgr.Recover()
+	return m.mgr.RecoverOwn()
 }
 
 // SweepExpired 清理超过 TTL 的已完成任务。
