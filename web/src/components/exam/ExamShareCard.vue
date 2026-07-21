@@ -1,13 +1,12 @@
 <template>
   <!-- 分享卡海报:专为分享设计的独立版式。纯展示、零按钮,控件由外层 ExamShareDialog 承载。
-       字段经 sharecard.ts 派生:打码节点名、时间、评分环、基准速率、地域极值、解锁 6 宫格、
-       出口地区 + 可选出口/入口 IP + DNS 泄露(+ 可选解析器)。
-       安全:默认不渲染任何 IP/服务器地址,仅当对应 showXxx=true 时显示。 -->
-  <div class="share-card">
+       两态:showAll=false(默认)显示脱敏摘要(打码节点名、无 IP、最佳/最差);
+       showAll=true 显示全量版(完整节点名、全 IP、多地域全行表格、稳定性明细、出网全字段)。 -->
+  <div class="share-card" :class="{ 'share-card-full': showAll }">
     <header class="share-head">
       <div class="share-head-main">
-        <div class="share-node">{{ nodeLabel }}</div>
-        <div class="share-time">{{ timeLabel }}</div>
+        <div class="share-node">{{ vm.nodeLabel }}</div>
+        <div class="share-time">{{ vm.timeLabel }}</div>
       </div>
       <div class="share-brand-tag">ProxyHub</div>
     </header>
@@ -28,7 +27,7 @@
         </svg>
         <div class="share-ring-center">
           <div class="share-ring-score" :style="{ color: scoreColor }">
-            {{ Math.round(score) }}
+            {{ Math.round(vm.score.total) }}
           </div>
           <div class="share-ring-label">{{ scoreText }}</div>
         </div>
@@ -40,10 +39,11 @@
         <div class="share-stat-sub">Cloudflare 最近节点</div>
       </div>
     </section>
-    <!-- 多地域最佳/最差 -->
+    <!-- 多地域:摘要版显示最佳/最差,全量版显示完整表格 -->
     <section class="share-block">
       <div class="share-block-title">多地域测速</div>
-      <div class="share-extreme">
+      <!-- 摘要版:最佳/最差两行 -->
+      <div v-if="!showAll" class="share-extreme">
         <div class="share-extreme-row">
           <span class="share-extreme-tag share-extreme-best">最佳</span>
           <span class="share-extreme-name">{{ best ? best.name : '—' }}</span>
@@ -61,12 +61,59 @@
           </span>
         </div>
       </div>
+      <!-- 全量版:完整表格 -->
+      <div v-else class="share-region-table">
+        <div class="share-region-header">
+          <span class="share-region-col-name">区域</span>
+          <span class="share-region-col-latency">延迟</span>
+          <span class="share-region-col-down">下行</span>
+          <span class="share-region-col-up">上行</span>
+        </div>
+        <div v-for="region in vm.allRegions" :key="region.code" class="share-region-row">
+          <span class="share-region-col-name">{{ region.name }}</span>
+          <span class="share-region-col-latency">{{ ms(region.ttfb_ms) }}</span>
+          <span class="share-region-col-down">{{ mbps(region.down_mbps) }}</span>
+          <span class="share-region-col-up">{{
+            region.up_mbps !== undefined ? mbps(region.up_mbps) : '—'
+          }}</span>
+        </div>
+      </div>
+    </section>
+    <!-- 全量版:稳定性明细 -->
+    <section v-if="showAll && vm.stabilityDetails" class="share-block">
+      <div class="share-block-title">稳定性指标</div>
+      <div class="share-stability-grid">
+        <div class="share-stability-item">
+          <span class="share-stability-label">丢包率</span>
+          <span class="share-stability-value">{{ pct(vm.stabilityDetails.loss_rate) }}</span>
+        </div>
+        <div class="share-stability-item">
+          <span class="share-stability-label">平均延迟</span>
+          <span class="share-stability-value">{{ ms(vm.stabilityDetails.mean_ms) }}</span>
+        </div>
+        <div class="share-stability-item">
+          <span class="share-stability-label">中位延迟</span>
+          <span class="share-stability-value">{{ ms(vm.stabilityDetails.median_ms) }}</span>
+        </div>
+        <div class="share-stability-item">
+          <span class="share-stability-label">P95</span>
+          <span class="share-stability-value">{{ ms(vm.stabilityDetails.p95_ms) }}</span>
+        </div>
+        <div class="share-stability-item">
+          <span class="share-stability-label">P99</span>
+          <span class="share-stability-value">{{ ms(vm.stabilityDetails.p99_ms) }}</span>
+        </div>
+        <div class="share-stability-item">
+          <span class="share-stability-label">抖动</span>
+          <span class="share-stability-value">{{ ms(vm.stabilityDetails.jitter_ms) }}</span>
+        </div>
+      </div>
     </section>
     <!-- 解锁 6 宫格 -->
     <section class="share-block">
       <div class="share-block-title">流媒体 / AI 解锁</div>
       <div class="share-unlock-grid">
-        <div v-for="cell in unlockCells" :key="cell.name" class="share-unlock-cell">
+        <div v-for="cell in vm.unlockCells" :key="cell.name" class="share-unlock-cell">
           <span class="share-unlock-dot" :style="{ background: cellColor(cell.level) }" />
           <span class="share-unlock-name">{{ cell.name }}</span>
           <span class="share-unlock-level" :style="{ color: cellColor(cell.level) }">{{
@@ -75,20 +122,20 @@
         </div>
       </div>
     </section>
-    <!-- 出口地区 + 可选出口/入口 IP + DNS 泄露(+ 可选解析器) -->
+    <!-- 出口地区 + 可选 IP + DNS 泄露 -->
     <section class="share-block">
       <div class="share-egress">
         <div class="share-egress-item">
           <span class="share-egress-label">出口地区</span>
-          <span class="share-egress-value">{{ egress.ipv4Region || '—' }}</span>
+          <span class="share-egress-value">{{ vm.egress.ipv4Region || '—' }}</span>
         </div>
-        <div v-if="egress.egressIp" class="share-egress-item">
+        <div v-if="vm.egress.egressIp" class="share-egress-item">
           <span class="share-egress-label">出口 IP</span>
-          <span class="share-egress-value">{{ egress.egressIp }}</span>
+          <span class="share-egress-value">{{ vm.egress.egressIp }}</span>
         </div>
-        <div v-if="egress.ingressIp" class="share-egress-item">
+        <div v-if="vm.egress.ingressIp" class="share-egress-item">
           <span class="share-egress-label">入口 IP</span>
-          <span class="share-egress-value">{{ egress.ingressIp }}</span>
+          <span class="share-egress-value">{{ vm.egress.ingressIp }}</span>
         </div>
         <div class="share-egress-item">
           <span class="share-egress-label">DNS</span>
@@ -96,10 +143,29 @@
             <span class="share-egress-dot" :style="{ background: leakColor }" />{{ leakText }}
           </span>
         </div>
-        <div v-if="egress.dnsResolver" class="share-egress-item">
+        <div v-if="vm.egress.dnsResolver" class="share-egress-item">
           <span class="share-egress-label">解析器</span>
-          <span class="share-egress-value">{{ egress.dnsResolver }}</span>
+          <span class="share-egress-value">{{ vm.egress.dnsResolver }}</span>
         </div>
+        <!-- 全量版:额外出网字段 -->
+        <template v-if="showAll">
+          <div v-if="vm.egress.asn" class="share-egress-item">
+            <span class="share-egress-label">ASN</span>
+            <span class="share-egress-value">{{ vm.egress.asn }}</span>
+          </div>
+          <div v-if="vm.egress.org" class="share-egress-item">
+            <span class="share-egress-label">组织</span>
+            <span class="share-egress-value">{{ vm.egress.org }}</span>
+          </div>
+          <div v-if="vm.egress.proxy !== undefined" class="share-egress-item">
+            <span class="share-egress-label">代理</span>
+            <span class="share-egress-value">{{ vm.egress.proxy ? '是' : '否' }}</span>
+          </div>
+          <div v-if="vm.egress.hosting !== undefined" class="share-egress-item">
+            <span class="share-egress-label">机房</span>
+            <span class="share-egress-value">{{ vm.egress.hosting ? '是' : '否' }}</span>
+          </div>
+        </template>
       </div>
     </section>
     <footer class="share-foot">
@@ -112,20 +178,7 @@
 import { computed } from 'vue'
 import type { ExamReport } from '@/types'
 import { gradeColorVar, gradeLabel } from './score'
-import {
-  displayNodeName,
-  formatExamTime,
-  shareOverallScore,
-  shareBaselineMbps,
-  shareBaselineUpMbps,
-  shareRegionExtremes,
-  shareUnlockCells,
-  shareEgressSummary,
-  unlockLevelColorVar,
-  leakColorVar,
-  leakLabel,
-  type UnlockCell
-} from './sharecard'
+import { shareViewModel, unlockLevelColorVar, leakColorVar, leakLabel } from './sharecard'
 import type { UnlockLevel } from './unlock'
 
 const props = withDefaults(
@@ -134,49 +187,43 @@ const props = withDefaults(
     nodeName: string
     examTime: string | number | Date
     nodeServer?: string
-    masked?: boolean
-    showEgressIp?: boolean
-    showIngressIp?: boolean
-    showDns?: boolean
+    showAll?: boolean
   }>(),
-  { masked: true, nodeServer: '', showEgressIp: false, showIngressIp: false, showDns: false }
+  { nodeServer: '', showAll: false }
 )
 // 评分环几何:r=52 的周长,进度按 score/100 收拢弧长。
 const RING_CIRC = 2 * Math.PI * 52
 // 令牌变量取 CSS 实际值(随亮/暗主题),缺失兜底;与既有段组件同款。
 const cssVar = (name: string) =>
   getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-const nodeLabel = computed(() => displayNodeName(props.nodeName, props.masked))
-const timeLabel = computed(() => formatExamTime(props.examTime))
-const overallScore = computed(() => shareOverallScore(props.report))
-const score = computed(() => overallScore.value.total)
-const scoreColor = computed(() => cssVar(gradeColorVar(overallScore.value.grade)) || '#059669')
-const scoreText = computed(() => gradeLabel(overallScore.value.grade))
-const ringOffset = computed(() => RING_CIRC * (1 - Math.max(0, Math.min(100, score.value)) / 100))
-const baseline = computed(() => shareBaselineMbps(props.report))
-const baselineDownText = computed(() =>
-  baseline.value === null ? '—' : `${baseline.value.toFixed(1)} Mbps`
-)
-const baselineUp = computed(() => shareBaselineUpMbps(props.report))
-const baselineUpText = computed(() =>
-  baselineUp.value === null ? null : `${baselineUp.value.toFixed(1)} Mbps`
-)
-const extremes = computed(() => shareRegionExtremes(props.report))
-const best = computed(() => extremes.value.best)
-const worst = computed(() => extremes.value.worst)
-const mbps = (v: number) => `${v.toFixed(1)} Mbps`
-const ms = (v: number) => `${Math.round(v)} ms`
-const unlockCells = computed<UnlockCell[]>(() => shareUnlockCells(props.report))
-const cellColor = (level: UnlockLevel) => cssVar(unlockLevelColorVar(level)) || '#64748b'
-const egress = computed(() =>
-  shareEgressSummary(props.report, {
-    showEgressIp: props.showEgressIp,
-    showIngressIp: props.showIngressIp,
-    showDns: props.showDns,
+
+const vm = computed(() =>
+  shareViewModel(props.report, {
+    showAll: props.showAll,
+    nodeName: props.nodeName,
+    examTime: props.examTime,
     ingressIp: props.nodeServer
   })
 )
-const leakColor = computed(() => cssVar(leakColorVar(egress.value.dnsLeak)) || '#64748b')
-const leakText = computed(() => leakLabel(egress.value.dnsLeak))
+
+const scoreColor = computed(() => cssVar(gradeColorVar(vm.value.score.grade)) || '#059669')
+const scoreText = computed(() => gradeLabel(vm.value.score.grade))
+const ringOffset = computed(
+  () => RING_CIRC * (1 - Math.max(0, Math.min(100, vm.value.score.total)) / 100)
+)
+const baselineDownText = computed(() =>
+  vm.value.baselineDown === null ? '—' : `${vm.value.baselineDown.toFixed(1)} Mbps`
+)
+const baselineUpText = computed(() =>
+  vm.value.baselineUp === null ? null : `${vm.value.baselineUp.toFixed(1)} Mbps`
+)
+const best = computed(() => vm.value.regionSummary.best)
+const worst = computed(() => vm.value.regionSummary.worst)
+const mbps = (v: number) => `${v.toFixed(1)} Mbps`
+const ms = (v: number) => `${Math.round(v)} ms`
+const pct = (v: number) => `${(v * 100).toFixed(1)}%`
+const cellColor = (level: UnlockLevel) => cssVar(unlockLevelColorVar(level)) || '#64748b'
+const leakColor = computed(() => cssVar(leakColorVar(vm.value.egress.dnsLeak)) || '#64748b')
+const leakText = computed(() => leakLabel(vm.value.egress.dnsLeak))
 </script>
 <style scoped src="./ExamShareCard.css"></style>

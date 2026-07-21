@@ -1,7 +1,8 @@
 <template>
-  <!-- 分享卡对话框:承载海报(ExamShareCard)之外的全部控件 —— 节点名开关、三个 IP/DNS 显隐开关、
+  <!-- 分享卡对话框:承载海报(ExamShareCard)之外的全部控件 —— 单一主开关「显示全部信息」、
        下载 PNG、复制到剪贴板。海报本身零按钮以免被截进图;渲染失败给显式 error 提示,不静默。
-       三个开关默认全关(出口 IP/入口 IP/DNS 解析器均属高敏信息),打开属用户明示。 -->
+       默认关(脱敏摘要:打码节点名、无 IP、最佳/最差);打开后全量展示(完整节点名、全 IP、
+       多地域全行、稳定性明细、出网全字段)。 -->
   <el-dialog
     v-model="visible"
     :title="`分享体检 · ${nodeLabel}`"
@@ -9,10 +10,7 @@
     class="share-dialog"
   >
     <div class="share-toolbar">
-      <el-switch v-model="showFullName" size="small" active-text="显示完整节点名" />
-      <el-switch v-model="showEgressIp" size="small" active-text="显示出口 IP" />
-      <el-switch v-model="showIngressIp" size="small" active-text="显示入口 IP" />
-      <el-switch v-model="showDns" size="small" active-text="显示 DNS 解析器" />
+      <el-switch v-model="showAll" size="small" active-text="显示全部信息" />
     </div>
 
     <el-alert
@@ -32,10 +30,7 @@
         :node-name="nodeName"
         :node-server="nodeServer"
         :exam-time="examTime"
-        :masked="!showFullName"
-        :show-egress-ip="showEgressIp"
-        :show-ingress-ip="showIngressIp"
-        :show-dns="showDns"
+        :show-all="showAll"
       />
     </div>
 
@@ -68,10 +63,7 @@ const props = withDefaults(
 
 const visible = defineModel<boolean>('visible', { required: true })
 
-const showFullName = ref(false)
-const showEgressIp = ref(false)
-const showIngressIp = ref(false)
-const showDns = ref(false)
+const showAll = ref(false)
 const downloading = ref(false)
 const copying = ref(false)
 const errorMsg = ref('')

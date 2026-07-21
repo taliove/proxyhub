@@ -8,6 +8,9 @@
   color: var(--ph-text-primary);
   font-variant-numeric: tabular-nums;
 }
+.share-card-full {
+  width: 480px;
+}
 .share-head {
   display: flex;
   align-items: flex-start;
@@ -214,4 +217,55 @@
 .share-foot-sub {
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
+}
+/* 全量版:多地域表格 */
+.share-region-table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-space-1);
+}
+.share-region-header,
+.share-region-row {
+  display: grid;
+  grid-template-columns: 1fr 60px 70px 70px;
+  gap: var(--ph-space-2);
+  font-size: var(--ph-text-sm);
+  padding: var(--ph-space-2) var(--ph-space-1);
+}
+.share-region-header {
+  font-weight: 600;
+  color: var(--ph-text-secondary);
+  border-bottom: 1px solid var(--ph-border-light);
+}
+.share-region-row {
+  color: var(--ph-text-primary);
+}
+.share-region-col-name {
+  font-weight: 500;
+}
+.share-region-col-latency,
+.share-region-col-down,
+.share-region-col-up {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* 全量版:稳定性明细网格 */
+.share-stability-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--ph-space-2) var(--ph-space-3);
+}
+.share-stability-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--ph-space-2);
+  font-size: var(--ph-text-sm);
+}
+.share-stability-label {
+  color: var(--ph-text-secondary);
+}
+.share-stability-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }

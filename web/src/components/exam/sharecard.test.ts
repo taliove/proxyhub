@@ -10,6 +10,7 @@ import {
   shareRegionExtremes,
   shareUnlockCells,
   shareEgressSummary,
+  shareViewModel,
   unlockLevelColorVar,
   leakColorVar,
   leakLabel,
@@ -375,6 +376,122 @@ describe('shareEgressSummary', () => {
     const s3 = shareEgressSummary(report, { showDns: true })
     expect(JSON.stringify(s3)).toContain('8.8.8.8')
     expect(JSON.stringify(s3)).not.toContain('203.0.113.7')
+  })
+})
+
+describe('shareViewModel (统一视图模型:showAll 控制全量/摘要)', () => {
+  const fullReport: ExamReport = {
+    stability: {
+      score: 88,
+      total: 100,
+      succeeded: 95,
+      loss_rate: 0.05,
+      mean_ms: 45,
+      median_ms: 42,
+      p95_ms: 78,
+      p99_ms: 95,
+      jitter_ms: 8
+    },
+    region_speed: {
+      regions: [
+        { code: 'x', name: '基准', ttfb_ms: 10, down_mbps: 500, up_mbps: 100 },
+        { code: 'us_west', name: '美西', ttfb_ms: 120, down_mbps: 80, up_mbps: 20 },
+        { code: 'jp', name: '东京', ttfb_ms: 60, down_mbps: 150, up_mbps: 30 },
+        { code: 'sg', name: '新加坡', ttfb_ms: 90, down_mbps: 40, up_mbps: 10 }
+      ]
+    },
+    egress: {
+      ipv4: {
+        ip: '203.0.113.7',
+        country: '美国',
+        region: '加州',
+        city: '洛杉矶',
+        asn: 'AS64500',
+        org: 'Example Hosting',
+        proxy: false,
+        hosting: true
+      },
+      dns: { resolver_ip: '8.8.8.8', resolver_geo: '美国', leak: false }
+    }
+  }
+
+  it('showAll=false(默认):摘要版 - 打码节点名、无任何 IP、多地域仅最佳/最差', () => {
+    const vm = shareViewModel(fullReport, {
+      showAll: false,
+      nodeName: '233boy-grpc-host',
+      ingressIp: '1.2.3.4',
+      examTime: new Date(2026, 6, 20, 9, 5)
+    })
+    // 节点名打码
+    expect(vm.nodeLabel).toBe('233boy-grpc-***')
+    // 摘要仅最佳/最差
+    expect(vm.regionSummary).toEqual({ best: expect.any(Object), worst: expect.any(Object) })
+    expect(vm.regionSummary.best?.name).toBe('东京')
+    expect(vm.regionSummary.worst?.name).toBe('新加坡')
+    // 无全量区域列表
+    expect(vm.allRegions).toBeUndefined()
+    // 无稳定性明细
+    expect(vm.stabilityDetails).toBeUndefined()
+    // 出口无任何 IP
+    expect(vm.egress.egressIp).toBeUndefined()
+    expect(vm.egress.ingressIp).toBeUndefined()
+    expect(vm.egress.dnsResolver).toBeUndefined()
+    expect(vm.egress.ipv4Region).toBe('美国 · 加州 · 洛杉矶')
+    // 安全断言:序列化不含任何敏感字段
+    const serialized = JSON.stringify(vm)
+    expect(serialized).not.toContain('203.0.113.7')
+    expect(serialized).not.toContain('8.8.8.8')
+    expect(serialized).not.toContain('1.2.3.4')
+    expect(serialized).not.toContain('AS64500')
+  })
+
+  it('showAll=true:全量版 - 完整节点名、所有 IP、多地域全行、稳定性明细、出网全字段', () => {
+    const vm = shareViewModel(fullReport, {
+      showAll: true,
+      nodeName: '233boy-grpc-host',
+      ingressIp: '1.2.3.4',
+      examTime: new Date(2026, 6, 20, 9, 5)
+    })
+    // 完整节点名
+    expect(vm.nodeLabel).toBe('233boy-grpc-host')
+    // 多地域全行(除基准外 3 行)
+    expect(vm.allRegions).toHaveLength(3)
+    expect(vm.allRegions?.map((r) => r.name)).toEqual(['美西', '东京', '新加坡'])
+    expect(vm.allRegions?.[0].up_mbps).toBe(20)
+    // 仍有摘要(向后兼容)
+    expect(vm.regionSummary.best?.name).toBe('东京')
+    // 稳定性明细
+    expect(vm.stabilityDetails).toEqual({
+      score: 88,
+      total: 100,
+      succeeded: 95,
+      loss_rate: 0.05,
+      mean_ms: 45,
+      median_ms: 42,
+      p95_ms: 78,
+      p99_ms: 95,
+      jitter_ms: 8
+    })
+    // 出口全字段
+    expect(vm.egress.egressIp).toBe('203.0.113.7')
+    expect(vm.egress.ingressIp).toBe('1.2.3.4')
+    expect(vm.egress.dnsResolver).toBe('8.8.8.8 (美国)')
+    expect(vm.egress.asn).toBe('AS64500')
+    expect(vm.egress.org).toBe('Example Hosting')
+    expect(vm.egress.proxy).toBe(false)
+    expect(vm.egress.hosting).toBe(true)
+  })
+
+  it('showAll=true 但稳定性段缺失:stabilityDetails 为 undefined', () => {
+    const report = { ...fullReport, stability: undefined }
+    const vm = shareViewModel(report, { showAll: true, nodeName: 'test' })
+    expect(vm.stabilityDetails).toBeUndefined()
+  })
+
+  it('showAll=true 但多地域段缺失:allRegions 为空数组', () => {
+    const report = { ...fullReport, region_speed: undefined }
+    const vm = shareViewModel(report, { showAll: true, nodeName: 'test' })
+    expect(vm.allRegions).toEqual([])
   })
 })
 

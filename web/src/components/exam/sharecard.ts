@@ -1,7 +1,7 @@
 // 分享卡的纯计算逻辑(与渲染解耦,便于单测)。
 // 只从 ExamReport 派生「可公开」字段:打码节点名、评分、基准下行/上行、多地域最佳/最差、
 // 解锁 6 宫格、出口地区 + DNS 泄露状态。出口 IPv4 仅当显式开关时返回,默认不派生。
-import type { ExamReport, ExamRegionResult, ExamUnlockResult } from '@/types'
+import type { ExamReport, ExamRegionResult, ExamUnlockResult, ExamStabilityMetrics } from '@/types'
 import { isBaselineRow, EXAM_UNLOCK_SLOTS } from './examrows'
 import { unlockLevel, unlockLabel, type UnlockLevel } from './unlock'
 import { ipv4Location } from './egress'
@@ -147,10 +147,16 @@ export interface EgressSummary {
   ingressIp?: string // 入口 IP(节点 server);仅当 showIngressIp=true 时填充
   dnsResolver?: string // DNS 解析器 IP + 地区;仅当 showDns=true 时填充
   dnsLeak: LeakStatus // DNS 泄露状态(与 showDns 独立:状态码始终可见,解析器详情受开关控制)
+  // 全量版额外字段(showAll=true 时填充)
+  asn?: string // ASN 编号
+  org?: string // 组织名称
+  proxy?: boolean // 疑似代理标记
+  hosting?: boolean // 机房标记
 }
 
-// shareEgressSummary 出口摘要:IPv4 出口「地区」+ 三个可选地址字段 + DNS 泄露状态。
+// shareEgressSummary 出口摘要:IPv4 出口「地区」+ 三个可选地址字段 + DNS 泄露状态 + 可选全量字段。
 // 安全契约:默认不返回任何 IP/服务器地址;仅当对应 showXxx=true 时填充。
+// showAll=true 时额外填充 asn/org/proxy/hosting 等全量字段(用于分享卡全量版)。
 // ingressIp(节点入口地址)由调用方从外部传入(不在 report.egress 里),例如 report 宿主传入 node.server。
 export function shareEgressSummary(
   report: ExamReport,
@@ -158,23 +164,47 @@ export function shareEgressSummary(
     showEgressIp?: boolean
     showIngressIp?: boolean
     showDns?: boolean
+    showAll?: boolean
     ingressIp?: string
   } = {}
 ): EgressSummary {
-  const { showEgressIp = false, showIngressIp = false, showDns = false, ingressIp } = options
+  const {
+    showEgressIp = false,
+    showIngressIp = false,
+    showDns = false,
+    showAll = false,
+    ingressIp
+  } = options
   const e = report.egress
   const ipv4 = e?.ipv4
   const ipv4Region = ipv4 && !ipv4.error ? ipv4Location(ipv4) : ''
-  const egressIp = showEgressIp && ipv4 && !ipv4.error ? ipv4.ip : undefined
-  const ingressIpValue = showIngressIp && ingressIp ? ingressIp : undefined
+  const egressIp = (showEgressIp || showAll) && ipv4 && !ipv4.error ? ipv4.ip : undefined
+  const ingressIpValue = (showIngressIp || showAll) && ingressIp ? ingressIp : undefined
   const dns = e?.dns
   let dnsLeak: LeakStatus = 'unknown'
   if (dns && !dns.error) dnsLeak = dns.leak ? 'leak' : 'ok'
   const dnsResolver =
-    showDns && dns && !dns.error
+    (showDns || showAll) && dns && !dns.error
       ? `${dns.resolver_ip}${dns.resolver_geo ? ` (${dns.resolver_geo})` : ''}`
       : undefined
-  return { ipv4Region, egressIp, ingressIp: ingressIpValue, dnsResolver, dnsLeak }
+
+  const summary: EgressSummary = {
+    ipv4Region,
+    egressIp,
+    ingressIp: ingressIpValue,
+    dnsResolver,
+    dnsLeak
+  }
+
+  // 全量版:额外填充 ASN/组织/标记字段
+  if (showAll && ipv4 && !ipv4.error) {
+    summary.asn = ipv4.asn
+    summary.org = ipv4.org
+    summary.proxy = ipv4.proxy
+    summary.hosting = ipv4.hosting
+  }
+
+  return summary
 }
 
 // leakColorVar DNS 泄露状态色:未泄露 绿 / 疑似泄露 红 / 未知 中性。
@@ -199,4 +229,74 @@ export function leakLabel(status: LeakStatus): string {
     default:
       return '未知'
   }
+}
+
+// ShareViewModelOptions shareViewModel 的输入选项(统一 showAll 主开关)。
+export interface ShareViewModelOptions {
+  showAll?: boolean // 主开关:false(默认)=脱敏摘要版,true=全量版
+  nodeName: string
+  examTime?: string | number | Date
+  ingressIp?: string
+}
+
+// ShareViewModel 分享卡统一视图模型(showAll 控制摘要/全量两态)。
+export interface ShareViewModel {
+  nodeLabel: string
+  timeLabel: string
+  score: ExamScoreResult
+  baselineDown: number | null
+  baselineUp: number | null
+  regionSummary: { best: RegionExtreme | null; worst: RegionExtreme | null }
+  allRegions?: ExamRegionResult[] // 仅全量版:多地域全行(除基准外)
+  stabilityDetails?: ExamStabilityMetrics // 仅全量版:稳定性明细指标
+  unlockCells: UnlockCell[]
+  egress: EgressSummary
+}
+
+// shareViewModel 分享卡统一视图模型派生函数:单一 showAll 开关控制摘要/全量两态。
+// showAll=false(默认):打码节点名、无 IP、多地域仅最佳/最差、无稳定性明细。
+// showAll=true:完整节点名、全 IP/ASN、多地域全行、稳定性明细、出网全字段。
+export function shareViewModel(report: ExamReport, options: ShareViewModelOptions): ShareViewModel {
+  const { showAll = false, nodeName, examTime, ingressIp } = options
+
+  const nodeLabel = displayNodeName(nodeName, !showAll)
+  const timeLabel = formatExamTime(examTime)
+  const score = shareOverallScore(report)
+  const baselineDown = shareBaselineMbps(report)
+  const baselineUp = shareBaselineUpMbps(report)
+  const regionSummary = shareRegionExtremes(report)
+  const unlockCells = shareUnlockCells(report)
+  const egress = shareEgressSummary(report, { showAll, ingressIp })
+
+  const vm: ShareViewModel = {
+    nodeLabel,
+    timeLabel,
+    score,
+    baselineDown,
+    baselineUp,
+    regionSummary,
+    unlockCells,
+    egress
+  }
+
+  // 全量版:额外派生多地域全行与稳定性明细
+  if (showAll) {
+    const regions = report.region_speed?.regions ?? []
+    vm.allRegions = regions.filter((r) => !isBaselineRow(r) && !r.error)
+    vm.stabilityDetails = report.stability
+      ? {
+          score: report.stability.score,
+          total: report.stability.total,
+          succeeded: report.stability.succeeded,
+          loss_rate: report.stability.loss_rate,
+          mean_ms: report.stability.mean_ms,
+          median_ms: report.stability.median_ms,
+          p95_ms: report.stability.p95_ms,
+          p99_ms: report.stability.p99_ms,
+          jitter_ms: report.stability.jitter_ms
+        }
+      : undefined
+  }
+
+  return vm
 }
