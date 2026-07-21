@@ -8,7 +8,8 @@ import {
   examEgressCell,
   buildNodeExamSummary,
   unlockTargetsOf,
-  tagsOf
+  tagsOf,
+  regionDisplay
 } from './nodecells'
 import type { UnifiedNode } from './selfmerge'
 
@@ -179,5 +180,21 @@ describe('tagsOf', () => {
   })
   it('缺省返回空', () => {
     expect(tagsOf([node({ tags: undefined })])).toEqual([])
+  })
+})
+
+describe('regionDisplay', () => {
+  it('正常地区码显示原值', () => {
+    expect(regionDisplay('HK')).toBe('HK')
+    expect(regionDisplay('JP')).toBe('JP')
+  })
+  it('Unknown 显示未知', () => {
+    expect(regionDisplay('Unknown')).toBe('未知')
+  })
+  it('空字符串显示未知', () => {
+    expect(regionDisplay('')).toBe('未知')
+  })
+  it('undefined 显示未知', () => {
+    expect(regionDisplay(undefined)).toBe('未知')
   })
 })

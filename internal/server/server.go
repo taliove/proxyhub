@@ -100,8 +100,8 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 	return s
 }
 
-// onExamComplete 体检自然完成的收口:落历史 + 按该节点重算自动标签。
-// 两步均为 best-effort:任一失败只记日志,不影响体检结果本身(下一场体检会再算)。
+// onExamComplete 体检自然完成的收口:落历史 + 按该节点重算自动标签 + 空/Unknown地区回写。
+// 三步均为 best-effort:任一失败只记日志,不影响体检结果本身(下一场体检会再算)。
 func (s *Server) onExamComplete(nodeKey string, report detection.ExamReport) {
 	if err := s.st.SaveExamHistory(nodeKey, report); err != nil {
 		s.logger.Warn("save exam history failed", "error", err)
@@ -109,6 +109,79 @@ func (s *Server) onExamComplete(nodeKey string, report detection.ExamReport) {
 	if err := s.st.RecomputeNodeTags(nodeKey); err != nil {
 		s.logger.Warn("recompute node tags after exam failed", "error", err)
 	}
+	s.writebackRegionIfNeeded(nodeKey, report)
+}
+
+// writebackRegionIfNeeded 回写节点地区:若节点 region 为空/Unknown 且体检获得出网国家码,
+// 则用国家码更新节点 region(机场节点更新内存池,自建节点更新数据库 self_hosted_nodes 表)。
+// 已有非空非 Unknown 的 region 不覆盖。无出网信息不操作。best-effort,失败记日志不阻断。
+func (s *Server) writebackRegionIfNeeded(nodeKey string, report detection.ExamReport) {
+	// 无出网信息或无国家码直接返回
+	if report.Egress == nil || report.Egress.IPv4 == nil || report.Egress.IPv4.CountryCode == "" {
+		return
+	}
+
+	countryCode := report.Egress.IPv4.CountryCode
+
+	// 尝试更新机场节点(内存池)
+	if s.updateAirportNodeRegion(nodeKey, countryCode) {
+		return
+	}
+
+	// 尝试更新自建节点(数据库)
+	if err := s.updateSelfHostedNodeRegion(nodeKey, countryCode); err != nil {
+		// 404 表示节点不在自建表(可能已删除或是机场节点但内存池已刷新),静默忽略
+		if err != store.ErrNotFound {
+			s.logger.Warn("writeback self-hosted node region failed", "nodeKey", nodeKey, "error", err)
+		}
+	}
+}
+
+// updateAirportNodeRegion 尝试更新机场节点的 region(内存池,通过 NodeSource 遍历)。
+// 只更新 region 为空或 "Unknown" 的节点;找到并更新返回 true,未找到返回 false。
+// 机场节点 region 存在内存池里,持久化看存储模型(当前 nodes 表不存 region,由刷新重建)。
+func (s *Server) updateAirportNodeRegion(nodeKey, countryCode string) bool {
+	if s.nodes == nil {
+		return false
+	}
+	for _, n := range s.nodes.Nodes() {
+		if n.NodeKey() != nodeKey {
+			continue
+		}
+		// 自建节点跳过(由 updateSelfHostedNodeRegion 处理)
+		if n.Source == subscription.SourceSelfHosted {
+			return false
+		}
+		// 只回写空/Unknown
+		if n.Region != "" && n.Region != "Unknown" {
+			return true // 找到节点但无需更新
+		}
+		n.Region = countryCode
+		return true
+	}
+	return false
+}
+
+// updateSelfHostedNodeRegion 尝试更新自建节点的 region_code(数据库 self_hosted_nodes 表)。
+// 按 server:port 定位节点(NodeKey 不含 SNI 对自建节点足够),只更新空/Unknown,已有值跳过。
+// 未找到返回 store.ErrNotFound。
+func (s *Server) updateSelfHostedNodeRegion(nodeKey, countryCode string) error {
+	nodes, err := s.st.ListAllSelfHostedNodes()
+	if err != nil {
+		return err
+	}
+	for _, n := range nodes {
+		if n.ToNode().NodeKey() != nodeKey {
+			continue
+		}
+		// 只回写空/Unknown
+		if n.RegionCode != "" && n.RegionCode != "Unknown" {
+			return nil
+		}
+		n.RegionCode = countryCode
+		return s.st.UpdateSelfHostedNode(n)
+	}
+	return store.ErrNotFound
 }
 
 // RecoverJobs 重启恢复:把上次进程遗留的 running 任务恢复或标记中断。
