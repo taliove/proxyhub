@@ -157,3 +157,68 @@ func TestRefreshRuns_RequireAuth(t *testing.T) {
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
+
+func TestAirportRefresh_StartsJob(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	if _, err := st.CreateAirport("测试机场", "http://example.com/sub"); err != nil {
+		t.Fatalf("CreateAirport() error = %v", err)
+	}
+	h := srv.Handler()
+	cookie := authedCookie(t, h)
+
+	w := authedRequest(t, h, "POST", "/api/airports/1/refresh", cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		OK      bool   `json:"ok"`
+		JobID   int64  `json:"jobId"`
+		Kind    string `json:"kind"`
+		Key     string `json:"key"`
+		Started bool   `json:"started"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.OK || resp.JobID != 43 || resp.Kind != "refresh" || resp.Key != "airport-1" || !resp.Started {
+		t.Errorf("resp = %+v, want ok=true jobId=43 kind=refresh key=airport-1 started=true", resp)
+	}
+}
+
+func TestAirportRefresh_ConflictWithFullRefresh(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	if _, err := st.CreateAirport("测试机场", "http://example.com/sub"); err != nil {
+		t.Fatalf("CreateAirport() error = %v", err)
+	}
+	srv.nodes.(*fakeNodes).refreshErr = aggregator.ErrRefreshConflict
+	h := srv.Handler()
+	cookie := authedCookie(t, h)
+
+	w := authedRequest(t, h, "POST", "/api/airports/1/refresh", cookie)
+	if w.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409 (body %s)", w.Code, w.Body.String())
+	}
+}
+
+func TestAirportRefresh_NotFound(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+	cookie := authedCookie(t, h)
+
+	w := authedRequest(t, h, "POST", "/api/airports/99999/refresh", cookie)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (body %s)", w.Code, w.Body.String())
+	}
+}
+
+func TestAirportRefresh_InvalidID(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+	cookie := authedCookie(t, h)
+
+	w := authedRequest(t, h, "POST", "/api/airports/abc/refresh", cookie)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (body %s)", w.Code, w.Body.String())
+	}
+}

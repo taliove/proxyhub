@@ -355,3 +355,39 @@ func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(airport)
 }
+
+// handleAirportRefresh POST /api/airports/{id}/refresh 发起单机场刷新任务
+// (只拉取入池,不含健康检查;秒级,用于刚加机场/换订阅 token 后快速可见)。
+// 与进行中的全量刷新冲突时返回 409;不同机场的单机场刷新可并行。
+func (s *Server) handleAirportRefresh(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.st.GetAirportByID(id); err != nil {
+		http.Error(w, "airport not found", http.StatusNotFound)
+		return
+	}
+
+	jobID, key, started, err := s.nodes.StartAirportRefreshJob(store.RefreshTriggerManual, id)
+	if err != nil {
+		if errors.Is(err, aggregator.ErrRefreshConflict) {
+			http.Error(w, "conflicts with a running full refresh", http.StatusConflict)
+			return
+		}
+		s.logger.Error("trigger airport refresh failed", "airport_id", id, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.Info("airport refresh triggered", "airport_id", id, "job_id", jobID, "started", started)
+	writeJSON(w, map[string]any{
+		"ok":      true,
+		"jobId":   jobID,
+		"kind":    "refresh",
+		"key":     key,
+		"started": started,
+	})
+}

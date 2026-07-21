@@ -49,9 +49,16 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="280">
+        <el-table-column label="操作" width="330">
           <template #default="{ row }">
             <el-button link type="primary" @click="openTestDialog(row)">测试</el-button>
+            <el-button
+              link
+              type="primary"
+              :loading="refreshingIds.includes(row.id)"
+              @click="refreshAirport(row)"
+              >刷新</el-button
+            >
             <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
             <el-button link @click="toggleAirport(row)">
               {{ row.enabled ? '禁用' : '启用' }}
@@ -100,11 +107,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import type { Airport } from '@/types'
 import client from '@/api/client'
+import { getJob } from '@/api/jobs'
 import { useDebouncedSuggest } from '@/composables/useDebouncedSuggest'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { getAirportQRContent } from './airport-utils'
@@ -208,6 +216,64 @@ const refreshNodes = async () => {
     refreshing.value = false
   }
 }
+
+// 单机场刷新:只拉取入池不含健康检查(秒级)。进行中按钮 loading,轮询任务到终态提示。
+const refreshingIds = ref<number[]>([])
+// 轮询定时器:组件卸载时清理,防止 setTimeout 链泄漏继续打接口
+const refreshPollTimers = new Map<number, ReturnType<typeof setTimeout>>()
+const REFRESH_POLL_MAX = 40 // 40 x 1.5s = 60s 超时兜底
+
+const refreshAirport = async (row: Airport) => {
+  try {
+    const resp = await client.post<unknown, { jobId: number; started: boolean }>(
+      `/airports/${row.id}/refresh`
+    )
+    refreshingIds.value = [...refreshingIds.value, row.id]
+    pollRefreshJob(row.id, resp.jobId, 0)
+  } catch (error) {
+    if ((error as { response?: { status?: number } })?.response?.status === 409) {
+      ElMessage.warning('全量刷新进行中,稍后再试')
+    } else {
+      ElMessage.error('刷新失败')
+    }
+  }
+}
+
+const stopRefreshPoll = (airportId: number) => {
+  const timer = refreshPollTimers.get(airportId)
+  if (timer) clearTimeout(timer)
+  refreshPollTimers.delete(airportId)
+  refreshingIds.value = refreshingIds.value.filter((id) => id !== airportId)
+}
+
+const pollRefreshJob = async (airportId: number, jobId: number, attempt: number) => {
+  try {
+    const job = await getJob(jobId)
+    if (job.status === 'running' && attempt < REFRESH_POLL_MAX) {
+      refreshPollTimers.set(
+        airportId,
+        setTimeout(() => pollRefreshJob(airportId, jobId, attempt + 1), 1500)
+      )
+      return
+    }
+    if (job.status === 'done') {
+      ElMessage.success('单机场刷新完成,节点已入池')
+    } else if (job.status === 'failed') {
+      ElMessage.error('刷新失败')
+    } else if (job.status === 'interrupted') {
+      ElMessage.warning('刷新被重启中断')
+    } else {
+      ElMessage.warning('刷新已取消')
+    }
+  } catch {
+    // 轮询失败静默结束,任务本身不受影响
+  }
+  stopRefreshPoll(airportId)
+}
+
+onUnmounted(() => {
+  for (const id of [...refreshPollTimers.keys()]) stopRefreshPoll(id)
+})
 
 const toggleAirport = async (row: Airport) => {
   await client.post(`/airports/${row.id}/toggle`)

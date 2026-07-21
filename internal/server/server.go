@@ -37,6 +37,9 @@ type NodeSource interface {
 	// 返回 jobs 行 id/任务 key/是否新启动;同 key 重复触发附加到进行中任务,
 	// 与进行中的单机场刷新冲突时返回 aggregator.ErrRefreshConflict。
 	StartRefreshJob(trigger string) (jobID int64, key string, started bool, err error)
+	// StartAirportRefreshJob 发起单机场刷新(只拉取入池,不含健康检查)。
+	// 与全量或同机场的进行中刷新冲突时返回 aggregator.ErrRefreshConflict。
+	StartAirportRefreshJob(trigger string, airportID int64) (jobID int64, key string, started bool, err error)
 	// CancelRefresh 取消指定 key 的刷新任务;无进行中任务返回 false。
 	CancelRefresh(key string) bool
 	// UpdateNodeTestResult 将单节点即时测试结果写回内存池（按 NodeKey 匹配）。
@@ -300,6 +303,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/airports", s.requireAuth(s.handleCreateAirport))
 	mux.HandleFunc("PUT /api/airports/{id}", s.requireAuth(s.handleUpdateAirport))
 	mux.HandleFunc("POST /api/airports/{id}/toggle", s.requireAuth(s.handleToggleAirport))
+	mux.HandleFunc("POST /api/airports/{id}/refresh", s.requireAuth(s.handleAirportRefresh))
 	mux.HandleFunc("DELETE /api/airports/{id}", s.requireAuth(s.handleDeleteAirport))
 
 	// 机场测试（诊断+抽样检活+评分）

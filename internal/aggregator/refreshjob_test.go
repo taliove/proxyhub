@@ -222,3 +222,115 @@ func TestRefreshJob_InterruptedOnRestart(t *testing.T) {
 		t.Errorf("other kind job status = %s, want running (RecoverOwn must not touch foreign kinds)", other.Status)
 	}
 }
+
+func TestStartAirportRefreshJob_FetchOnlyNoHealthCheck(t *testing.T) {
+	agg, st := newTestAggregator(t)
+	release := make(chan struct{})
+	close(release) // 不阻塞
+	srv := gatedSubscriptionServer(t, release)
+	airport, err := st.CreateAirport("目标机场", srv.URL)
+	if err != nil {
+		t.Fatalf("CreateAirport() error = %v", err)
+	}
+
+	jobID, key, started, err := agg.StartAirportRefreshJob(store.RefreshTriggerManual, airport.ID)
+	if err != nil {
+		t.Fatalf("StartAirportRefreshJob() error = %v", err)
+	}
+	if !started || key != "airport-1" {
+		t.Fatalf("got key=%q started=%v, want airport-1/true", key, started)
+	}
+
+	if status := waitJobStatus(t, st, jobID); status != jobs.StatusDone {
+		t.Fatalf("job status = %s, want done", status)
+	}
+
+	// 节点入池但不跑健康检查:Latency 保持 0(未检测),Available 默认 false
+	nodes := agg.Nodes()
+	if len(nodes) != 1 {
+		t.Fatalf("pool size = %d, want 1", len(nodes))
+	}
+	if nodes[0].Source != "目标机场" {
+		t.Errorf("node source = %q, want 目标机场", nodes[0].Source)
+	}
+	if nodes[0].Latency != 0 || nodes[0].Available {
+		t.Errorf("health check should not run: latency=%d available=%v, want 0/false",
+			nodes[0].Latency, nodes[0].Available)
+	}
+
+	// refresh_runs 成功且关联 job
+	run := waitRefreshRun(t, st, jobID)
+	deadline := time.Now().Add(3 * time.Second)
+	for run.Status == store.RefreshStatusRunning && time.Now().Before(deadline) {
+		run, _ = st.GetRefreshRun(run.ID)
+		time.Sleep(20 * time.Millisecond)
+	}
+	if run.Status != store.RefreshStatusSuccess {
+		t.Errorf("refresh run status = %s, want success", run.Status)
+	}
+}
+
+func TestStartAirportRefreshJob_ParallelDifferentAirports(t *testing.T) {
+	agg, st := newTestAggregator(t)
+
+	releaseA := make(chan struct{})
+	releaseB := make(chan struct{})
+	srvA := gatedSubscriptionServerNamed(t, releaseA, "127.0.0.1:1", "A 01")
+	srvB := gatedSubscriptionServerNamed(t, releaseB, "127.0.0.1:2", "B 01")
+	apA, err := st.CreateAirport("机场A", srvA.URL)
+	if err != nil {
+		t.Fatalf("CreateAirport(A) error = %v", err)
+	}
+	apB, err := st.CreateAirport("机场B", srvB.URL)
+	if err != nil {
+		t.Fatalf("CreateAirport(B) error = %v", err)
+	}
+
+	jobA, _, _, err := agg.StartAirportRefreshJob(store.RefreshTriggerManual, apA.ID)
+	if err != nil {
+		t.Fatalf("start A: %v", err)
+	}
+	jobB, _, _, err := agg.StartAirportRefreshJob(store.RefreshTriggerManual, apB.ID)
+	if err != nil {
+		t.Fatalf("start B: %v (different airports must run in parallel)", err)
+	}
+	// 同机场重复触发:附加不冲突
+	if _, _, started, err := agg.StartAirportRefreshJob(store.RefreshTriggerManual, apA.ID); err != nil || started {
+		t.Errorf("duplicate A: started=%v err=%v, want attach", started, err)
+	}
+	// 全量与单机场互斥
+	if _, _, _, err := agg.StartRefreshJob(store.RefreshTriggerManual); !errors.Is(err, ErrRefreshConflict) {
+		t.Errorf("full during single-airport: err = %v, want ErrRefreshConflict", err)
+	}
+
+	close(releaseA)
+	close(releaseB)
+	if status := waitJobStatus(t, st, jobA); status != jobs.StatusDone {
+		t.Errorf("jobA status = %s, want done", status)
+	}
+	if status := waitJobStatus(t, st, jobB); status != jobs.StatusDone {
+		t.Errorf("jobB status = %s, want done", status)
+	}
+
+	// 两个机场的节点都在池中(并行写不丢更新)
+	sources := map[string]bool{}
+	for _, n := range agg.Nodes() {
+		sources[n.Source] = true
+	}
+	if !sources["机场A"] || !sources["机场B"] {
+		t.Errorf("pool sources = %v, want both 机场A and 机场B", sources)
+	}
+}
+
+// gatedSubscriptionServerNamed 同 gatedSubscriptionServer,server/节点名可定制。
+// 注意两个机场必须用不同 server:port,否则 NodeKey 相同互相覆盖。
+func gatedSubscriptionServerNamed(t *testing.T, release <-chan struct{}, addr, marker string) *httptest.Server {
+	t.Helper()
+	content := base64.StdEncoding.EncodeToString([]byte("trojan://pw@" + addr + "#HK " + marker))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		w.Write([]byte(content))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}

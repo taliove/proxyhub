@@ -40,6 +40,14 @@ func (f *fakeNodes) StartRefreshJob(trigger string) (int64, string, bool, error)
 
 func (f *fakeNodes) CancelRefresh(string) bool { return true }
 
+func (f *fakeNodes) StartAirportRefreshJob(trigger string, airportID int64) (int64, string, bool, error) {
+	f.lastTrigger = trigger
+	if f.refreshErr != nil {
+		return 0, "", false, f.refreshErr
+	}
+	return 43, "airport-1", true, nil
+}
+
 func (f *fakeNodes) UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool {
 	// 测试 mock：查找并更新节点，模拟真实行为
 	for _, n := range f.nodes {

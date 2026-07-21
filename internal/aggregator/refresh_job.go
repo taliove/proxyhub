@@ -166,6 +166,16 @@ func (a *Aggregator) StartRefreshJob(trigger string) (int64, string, bool, error
 	return a.startRefresh(trigger, 0)
 }
 
+// StartAirportRefreshJob 经 jobs 运行时发起单机场刷新(只拉取入池,不含健康检查)。
+// 与进行中的全量刷新或同机场刷新冲突时返回 ErrRefreshConflict;
+// 不同机场的单机场刷新可并行(拉取并行,池写串行)。
+func (a *Aggregator) StartAirportRefreshJob(trigger string, airportID int64) (int64, string, bool, error) {
+	if airportID <= 0 {
+		return 0, "", false, fmt.Errorf("invalid airport id %d", airportID)
+	}
+	return a.startRefresh(trigger, airportID)
+}
+
 // startRefresh 发起刷新任务(全量 airportID=0 / 单机场)。
 // refreshStartMu 把冲突检查与 OpenIDForce 包成临界区,消除 TOCTOU:
 // 否则两个并发触发(全量 + 单机场)可同时通过检查,破坏机场级互斥。
