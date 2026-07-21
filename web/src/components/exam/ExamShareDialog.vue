@@ -1,5 +1,5 @@
 <template>
-  <!-- 分享卡对话框:承载海报(ExamShareCard)之外的全部控件 —— 打码开关、下载 PNG、复制到剪贴板。
+  <!-- 分享卡对话框:承载海报(ExamShareCard)之外的全部控件 —— 节点名开关、IP 开关、下载 PNG、复制到剪贴板。
        海报本身零按钮以免被截进图;渲染失败给显式 error 提示,不静默。 -->
   <el-dialog
     v-model="visible"
@@ -9,6 +9,7 @@
   >
     <div class="share-toolbar">
       <el-switch v-model="showFullName" size="small" active-text="显示完整节点名" />
+      <el-switch v-model="showIp" size="small" active-text="显示 IP" />
     </div>
 
     <el-alert
@@ -28,6 +29,7 @@
         :node-name="nodeName"
         :exam-time="examTime"
         :masked="!showFullName"
+        :show-ip="showIp"
       />
     </div>
 
@@ -60,6 +62,7 @@ const props = withDefaults(
 const visible = defineModel<boolean>('visible', { required: true })
 
 const showFullName = ref(false)
+const showIp = ref(false)
 const downloading = ref(false)
 const copying = ref(false)
 const errorMsg = ref('')
@@ -135,6 +138,7 @@ const onCopy = async () => {
 .share-toolbar {
   display: flex;
   justify-content: flex-end;
+  gap: var(--ph-space-3);
   margin-bottom: var(--ph-space-3);
 }
 .share-alert {
