@@ -240,6 +240,27 @@ func (s *Store) UpdateAirport(id int64, name, url, abbr string) error {
 	return nil
 }
 
+// GetUsedAbbrs returns all abbreviations currently in use by airports,
+// excluding the given ID (for update case). Returns a set map.
+func (s *Store) GetUsedAbbrs(excludeID int64) (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT abbr FROM airports WHERE id != ? AND abbr != ''`, excludeID)
+	if err != nil {
+		return nil, fmt.Errorf("query used abbrs: %w", err)
+	}
+	defer rows.Close()
+
+	used := make(map[string]bool)
+	for rows.Next() {
+		var abbr string
+		if err := rows.Scan(&abbr); err != nil {
+			return nil, err
+		}
+		used[abbr] = true
+	}
+	return used, rows.Err()
+}
+
+
 // AirportAbbreviations 返回 机场名 → 简称 的映射,供节点名称标准化使用(见 ADR 0012)。
 //
 // 手动设置的简称(abbr 字段非空)优先占用;其余机场自动生成并去重,
