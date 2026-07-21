@@ -200,7 +200,9 @@
                   <el-dropdown-item command="quick">快测</el-dropdown-item>
                   <el-dropdown-item command="real">真实检测</el-dropdown-item>
                   <el-dropdown-item command="bandwidth">带宽测试</el-dropdown-item>
-                  <el-dropdown-item command="exam" divided>深度体检</el-dropdown-item>
+                  <el-dropdown-item command="exam" divided>
+                    {{ props.runningExamKeys.has(row.node_key) ? '查看进度' : '深度体检' }}
+                  </el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -247,8 +249,10 @@ const props = withDefaults(
     total: number
     // node_key -> 最近一次体检派生摘要;缺省即无历史(不渲染)
     examSummaries?: Record<string, NodeExamSummary | undefined>
+    // 进行中的 exam 任务 key 集合(node_key),用于显示"查看进度"按钮
+    runningExamKeys?: Set<string>
   }>(),
-  { examSummaries: () => ({}) }
+  { examSummaries: () => ({}), runningExamKeys: () => new Set() }
 )
 
 const summaryFor = (row: UnifiedNode): NodeExamSummary | undefined =>
