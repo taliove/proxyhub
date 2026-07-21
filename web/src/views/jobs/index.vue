@@ -13,11 +13,13 @@
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="jobs">
+      <el-table v-loading="loading" :data="jobs" @row-click="openDetail">
         <el-table-column label="任务" min-width="140">
           <template #default="{ row }">{{ kindLabel(row.kind) }}</template>
         </el-table-column>
-        <el-table-column prop="key" label="标识" min-width="120" show-overflow-tooltip />
+        <el-table-column label="标识" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">{{ scopeLabel(row) }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
             <el-tag :type="statusMeta(row.status).tag" size="small">{{
@@ -36,7 +38,7 @@
         </el-table-column>
         <el-table-column label="操作" width="90">
           <template #default="{ row }">
-            <el-button v-if="isRunning(row.status)" link type="warning" @click="onCancel(row)"
+            <el-button v-if="isRunning(row.status)" link type="warning" @click.stop="onCancel(row)"
               >取消</el-button
             >
           </template>
@@ -45,6 +47,8 @@
 
       <el-empty v-if="!loading && jobs.length === 0" description="暂无任务记录" :image-size="60" />
     </el-card>
+
+    <JobDetailDialog v-model="detailVisible" :job="detailJob" />
   </div>
 </template>
 
@@ -52,13 +56,22 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listJobs, cancelJob, type Job } from '@/api/jobs'
-import { kindLabel, statusMeta, isRunning, parseProgress } from './jobmeta'
+import { kindLabel, statusMeta, isRunning, parseProgress, scopeLabel } from './jobmeta'
 import ScheduleCard from './ScheduleCard.vue'
+import JobDetailDialog from './JobDetailDialog.vue'
 
 const jobs = ref<Job[]>([])
 const loading = ref(false)
 const polling = ref(false)
 let pollTimer: number | null = null
+
+// 详情弹框:点击行打开,数据直接取列表行(已含 params)
+const detailVisible = ref(false)
+const detailJob = ref<Job | null>(null)
+const openDetail = (row: Job) => {
+  detailJob.value = row
+  detailVisible.value = true
+}
 
 const POLL_INTERVAL_MS = 4000
 
@@ -128,5 +141,8 @@ onUnmounted(stopPolling)
 .muted {
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-sm);
+}
+:deep(.el-table__row) {
+  cursor: pointer;
 }
 </style>

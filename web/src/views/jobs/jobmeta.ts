@@ -58,3 +58,42 @@ export function parseCursor(cursor: string | undefined): number | null {
   if (!Number.isInteger(n) || n < 0) return null
   return n
 }
+
+// JobParams 任务启动参数(jobs 表 params_json 的已知子集)。
+export interface JobParams {
+  node_keys?: string[]
+  scope?: string // "all" / "query" / "selected"(2026-07 起写入;旧任务无此字段)
+}
+
+// parseJobParams 解析 params JSON 串;空/非法返回 null。
+export function parseJobParams(params: string | undefined): JobParams | null {
+  if (!params) return null
+  try {
+    const p = JSON.parse(params) as JobParams | null
+    return p && typeof p === 'object' ? p : null
+  } catch {
+    return null
+  }
+}
+
+// scopeLabel 生成任务范围的可读标识(替代裸 key 展示)。
+// batch 类任务:优先读 params.scope;旧任务(无 scope)回退 node_keys 长度启发式——
+// 空列表推定"全部节点",非空只说"N 个节点"(不妄断"选中",exam 全量会展开为完整列表)。
+export function scopeLabel(job: { kind: string; key: string; params?: string }): string {
+  switch (job.kind) {
+    case 'batch_detection':
+    case 'batch_exam': {
+      const p = parseJobParams(job.params)
+      const n = p?.node_keys?.length ?? 0
+      if (p?.scope === 'all') return '全部节点'
+      if (p?.scope === 'query') return `筛选结果 ${n} 个节点`
+      if (p?.scope === 'selected') return `选中 ${n} 个节点`
+      // 旧任务无 scope 标记:keys 为空推定全量,非空只报数量
+      return n === 0 ? '全部节点' : `${n} 个节点`
+    }
+    case 'retag_all':
+      return '全部节点'
+    default:
+      return job.key
+  }
+}

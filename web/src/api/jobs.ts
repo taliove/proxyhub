@@ -5,12 +5,14 @@ import client from './client'
 export type JobStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted'
 
 // Job 通用任务信息(后端 JobInfo)。cursor 为游标进度(已完成数的字符串)。
+// params 为启动参数 JSON 串(含 node_keys/scope,用于生成可读范围标识)。
 export interface Job {
   id: number
   kind: string
   key: string
   status: JobStatus
   cursor?: string
+  params?: string
   created_at: string
   updated_at: string
 }
@@ -24,6 +26,11 @@ export interface ScheduleConfig {
 // listJobs 拉取任务列表(后端按 created_at 倒序)。
 export function listJobs(): Promise<Job[]> {
   return client.get<unknown, Job[]>('/jobs')
+}
+
+// getJob 拉取单个任务详情。
+export function getJob(id: number): Promise<Job> {
+  return client.get<unknown, Job>(`/jobs/${id}`)
 }
 
 // cancelJob 取消运行中任务(按 kind + key 定位)。

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { kindLabel, statusMeta, isRunning, parseProgress, parseCursor } from './jobmeta'
+import { kindLabel, statusMeta, isRunning, parseProgress, parseCursor, scopeLabel } from './jobmeta'
 
 describe('kindLabel', () => {
   it('已知 kind 映射中文名', () => {
@@ -64,5 +64,70 @@ describe('parseProgress', () => {
   })
   it('总量为 0 或缺省时回落到计数', () => {
     expect(parseProgress('7', 0)).toBe('已处理 7')
+  })
+})
+
+describe('scopeLabel', () => {
+  it('batch_detection 按 scope 标记生成文案', () => {
+    expect(
+      scopeLabel({
+        kind: 'batch_detection',
+        key: 'all',
+        params: '{"scope":"all","node_keys":["a","b"]}'
+      })
+    ).toBe('全部节点')
+    expect(
+      scopeLabel({
+        kind: 'batch_detection',
+        key: 'all',
+        params: '{"scope":"selected","node_keys":["a","b","c"]}'
+      })
+    ).toBe('选中 3 个节点')
+    expect(
+      scopeLabel({
+        kind: 'batch_detection',
+        key: 'all',
+        params: '{"scope":"query","node_keys":["a"]}'
+      })
+    ).toBe('筛选结果 1 个节点')
+  })
+  it('batch_exam 同样按 scope 标记', () => {
+    expect(
+      scopeLabel({
+        kind: 'batch_exam',
+        key: 'batch_exam',
+        params: '{"scope":"all","node_keys":["a"]}'
+      })
+    ).toBe('全部节点')
+    expect(
+      scopeLabel({
+        kind: 'batch_exam',
+        key: 'batch_exam',
+        params: '{"scope":"selected","node_keys":["a","b"]}'
+      })
+    ).toBe('选中 2 个节点')
+  })
+  it('旧任务无 scope 字段时回退 keys 长度启发式', () => {
+    expect(scopeLabel({ kind: 'batch_detection', key: 'all', params: '{"node_keys":[]}' })).toBe(
+      '全部节点'
+    )
+    expect(
+      scopeLabel({ kind: 'batch_detection', key: 'all', params: '{"node_keys":["a","b"]}' })
+    ).toBe('2 个节点')
+    expect(
+      scopeLabel({ kind: 'batch_exam', key: 'batch_exam', params: '{"node_keys":["a"]}' })
+    ).toBe('1 个节点')
+  })
+  it('params 缺失/非法时按空 keys 处理', () => {
+    expect(scopeLabel({ kind: 'batch_detection', key: 'all' })).toBe('全部节点')
+    expect(scopeLabel({ kind: 'batch_detection', key: 'all', params: 'not-json' })).toBe('全部节点')
+    expect(scopeLabel({ kind: 'batch_detection', key: 'all', params: 'null' })).toBe('全部节点')
+  })
+  it('retag_all 固定全部节点', () => {
+    expect(scopeLabel({ kind: 'retag_all', key: 'nightly' })).toBe('全部节点')
+  })
+  it('exam 及其他 kind 原样显示 key', () => {
+    expect(scopeLabel({ kind: 'exam', key: 'example.com:443' })).toBe('example.com:443')
+    expect(scopeLabel({ kind: 'mystery', key: 'k1' })).toBe('k1')
   })
 })
