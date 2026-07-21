@@ -180,3 +180,92 @@ func TestHandleGetAirportTestRun_Success(t *testing.T) {
 		t.Errorf("status = %v, want completed", resp["status"])
 	}
 }
+
+func TestHandleListAirportTestRuns_Success(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	airport, _ := st.CreateAirport("TestAirport", "https://example.com/sub")
+
+	// Create 3 test runs
+	for i := 0; i < 3; i++ {
+		run := &store.AirportTestRun{
+			AirportID:      airport.ID,
+			Status:         "completed",
+			DimensionsJSON: fmt.Sprintf(`{"http_status":200,"node_count":%d}`, i+1),
+			OverallScore:   floatPtr(float64(80 + i)),
+		}
+		st.CreateAirportTestRun(context.Background(), run)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/airports/%d/test/runs", airport.ID), nil)
+	w := httptest.NewRecorder()
+	srv.handleListAirportTestRuns(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+
+	if len(resp) != 3 {
+		t.Fatalf("got %d runs, want 3", len(resp))
+	}
+
+	// Verify descending order (newest first)
+	for i := 0; i < len(resp)-1; i++ {
+		id1 := resp[i]["id"].(float64)
+		id2 := resp[i+1]["id"].(float64)
+		if id1 < id2 {
+			t.Errorf("runs not in descending order: run[%d].id=%v < run[%d].id=%v", i, id1, i+1, id2)
+		}
+	}
+}
+
+func TestHandleListAirportTestRuns_Limit(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	airport, _ := st.CreateAirport("TestAirport", "https://example.com/sub")
+
+	// Create 35 runs
+	for i := 0; i < 35; i++ {
+		run := &store.AirportTestRun{
+			AirportID:      airport.ID,
+			Status:         "completed",
+			DimensionsJSON: `{"http_status":200}`,
+		}
+		st.CreateAirportTestRun(context.Background(), run)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/airports/%d/test/runs", airport.ID), nil)
+	w := httptest.NewRecorder()
+	srv.handleListAirportTestRuns(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var resp []map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+
+	if len(resp) != 30 {
+		t.Errorf("got %d runs, want 30 (limit)", len(resp))
+	}
+}
+
+func TestHandleListAirportTestRuns_NotFound(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st), noopHealthChecker{}, noopPoolWriter{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/airports/99999/test/runs", nil)
+	w := httptest.NewRecorder()
+	srv.handleListAirportTestRuns(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+func floatPtr(f float64) *float64 {
+	return &f
+}

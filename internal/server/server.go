@@ -300,6 +300,7 @@ func (s *Server) Handler() http.Handler {
 	// 机场测试（诊断+抽样检活+评分）
 	mux.HandleFunc("POST /api/airports/{id}/test", s.requireAuth(s.handleAirportTest))
 	mux.HandleFunc("GET /api/airports/{id}/test/runs/{runId}", s.requireAuth(s.handleGetAirportTestRun))
+	mux.HandleFunc("GET /api/airports/{id}/test/runs", s.requireAuth(s.handleListAirportTestRuns))
 
 	// 节点状态
 	mux.HandleFunc("GET /api/nodes", s.requireAuth(s.handleListNodes))

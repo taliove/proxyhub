@@ -73,6 +73,35 @@ func (s *Store) UpdateAirportTestRun(ctx context.Context, run *AirportTestRun) e
 	return nil
 }
 
+// ListAirportTestRuns retrieves recent test runs for an airport (descending order, limited).
+func (s *Store) ListAirportTestRuns(ctx context.Context, airportID int64, limit int) ([]*AirportTestRun, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, airport_id, created_at, sample_params, is_full, status, overall_score, dimensions_json, error_message
+		FROM airport_test_runs
+		WHERE airport_id = ?
+		ORDER BY id DESC
+		LIMIT ?`,
+		airportID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query test runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []*AirportTestRun
+	for rows.Next() {
+		var run AirportTestRun
+		var isFull int
+		if err := rows.Scan(
+			&run.ID, &run.AirportID, &run.CreatedAt, &run.SampleParams, &isFull,
+			&run.Status, &run.OverallScore, &run.DimensionsJSON, &run.ErrorMessage); err != nil {
+			return nil, fmt.Errorf("scan test run: %w", err)
+		}
+		run.IsFull = isFull == 1
+		runs = append(runs, &run)
+	}
+	return runs, nil
+}
+
 // PruneAirportTestRuns deletes test runs older than specified time (90-day retention).
 func (s *Store) PruneAirportTestRuns(olderThan time.Time) error {
 	cutoff := olderThan.UTC().Format("2006-01-02 15:04:05")
