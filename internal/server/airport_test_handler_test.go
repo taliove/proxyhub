@@ -14,6 +14,20 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
+// noopHealthChecker 诊断阶段测试用:检活阶段不真正执行(异步 goroutine 里拿到 nil 结果)
+type noopHealthChecker struct{}
+
+func (noopHealthChecker) CheckAll(_ context.Context, _ []*subscription.Node) []*airporttest.HealthCheckResult {
+	return nil
+}
+
+// noopPoolWriter 诊断阶段测试用:不写回节点池
+type noopPoolWriter struct{}
+
+func (noopPoolWriter) UpdateNodeTestResult(_, _ string, _ bool, _ int, _, _ float64) bool {
+	return false
+}
+
 func TestHandleAirportTest_Success(t *testing.T) {
 	nodes := []*subscription.Node{
 		{Name: "test-vmess", Type: "vmess", Server: "example.com", Port: 443, Source: "test-airport"},
@@ -32,7 +46,7 @@ ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:8080#Test%20SS`
 
 	airport, _ := st.CreateAirport("TestAirport", mockSub.URL)
 
-	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st))
+	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st), noopHealthChecker{}, noopPoolWriter{})
 
 	// Record node pool state before test
 	nodesBefore := srv.nodes.Nodes()
@@ -83,7 +97,7 @@ func TestHandleAirportTest_FetchFailure(t *testing.T) {
 	// URL that will fail to connect
 	airport, _ := st.CreateAirport("BadAirport", "http://localhost:1")
 
-	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st))
+	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st), noopHealthChecker{}, noopPoolWriter{})
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/airports/%d/test", airport.ID), nil)
 	w := httptest.NewRecorder()
@@ -108,7 +122,7 @@ func TestHandleAirportTest_FetchFailure(t *testing.T) {
 
 func TestHandleAirportTest_NotFound(t *testing.T) {
 	srv, st := newTestServer(t, nil)
-	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st))
+	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st), noopHealthChecker{}, noopPoolWriter{})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/airports/99999/test", nil)
 	w := httptest.NewRecorder()
@@ -124,7 +138,7 @@ func TestHandleAirportTest_Disabled(t *testing.T) {
 	airport, _ := st.CreateAirport("DisabledAirport", "https://example.com/sub")
 	st.SetAirportEnabled(airport.ID, false)
 
-	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st))
+	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st), noopHealthChecker{}, noopPoolWriter{})
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/airports/%d/test", airport.ID), nil)
 	w := httptest.NewRecorder()
