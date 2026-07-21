@@ -121,16 +121,28 @@ func (s *Server) handleCreateAirport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 简称可选:提供了才落库(默认空=自动生成),避免改动 CreateAirport 签名波及大量调用点
-	if req.Abbr != "" {
-		if err := s.st.UpdateAirport(airport.ID, req.Name, req.URL, req.Abbr); err != nil {
-			s.logger.Warn("set airport abbr failed", "id", airport.ID, "error", err)
-		} else {
-			airport.Abbr = req.Abbr
+	// Auto-generate abbr if not provided (ADR 0012)
+	finalAbbr := req.Abbr
+	if finalAbbr == "" {
+		// Get all used abbreviations (excluding this new airport which has no abbr yet)
+		used, err := s.st.GetUsedAbbrs(-1) // -1 means don't exclude any
+		if err != nil {
+			s.logger.Warn("get used abbrs failed", "error", err)
+			used = make(map[string]bool) // fallback to empty set
 		}
+		// Generate and deduplicate
+		base := subscription.GenerateAbbreviation(req.Name)
+		finalAbbr = subscription.NextFreeAbbr(base, used)
 	}
 
-	s.logger.Info("airport created", "name", req.Name)
+	// Save the final abbr (either explicit or auto-generated)
+	if err := s.st.UpdateAirport(airport.ID, req.Name, req.URL, finalAbbr); err != nil {
+		s.logger.Warn("set airport abbr failed", "id", airport.ID, "error", err)
+	} else {
+		airport.Abbr = finalAbbr
+	}
+
+	s.logger.Info("airport created", "name", req.Name, "abbr", finalAbbr)
 	json.NewEncoder(w).Encode(airport)
 }
 
@@ -308,12 +320,34 @@ func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.st.UpdateAirport(id, req.Name, req.URL, req.Abbr); err != nil {
+	// Auto-generate abbr if cleared (ADR 0012)
+	finalAbbr := req.Abbr
+	if finalAbbr == "" {
+		// Get all used abbreviations (excluding this airport being updated)
+		used, err := s.st.GetUsedAbbrs(id)
+		if err != nil {
+			s.logger.Warn("get used abbrs failed", "error", err)
+			used = make(map[string]bool) // fallback to empty set
+		}
+		// Generate and deduplicate
+		base := subscription.GenerateAbbreviation(req.Name)
+		finalAbbr = subscription.NextFreeAbbr(base, used)
+	}
+
+	if err := s.st.UpdateAirport(id, req.Name, req.URL, finalAbbr); err != nil {
 		s.logger.Error("update airport failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	s.logger.Info("airport updated", "id", id, "name", req.Name)
-	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	s.logger.Info("airport updated", "id", id, "name", req.Name, "abbr", finalAbbr)
+
+	// Return updated airport with final abbr so frontend can display it
+	airport, err := s.st.GetAirportByID(id)
+	if err != nil {
+		s.logger.Warn("get updated airport failed", "error", err)
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		return
+	}
+	json.NewEncoder(w).Encode(airport)
 }
