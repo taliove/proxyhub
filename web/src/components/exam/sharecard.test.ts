@@ -415,7 +415,7 @@ describe('shareViewModel (统一视图模型:showAll 控制全量/摘要)', () =
     }
   }
 
-  it('showAll=false(默认):摘要版 - 打码节点名、无任何 IP、多地域仅最佳/最差', () => {
+  it('showAll=false(默认):摘要版 - 打码节点名、无任何 IP、多地域仅最佳/最差、含稳定性明细', () => {
     const vm = shareViewModel(fullReport, {
       showAll: false,
       nodeName: '233boy-grpc-host',
@@ -430,8 +430,18 @@ describe('shareViewModel (统一视图模型:showAll 控制全量/摘要)', () =
     expect(vm.regionSummary.worst?.name).toBe('新加坡')
     // 无全量区域列表
     expect(vm.allRegions).toBeUndefined()
-    // 无稳定性明细
-    expect(vm.stabilityDetails).toBeUndefined()
+    // 摘要版也含稳定性明细(不含敏感信息)
+    expect(vm.stabilityDetails).toEqual({
+      score: 88,
+      total: 100,
+      succeeded: 95,
+      loss_rate: 0.05,
+      mean_ms: 45,
+      median_ms: 42,
+      p95_ms: 78,
+      p99_ms: 95,
+      jitter_ms: 8
+    })
     // 出口无任何 IP
     expect(vm.egress.egressIp).toBeUndefined()
     expect(vm.egress.ingressIp).toBeUndefined()
@@ -482,16 +492,16 @@ describe('shareViewModel (统一视图模型:showAll 控制全量/摘要)', () =
     expect(vm.egress.hosting).toBe(true)
   })
 
-  it('showAll=true 但稳定性段缺失:stabilityDetails 为 undefined', () => {
+  it('showAll=false 但稳定性段缺失:stabilityDetails 为 undefined', () => {
     const report = { ...fullReport, stability: undefined }
-    const vm = shareViewModel(report, { showAll: true, nodeName: 'test' })
+    const vm = shareViewModel(report, { showAll: false, nodeName: 'test' })
     expect(vm.stabilityDetails).toBeUndefined()
   })
 
-  it('showAll=true 但多地域段缺失:allRegions 为空数组', () => {
+  it('showAll=false 但多地域段缺失:allRegions 为 undefined', () => {
     const report = { ...fullReport, region_speed: undefined }
-    const vm = shareViewModel(report, { showAll: true, nodeName: 'test' })
-    expect(vm.allRegions).toEqual([])
+    const vm = shareViewModel(report, { showAll: false, nodeName: 'test' })
+    expect(vm.allRegions).toBeUndefined()
   })
 })
 
