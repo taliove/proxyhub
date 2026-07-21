@@ -440,15 +440,28 @@ cmd_rotate_path() {
         return 2
     fi
 
-    # Generate new Site Path if not provided.
+    # Generate new Site Path if not provided. random_token draws from the full
+    # [A-Za-z0-9_-] charset, so a single draw fails validate_site_path ~1.6% of
+    # the time (too few character classes, or a reserved-word substring).
+    # Resample until one validates, mirroring install.sh's _obtain_site_path;
+    # bound the attempts so a broken PRNG cannot loop forever.
     if [[ -z "$new_path" ]]; then
-        new_path=$(random_token 20) || {
-            _ph_err "failed to generate new Site Path"
+        local attempts=0
+        while (( attempts < 100 )); do
+            new_path=$(random_token 20) || {
+                _ph_err "failed to generate new Site Path"
+                return 1
+            }
+            validate_site_path "$new_path" >/dev/null 2>&1 && break
+            attempts=$((attempts + 1))
+        done
+        if (( attempts >= 100 )); then
+            _ph_err "failed to generate a valid Site Path after 100 attempts"
             return 1
-        }
+        fi
     fi
 
-    # Validate new Site Path.
+    # Validate new Site Path (also covers operator-provided paths).
     if ! validate_site_path "$new_path"; then
         _ph_err "invalid Site Path: ${new_path}"
         return 1
