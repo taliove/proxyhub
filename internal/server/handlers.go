@@ -93,7 +93,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 
 // handleListAirports 列出机场
 func (s *Server) handleListAirports(w http.ResponseWriter, r *http.Request) {
-	airports, err := s.st.ListAirports()
+	airports, err := s.st.ListAirportsWithTestRuns(r.Context())
 	if err != nil {
 		s.logger.Error("list airports failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
