@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/taliove/proxyhub/internal/airporttest"
 	"github.com/taliove/proxyhub/internal/store"
@@ -28,6 +29,38 @@ func (noopPoolWriter) UpdateNodeTestResult(_, _ string, _ bool, _ int, _, _ floa
 	return false
 }
 
+// fakePoolOps 池操作假实现:LoadPoolBySource 返回预设节点,Upsert 并入内存
+type fakePoolOps struct {
+	nodes    []*subscription.Node
+	upserted []*subscription.Node
+}
+
+func (f *fakePoolOps) LoadPoolBySource(_ string) ([]*subscription.Node, error) {
+	return f.nodes, nil
+}
+
+func (f *fakePoolOps) UpsertAirportNodes(_ string, fetched []*subscription.Node) error {
+	f.upserted = fetched
+	f.nodes = append(f.nodes, fetched...)
+	return nil
+}
+
+// waitForRunTerminal 轮询 run 到终态(completed/failed)再返回。
+// POST 后检活+评分在后台 goroutine 执行,不等它写完 DB 就结束测试,
+// t.TempDir 清理会撞上正在写入的 SQLite 文件("directory not empty")。
+func waitForRunTerminal(t *testing.T, st *store.Store, airportID, runID int64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		run, err := st.GetAirportTestRun(context.Background(), airportID, runID)
+		if err == nil && (run.Status == "completed" || run.Status == "failed") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("run %d did not reach terminal state within 5s", runID)
+}
+
 func TestHandleAirportTest_Success(t *testing.T) {
 	nodes := []*subscription.Node{
 		{Name: "test-vmess", Type: "vmess", Server: "example.com", Port: 443, Source: "test-airport"},
@@ -46,7 +79,7 @@ ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:8080#Test%20SS`
 
 	airport, _ := st.CreateAirport("TestAirport", mockSub.URL)
 
-	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st), noopHealthChecker{}, noopPoolWriter{})
+	srv.testOrchestrator = airporttest.NewOrchestratorWithPoolOps(airporttest.NewStoreAdapter(st), noopHealthChecker{}, noopPoolWriter{}, &fakePoolOps{nodes: nodes})
 
 	// Record node pool state before test
 	nodesBefore := srv.nodes.Nodes()
@@ -101,6 +134,9 @@ ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:8080#Test%20SS`
 	if len(nodesAfter) != len(nodesBefore) {
 		t.Errorf("node pool changed: before %d, after %d", len(nodesBefore), len(nodesAfter))
 	}
+
+	// 等后台检活 goroutine 写完 DB,避免 TempDir 清理竞态
+	waitForRunTerminal(t, st, airport.ID, int64(resp["id"].(float64)))
 }
 
 func TestHandleAirportTest_FetchFailure(t *testing.T) {
@@ -108,7 +144,7 @@ func TestHandleAirportTest_FetchFailure(t *testing.T) {
 	// URL that will fail to connect
 	airport, _ := st.CreateAirport("BadAirport", "http://localhost:1")
 
-	srv.testOrchestrator = airporttest.NewOrchestrator(airporttest.NewStoreAdapter(st), noopHealthChecker{}, noopPoolWriter{})
+	srv.testOrchestrator = airporttest.NewOrchestratorWithPoolOps(airporttest.NewStoreAdapter(st), noopHealthChecker{}, noopPoolWriter{}, &fakePoolOps{})
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/airports/%d/test", airport.ID), nil)
 	w := httptest.NewRecorder()
@@ -136,6 +172,16 @@ func TestHandleAirportTest_FetchFailure(t *testing.T) {
 	}
 	if diag.HTTPStatus != 0 {
 		t.Errorf("http_status = %d, want 0 (fetch failed)", diag.HTTPStatus)
+	}
+
+	// 池空 + URL 不可达:后台 RunTest 应把 run 置为 failed;等终态避免 TempDir 清理竞态
+	waitForRunTerminal(t, st, airport.ID, int64(resp["id"].(float64)))
+	run, err := st.GetAirportTestRun(context.Background(), airport.ID, int64(resp["id"].(float64)))
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.Status != "failed" {
+		t.Errorf("final status = %v, want failed (pool empty + URL unreachable)", run.Status)
 	}
 }
 
