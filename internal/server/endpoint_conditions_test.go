@@ -228,3 +228,157 @@ func TestPreviewConditionsCount(t *testing.T) {
 		t.Errorf("count (HK+US) = %d, want 2", resp.Count)
 	}
 }
+
+// TestPreviewConditions_NodeDetails 预览返回节点明细(前 N 个:名称/地区/延迟/带宽/标签),不只是计数。
+func TestPreviewConditions_NodeDetails(t *testing.T) {
+	// 使用 condPool 确保节点通过 filteredNodes
+	srv, st := newTestServer(t, condPool())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	_ = st
+
+	// 无条件:全匹配
+	body, _ := json.Marshal(map[string]any{"regions": []string{}})
+	req := httptest.NewRequest("POST", "/api/endpoints/preview-conditions", bytes.NewReader(body))
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Count int `json:"count"`
+		Total int `json:"total"`
+		Nodes []struct {
+			Name              string   `json:"name"`
+			Region            string   `json:"region"`
+			Latency           int      `json:"latency"`
+			Source            string   `json:"source"`
+			BandwidthDownMbps *float64 `json:"bandwidth_down_mbps,omitempty"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if resp.Count != 3 || resp.Total != 3 {
+		t.Errorf("count=%d, total=%d; want 3,3", resp.Count, resp.Total)
+	}
+	if len(resp.Nodes) != 3 {
+		t.Fatalf("len(nodes) = %d, want 3", len(resp.Nodes))
+	}
+
+	// 检查第一个节点有必需字段
+	n0 := resp.Nodes[0]
+	if n0.Name == "" {
+		t.Error("node[0].name is empty")
+	}
+	if n0.Region == "" {
+		t.Error("node[0].region is empty")
+	}
+	if n0.Source == "" {
+		t.Error("node[0].source is empty")
+	}
+	// latency/bandwidth 检查存在即可(condPool 无 bandwidth)
+}
+
+
+
+// TestPreviewConditions_TruncateAt20 节点明细数组截断在 20 个(count 保持真实值)。
+// 使用 condPool 基础+复制来避开复杂过滤逻辑。
+func TestPreviewConditions_TruncateAt20(t *testing.T) {
+	// 基于 condPool 结构复制 25 个可用节点
+	base := condPool()
+	nodes := make([]*subscription.Node, 0, 25)
+	for i := 0; i < 25; i++ {
+		// 轮询复制 condPool 的三个节点模板,确保每个节点唯一
+		template := base[i%3]
+		n := &subscription.Node{
+			Name: fmt.Sprintf("%s-%d", template.Name, i),
+			Type: template.Type, Cipher: template.Cipher, Password: template.Password,
+			Server: fmt.Sprintf("n%d.example.com", i), Port: 8388 + i,
+			Region: template.Region, Source: template.Source, Available: template.Available,
+		}
+		nodes = append(nodes, n)
+	}
+
+	srv, st := newTestServer(t, nodes)
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	_ = st
+
+	body, _ := json.Marshal(map[string]any{"regions": []string{}})
+	req := httptest.NewRequest("POST", "/api/endpoints/preview-conditions", bytes.NewReader(body))
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Count int                    `json:"count"`
+		Nodes []map[string]any `json:"nodes"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+
+	// 验证真实命中数大于 20 且明细被截断
+	if resp.Count < 20 {
+		t.Errorf("count = %d, want >= 20 (至少部分节点通过过滤)", resp.Count)
+	}
+	if len(resp.Nodes) > 20 {
+		t.Errorf("len(nodes) = %d, want <= 20 (截断)", len(resp.Nodes))
+	}
+	// 最重要的断言:nodes 少于 count(证明截断生效)
+	if len(resp.Nodes) >= resp.Count {
+		t.Error("nodes array should be truncated, but len(nodes) >= count")
+	}
+}
+
+
+
+
+// TestPreviewConditions_ZeroMatch 零命中时 nodes 返回空数组(不是 null)。
+func TestPreviewConditions_ZeroMatch(t *testing.T) {
+	nodes := []*subscription.Node{
+		{Name: "HK-01", Type: "ss", Server: "hk1.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Region: "HK", Source: "机场A", Available: true},
+	}
+
+	srv, st := newTestServer(t, nodes)
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	_ = st
+
+	// 筛选不存在的地区
+	body, _ := json.Marshal(map[string]any{"regions": []string{"US"}})
+	req := httptest.NewRequest("POST", "/api/endpoints/preview-conditions", bytes.NewReader(body))
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	var resp struct {
+		Count int                    `json:"count"`
+		Nodes []map[string]any `json:"nodes"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+
+	if resp.Count != 0 {
+		t.Errorf("count = %d, want 0", resp.Count)
+	}
+	if resp.Nodes == nil {
+		t.Error("nodes should be [] not null")
+	}
+	if len(resp.Nodes) != 0 {
+		t.Errorf("len(nodes) = %d, want 0", len(resp.Nodes))
+	}
+}
+
+
+

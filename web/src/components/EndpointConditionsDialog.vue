@@ -76,6 +76,30 @@
           命中 {{ preview.count }} / 共 {{ preview.total }} 个节点
         </el-tag>
         <span class="cfg-hint cond-hint-inline">按当前节点池实时求值,与订阅拉取一致。</span>
+        <!-- 节点明细小表(前 20 个) -->
+        <el-table
+          v-if="preview.nodes && preview.nodes.length > 0"
+          :data="preview.nodes"
+          size="small"
+          max-height="200"
+          class="preview-nodes-table"
+        >
+          <el-table-column prop="name" label="节点名" width="140" show-overflow-tooltip />
+          <el-table-column prop="region" label="地区" width="70" />
+          <el-table-column prop="latency" label="延迟(ms)" width="90" />
+          <el-table-column prop="source" label="来源" width="100" show-overflow-tooltip />
+          <el-table-column label="带宽" width="100">
+            <template #default="{ row }">
+              <span v-if="row.bandwidth_down_mbps">
+                {{ Math.round(row.bandwidth_down_mbps) }}M
+              </span>
+              <span v-else class="cfg-hint">-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-if="preview.count > preview.nodes.length" class="cfg-hint">
+          仅展示前 {{ preview.nodes.length }} 个,共命中 {{ preview.count }} 个节点
+        </div>
       </el-form-item>
     </el-form>
     <template #footer>
@@ -115,14 +139,28 @@ const tagGroups: { label: string; tags: string[] }[] = [
 ]
 
 const form = ref<SubscriptionConditions>({ airports: [], regions: [], tags: [], keyword: '' })
-const preview = ref<{ count: number; total: number }>({ count: 0, total: 0 })
+
+interface PreviewNode {
+  name: string
+  region: string
+  latency: number
+  source: string
+  bandwidth_down_mbps?: number
+  tags?: string[]
+}
+
+const preview = ref<{ count: number; total: number; nodes: PreviewNode[] }>({
+  count: 0,
+  total: 0,
+  nodes: []
+})
 const airportOptions = ref<string[]>([])
 const regionOptions = ref<RegionOption[]>([])
 
 // 对话框打开时初始化表单并加载选项/预览。
 const onOpen = async () => {
   form.value = parseConditions(props.endpoint?.conditions ?? '')
-  preview.value = { count: 0, total: 0 }
+  preview.value = { count: 0, total: 0, nodes: [] }
   await loadOptions()
   await loadPreview()
 }
@@ -170,5 +208,8 @@ const save = async () => {
 .cond-hint-inline {
   margin-left: var(--ph-space-2);
   margin-top: 0;
+}
+.preview-nodes-table {
+  margin-top: var(--ph-space-2);
 }
 </style>

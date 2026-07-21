@@ -111,7 +111,9 @@ func (s *Server) handleUpdateEndpointConditions(w http.ResponseWriter, r *http.R
 }
 
 // handlePreviewConditions 预览一组(未保存的)条件在当前节点池上的命中数,用于编辑时实时反馈。
-// total = 全局过滤链后的可下发节点数;count = 再套用条件后命中的节点数。走与 /sub 同一条链。
+// total = 全局过滤链后的可下发节点数;count = 再套用条件后命中的节点数。
+// 返回 count + 前 N(20)个命中节点明细(名称/地区/延迟/带宽/来源/标签),便于条件配置时预览具体节点。
+// 走与 /sub 同一条链,保证所见即所得。
 func (s *Server) handlePreviewConditions(w http.ResponseWriter, r *http.Request) {
 	var cond subfilter.Conditions
 	if err := json.NewDecoder(r.Body).Decode(&cond); err != nil {
@@ -120,8 +122,24 @@ func (s *Server) handlePreviewConditions(w http.ResponseWriter, r *http.Request)
 	}
 	filtered := s.filteredNodes(s.nodes.Nodes())
 	matched := s.applyConditionsResolved(filtered, cond)
-	writeJSON(w, map[string]int{
+
+	// 取前 20 个命中节点的明细(多于 20 时截断,避免返回体过大;count 保留真实命中数)
+	const previewLimit = 20
+	detailNodes := matched
+	if len(detailNodes) > previewLimit {
+		detailNodes = matched[:previewLimit]
+	}
+
+	// 拉取节点标签用于明细展示(拉取失败时标签字段留空,不影响其余字段)
+	nodeTags, _ := s.collectNodeTags(detailNodes)
+
+	// 组装明细(预览不需要 blocked/unlockResults,传 nil)
+	nodeDetails := toNodeViews(detailNodes, nil, nil, nodeTags)
+
+	writeJSON(w, map[string]any{
 		"total": len(filtered),
 		"count": len(matched),
+		"nodes": nodeDetails,
 	})
 }
+
