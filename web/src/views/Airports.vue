@@ -29,12 +29,13 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200">
+        <el-table-column label="操作" width="260">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
             <el-button link @click="toggleAirport(row)">
               {{ row.enabled ? '禁用' : '启用' }}
             </el-button>
+            <el-button link type="primary" @click="showQRCode(row)">二维码</el-button>
             <el-button link type="danger" @click="deleteAirport(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -66,6 +67,13 @@
         <el-button type="primary" @click="submitForm">{{ editMode ? '保存' : '添加' }}</el-button>
       </template>
     </el-dialog>
+
+    <QRCodeDialog
+      ref="qrDialog"
+      v-model="qrDialogVisible"
+      title="机场订阅二维码"
+      hint="扫码导入该机场原始订阅(未经过 ProxyHub 聚合)"
+    />
   </div>
 </template>
 
@@ -76,6 +84,8 @@ import { Refresh } from '@element-plus/icons-vue'
 import type { Airport } from '@/types'
 import client from '@/api/client'
 import { useDebouncedSuggest } from '@/composables/useDebouncedSuggest'
+import QRCodeDialog from '@/components/QRCodeDialog.vue'
+import { getAirportQRContent } from './Airports.test'
 
 const airports = ref<Airport[]>([])
 const loading = ref(false)
@@ -84,6 +94,10 @@ const dialogVisible = ref(false)
 const editMode = ref(false)
 const editingId = ref<number | null>(null)
 const form = ref({ name: '', url: '', abbr: '' })
+
+// QR Code dialog
+const qrDialogVisible = ref(false)
+const qrDialog = ref<InstanceType<typeof QRCodeDialog> | null>(null)
 
 // Debounced auto-suggestion: name input -> abbr suggestion
 const abbrRef = computed({
@@ -173,6 +187,11 @@ const deleteAirport = async (row: Airport) => {
   await client.delete(`/airports/${row.id}`)
   ElMessage.success('已删除')
   loadAirports()
+}
+
+const showQRCode = (airport: Airport) => {
+  const content = getAirportQRContent(airport)
+  qrDialog.value?.show(content)
 }
 
 onMounted(loadAirports)
