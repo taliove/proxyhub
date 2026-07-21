@@ -58,7 +58,7 @@
           @change="loadPreview"
         >
           <el-option-group v-for="g in tagGroups" :key="g.label" :label="g.label">
-            <el-option v-for="t in g.tags" :key="t" :label="t" :value="t" />
+            <el-option v-for="t in g.tags" :key="t.value" :label="t.label" :value="t.value" />
           </el-option-group>
         </el-select>
         <div class="cfg-hint">多个标签为「与」:节点需同时具备所有选中标签。</div>
@@ -115,6 +115,7 @@ import { ElMessage } from 'element-plus'
 import type { Endpoint, SubscriptionConditions } from '@/types'
 import client from '@/api/client'
 import { parseConditions } from '@/utils/conditions'
+import { tagLabel } from '@/utils/taglabels'
 
 // 地区选项:后端 /settings/regions 返回大写键(与 web/src/views/nodes 对齐)
 interface RegionOption {
@@ -129,13 +130,38 @@ const emit = defineEmits<{
 }>()
 
 // 标签选项对齐 internal/nodetag/derive.go 的固定词表;region:<CC> 等动态标签用 allow-create 输入。
-const tagGroups: { label: string; tags: string[] }[] = [
+// 标签分组展示中文化(选项 label 中文,value 保持英文存储)。
+const tagGroups: { label: string; tags: { label: string; value: string }[] }[] = [
   {
     label: '解锁能力',
-    tags: ['nf-full', 'nf-originals', 'yt-premium', 'disney-plus', 'openai', 'claude', 'gemini']
+    tags: [
+      { label: tagLabel('nf-full'), value: 'nf-full' },
+      { label: tagLabel('nf-originals'), value: 'nf-originals' },
+      { label: tagLabel('yt-premium'), value: 'yt-premium' },
+      { label: tagLabel('disney-plus'), value: 'disney-plus' },
+      { label: tagLabel('openai'), value: 'openai' },
+      { label: tagLabel('claude'), value: 'claude' },
+      { label: tagLabel('gemini'), value: 'gemini' }
+    ]
   },
-  { label: '稳定性', tags: ['stable-good', 'stable-fair', 'stable-poor'] },
-  { label: '出网/质量', tags: ['fast', 'ipv6', 'hosting', 'residential', 'dns-leak'] }
+  {
+    label: '稳定性',
+    tags: [
+      { label: tagLabel('stable-good'), value: 'stable-good' },
+      { label: tagLabel('stable-fair'), value: 'stable-fair' },
+      { label: tagLabel('stable-poor'), value: 'stable-poor' }
+    ]
+  },
+  {
+    label: '出网/质量',
+    tags: [
+      { label: tagLabel('fast'), value: 'fast' },
+      { label: tagLabel('ipv6'), value: 'ipv6' },
+      { label: tagLabel('hosting'), value: 'hosting' },
+      { label: tagLabel('residential'), value: 'residential' },
+      { label: tagLabel('dns-leak'), value: 'dns-leak' }
+    ]
+  }
 ]
 
 const form = ref<SubscriptionConditions>({ airports: [], regions: [], tags: [], keyword: '' })

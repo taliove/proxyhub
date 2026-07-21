@@ -54,7 +54,7 @@
         class="ctl-md"
         :disabled="tagOptions.length === 0"
       >
-        <el-option v-for="t in tagOptions" :key="t" :label="t" :value="t" />
+        <el-option v-for="t in tagOptions" :key="t" :label="tagLabel(t)" :value="t" />
       </el-select>
       <el-select
         v-model="unlock"
@@ -76,6 +76,7 @@ import { computed, ref } from 'vue'
 import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import { NODE_TYPES, SELF_HOSTED } from '../utils'
 import type { RegionItem } from '../composables/useNodePool'
+import { tagLabel } from '@/utils/taglabels'
 
 // 结构化筛选条件的双向绑定(父层持有 criteria,child 只按字段收发,不改 props)。
 // 客户端过滤即时生效(谓词见 predicates.ts),故无需 search 事件。

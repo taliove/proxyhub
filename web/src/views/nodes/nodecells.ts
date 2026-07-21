@@ -7,6 +7,7 @@ import {
 } from '@/components/exam/examhistory'
 import { isGenericTarget } from './unlock'
 import type { UnifiedNode } from './selfmerge'
+import { tagLabel } from '@/utils/taglabels'
 
 // 统一节点表的单元格视图模型:与渲染解耦的纯计算,便于单测。
 
@@ -40,7 +41,8 @@ export const stateTags = (n: UnifiedNode): StateTag[] => {
 export const latencyText = (n: Node): string => (n.latency > 0 ? `${n.latency}ms` : '—')
 
 // 标签展示:缺省(票据 21 前)返回空数组,由模板走空态,不报错。
-export const tagsDisplay = (n: Node): string[] => n.tags ?? []
+// 返回中文标签(存储英文,展示中文化)。
+export const tagsDisplay = (n: Node): string[] => (n.tags ?? []).map(tagLabel)
 
 // 出网单元:国家码 + 泄露/代理警示。无出网信息返回 null(不占位)。
 export interface EgressCell {
