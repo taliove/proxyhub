@@ -184,6 +184,20 @@ describe('isActiveCriteria', () => {
     expect(isActiveCriteria(criteria({ tags: ['x'] }))).toBe(true)
     expect(isActiveCriteria(criteria({ keyword: '  ' }))).toBe(false)
   })
+  it('stale: 默认 false(仅在架)不算激活;主动筛已下架(true)算激活', () => {
+    expect(emptyCriteria().stale).toBe(false)
+    expect(isActiveCriteria(criteria({ stale: false }))).toBe(false)
+    expect(isActiveCriteria(criteria({ stale: true }))).toBe(true)
+  })
+})
+
+describe('stale 默认筛选', () => {
+  it('默认条件过滤掉下架节点,清空(null)则全部可见', () => {
+    const nodes = [node({ node_key: 'a', stale: false }), node({ node_key: 'b', stale: true })]
+    expect(filterNodes(nodes, emptyCriteria()).map((n) => n.node_key)).toEqual(['a'])
+    expect(filterNodes(nodes, criteria({ stale: null })).map((n) => n.node_key)).toEqual(['a', 'b'])
+    expect(filterNodes(nodes, criteria({ stale: true })).map((n) => n.node_key)).toEqual(['b'])
+  })
 })
 
 describe('sortNodes - 不原地改 + 稳定次级键', () => {

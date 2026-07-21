@@ -30,7 +30,9 @@ export const emptyCriteria = (): NodeFilterCriteria => ({
   type: '',
   available: null,
   blocked: null,
-  stale: null,
+  // 默认"仅在架":下架节点是订阅里已消失的残留,日常管理不关心;
+  // 用户在筛选栏清空"上下架"即可回到 null(全部,含下架)。
+  stale: false,
   keyword: '',
   tags: [],
   unlock: [],
@@ -104,13 +106,14 @@ export const filterNodes = (
 ): Node[] => nodes.filter((n) => matchesNode(n, c, ctx))
 
 // isActiveCriteria 判断是否存在任何有效筛选(用于空态/计数提示)。
+// stale 默认 false(仅在架)是默认视图而非主动筛选,仅 true(主动看下架)算激活。
 export const isActiveCriteria = (c: NodeFilterCriteria): boolean =>
   !!c.source ||
   !!c.region ||
   !!c.type ||
   c.available !== null ||
   c.blocked !== null ||
-  c.stale !== null ||
+  c.stale === true ||
   c.keyword.trim() !== '' ||
   c.tags.length > 0 ||
   c.unlock.length > 0 ||
