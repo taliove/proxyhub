@@ -98,3 +98,9 @@ export const tagsOf = (nodes: Node[]): string[] => {
   }
   return [...set].sort()
 }
+
+// 地区列显示:空/Unknown 显示"未知",其他原样返回。
+export const regionDisplay = (region: string | undefined): string => {
+  if (!region || region === 'Unknown') return '未知'
+  return region
+}

@@ -64,7 +64,8 @@ func (s *Server) handleCreateSelfNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]bool{"success": true})
+	regionResolved := n.RegionCode != "" && n.RegionCode != "Unknown"
+	writeJSON(w, map[string]any{"success": true, "region_resolved": regionResolved})
 }
 
 // handleUpdateSelfNode updates an existing self-hosted node
@@ -94,7 +95,8 @@ func (s *Server) handleUpdateSelfNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]bool{"success": true})
+	regionResolved := n.RegionCode != "" && n.RegionCode != "Unknown"
+	writeJSON(w, map[string]any{"success": true, "region_resolved": regionResolved})
 }
 
 // handleDeleteSelfNode deletes a self-hosted node
