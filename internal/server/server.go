@@ -23,6 +23,7 @@ import (
 	"github.com/taliove/proxyhub/internal/filter"
 	"github.com/taliove/proxyhub/internal/generator"
 	"github.com/taliove/proxyhub/internal/geoip"
+	"github.com/taliove/proxyhub/internal/healthcheck"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
@@ -101,6 +102,16 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 			}),
 		)
 	}
+
+	// 初始化机场测试编排器
+	storeAdapter := airporttest.NewStoreAdapter(st)
+	healthChecker := NewHealthCheckAdapter(healthcheck.NewChecker(
+		cfg.HealthCheck.Timeout.Latency,
+		cfg.HealthCheck.Timeout.Request,
+		cfg.HealthCheck.TestURL,
+		cfg.HealthCheck.Concurrent,
+	))
+	s.testOrchestrator = airporttest.NewOrchestrator(storeAdapter, healthChecker, nodes)
 
 	return s
 }
