@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/taliove/proxyhub/internal/geoip"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -81,7 +82,9 @@ func (s *Server) refreshAirportNodeNames(targetKeys map[string]bool) int {
 	return len(toRefresh)
 }
 
-// refreshSelfHostedNodeNames re-runs GeoIP resolution and name fallback for self-hosted nodes.
+// refreshSelfHostedNodeNames re-runs GeoIP resolution and applies region-based naming for self-hosted nodes.
+// For nodes with known region: always renames to "自建{region}" format, overwriting custom names.
+// For nodes with Unknown/empty region: preserves existing name.
 // Returns count of nodes updated.
 func (s *Server) refreshSelfHostedNodeNames(targetKeys map[string]bool) int {
 	nodes, err := s.st.ListAllSelfHostedNodes()
@@ -99,18 +102,18 @@ func (s *Server) refreshSelfHostedNodeNames(targetKeys map[string]bool) int {
 
 		// Re-run region resolution
 		oldRegion := n.RegionCode
+		oldName := n.Name
 		n.RegionCode = s.resolveSelfNodeRegion(n)
 
-		// Re-run name fallback (will only set name if currently empty or region changed)
-		// Save original name to detect changes
-		oldName := n.Name
-		n.Name = "" // Temporarily clear to trigger fallback
-		if err := applySelfNodeNameFallback(n); err != nil {
-			// If fallback fails, restore original and skip
-			n.Name = oldName
-			n.RegionCode = oldRegion
-			continue
+		// Apply region-based naming: if region is known, always rename to standard format
+		if n.RegionCode != "" && n.RegionCode != "Unknown" {
+			cn := geoip.CountryName(n.RegionCode)
+			if cn != "" {
+				n.Name = selfNodeNamePrefix + cn
+			}
+			// If CountryName fails despite having region code, keep old name
 		}
+		// If region is Unknown or empty, preserve existing name (no change to n.Name)
 
 		// Only update DB if something changed
 		if n.RegionCode != oldRegion || n.Name != oldName {

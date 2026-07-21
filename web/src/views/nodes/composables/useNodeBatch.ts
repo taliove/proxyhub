@@ -4,8 +4,9 @@ import type { Node } from '@/types'
 import client from '@/api/client'
 import { isSelfHosted } from '../utils'
 
-// 选中态与屏蔽操作:单个节点 / 选中集。自建节点豁免屏蔽(见 CONTEXT.md),
-// 因此批量操作一律只作用于 selectableSelection。
+// Selection state and batch operations. Self-hosted nodes are exempt from block/unblock
+// (see CONTEXT.md), so block operations only apply to selectableSelection (airport nodes).
+// Other operations (refresh-names, detect, exam) apply to all selected nodes uniformly.
 export function useNodeBatch(reload: () => void) {
   const selection = ref<Node[]>([])
 
@@ -13,6 +14,7 @@ export function useNodeBatch(reload: () => void) {
     selection.value = rows
   }
 
+  // Airport-only selection for block operations
   const selectableSelection = computed(() => selection.value.filter((n) => !isSelfHosted(n)))
 
   const blockNode = async (row: Node) => {
@@ -46,7 +48,12 @@ export function useNodeBatch(reload: () => void) {
   }
 
   const refreshNamesSelected = async () => {
-    const keys = selectableSelection.value.map((n) => n.node_key)
+    // Refresh names applies to all selected nodes (both airport and self-hosted)
+    const keys = selection.value.map((n) => n.node_key)
+    if (keys.length === 0) {
+      ElMessage.warning('请先选择节点')
+      return
+    }
     try {
       const res = await client.post<unknown, { updated: number; total: number }>(
         '/nodes/refresh-names',
@@ -56,7 +63,26 @@ export function useNodeBatch(reload: () => void) {
       )
       ElMessage.success(`已刷新 ${res.updated} 个节点名称`)
       reload()
-    } catch (err) {
+    } catch {
+      ElMessage.error('刷新名称失败')
+    }
+  }
+
+  const refreshNameOne = async (row: Node) => {
+    try {
+      const res = await client.post<unknown, { updated: number; total: number }>(
+        '/nodes/refresh-names',
+        {
+          node_keys: [row.node_key]
+        }
+      )
+      if (res.updated > 0) {
+        ElMessage.success('已刷新节点名称')
+      } else {
+        ElMessage.info('节点名称无变化')
+      }
+      reload()
+    } catch {
       ElMessage.error('刷新名称失败')
     }
   }
@@ -69,6 +95,7 @@ export function useNodeBatch(reload: () => void) {
     unblockNode,
     blockSelected,
     unblockSelected,
-    refreshNamesSelected
+    refreshNamesSelected,
+    refreshNameOne
   }
 }

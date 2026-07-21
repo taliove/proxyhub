@@ -160,12 +160,13 @@
         </template>
       </el-table-column>
 
-      <!-- 操作:自建走 编辑/启停/删除;机场走 编辑/屏蔽;点击行打开详情抽屉 -->
-      <el-table-column label="操作" width="180">
+      <!-- 操作:自建走 编辑/刷新名称/启停/删除;机场走 编辑/刷新名称/屏蔽;点击行打开详情抽屉 -->
+      <el-table-column label="操作" width="220">
         <template #default="{ row }">
           <span class="row-ops" @click.stop>
             <template v-if="isSelfHosted(row)">
               <el-button link type="primary" @click="emit('edit-self', row)">编辑</el-button>
+              <el-button link @click="emit('refresh-name', row)">刷新名称</el-button>
               <el-button link @click="emit('toggle-self', row)">
                 {{ row.enabled === false ? '启用' : '禁用' }}
               </el-button>
@@ -173,6 +174,7 @@
             </template>
             <template v-else>
               <el-button link type="primary" @click="emit('edit-override', row)">编辑</el-button>
+              <el-button link @click="emit('refresh-name', row)">刷新名称</el-button>
               <el-button v-if="row.blocked" link type="warning" @click="emit('unblock', row)">
                 取消屏蔽
               </el-button>
@@ -278,11 +280,15 @@ const emit = defineEmits<{
   (e: 'delete-self', row: UnifiedNode): void
   (e: 'block', row: UnifiedNode): void
   (e: 'unblock', row: UnifiedNode): void
+  (e: 'refresh-name', row: UnifiedNode): void
   (e: 'test', row: UnifiedNode, mode: TestCommand): void
 }>()
 
-// 自建节点豁免屏蔽,不可勾选进批量操作
-const isSelectable = (row: UnifiedNode) => !isSelfHosted(row)
+// Self-hosted nodes are now selectable for batch operations.
+// Block/unblock operations semantically only apply to airport nodes (self-hosted nodes
+// don't participate in blocking); other batch operations (detect, exam, refresh-names)
+// apply to all node types uniformly. The batch operation handlers filter by source when needed.
+const isSelectable = () => true
 
 // stale / 禁用节点行置灰
 const rowClassName = ({ row }: { row: UnifiedNode }) =>
