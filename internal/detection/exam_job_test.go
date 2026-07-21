@@ -211,6 +211,39 @@ func TestExamJobManager_FailedNoHistory(t *testing.T) {
 	}
 }
 
+// TestExamJobManager_OpenStoresNodeBeforeRun 钉死根因回归:活节点必须在 Run 之前就位。
+// 历史缺陷:open 在 mgr.Open(已启动 Run goroutine)之后才 Store 节点,Run 的
+// LoadAndDelete 偶发抢先命中空缺 -> 返回 "no live node" -> OnComplete 收非 examResult ->
+// 不落历史 -> 上层 waitExamHistory 超时。修复后 OnStart 在锁内、Run 启动前原子晋升节点,
+// 连开多轮不应再丢节点(onComplete 每轮必达,onErr 从不因缺节点触发)。
+func TestExamJobManager_OpenStoresNodeBeforeRun(t *testing.T) {
+	var completed atomic.Int32
+	var errs atomic.Int32
+	onComplete := func(string, ExamReport) { completed.Add(1) }
+	onErr := func(error) { errs.Add(1) }
+
+	// runner 立即自然完成(带稳定性段 -> 应落历史),放大 open/Run 的时序竞争窗口。
+	run := func(_ context.Context, _ *subscription.Node, emit func(ExamEvent)) ExamReport {
+		emit(ExamEvent{Phase: "done"})
+		return ExamReport{Stability: &StabilityMetrics{Succeeded: 1}}
+	}
+
+	const rounds = 300
+	for i := 0; i < rounds; i++ {
+		m := NewExamJobManager(run, onComplete, WithExamErrorHandler(onErr))
+		node := examTestNode()
+		s := m.Open(node.NodeKey(), node)
+		drainExam(s)
+	}
+
+	if got := errs.Load(); got != 0 {
+		t.Fatalf("onErr fired %d times (live node lost to Run/Store race)", got)
+	}
+	if got := completed.Load(); got != rounds {
+		t.Fatalf("onComplete fired %d times, want %d (every run must persist)", got, rounds)
+	}
+}
+
 func TestExamJobManager_OpenForceRestartsFinished(t *testing.T) {
 	se := newScriptedExam()
 	m := NewExamJobManager(se.run, nil)

@@ -45,7 +45,8 @@ type examKind struct {
 	run        ExamRunner
 	onComplete func(nodeKey string, report ExamReport)
 	onErr      func(error)
-	nodes      sync.Map // nodeKey -> *subscription.Node(活节点,含凭证,仅内存)
+	nodes      sync.Map // nodeKey -> *subscription.Node(供 Run 消费的活节点,含凭证,仅内存)
+	pending    sync.Map // nodeKey -> *subscription.Node(open 暂存,OnStart 原子晋升进 nodes)
 }
 
 func (k *examKind) Name() string    { return "exam" }
@@ -62,6 +63,15 @@ func (k *examKind) CancelEvent() (json.RawMessage, bool) {
 		return nil, false
 	}
 	return b, true
+}
+
+// OnStart 新任务创建后、Run goroutine 启动前(jobs 运行时在 manager 锁内同步调用):
+// 把 open 暂存于 pending 的活节点原子晋升进 nodes,建立"节点就位 happens-before Run"。
+// 仅创建路径触发;附加到既有任务不触发(其 pending 暂存由 open 收尾清理)。
+func (k *examKind) OnStart(nodeKey string) {
+	if v, ok := k.pending.LoadAndDelete(nodeKey); ok {
+		k.nodes.Store(nodeKey, v)
+	}
 }
 
 // examResult 包装体检结果,承载 report(OnComplete 要用)经 Run 返回值传递给 hook。
@@ -236,12 +246,16 @@ func (m *ExamJobManager) OpenForce(nodeKey string, node *subscription.Node) *Exa
 }
 
 func (m *ExamJobManager) open(nodeKey string, node *subscription.Node, force bool) *ExamSubscription {
-	// 活节点存内存旁路(凭证不进 params_json)。只在启动新任务时 Store(被 Run LoadAndDelete 消费);
-	// 附加到既有任务(已在跑/已收口回放)不 Store,避免凭证对象留存超出任务生命周期(M2 修复)。
+	// 活节点存内存旁路(凭证不进 params_json)。先暂存进 pending:若 mgr 判定为新任务,
+	// 会在锁内、Run goroutine 启动前调 OnStart 把它原子晋升进 nodes(被 Run LoadAndDelete 消费),
+	// 消除"Run 抢先于旁路写入"的竞态。附加到既有任务不触发 OnStart,暂存由收尾 LoadAndDelete 清掉,
+	// 避免凭证对象留存超出任务生命周期(M2 修复)。
 	params, err := json.Marshal(examParams{NodeKey: nodeKey})
 	if err != nil && m.kind.onErr != nil {
 		m.kind.onErr(fmt.Errorf("exam: marshal params: %w", err))
 	}
+
+	m.kind.pending.Store(nodeKey, node)
 
 	var inner *jobs.Subscription
 	if force {
@@ -249,6 +263,9 @@ func (m *ExamJobManager) open(nodeKey string, node *subscription.Node, force boo
 	} else {
 		inner, err = m.mgr.Open(m.kind.Name(), nodeKey, params)
 	}
+	// 收尾清理暂存:创建路径 OnStart 已 LoadAndDelete(此处 no-op);附加路径 OnStart 未触发,
+	// 此处删掉暂存,避免活节点(含凭证)留存超出任务生命周期。
+	m.kind.pending.LoadAndDelete(nodeKey)
 	if err != nil {
 		// 仅当 kind 未注册才可能到此(编程错误);此处 kind 恒已注册,理论不达。
 		closed := make(chan ExamFrame)
@@ -256,11 +273,6 @@ func (m *ExamJobManager) open(nodeKey string, node *subscription.Node, force boo
 		return &ExamSubscription{Live: closed, done: make(chan struct{}), inner: &jobs.Subscription{}}
 	}
 
-	// 新任务刚启动:将活节点存入旁路(len(Replay)=0 标识"刚起,尚未 emit 首帧")。
-	// 附加到既有任务:Replay 非空,跳过 Store(节点已被首次启动时的 Run 消费,或任务已收口)。
-	if len(inner.Replay) == 0 {
-		m.kind.nodes.Store(nodeKey, node)
-	}
 	return newExamSubscription(inner)
 }
 
