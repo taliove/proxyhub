@@ -16,7 +16,7 @@ description: ProxyHub 日常开发统一范式——编译、运行、测试、�
 | 前端源码 | `web/src/`(构建产物由 vite 写入 `cmd/server/web/`,gitignored) | 手改 `cmd/server/web/` 产物 |
 | 运维脚本 | `scripts/install/` 或 `scripts/release/`,配套 `test_*.sh` | 根目录散落 .sh |
 | 编译产物 | `dist/`(make 已保证) | 根目录 `go build` 裸跑(会生成 `./proxyhub`、`./server`) |
-| 运行态(数据库/日志/生成的 xray 配置) | `var/data`、`var/log`、`var/xray`(代码默认路径必须落这里,写入方负责 `MkdirAll`) | 任何写到仓库根的默认路径 |
+| 运行态(数据库/日志) | `var/data`、`var/log`(代码默认路径必须落这里,写入方负责 `MkdirAll`) | 任何写到仓库根的默认路径 |
 | 测试临时数据 | `.test/`(集成)/ `t.TempDir()`(单元) | 提交 `.test/` 内容 |
 | 文档 | 按 `CLAUDE.md` §3:术语/ADR/设计/运维 | 过程产物(计划/总结/验证报告) |
 
