@@ -6,6 +6,7 @@ export interface DiagnosticResult {
   node_count: number
   protocol_counts: Record<string, number>
   parse_failures: number
+  url_reachable?: boolean // 订阅URL是否可达(HTTP 2xx)
 }
 
 export interface CheckingProgress {
@@ -146,4 +147,52 @@ export function formatDuration(ms: number): string {
  */
 export function isHttpSuccess(status: number): boolean {
   return status >= 200 && status < 300
+}
+
+/**
+ * Diagnostic state for UI display.
+ * Pure function for easy testing.
+ */
+export type DiagnosticState = 'success' | 'unreachable' | 'failed'
+
+/**
+ * Derive diagnostic state from test run status and dimensions.
+ * Pure function for easy testing.
+ *
+ * Three states:
+ * - success: URL reachable (HTTP 2xx), test proceeds normally
+ * - unreachable: URL unreachable but pool has nodes, test continues with renormalized weights
+ * - failed: run failed (pool empty + URL unreachable)
+ */
+export function getDiagnosticState(
+  runStatus: TestRunStatus,
+  dimensionsJson: string
+): DiagnosticState {
+  // Run failed: diagnostic failed
+  if (runStatus === 'failed') {
+    return 'failed'
+  }
+
+  // Parse dimensions to check url_reachable
+  try {
+    const dims = JSON.parse(dimensionsJson)
+    // url_reachable explicitly false means URL unreachable but test continues (pool has nodes)
+    if (dims.url_reachable === false) {
+      return 'unreachable'
+    }
+    // url_reachable true or checking/scoring/completed status means success
+    if (
+      dims.url_reachable === true ||
+      runStatus === 'checking' ||
+      runStatus === 'scoring' ||
+      runStatus === 'completed'
+    ) {
+      return 'success'
+    }
+  } catch {
+    // Parse error, fall through
+  }
+
+  // Diagnosing phase or unknown: default to success
+  return 'success'
 }

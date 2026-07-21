@@ -5,7 +5,8 @@ import {
   parseCompletedResult,
   getScoreColor,
   formatDuration,
-  isHttpSuccess
+  isHttpSuccess,
+  getDiagnosticState
 } from './useAirportTest'
 
 describe('useAirportTest', () => {
@@ -170,6 +171,44 @@ describe('useAirportTest', () => {
       expect(isHttpSuccess(404)).toBe(false)
       expect(isHttpSuccess(500)).toBe(false)
       expect(isHttpSuccess(0)).toBe(false)
+    })
+  })
+
+  describe('getDiagnosticState', () => {
+    it('should return success when URL is reachable (url_reachable=true)', () => {
+      const dimensionsJson = JSON.stringify({ url_reachable: true, http_status: 200 })
+      expect(getDiagnosticState('checking', dimensionsJson)).toBe('success')
+      expect(getDiagnosticState('scoring', dimensionsJson)).toBe('success')
+      expect(getDiagnosticState('completed', dimensionsJson)).toBe('success')
+    })
+
+    it('should return unreachable when URL is not reachable but test continues (url_reachable=false)', () => {
+      const dimensionsJson = JSON.stringify({ url_reachable: false, http_status: 404 })
+      expect(getDiagnosticState('checking', dimensionsJson)).toBe('unreachable')
+      expect(getDiagnosticState('scoring', dimensionsJson)).toBe('unreachable')
+      expect(getDiagnosticState('completed', dimensionsJson)).toBe('unreachable')
+    })
+
+    it('should return failed when run status is failed', () => {
+      const dimensionsJson = JSON.stringify({ url_reachable: false, http_status: 404 })
+      expect(getDiagnosticState('failed', dimensionsJson)).toBe('failed')
+    })
+
+    it('should return success for diagnosing phase (before url_reachable is known)', () => {
+      const dimensionsJson = JSON.stringify({ http_status: 0 })
+      expect(getDiagnosticState('diagnosing', dimensionsJson)).toBe('success')
+    })
+
+    it('should return success when dimensions cannot be parsed', () => {
+      const invalidJson = 'invalid json'
+      expect(getDiagnosticState('checking', invalidJson)).toBe('success')
+    })
+
+    it('should return success when url_reachable is missing but status is checking/scoring/completed', () => {
+      const dimensionsJson = JSON.stringify({ http_status: 200 })
+      expect(getDiagnosticState('checking', dimensionsJson)).toBe('success')
+      expect(getDiagnosticState('scoring', dimensionsJson)).toBe('success')
+      expect(getDiagnosticState('completed', dimensionsJson)).toBe('success')
     })
   })
 })

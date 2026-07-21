@@ -21,6 +21,7 @@ type ScoreDimensions struct {
 	RegionDistribution map[string]int     `json:"region_distribution"` // 地区分布
 	HTTPStatus        int                `json:"http_status"`         // 拉取HTTP状态
 	ParseSuccessRate  float64            `json:"parse_success_rate"`  // 解析成功率
+	URLReachable      bool               `json:"url_reachable"`       // 订阅URL是否可达(HTTP 2xx)
 }
 
 // CalculateScore 计算综合评分(0-100)及维度明细。
@@ -39,11 +40,13 @@ func CalculateScore(nodes []*subscription.Node, httpStatus, parseFailures, total
 
 	// 节点为空:各维度零分
 	if len(nodes) == 0 {
+		dims.URLReachable = httpStatus >= 200 && httpStatus < 300
 		return 0, dims
 	}
 
 	// 判断是否需要重归一(URL不可达)
 	fetchHealthAvailable := httpStatus >= 200 && httpStatus < 300
+	dims.URLReachable = fetchHealthAvailable
 
 	// 原始权重
 	availabilityWeight := 50.0

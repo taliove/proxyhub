@@ -20,6 +20,11 @@ func TestCalculateScore_RenormalizedWeights_URLUnreachable(t *testing.T) {
 	// HTTP 404: fetch health N/A, weights renormalized
 	score, dims := CalculateScore(nodes, 404, 0, 0)
 
+	// URLReachable should be false
+	if dims.URLReachable {
+		t.Error("URLReachable should be false for HTTP 404")
+	}
+
 	// Fetch health should be 0 (N/A)
 	if dims.FetchHealthScore != 0 {
 		t.Errorf("fetch health score should be 0 for HTTP 404, got %.2f", dims.FetchHealthScore)
@@ -141,6 +146,11 @@ func TestCalculateScore_NormalWeights_URLReachable(t *testing.T) {
 
 	// HTTP 200: all 4 dimensions active
 	score, dims := CalculateScore(nodes, 200, 0, 10)
+
+	// URLReachable should be true
+	if !dims.URLReachable {
+		t.Error("URLReachable should be true for HTTP 200")
+	}
 
 	// Availability: 100% * 50% = 50
 	if dims.AvailabilityScore != 50 {
