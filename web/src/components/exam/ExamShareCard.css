@@ -56,15 +56,10 @@
   height: 108px;
   transform: rotate(-90deg);
 }
-.share-ring-track {
-  fill: none;
-  stroke: var(--ph-border);
-  stroke-width: 10;
-}
+/* 环轨道/弧的关键视觉属性(fill/stroke/stroke-width/stroke-linecap)已内联为
+   presentation attributes,见 ExamShareCard.vue —— 保证 html-to-image 导出一致。
+   此处只保留纯动画,不重复声明视觉属性。 */
 .share-ring-arc {
-  fill: none;
-  stroke-width: 10;
-  stroke-linecap: round;
   transition: stroke-dashoffset 0.4s ease;
 }
 .share-ring-center {
@@ -218,35 +213,41 @@
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
 }
-/* 全量版:多地域表格 */
+/* 全量版:多地域表格。密度对齐摘要版(最佳/最差):行高紧凑、数值单行不折行。 */
 .share-region-table {
   display: flex;
   flex-direction: column;
-  gap: var(--ph-space-1);
 }
 .share-region-header,
 .share-region-row {
   display: grid;
-  grid-template-columns: 1fr 60px 70px 70px;
+  /* 数值列固定宽度,容得下 "162.7 Mbps"(单行),名列吃余量。 */
+  grid-template-columns: 1fr 52px 76px 76px;
   gap: var(--ph-space-2);
   font-size: var(--ph-text-sm);
-  padding: var(--ph-space-2) var(--ph-space-1);
+  line-height: 1.3;
+  padding: var(--ph-space-1) var(--ph-space-1);
 }
 .share-region-header {
   font-weight: 600;
   color: var(--ph-text-secondary);
   border-bottom: 1px solid var(--ph-border-light);
+  margin-bottom: var(--ph-space-1);
 }
 .share-region-row {
   color: var(--ph-text-primary);
 }
 .share-region-col-name {
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .share-region-col-latency,
 .share-region-col-down,
 .share-region-col-up {
   text-align: right;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 /* 全量版:稳定性明细网格 */
