@@ -133,8 +133,8 @@ func (s *Server) handlePreviewConditions(w http.ResponseWriter, r *http.Request)
 	// 拉取节点标签用于明细展示(拉取失败时标签字段留空,不影响其余字段)
 	nodeTags, _ := s.collectNodeTags(detailNodes)
 
-	// 组装明细(预览不需要 blocked/unlockResults,传 nil)
-	nodeDetails := toNodeViews(detailNodes, nil, nil, nodeTags)
+	// 组装明细(预览不需要 blocked/unlockResults/稳定性分,传 nil)
+	nodeDetails := toNodeViews(detailNodes, nil, nil, nodeTags, nil)
 
 	writeJSON(w, map[string]any{
 		"total": len(filtered),
