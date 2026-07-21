@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { parseDiagnosticResult, formatDuration, isHttpSuccess } from './useAirportTest'
+import {
+  parseDiagnosticResult,
+  parseCheckingProgress,
+  parseCompletedResult,
+  getScoreColor,
+  formatDuration,
+  isHttpSuccess
+} from './useAirportTest'
 
 describe('useAirportTest', () => {
   describe('parseDiagnosticResult', () => {
@@ -36,6 +43,102 @@ describe('useAirportTest', () => {
 
       expect(result.http_status).toBe(0)
       expect(result.node_count).toBe(0)
+    })
+  })
+
+  describe('parseCheckingProgress', () => {
+    it('should parse valid checking progress', () => {
+      const json = JSON.stringify({
+        checked: 5,
+        total: 10,
+        http_status: 200,
+        node_count: 10
+      })
+
+      const result = parseCheckingProgress(json)
+
+      expect(result).toEqual({ checked: 5, total: 10 })
+    })
+
+    it('should return null for missing fields', () => {
+      const json = JSON.stringify({ http_status: 200 })
+
+      const result = parseCheckingProgress(json)
+
+      expect(result).toBeNull()
+    })
+
+    it('should return null for invalid JSON', () => {
+      const result = parseCheckingProgress('invalid')
+
+      expect(result).toBeNull()
+    })
+  })
+
+  describe('parseCompletedResult', () => {
+    it('should parse valid completed result', () => {
+      const json = JSON.stringify({
+        http_status: 200,
+        node_count: 10,
+        checked: 10,
+        total: 10,
+        availability_rate: 0.9,
+        latency_mean_ms: 120,
+        latency_p95_ms: 200,
+        score_breakdown: {
+          availability_rate: 0.9,
+          availability_score: 45,
+          latency_mean_ms: 120,
+          latency_p95_ms: 200,
+          latency_score: 28,
+          fetch_health_score: 10,
+          region_coverage_count: 3,
+          region_coverage_score: 7.5
+        }
+      })
+
+      const result = parseCompletedResult(json)
+
+      expect(result).not.toBeNull()
+      expect(result?.score_breakdown.availability_score).toBe(45)
+      expect(result?.score_breakdown.latency_score).toBe(28)
+    })
+
+    it('should return null for diagnostic-only result', () => {
+      const json = JSON.stringify({
+        http_status: 200,
+        node_count: 10
+      })
+
+      const result = parseCompletedResult(json)
+
+      expect(result).toBeNull()
+    })
+
+    it('should return null for invalid JSON', () => {
+      const result = parseCompletedResult('invalid')
+
+      expect(result).toBeNull()
+    })
+  })
+
+  describe('getScoreColor', () => {
+    it('should return success for scores >= 80', () => {
+      expect(getScoreColor(80)).toBe('success')
+      expect(getScoreColor(90)).toBe('success')
+      expect(getScoreColor(100)).toBe('success')
+    })
+
+    it('should return warning for scores >= 60 and < 80', () => {
+      expect(getScoreColor(60)).toBe('warning')
+      expect(getScoreColor(70)).toBe('warning')
+      expect(getScoreColor(79)).toBe('warning')
+    })
+
+    it('should return danger for scores < 60', () => {
+      expect(getScoreColor(0)).toBe('danger')
+      expect(getScoreColor(30)).toBe('danger')
+      expect(getScoreColor(59)).toBe('danger')
     })
   })
 

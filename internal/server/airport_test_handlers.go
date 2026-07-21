@@ -103,3 +103,30 @@ func (s *Server) handleGetAirportTestRun(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(run)
 }
+
+// handleListAirportTestRuns retrieves recent test runs for an airport.
+func (s *Server) handleListAirportTestRuns(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/airports/")
+	idStr = strings.TrimSuffix(idStr, "/test/runs")
+	airportID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid airport id", http.StatusBadRequest)
+		return
+	}
+
+	// Verify airport exists
+	_, err = s.st.GetAirportByID(airportID)
+	if err != nil {
+		http.Error(w, "airport not found", http.StatusNotFound)
+		return
+	}
+
+	runs, err := s.st.ListAirportTestRuns(context.Background(), airportID, 30)
+	if err != nil {
+		http.Error(w, "failed to retrieve runs", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(runs)
+}

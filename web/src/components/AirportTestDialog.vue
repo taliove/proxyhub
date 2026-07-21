@@ -2,7 +2,7 @@
   <el-dialog
     v-model="visible"
     :title="`机场测试 - ${airport?.name || ''}`"
-    width="600px"
+    width="700px"
     @close="handleClose"
   >
     <!-- Diagnostics phase -->
@@ -13,12 +13,12 @@
       </div>
     </div>
 
-    <!-- Diagnostics results -->
-    <div v-else-if="phase === 'diagnostic-done'" class="test-phase">
-      <h4>📊 诊断结果</h4>
-      <el-descriptions :column="2" border>
+    <!-- Checking phase (with progress) -->
+    <div v-else-if="phase === 'checking'" class="test-phase">
+      <h4>✅ 诊断完成</h4>
+      <el-descriptions :column="2" border size="small" class="compact-descriptions">
         <el-descriptions-item label="HTTP 状态">
-          <el-tag :type="diagnosticResult.http_status === 200 ? 'success' : 'danger'">
+          <el-tag :type="diagnosticResult.http_status === 200 ? 'success' : 'danger'" size="small">
             {{ diagnosticResult.http_status }}
           </el-tag>
         </el-descriptions-item>
@@ -29,31 +29,44 @@
           {{ diagnosticResult.node_count }} 节点
         </el-descriptions-item>
         <el-descriptions-item label="解析失败">
-          <el-tag v-if="diagnosticResult.parse_failures > 0" type="warning">
+          <el-tag v-if="diagnosticResult.parse_failures > 0" type="warning" size="small">
             {{ diagnosticResult.parse_failures }} 行
           </el-tag>
           <span v-else>0</span>
         </el-descriptions-item>
       </el-descriptions>
 
-      <div v-if="diagnosticResult.protocol_counts" class="protocol-counts">
-        <h5>协议分布</h5>
-        <el-tag
-          v-for="(count, protocol) in diagnosticResult.protocol_counts"
-          :key="protocol"
-          class="protocol-tag"
-        >
-          {{ protocol }}: {{ count }}
-        </el-tag>
-      </div>
+      <el-divider />
 
-      <!-- Future phases placeholder -->
-      <div class="future-phases">
-        <el-divider />
-        <el-alert type="info" :closable="false" show-icon>
-          <template #title> 抽样检活与综合评分功能即将支持 </template>
-        </el-alert>
+      <div class="phase-loading">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>正在检活节点...</span>
       </div>
+      <el-progress
+        v-if="checkingProgress"
+        :percentage="Math.round((checkingProgress.checked / checkingProgress.total) * 100)"
+        :format="() => `${checkingProgress?.checked || 0} / ${checkingProgress?.total || 0}`"
+      />
+    </div>
+
+    <!-- Scoring phase -->
+    <div v-else-if="phase === 'scoring'" class="test-phase">
+      <div class="phase-loading">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>正在计算综合评分...</span>
+      </div>
+    </div>
+
+    <!-- Completed phase (full report) -->
+    <div v-else-if="phase === 'completed'" class="test-phase">
+      <AirportTestScoreReport
+        :overall-score="overallScore"
+        :diagnostic="diagnosticResult"
+        :completed-result="completedResult"
+        @run-full="runFullTest"
+      />
+
+      <AirportTestTrend :runs="historyRuns" />
     </div>
 
     <!-- Error state -->
@@ -71,11 +84,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { Airport } from '@/types'
-import { runAirportTest, type DiagnosticResult } from '@/composables/useAirportTest'
+import {
+  runAirportTest,
+  getTestRun,
+  listTestRuns,
+  parseDiagnosticResult,
+  parseCheckingProgress,
+  parseCompletedResult,
+  type DiagnosticResult,
+  type CheckingProgress,
+  type CompletedResult,
+  type TestRun,
+  type TestRunStatus
+} from '@/composables/useAirportTest'
+import AirportTestScoreReport from './AirportTestScoreReport.vue'
+import AirportTestTrend from './AirportTestTrend.vue'
 
 interface Props {
   modelValue: boolean
@@ -90,7 +117,8 @@ const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 const visible = ref(false)
-const phase = ref<'diagnosing' | 'diagnostic-done' | 'failed'>('diagnosing')
+const phase = ref<TestRunStatus>('diagnosing')
+const currentRunId = ref<number | null>(null)
 const diagnosticResult = ref<DiagnosticResult>({
   http_status: 0,
   duration_ms: 0,
@@ -98,7 +126,12 @@ const diagnosticResult = ref<DiagnosticResult>({
   protocol_counts: {},
   parse_failures: 0
 })
+const checkingProgress = ref<CheckingProgress | null>(null)
+const completedResult = ref<CompletedResult | null>(null)
+const overallScore = ref<number>(0)
 const errorMessage = ref('')
+const historyRuns = ref<TestRun[]>([])
+const pollingTimer = ref<number | null>(null)
 
 watch(
   () => props.modelValue,
@@ -112,16 +145,21 @@ watch(
 
 watch(visible, (val) => {
   emit('update:modelValue', val)
+  if (!val) {
+    stopPolling()
+  }
 })
 
-const startTest = async () => {
+const startTest = async (full = false) => {
   if (!props.airport) return
 
   phase.value = 'diagnosing'
   errorMessage.value = ''
+  stopPolling()
 
   try {
-    const result = await runAirportTest(props.airport.id)
+    const result = await runAirportTest(props.airport.id, full)
+    currentRunId.value = result.id
 
     if (result.status === 'failed') {
       phase.value = 'failed'
@@ -129,19 +167,96 @@ const startTest = async () => {
       return
     }
 
-    const dims = JSON.parse(result.dimensions_json) as DiagnosticResult
+    const dims = parseDiagnosticResult(result.dimensions_json)
     diagnosticResult.value = dims
-    phase.value = 'diagnostic-done'
-  } catch (error: any) {
+
+    if (result.status !== 'completed') {
+      startPolling()
+    } else {
+      handleCompletedRun(result)
+    }
+
+    loadHistory()
+  } catch (error) {
+    const err = error as { response?: { data?: { error?: string } }; message?: string }
     phase.value = 'failed'
-    errorMessage.value = error.response?.data?.error || error.message || '请求失败'
+    errorMessage.value = err.response?.data?.error || err.message || '请求失败'
     ElMessage.error('测试执行失败')
   }
 }
 
+const runFullTest = () => {
+  startTest(true)
+}
+
+const startPolling = () => {
+  stopPolling()
+
+  const poll = async () => {
+    if (!props.airport || !currentRunId.value) return
+
+    try {
+      const run = await getTestRun(props.airport.id, currentRunId.value)
+
+      if (run.status === 'failed') {
+        phase.value = 'failed'
+        errorMessage.value = run.error_message || '测试失败'
+        stopPolling()
+        return
+      }
+
+      if (run.status === 'checking') {
+        phase.value = 'checking'
+        const progress = parseCheckingProgress(run.dimensions_json)
+        if (progress) {
+          checkingProgress.value = progress
+        }
+      } else if (run.status === 'scoring') {
+        phase.value = 'scoring'
+      } else if (run.status === 'completed') {
+        handleCompletedRun(run)
+        stopPolling()
+        loadHistory()
+      }
+    } catch (error) {
+      console.error('Polling error:', error)
+    }
+  }
+
+  pollingTimer.value = window.setInterval(poll, 1500)
+}
+
+const stopPolling = () => {
+  if (pollingTimer.value) {
+    clearInterval(pollingTimer.value)
+    pollingTimer.value = null
+  }
+}
+
+const handleCompletedRun = (run: TestRun) => {
+  phase.value = 'completed'
+  const result = parseCompletedResult(run.dimensions_json)
+  if (result) {
+    completedResult.value = result
+    overallScore.value = run.overall_score || 0
+  }
+}
+
+const loadHistory = async () => {
+  if (!props.airport) return
+
+  try {
+    const runs = await listTestRuns(props.airport.id)
+    historyRuns.value = runs
+  } catch (error) {
+    console.error('Failed to load history:', error)
+  }
+}
+
 const handleClose = () => {
-  // Reset state on close
+  stopPolling()
   phase.value = 'diagnosing'
+  currentRunId.value = null
   diagnosticResult.value = {
     http_status: 0,
     duration_ms: 0,
@@ -149,8 +264,16 @@ const handleClose = () => {
     protocol_counts: {},
     parse_failures: 0
   }
+  checkingProgress.value = null
+  completedResult.value = null
+  overallScore.value = 0
   errorMessage.value = ''
+  historyRuns.value = []
 }
+
+onUnmounted(() => {
+  stopPolling()
+})
 </script>
 
 <style scoped>
@@ -163,7 +286,7 @@ const handleClose = () => {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  padding: 40px 0;
+  padding: 20px 0;
   font-size: 16px;
   color: var(--el-text-color-secondary);
 }
@@ -172,21 +295,7 @@ const handleClose = () => {
   font-size: 24px;
 }
 
-.protocol-counts {
-  margin-top: 20px;
-}
-
-.protocol-counts h5 {
-  margin-bottom: 12px;
-  font-size: 14px;
-  color: var(--el-text-color-regular);
-}
-
-.protocol-tag {
-  margin-right: 8px;
-}
-
-.future-phases {
-  margin-top: 20px;
+.compact-descriptions {
+  margin-bottom: 20px;
 }
 </style>
