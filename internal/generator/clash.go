@@ -2,6 +2,7 @@ package generator
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/taliove/proxyhub/internal/subscription"
 )
@@ -82,9 +83,53 @@ func ClashProxy(node *subscription.Node, name string) (map[string]any, error) {
 		base["type"] = "ss"
 		base["cipher"] = node.Cipher
 		base["password"] = node.Password
+		base["udp"] = true
+		if node.Plugin != "" {
+			plugin, opts := clashSSPlugin(node.Plugin, node.PluginOpts)
+			base["plugin"] = plugin
+			if len(opts) > 0 {
+				base["plugin-opts"] = opts
+			}
+		}
 	default:
 		return nil, fmt.Errorf("unsupported type: %s", node.Type)
 	}
 
 	return base, nil
+}
+
+// clashSSPlugin 把 SIP002 plugin 串映射为 Clash 的 plugin/plugin-opts。
+// simple-obfs/obfs-local -> obfs(obfs->mode, obfs-host->host, obfs-uri->path);
+// v2ray-plugin -> v2ray-plugin(opts 键原样透传,裸标记如 tls 视为 true)。
+func clashSSPlugin(plugin, opts string) (string, map[string]any) {
+	name := plugin
+	switch plugin {
+	case "simple-obfs", "obfs-local":
+		name = "obfs"
+	}
+
+	m := map[string]any{}
+	for _, kv := range strings.Split(opts, ";") {
+		if kv == "" {
+			continue
+		}
+		k, v, hasValue := strings.Cut(kv, "=")
+		if plugin == "v2ray-plugin" {
+			if !hasValue {
+				m[k] = true // 裸标记,如 tls
+				continue
+			}
+			m[k] = v
+			continue
+		}
+		switch k {
+		case "obfs":
+			m["mode"] = v
+		case "obfs-host":
+			m["host"] = v
+		case "obfs-uri":
+			m["path"] = v
+		}
+	}
+	return name, m
 }

@@ -22,6 +22,11 @@ type Node struct {
 	AlterID  int    `json:"alter_id,omitempty"`
 	Cipher   string `json:"cipher,omitempty"`
 
+	// SS 插件(SIP002):simple-obfs / v2ray-plugin 等。机场节点常靠 obfs 混淆才能连通,
+	// 丢失会导致重建的订阅全部不可用;PluginOpts 保留 "obfs=http;obfs-host=x" 原始串。
+	Plugin     string `json:"plugin,omitempty"`
+	PluginOpts string `json:"plugin_opts,omitempty"`
+
 	// 网络配置
 	Network         string `json:"network,omitempty"` // tcp, ws, grpc
 	TLS             bool   `json:"tls,omitempty"`

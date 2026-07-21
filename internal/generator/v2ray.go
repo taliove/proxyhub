@@ -58,7 +58,6 @@ func GenerateShareURI(node *subscription.Node) (string, error) {
 	return shareLink(node)
 }
 
-
 func vmessLink(node *subscription.Node) (string, error) {
 	tls := ""
 	if node.TLS {
@@ -129,6 +128,14 @@ func anytlsLink(node *subscription.Node) string {
 func ssLink(node *subscription.Node) string {
 	userInfo := base64.URLEncoding.EncodeToString(
 		[]byte(fmt.Sprintf("%s:%s", node.Cipher, node.Password)))
-	return fmt.Sprintf("ss://%s@%s:%d#%s",
-		userInfo, node.Server, node.Port, url.QueryEscape(node.EffectiveName()))
+	link := fmt.Sprintf("ss://%s@%s:%d", userInfo, node.Server, node.Port)
+	// SIP002 plugin 参数原样回写(simple-obfs/v2ray-plugin),丢失会导致节点不可用
+	if node.Plugin != "" {
+		raw := node.Plugin
+		if node.PluginOpts != "" {
+			raw += ";" + node.PluginOpts
+		}
+		link += "/?plugin=" + url.QueryEscape(raw)
+	}
+	return link + "#" + url.QueryEscape(node.EffectiveName())
 }

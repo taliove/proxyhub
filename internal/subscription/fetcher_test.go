@@ -19,11 +19,28 @@ func TestParseShadowsocksNode(t *testing.T) {
 			line:    "ss://YWVzLTEyOC1nY206ZmFrZXB3MTIzNDU2Nzg@00000000-0000-0000-0000-000000000000.example.com:12022/?plugin=simple-obfs%3Bobfs%3Dhttp%3Bobfs-host%3Dobfs.example.com#%F0%9F%87%AD%F0%9F%87%B0%20%E9%A6%99%E6%B8%AF%2001%E4%B8%A81x%20HK",
 			wantErr: false,
 			wantNode: &Node{
-				Type:   "ss",
-				Server: "00000000-0000-0000-0000-000000000000.example.com",
-				Port:   12022,
-				Cipher: "aes-128-gcm",
-				Region: "HK",
+				Type:       "ss",
+				Server:     "00000000-0000-0000-0000-000000000000.example.com",
+				Port:       12022,
+				Cipher:     "aes-128-gcm",
+				Plugin:     "simple-obfs",
+				PluginOpts: "obfs=http;obfs-host=obfs.example.com",
+				Region:     "HK",
+			},
+		},
+		{
+			// 部分客户端/机场不转义 plugin 里的分号,url.ParseQuery 会报错,必须兼容
+			name:    "SIP002 format with unescaped plugin semicolons",
+			line:    "ss://YWVzLTEyOC1nY206ZmFrZXB3MTIzNDU2Nzg@00000000-0000-0000-0000-000000000000.example.com:12022/?plugin=simple-obfs;obfs=http;obfs-host=obfs.example.com#%F0%9F%87%AD%F0%9F%87%B0%20HK",
+			wantErr: false,
+			wantNode: &Node{
+				Type:       "ss",
+				Server:     "00000000-0000-0000-0000-000000000000.example.com",
+				Port:       12022,
+				Cipher:     "aes-128-gcm",
+				Plugin:     "simple-obfs",
+				PluginOpts: "obfs=http;obfs-host=obfs.example.com",
+				Region:     "HK",
 			},
 		},
 	}
@@ -47,6 +64,12 @@ func TestParseShadowsocksNode(t *testing.T) {
 				}
 				if node.Cipher != tt.wantNode.Cipher {
 					t.Errorf("Cipher = %v, want %v", node.Cipher, tt.wantNode.Cipher)
+				}
+				if node.Plugin != tt.wantNode.Plugin {
+					t.Errorf("Plugin = %v, want %v", node.Plugin, tt.wantNode.Plugin)
+				}
+				if node.PluginOpts != tt.wantNode.PluginOpts {
+					t.Errorf("PluginOpts = %v, want %v", node.PluginOpts, tt.wantNode.PluginOpts)
 				}
 				if node.Region != tt.wantNode.Region {
 					t.Errorf("Region = %v, want %v", node.Region, tt.wantNode.Region)

@@ -389,8 +389,12 @@ func (f *Fetcher) parseShadowsocksNode(line, source string) (*Node, error) {
 		line = line[:idx]
 	}
 
-	// 去掉 ?plugin 参数和尾部 / （SIP002 格式）
+	// 提取 SIP002 plugin 参数(如 ?plugin=simple-obfs%3Bobfs%3Dhttp%3Bobfs-host%3Dx)。
+	// 必须在剥离查询串之前解析:obfs/v2ray-plugin 信息丢失会让重建的订阅不可用
+	// (服务器只认插件包装后的流量,裸 SS 握手直接失败)。
+	var plugin, pluginOpts string
 	if idx := strings.Index(line, "?"); idx != -1 {
+		plugin, pluginOpts = parseSSPlugin(line[idx+1:])
 		line = line[:idx]
 	}
 	line = strings.TrimSuffix(line, "/")
@@ -484,16 +488,41 @@ func (f *Fetcher) parseShadowsocksNode(line, source string) (*Node, error) {
 	region := extractRegion(name)
 
 	return &Node{
-		Name:      name,
-		Type:      "ss",
-		Server:    server,
-		Port:      port,
-		Password:  password,
-		Cipher:    method,
-		Region:    region,
-		Source:    source,
-		Available: false,
+		Name:       name,
+		Type:       "ss",
+		Server:     server,
+		Port:       port,
+		Password:   password,
+		Cipher:     method,
+		Plugin:     plugin,
+		PluginOpts: pluginOpts,
+		Region:     region,
+		Source:     source,
+		Available:  false,
 	}, nil
+}
+
+// parseSSPlugin 解析 SIP002 查询串中的 plugin 参数,返回 (插件名, opts 串)。
+// 形如 "plugin=simple-obfs%3Bobfs%3Dhttp%3Bobfs-host%3Dx" -> ("simple-obfs", "obfs=http;obfs-host=x")
+// 不用 url.ParseQuery:它对未转义的字面分号报错(Go 1.17+),而部分客户端/机场
+// 直接输出 "plugin=simple-obfs;obfs=http;obfs-host=x",两种形态都要兼容。
+func parseSSPlugin(query string) (string, string) {
+	var raw string
+	for _, seg := range strings.Split(query, "&") {
+		if v, ok := strings.CutPrefix(seg, "plugin="); ok {
+			raw = v
+			break
+		}
+	}
+	if raw == "" {
+		return "", ""
+	}
+	decoded, err := url.QueryUnescape(raw)
+	if err != nil {
+		return "", ""
+	}
+	name, opts, _ := strings.Cut(decoded, ";")
+	return name, opts
 }
 
 // extractRegion 从节点名称提取地区

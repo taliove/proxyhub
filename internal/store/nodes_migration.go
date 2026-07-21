@@ -34,6 +34,13 @@ func (s *Store) migrateNodesToUpsert() error {
 	if err := s.addColumnIfMissing("nodes", "grpc_service_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// SS 插件(simple-obfs/v2ray-plugin),丢失会让重建订阅不可用
+	if err := s.addColumnIfMissing("nodes", "plugin", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("nodes", "plugin_opts", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 
 	// 2. 回填 node_key（旧行的 node_key 列为空，需从 server/port/sni 计算）
 	if err := s.backfillNodeKeys(); err != nil {

@@ -262,3 +262,36 @@ func TestNodePool_BandwidthRoundtrip(t *testing.T) {
 		t.Errorf("BandwidthCheck = %v, want %v", node.BandwidthCheck, now)
 	}
 }
+
+// TestNodePool_PluginRoundtrip 验证 SS 插件(simple-obfs)经 nodes 表持久化后不丢失。
+// 丢失会让重建的 Clash 订阅缺 plugin/plugin-opts,节点不可用。
+func TestNodePool_PluginRoundtrip(t *testing.T) {
+	st := newTestStore(t)
+
+	pool := []*subscription.Node{
+		{
+			Name: "香港01", Type: "ss", Server: "1.1.1.1", Port: 12022, Source: "机场A",
+			Cipher: "aes-128-gcm", Password: "p1",
+			Plugin: "simple-obfs", PluginOpts: "obfs=http;obfs-host=obfs.example.com",
+		},
+	}
+	if err := st.SaveNodePool(pool); err != nil {
+		t.Fatalf("SaveNodePool() error = %v", err)
+	}
+
+	got, err := st.LoadNodePool()
+	if err != nil {
+		t.Fatalf("LoadNodePool() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+
+	node := got[0]
+	if node.Plugin != "simple-obfs" {
+		t.Errorf("Plugin = %q, want simple-obfs", node.Plugin)
+	}
+	if node.PluginOpts != "obfs=http;obfs-host=obfs.example.com" {
+		t.Errorf("PluginOpts = %q, want obfs=http;obfs-host=obfs.example.com", node.PluginOpts)
+	}
+}
