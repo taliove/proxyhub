@@ -56,6 +56,26 @@ func (f *fakeNodes) UpdateNodeTestResult(nodeKey, mode string, available bool, l
 	return false
 }
 
+// UpdateNodeIdentity 测试 mock：按 NodeKey 命中后替换节点对象(不可变语义),
+// 与真实 Aggregator 行为一致。name/region 为空表示不改该字段。
+func (f *fakeNodes) UpdateNodeIdentity(nodeKey, name, region string) bool {
+	for i, n := range f.nodes {
+		if n.NodeKey() != nodeKey {
+			continue
+		}
+		updated := *n
+		if name != "" {
+			updated.Name = name
+		}
+		if region != "" {
+			updated.Region = region
+		}
+		f.nodes[i] = &updated
+		return true
+	}
+	return false
+}
+
 func newTestServer(t *testing.T, nodes []*subscription.Node) (*Server, *store.Store) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
