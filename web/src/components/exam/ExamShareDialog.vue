@@ -1,6 +1,7 @@
 <template>
-  <!-- 分享卡对话框:承载海报(ExamShareCard)之外的全部控件 —— 节点名开关、IP 开关、下载 PNG、复制到剪贴板。
-       海报本身零按钮以免被截进图;渲染失败给显式 error 提示,不静默。 -->
+  <!-- 分享卡对话框:承载海报(ExamShareCard)之外的全部控件 —— 节点名开关、三个 IP/DNS 显隐开关、
+       下载 PNG、复制到剪贴板。海报本身零按钮以免被截进图;渲染失败给显式 error 提示,不静默。
+       三个开关默认全关(出口 IP/入口 IP/DNS 解析器均属高敏信息),打开属用户明示。 -->
   <el-dialog
     v-model="visible"
     :title="`分享体检 · ${nodeLabel}`"
@@ -9,7 +10,9 @@
   >
     <div class="share-toolbar">
       <el-switch v-model="showFullName" size="small" active-text="显示完整节点名" />
-      <el-switch v-model="showIp" size="small" active-text="显示 IP" />
+      <el-switch v-model="showEgressIp" size="small" active-text="显示出口 IP" />
+      <el-switch v-model="showIngressIp" size="small" active-text="显示入口 IP" />
+      <el-switch v-model="showDns" size="small" active-text="显示 DNS 解析器" />
     </div>
 
     <el-alert
@@ -27,9 +30,12 @@
         ref="cardRef"
         :report="report"
         :node-name="nodeName"
+        :node-server="nodeServer"
         :exam-time="examTime"
         :masked="!showFullName"
-        :show-ip="showIp"
+        :show-egress-ip="showEgressIp"
+        :show-ingress-ip="showIngressIp"
+        :show-dns="showDns"
       />
     </div>
 
@@ -54,15 +60,18 @@ const props = withDefaults(
   defineProps<{
     report: ExamReport | null
     nodeName?: string
+    nodeServer?: string
     examTime?: string | number | Date
   }>(),
-  { nodeName: '', examTime: '' }
+  { nodeName: '', nodeServer: '', examTime: '' }
 )
 
 const visible = defineModel<boolean>('visible', { required: true })
 
 const showFullName = ref(false)
-const showIp = ref(false)
+const showEgressIp = ref(false)
+const showIngressIp = ref(false)
+const showDns = ref(false)
 const downloading = ref(false)
 const copying = ref(false)
 const errorMsg = ref('')

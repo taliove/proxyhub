@@ -9,14 +9,11 @@
     @close="onClose"
     @closed="onClosed"
   >
-    <!-- 头部:标题 + 状态灯 + 三态标签(连接中/体检中/重连中/完成/已取消/连接失败)。 -->
+    <!-- 头部:标题 + 三态标签(连接中/体检中/重连中/完成/已取消/连接失败)。 -->
     <template #header>
       <div class="exam-dialog-head">
         <span class="exam-dialog-title">深度体检 · {{ nodeName }}</span>
-        <div class="exam-dialog-status">
-          <span class="status-light" :class="`status-light--${statusLight}`"></span>
-          <el-tag :type="statusTag.type" size="small" effect="light">{{ statusTag.label }}</el-tag>
-        </div>
+        <el-tag :type="statusTag.type" size="small" effect="light">{{ statusTag.label }}</el-tag>
       </div>
     </template>
 
@@ -49,6 +46,7 @@
     v-model:visible="shareVisible"
     :report="shareReport"
     :node-name="nodeName"
+    :node-server="nodeServer"
     :exam-time="shareTime"
   />
 </template>
@@ -70,13 +68,13 @@ import { mergeEgress } from './exam/egress'
 import { regionSectionComplete, egressSectionComplete } from './exam/examrows'
 import { ExamStream } from './exam/examstream'
 import type { ExamStreamStatus, EventSourceLike } from './exam/examstream'
-import { computeStatusLight } from './exam/statuslight'
 import ExamReportLayout from './exam/ExamReportLayout.vue'
 import ExamShareDialog from './exam/ExamShareDialog.vue'
 import type { ExamReport } from '@/types'
 
 const visible = ref(false)
 const nodeName = ref('')
+const nodeServer = ref('')
 const status = ref<ExamStreamStatus | 'idle'>('idle')
 const cancelling = ref(false)
 
@@ -110,18 +108,6 @@ const stabilityDone = computed(() => metrics.value !== null)
 const regionsComplete = computed(() => regionSectionComplete(regions.value))
 const regionActive = computed(() => running.value && stabilityDone.value && !regionsComplete.value)
 const unlockActive = computed(() => running.value && regionsComplete.value)
-
-// 状态灯:绿(正常进行,无失败项)、黄(有失败项但非致命)、红(致命/连接失败)。
-const statusLight = computed(() =>
-  computeStatusLight(
-    status.value,
-    terminalError.value,
-    metrics.value,
-    regions.value,
-    unlockResults.value,
-    egress.value
-  )
-)
 
 // 三态标签:完成/已取消/连接失败(终态)与连接中/体检中/重连中(运行态)互斥可区分。
 const statusTag = computed<{
@@ -172,9 +158,10 @@ const openShare = () => {
   shareVisible.value = true
 }
 
-const open = (p: { self_node_id?: number; node_key?: string }, name: string) => {
+const open = (p: { self_node_id?: number; node_key?: string }, name: string, server = '') => {
   payload = p
   nodeName.value = name
+  nodeServer.value = server
   // Reset state to prepare for new/reattached stream
   reset()
   visible.value = true
@@ -299,25 +286,5 @@ defineExpose({
   font-size: var(--ph-text-md);
   font-weight: 600;
   color: var(--ph-text-primary);
-}
-.exam-dialog-status {
-  display: flex;
-  align-items: center;
-  gap: var(--ph-space-2);
-}
-.status-light {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-}
-.status-light--green {
-  background-color: var(--ph-success);
-}
-.status-light--yellow {
-  background-color: var(--ph-warning);
-}
-.status-light--red {
-  background-color: var(--ph-danger);
 }
 </style>

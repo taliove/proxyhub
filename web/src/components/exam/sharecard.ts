@@ -139,24 +139,42 @@ export function unlockLevelColorVar(level: UnlockLevel): string {
 // LeakStatus DNS 泄露三态:未泄露 ok / 疑似泄露 leak / 未知(缺失或探测异常)unknown。
 export type LeakStatus = 'ok' | 'leak' | 'unknown'
 
-// EgressSummary 出口摘要(地区 + DNS 泄露状态 + 可选 IPv4 地址)。
+// EgressSummary 出口摘要(地区 + 可选出口 IP + 可选入口 IP + 可选 DNS 解析器)。
+// 三个 IP 字段各有独立开关,默认全隐藏(高敏信息);showXxx=true 时填充对应字段。
 export interface EgressSummary {
-  ipv4Region: string // 国家·省·市;失败或缺失为空串
-  ipv4Address?: string // IPv4 地址;仅当 showIp=true 时填充
-  dnsLeak: LeakStatus
+  ipv4Region: string // 出口地区:国家·省·市;失败或缺失为空串
+  egressIp?: string // 出口 IPv4 地址;仅当 showEgressIp=true 时填充
+  ingressIp?: string // 入口 IP(节点 server);仅当 showIngressIp=true 时填充
+  dnsResolver?: string // DNS 解析器 IP + 地区;仅当 showDns=true 时填充
+  dnsLeak: LeakStatus // DNS 泄露状态(与 showDns 独立:状态码始终可见,解析器详情受开关控制)
 }
 
-// shareEgressSummary 出口摘要:IPv4 出口「地区」+ 可选「地址」+ DNS 泄露状态。
-// 安全契约:默认不返回 IP 地址;仅当 showIp=true 时填充 ipv4Address 字段。
-export function shareEgressSummary(report: ExamReport, showIp = false): EgressSummary {
+// shareEgressSummary 出口摘要:IPv4 出口「地区」+ 三个可选地址字段 + DNS 泄露状态。
+// 安全契约:默认不返回任何 IP/服务器地址;仅当对应 showXxx=true 时填充。
+// ingressIp(节点入口地址)由调用方从外部传入(不在 report.egress 里),例如 report 宿主传入 node.server。
+export function shareEgressSummary(
+  report: ExamReport,
+  options: {
+    showEgressIp?: boolean
+    showIngressIp?: boolean
+    showDns?: boolean
+    ingressIp?: string
+  } = {}
+): EgressSummary {
+  const { showEgressIp = false, showIngressIp = false, showDns = false, ingressIp } = options
   const e = report.egress
   const ipv4 = e?.ipv4
   const ipv4Region = ipv4 && !ipv4.error ? ipv4Location(ipv4) : ''
-  const ipv4Address = showIp && ipv4 && !ipv4.error ? ipv4.ip : undefined
+  const egressIp = showEgressIp && ipv4 && !ipv4.error ? ipv4.ip : undefined
+  const ingressIpValue = showIngressIp && ingressIp ? ingressIp : undefined
   const dns = e?.dns
   let dnsLeak: LeakStatus = 'unknown'
   if (dns && !dns.error) dnsLeak = dns.leak ? 'leak' : 'ok'
-  return { ipv4Region, ipv4Address, dnsLeak }
+  const dnsResolver =
+    showDns && dns && !dns.error
+      ? `${dns.resolver_ip}${dns.resolver_geo ? ` (${dns.resolver_geo})` : ''}`
+      : undefined
+  return { ipv4Region, egressIp, ingressIp: ingressIpValue, dnsResolver, dnsLeak }
 }
 
 // leakColorVar DNS 泄露状态色:未泄露 绿 / 疑似泄露 红 / 未知 中性。

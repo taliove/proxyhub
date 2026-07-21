@@ -19,6 +19,7 @@
       v-model:visible="shareVisible"
       :report="report"
       :node-name="nodeName"
+      :node-server="nodeServer"
       :exam-time="examTime"
     />
   </div>
@@ -33,11 +34,12 @@ import ExamShareDialog from './ExamShareDialog.vue'
 withDefaults(
   defineProps<{
     report: ExamReport
-    // 分享卡展示用:节点名(空则由分享卡回落占位)与体检时间(历史记录的 created_at)。
+    // 分享卡展示用:节点名(空则由分享卡回落占位)、节点服务器地址(用于入口 IP)、体检时间(历史记录的 created_at)。
     nodeName?: string
+    nodeServer?: string
     examTime?: string | number | Date
   }>(),
-  { nodeName: '', examTime: '' }
+  { nodeName: '', nodeServer: '', examTime: '' }
 )
 
 const shareVisible = ref(false)

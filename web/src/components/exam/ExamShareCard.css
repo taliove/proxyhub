@@ -1,0 +1,217 @@
+.share-card {
+  width: 400px;
+  box-sizing: border-box;
+  padding: var(--ph-space-5);
+  background: var(--ph-bg-surface);
+  border: 1px solid var(--ph-border);
+  border-radius: var(--ph-radius-xl);
+  color: var(--ph-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.share-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ph-space-3);
+  margin-bottom: var(--ph-space-4);
+}
+.share-node {
+  font-size: var(--ph-text-lg);
+  font-weight: 700;
+  word-break: break-all;
+}
+.share-time,
+.share-brand-tag {
+  font-size: var(--ph-text-xs);
+}
+.share-time {
+  margin-top: var(--ph-space-1);
+  color: var(--ph-text-secondary);
+}
+.share-brand-tag {
+  flex: none;
+  padding: 2px var(--ph-space-2);
+  border-radius: var(--ph-radius-full);
+  background: var(--ph-color-primary);
+  color: #fff;
+  font-weight: 600;
+}
+.share-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-5);
+  padding: var(--ph-space-3) 0 var(--ph-space-4);
+}
+.share-ring-wrap {
+  position: relative;
+  width: 108px;
+  height: 108px;
+  flex: none;
+}
+.share-ring {
+  width: 108px;
+  height: 108px;
+  transform: rotate(-90deg);
+}
+.share-ring-track {
+  fill: none;
+  stroke: var(--ph-border);
+  stroke-width: 10;
+}
+.share-ring-arc {
+  fill: none;
+  stroke-width: 10;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.4s ease;
+}
+.share-ring-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.share-ring-label,
+.share-stat-label {
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
+}
+.share-ring-score {
+  font-size: var(--ph-text-display);
+  font-weight: 700;
+  line-height: 1;
+}
+.share-stat-value {
+  margin-top: var(--ph-space-1);
+  font-size: var(--ph-text-2xl);
+  font-weight: 700;
+}
+.share-stat-sub-up,
+.share-stat-sub {
+  margin-top: var(--ph-space-1);
+  font-size: var(--ph-text-xs);
+}
+.share-stat-sub-up {
+  color: var(--ph-text-secondary);
+}
+.share-stat-sub {
+  color: var(--ph-text-placeholder);
+}
+.share-block {
+  padding: var(--ph-space-3) 0;
+  border-top: 1px solid var(--ph-border-light);
+}
+.share-block-title {
+  margin-bottom: var(--ph-space-2);
+  font-size: var(--ph-text-sm);
+  font-weight: 600;
+  color: var(--ph-text-regular);
+}
+.share-egress,
+.share-extreme {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-space-2);
+}
+.share-extreme-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+  font-size: var(--ph-text-sm);
+}
+.share-extreme-tag {
+  flex: none;
+  padding: 0 var(--ph-space-2);
+  border-radius: var(--ph-radius-full);
+  font-size: var(--ph-text-xs);
+  font-weight: 600;
+}
+.share-extreme-best {
+  color: var(--ph-success);
+  background: rgba(5, 150, 105, 0.14);
+}
+.share-extreme-worst {
+  color: var(--ph-warning);
+  background: rgba(217, 119, 6, 0.14);
+}
+.share-extreme-name {
+  flex: 1;
+  font-weight: 500;
+}
+.share-extreme-val {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+}
+.share-extreme-latency {
+  font-size: var(--ph-text-xs);
+  font-weight: 500;
+  color: var(--ph-text-secondary);
+}
+.share-unlock-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--ph-space-2) var(--ph-space-4);
+}
+.share-unlock-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+  font-size: var(--ph-text-sm);
+}
+.share-unlock-dot,
+.share-egress-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--ph-radius-full);
+}
+.share-unlock-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ph-text-regular);
+}
+.share-unlock-level {
+  flex: none;
+  font-weight: 600;
+}
+.share-egress-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ph-space-3);
+  font-size: var(--ph-text-sm);
+}
+.share-egress-label {
+  flex: none;
+  width: 64px;
+  color: var(--ph-text-secondary);
+}
+.share-egress-value {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+  font-weight: 500;
+  word-break: break-all;
+}
+.share-foot {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ph-space-2);
+  margin-top: var(--ph-space-4);
+  padding-top: var(--ph-space-3);
+  border-top: 1px solid var(--ph-border-light);
+}
+.share-foot-brand {
+  font-size: var(--ph-text-sm);
+  font-weight: 700;
+  color: var(--ph-color-primary);
+}
+.share-foot-sub {
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
+}

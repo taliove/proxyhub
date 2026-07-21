@@ -242,7 +242,7 @@ const examDialog = ref<InstanceType<typeof NodeExamDialog> | null>(null)
 const testTarget = (row: UnifiedNode) =>
   row.self_node_id != null ? { self_node_id: row.self_node_id } : { node_key: row.node_key }
 const openExam = (node: UnifiedNode) =>
-  examDialog.value?.open(testTarget(node), node.display_name || node.name)
+  examDialog.value?.open(testTarget(node), node.display_name || node.name, node.server)
 const runTest = async (row: UnifiedNode, mode: TestCommand) => {
   const label = row.display_name || row.name
   const target = testTarget(row)
