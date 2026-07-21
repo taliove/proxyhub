@@ -150,4 +150,49 @@ describe('ExamShareCard', () => {
     })
     expect(wrapper.html()).not.toContain('color-mix')
   })
+
+  it('评分环关键视觉属性内联为 presentation attributes(导出 PNG 不依赖样式表)', () => {
+    const wrapper = mount(ExamShareCard, {
+      props: {
+        report: mockReport,
+        nodeName: 'test',
+        examTime: new Date()
+      }
+    })
+    const track = wrapper.find('.share-ring-track')
+    const arc = wrapper.find('.share-ring-arc')
+    expect(track.exists()).toBe(true)
+    expect(arc.exists()).toBe(true)
+    // 轨道:fill=none(防默认黑填充)+ stroke + stroke-width 内联
+    expect(track.attributes('fill')).toBe('none')
+    expect(track.attributes('stroke')).toBeTruthy()
+    expect(track.attributes('stroke-width')).toBe('10')
+    // 弧:fill=none + stroke(评分色)+ stroke-width + 圆头 内联
+    expect(arc.attributes('fill')).toBe('none')
+    expect(arc.attributes('stroke')).toBeTruthy()
+    expect(arc.attributes('stroke-width')).toBe('10')
+    expect(arc.attributes('stroke-linecap')).toBe('round')
+    expect(arc.attributes('stroke-dasharray')).toBeTruthy()
+    expect(arc.attributes('stroke-dashoffset')).toBeTruthy()
+  })
+
+  it('全量版多地域表:数值单元格单行不折行(nowrap)', () => {
+    const wrapper = mount(ExamShareCard, {
+      props: {
+        report: mockReport,
+        nodeName: 'test',
+        examTime: new Date(),
+        showAll: true
+      }
+    })
+    // 数值列(延迟/下行/上行)在渲染的表体中存在
+    const table = wrapper.find('.share-region-table')
+    expect(table.exists()).toBe(true)
+    expect(table.findAll('.share-region-col-down').length).toBeGreaterThan(0)
+    expect(table.findAll('.share-region-col-up').length).toBeGreaterThan(0)
+    expect(table.findAll('.share-region-col-latency').length).toBeGreaterThan(0)
+    // 值文本完整渲染(不因换行被拆碎)
+    expect(table.html()).toContain('80.0 Mbps')
+    expect(table.html()).toContain('150.0 Mbps')
+  })
 })

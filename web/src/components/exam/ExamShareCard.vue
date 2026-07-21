@@ -14,13 +14,27 @@
     <section class="share-hero">
       <div class="share-ring-wrap">
         <svg class="share-ring" viewBox="0 0 120 120" aria-hidden="true">
-          <circle class="share-ring-track" cx="60" cy="60" r="52" />
+          <!-- 关键视觉属性(fill/stroke/stroke-width)以 presentation attributes 内联,
+               不依赖样式表:html-to-image 导出时外部 scoped CSS 应用不全,且缺 fill 的
+               circle 会默认黑填充。内联后导出 PNG 与页面一致(环心透明、不发黑)。 -->
+          <circle
+            class="share-ring-track"
+            cx="60"
+            cy="60"
+            r="52"
+            fill="none"
+            :stroke="trackColor"
+            stroke-width="10"
+          />
           <circle
             class="share-ring-arc"
             cx="60"
             cy="60"
             r="52"
+            fill="none"
             :stroke="scoreColor"
+            stroke-width="10"
+            stroke-linecap="round"
             :stroke-dasharray="RING_CIRC"
             :stroke-dashoffset="ringOffset"
           />
@@ -207,6 +221,8 @@ const vm = computed(() =>
 )
 
 const scoreColor = computed(() => cssVar(gradeColorVar(vm.value.score.grade)) || '#059669')
+// 环底轨道色:取边框令牌(随主题),缺失兜底。与弧色一样内联到 SVG,避免导出时丢样式。
+const trackColor = computed(() => cssVar('--ph-border') || '#e2e8f0')
 const scoreText = computed(() => gradeLabel(vm.value.score.grade))
 const ringOffset = computed(
   () => RING_CIRC * (1 - Math.max(0, Math.min(100, vm.value.score.total)) / 100)
