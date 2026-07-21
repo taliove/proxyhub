@@ -96,6 +96,8 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 
 构建顺序不可逆:`make build` → `make restart` 重启(日志在 `var/log/`)。改前端不重启 = 没生效。运行生命周期只有 make 一个入口(`make start|stop|restart|status`)。日常开发范式见 `.claude/skills/dev-workflow`。
 
+验证纪律:汇报"完成"前必须自行验证生效(前端 = `make build` + `make restart` 后确认页面/接口实际变化;后端 = 接口实测或日志确认)。禁止只改代码未验证就汇报。
+
 ## 6. 测试门槛
 
 - 每次签入前:`make check`(vet + Go 测试 + shell 套件 + 前端 lint)
@@ -115,6 +117,8 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 - 推送前:`.claude/skills/pre-push`
 - 发布(版本纪律/演练/tag/验证):`.claude/skills/release`
 - 写文档(决策树/放置命名/模板/spec 蒸馏/README 守卫):`.claude/skills/doc-writing`
+- 需求讨论(拷问/澄清):`.claude/skills/req-grill` —— 需求相关讨论一律用它,不用 superpowers 的 brainstorming/grilling
+- 批量 ticket 实施默认子代理并发调度;串行实施需先说明理由。并行会话隔离:用户声明某范围由另一会话处理时,严禁触碰该范围
 - Go 语义评审:`.claude/agents/go-reviewer`(独立上下文,专挑机械门禁抓不住的毛病;它只评审,不写码)
 
 Skills 是流程,不是建议——逐条执行,不允许跳项。
