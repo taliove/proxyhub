@@ -13,7 +13,9 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
-// handleAirportTest executes diagnostic phase for an airport and triggers async test.
+// handleAirportTest executes airport test with pool-first logic.
+// Diagnostic runs sync, then dispatches async test (sampling + health check + scoring).
+// New flow: diagnostic non-blocking, pool-aware branching in RunTest.
 func (s *Server) handleAirportTest(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/airports/")
 	idStr = strings.TrimSuffix(idStr, "/test")
@@ -41,33 +43,61 @@ func (s *Server) handleAirportTest(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&body)
 	}
 
-	// 阶段1:诊断(同步)
-	run, err := s.testOrchestrator.RunDiagnostic(
-		context.Background(),
-		airport.ID,
-		airport.Name,
-		airport.URL,
-		body.Full,
-	)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("diagnostic failed: %v", err), http.StatusInternalServerError)
-		return
+	// Diagnostic phase: attempt fetch (non-blocking on failure in pool-aware mode)
+	ctx := context.Background()
+	start := time.Now()
+
+	var fetchedNodes []*subscription.Node
+	diagResult := &airporttest.DiagnosticResult{}
+
+	sub, fetchErr := subscription.NewFetcher(30 * time.Second).Fetch(airport.Name, airport.URL)
+	elapsed := time.Since(start)
+
+	if fetchErr != nil {
+		// Fetch failed: record diagnostic failure, but don't block run
+		diagResult.HTTPStatus = 0 // Will be interpreted as non-2xx
+		diagResult.DurationMs = elapsed.Milliseconds()
+		diagResult.NodeCount = 0
+		diagResult.ParseFailures = 0
+		diagResult.ProtocolCounts = make(map[string]int)
+	} else {
+		// Fetch succeeded: populate diagnostic result
+		diagResult.HTTPStatus = 200
+		diagResult.DurationMs = elapsed.Milliseconds()
+		diagResult.NodeCount = len(sub.Nodes)
+		diagResult.ParseFailures = 0 // subscription.Fetch doesn't expose parse stats, assume 0
+		diagResult.ProtocolCounts = make(map[string]int)
+		for _, node := range sub.Nodes {
+			diagResult.ProtocolCounts[node.Type]++
+		}
+		fetchedNodes = sub.Nodes
 	}
 
-	// 阶段2-4:异步执行(抽样 + 检活 + 评分)
-	// 解析诊断结果以获取节点
-	var diagResult airporttest.DiagnosticResult
-	json.Unmarshal([]byte(run.DimensionsJSON), &diagResult)
+	// Create run with diagnostic result
+	run := &airporttest.TestRun{
+		AirportID:    airport.ID,
+		CreatedAt:    time.Now().UTC(),
+		SampleParams: "{}",
+		IsFull:       body.Full,
+		Status:       airporttest.StatusDiagnosing,
+	}
 
-	// 重新拉取节点(诊断已验证可拉取)
+	dimsJSON, _ := json.Marshal(diagResult)
+	run.DimensionsJSON = string(dimsJSON)
+
+	// Use store adapter to create run (converts TestRun to store.AirportTestRun)
+	storeAdapter := airporttest.NewStoreAdapter(s.st)
+	runID, err := storeAdapter.CreateTestRun(ctx, run)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("create test run: %v", err), http.StatusInternalServerError)
+		return
+	}
+	run.ID = runID
+
+	// Async: pool-aware test execution (sampling + health check + scoring)
 	go func() {
 		ctx := context.Background()
-		sub, err := subscription.NewFetcher(30 * time.Second).Fetch(airport.Name, airport.URL)
-		if err != nil {
-			s.logger.Warn("async fetch failed", "airport", airport.Name, "error", err)
-			return
-		}
-		s.testOrchestrator.RunTest(ctx, run, sub.Nodes, &diagResult)
+		s.testOrchestrator.RunTest(ctx, run, airport.Name, fetchedNodes, diagResult)
 	}()
 
 	w.Header().Set("Content-Type", "application/json")

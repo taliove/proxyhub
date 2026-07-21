@@ -68,8 +68,19 @@ ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:8080#Test%20SS`
 	if resp["id"] == nil {
 		t.Fatalf("missing run id in response")
 	}
-	if resp["status"] != "completed" {
-		t.Fatalf("status = %v, want completed", resp["status"])
+	// New flow: handler returns immediately, async RunTest may complete quickly in test env
+	// Accept diagnosing, checking, scoring, or completed
+	status := resp["status"].(string)
+	validStatuses := []string{"diagnosing", "checking", "scoring", "completed"}
+	found := false
+	for _, s := range validStatuses {
+		if status == s {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("status = %v, want one of %v", status, validStatuses)
 	}
 
 	dims := resp["dimensions_json"].(string)
@@ -85,10 +96,10 @@ ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:8080#Test%20SS`
 		t.Errorf("http_status = %d, want 200", diag.HTTPStatus)
 	}
 
-	// Verify node pool unchanged
+	// Verify node pool unchanged (diagnostic + test don't touch pool without poolOps)
 	nodesAfter := srv.nodes.Nodes()
 	if len(nodesAfter) != len(nodesBefore) {
-		t.Errorf("node pool changed: before %d, after %d (diagnostic should be read-only)", len(nodesBefore), len(nodesAfter))
+		t.Errorf("node pool changed: before %d, after %d", len(nodesBefore), len(nodesAfter))
 	}
 }
 
@@ -104,7 +115,7 @@ func TestHandleAirportTest_FetchFailure(t *testing.T) {
 	srv.handleAirportTest(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (failed run should return 200 with status=failed)", w.Code)
+		t.Fatalf("status = %d, want 200 (fetch failure doesn't block handler)", w.Code)
 	}
 
 	var resp map[string]any
@@ -112,11 +123,19 @@ func TestHandleAirportTest_FetchFailure(t *testing.T) {
 		t.Fatalf("parse response: %v", err)
 	}
 
-	if resp["status"] != "failed" {
-		t.Errorf("status = %v, want failed", resp["status"])
+	// New flow: fetch failure is recorded in diagnostic but handler returns 200 with diagnosing status
+	// Async RunTest will fail it if pool is also empty
+	if resp["status"] != "diagnosing" {
+		t.Errorf("status = %v, want diagnosing (fetch failure non-blocking)", resp["status"])
 	}
-	if resp["error_message"] == nil || resp["error_message"] == "" {
-		t.Error("expected error_message in failed run")
+	// Diagnostic result will have HTTPStatus=0 indicating fetch failure
+	dims := resp["dimensions_json"].(string)
+	var diag airporttest.DiagnosticResult
+	if err := json.Unmarshal([]byte(dims), &diag); err != nil {
+		t.Fatalf("parse dimensions: %v", err)
+	}
+	if diag.HTTPStatus != 0 {
+		t.Errorf("http_status = %d, want 0 (fetch failed)", diag.HTTPStatus)
 	}
 }
 

@@ -16,7 +16,15 @@
     <!-- Checking phase (with progress) -->
     <div v-else-if="phase === 'checking'" class="test-phase">
       <h4>✅ 诊断完成</h4>
-      <el-descriptions :column="2" border size="small" class="compact-descriptions">
+
+      <!-- Success state: URL reachable -->
+      <el-descriptions
+        v-if="diagnosticState === 'success'"
+        :column="2"
+        border
+        size="small"
+        class="compact-descriptions"
+      >
         <el-descriptions-item label="HTTP 状态">
           <el-tag :type="diagnosticResult.http_status === 200 ? 'success' : 'danger'" size="small">
             {{ diagnosticResult.http_status }}
@@ -35,6 +43,18 @@
           <span v-else>0</span>
         </el-descriptions-item>
       </el-descriptions>
+
+      <!-- Unreachable state: URL unreachable but pool has nodes -->
+      <el-alert
+        v-else-if="diagnosticState === 'unreachable'"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="diagnostic-alert"
+      >
+        <template #title>订阅 URL 当前不可达</template>
+        已基于池内已同步节点进行测试,评分不含拉取健康维度(权重重归一)。
+      </el-alert>
 
       <el-divider />
 
@@ -95,11 +115,13 @@ import {
   parseDiagnosticResult,
   parseCheckingProgress,
   parseCompletedResult,
+  getDiagnosticState,
   type DiagnosticResult,
   type CheckingProgress,
   type CompletedResult,
   type TestRun,
-  type TestRunStatus
+  type TestRunStatus,
+  type DiagnosticState
 } from '@/composables/useAirportTest'
 import AirportTestScoreReport from './AirportTestScoreReport.vue'
 import AirportTestTrend from './AirportTestTrend.vue'
@@ -118,6 +140,7 @@ const emit = defineEmits<Emits>()
 
 const visible = ref(false)
 const phase = ref<TestRunStatus>('diagnosing')
+const diagnosticState = ref<DiagnosticState>('success')
 const currentRunId = ref<number | null>(null)
 const diagnosticResult = ref<DiagnosticResult>({
   http_status: 0,
@@ -197,6 +220,9 @@ const startPolling = () => {
 
     try {
       const run = await getTestRun(props.airport.id, currentRunId.value)
+
+      // Update diagnostic state
+      diagnosticState.value = getDiagnosticState(run.status, run.dimensions_json)
 
       if (run.status === 'failed') {
         phase.value = 'failed'
@@ -296,6 +322,10 @@ onUnmounted(() => {
 }
 
 .compact-descriptions {
+  margin-bottom: 20px;
+}
+
+.diagnostic-alert {
   margin-bottom: 20px;
 }
 </style>

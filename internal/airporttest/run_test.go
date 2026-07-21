@@ -105,7 +105,7 @@ func TestRunTest_EmptyPool(t *testing.T) {
 		NodeCount:      0,
 	}
 
-	updatedRun, err := orch.RunTest(context.Background(), run, []*subscription.Node{}, diagResult)
+	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", []*subscription.Node{}, diagResult)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestRunTest_SamplingAndWriteback(t *testing.T) {
 		NodeCount:     8,
 	}
 
-	updatedRun, err := orch.RunTest(context.Background(), run, nodes, diagResult)
+	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", nodes, diagResult)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestRunTest_FullMode(t *testing.T) {
 		NodeCount:     8,
 	}
 
-	updatedRun, err := orch.RunTest(context.Background(), run, nodes, diagResult)
+	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", nodes, diagResult)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestRunTest_StatusFlow(t *testing.T) {
 		NodeCount:     1,
 	}
 
-	_, err := orch.RunTest(context.Background(), run, nodes, diagResult)
+	_, err := orch.RunTest(context.Background(), run, "TestAirport", nodes, diagResult)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}
