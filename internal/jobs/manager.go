@@ -251,6 +251,11 @@ func (m *Manager) startOrAttach(kind, key string, params json.RawMessage, force 
 
 	j := m.newJob(k, key, rowID)
 	m.jobs[id] = j
+	// OnStart 在锁内、goroutine 启动前同步调用:让 kind 把运行首步就要读的旁路数据
+	// (体检活节点)原子就位,消除 Run 的 LoadAndDelete 抢先于旁路写入的竞态。
+	if s, ok := k.(starter); ok {
+		s.OnStart(key)
+	}
 	go m.runJob(j, params, "")
 	return j, nil
 }

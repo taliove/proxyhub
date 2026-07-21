@@ -63,3 +63,11 @@ type completionHooker interface {
 type cancelEventer interface {
 	CancelEvent() (json.RawMessage, bool)
 }
+
+// starter 可选接口:kind 实现它则在新任务创建后、运行 goroutine 启动前接到通知
+// (在 manager 锁内同步调用,仅创建路径触发,附加到既有任务不触发)。
+// 供 kind 把"运行 goroutine 首步就要读取"的旁路数据(如体检活节点)原子地就位,
+// 消除"Run 抢先于旁路写入"的竞态。实现必须快且不得回调 manager(避免死锁)。
+type starter interface {
+	OnStart(key string)
+}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/taliove/proxyhub/internal/detection"
+	"github.com/taliove/proxyhub/internal/jobs"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
@@ -82,6 +83,39 @@ func waitExamHistory(t *testing.T, st *store.Store, nodeKey string) *store.ExamH
 	}
 }
 
+// waitExamJobDone 轮询等待该节点的体检任务在 jobs 表落终态(done/failed/cancelled/interrupted)。
+// 落终态由任务生命周期最后一步 runJob->store.Finish 写入,严格晚于落历史那几笔副作用
+// (SaveExamHistory/RecomputeNodeTags/writeback);故任务终态可见 = 该任务再无后台写库。
+// 测试据此在拆台(st.Close + t.TempDir 清理)前等清后台写,消除写库与清理竞速。
+// 用途区别于 waitExamHistory:后者只等第一笔(落历史),此处等整条任务寿命收尾。
+func waitExamJobDone(t *testing.T, st *store.Store, nodeKey string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		records, err := st.Jobs().LoadAll()
+		if err != nil {
+			t.Fatalf("load jobs: %v", err)
+		}
+		if examJobTerminal(records, nodeKey) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("exam job for %q did not reach terminal state within timeout", nodeKey)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// examJobTerminal 报告是否存在该节点的 exam 任务且已落终态(非 running)。
+func examJobTerminal(records []jobs.Record, nodeKey string) bool {
+	for _, rec := range records {
+		if rec.Kind == "exam" && rec.Key == nodeKey && rec.Status != jobs.StatusRunning {
+			return true
+		}
+	}
+	return false
+}
+
 // 体检成功完成 -> 自动落一条历史,latest 可读回。
 func TestHandleNodeExamStream_PersistsOnComplete(t *testing.T) {
 	node := examNode()
@@ -100,6 +134,8 @@ func TestHandleNodeExamStream_PersistsOnComplete(t *testing.T) {
 	if latest.Report.Stability == nil {
 		t.Errorf("persisted report missing stability section")
 	}
+	// 等任务寿命收尾,避免后台写库与拆台清理竞速。
+	waitExamJobDone(t, st, node.NodeKey())
 }
 
 // 体检中途失败(建会话失败)-> 不落历史。语义在此钉死:失败不落盘。
@@ -198,6 +234,8 @@ func TestHandleGetExamLatest_AfterExam(t *testing.T) {
 
 	// 落历史是任务收口后的异步副作用,等其完成再查 latest(见 waitExamHistory)。
 	waitExamHistory(t, st, node.NodeKey())
+	// 再等整条任务寿命收尾(jobs 表落终态),确保后台写库全部完成,不与拆台清理竞速。
+	waitExamJobDone(t, st, node.NodeKey())
 
 	// 再查 latest。
 	req := httptest.NewRequest(http.MethodGet, "/api/nodes/exam/latest?node_key="+node.NodeKey(), nil)
