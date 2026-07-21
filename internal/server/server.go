@@ -24,6 +24,7 @@ import (
 	"github.com/taliove/proxyhub/internal/generator"
 	"github.com/taliove/proxyhub/internal/geoip"
 	"github.com/taliove/proxyhub/internal/healthcheck"
+	"github.com/taliove/proxyhub/internal/poolops"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
@@ -111,7 +112,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		cfg.HealthCheck.TestURL,
 		cfg.HealthCheck.Concurrent,
 	))
-	poolOps := airporttest.NewStorePoolAdapter(st, geo)
+	poolOps := poolops.NewStoreAdapter(st)
 	s.testOrchestrator = airporttest.NewOrchestratorWithPoolOps(storeAdapter, healthChecker, nodes, poolOps)
 
 	return s

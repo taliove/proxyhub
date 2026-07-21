@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/taliove/proxyhub/internal/poolops"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -66,13 +67,9 @@ type PoolWriter interface {
 	UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool
 }
 
-// PoolOperations abstracts pool loading and single-airport upsert for pool-aware testing.
-type PoolOperations interface {
-	// LoadPoolBySource returns nodes in the pool matching the given source (airport name).
-	LoadPoolBySource(source string) ([]*subscription.Node, error)
-	// UpsertAirportNodes merges fetched nodes into pool (single-airport scope).
-	UpsertAirportNodes(airportName string, fetchedNodes []*subscription.Node) error
-}
+// PoolOperations 是 poolops.Operations 的别名(单机场 upsert 口径已上移聚合层,
+// 见 internal/poolops;保留别名避免编排层 churn)。
+type PoolOperations = poolops.Operations
 
 // Store abstracts database operations for airport testing.
 type Store interface {
