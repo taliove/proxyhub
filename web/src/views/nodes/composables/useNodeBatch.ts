@@ -45,6 +45,22 @@ export function useNodeBatch(reload: () => void) {
     reload()
   }
 
+  const refreshNamesSelected = async () => {
+    const keys = selectableSelection.value.map((n) => n.node_key)
+    try {
+      const res = await client.post<unknown, { updated: number; total: number }>(
+        '/nodes/refresh-names',
+        {
+          node_keys: keys
+        }
+      )
+      ElMessage.success(`已刷新 ${res.updated} 个节点名称`)
+      reload()
+    } catch (err) {
+      ElMessage.error('刷新名称失败')
+    }
+  }
+
   return {
     selection,
     selectableSelection,
@@ -52,6 +68,7 @@ export function useNodeBatch(reload: () => void) {
     blockNode,
     unblockNode,
     blockSelected,
-    unblockSelected
+    unblockSelected,
+    refreshNamesSelected
   }
 }

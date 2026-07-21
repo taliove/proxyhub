@@ -42,6 +42,7 @@
       @detect="detectSelected"
       @exam="examSelected"
       @cancel-exam="cancelExam"
+      @refresh-names="refreshNamesSelected"
     />
 
     <NodeTable
@@ -180,7 +181,8 @@ const {
   blockNode,
   unblockNode,
   blockSelected,
-  unblockSelected
+  unblockSelected,
+  refreshNamesSelected
 } = useNodeBatch(reload)
 const { testing, testNode } = useNodeTest()
 
