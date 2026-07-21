@@ -336,4 +336,151 @@ describe('score — 体检总分计算', () => {
       expect(result.partial).toBe(false)
     })
   })
+
+  describe('渐进式评分(体检进行中)', () => {
+    it('只有稳定性段到达 → 按稳定性分算总分,标记 partial', () => {
+      const report: ExamReport = {
+        stability: { score: 80 } as any
+      }
+      const result = calculateExamScore(report)
+      // 稳定性权重归一化为 100%
+      expect(result.total).toBe(80)
+      expect(result.partial).toBe(true)
+      expect(result.breakdown.stability.weight).toBe(1.0)
+      expect(result.breakdown.stability.score).toBe(80)
+    })
+
+    it('稳定性 + 速度到达 → 两项归一化权重,分数增长', () => {
+      const report: ExamReport = {
+        stability: { score: 85 } as any,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 50, up_mbps: 50, ttfb_ms: 10 }]
+        }
+      }
+      const result = calculateExamScore(report)
+      // 稳定性 40% + 速度 25% = 65%,归一化:稳定性 40/65,速度 25/65
+      // 稳定性 85×(40/65) + 速度 90×(25/65) = 52.3 + 34.6 = 86.9
+      expect(result.total).toBeCloseTo(86.9, 1)
+      expect(result.partial).toBe(true)
+      expect(result.breakdown.stability.weight).toBeCloseTo(0.615, 2)
+      expect(result.breakdown.speed.weight).toBeCloseTo(0.385, 2)
+    })
+
+    it('稳定性 + 速度 + 解锁到达 → 三项归一化,分数继续增长', () => {
+      const report: ExamReport = {
+        stability: { score: 85 } as any,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 50, up_mbps: 50, ttfb_ms: 10 }]
+        },
+        unlock: {
+          results: [
+            { target_name: 'Netflix', level: 'full' },
+            { target_name: 'YouTube Premium', level: 'full' },
+            { target_name: 'Disney+', level: 'full' },
+            { target_name: 'OpenAI', level: 'full' },
+            { target_name: 'Claude', level: 'full' },
+            { target_name: 'Gemini', level: 'full' }
+          ] as any[]
+        }
+      }
+      const result = calculateExamScore(report)
+      // 稳定性 40% + 速度 25% + 解锁 20% = 85%,归一化
+      // 稳定性 85×(40/85) + 速度 90×(25/85) + 解锁 100×(20/85) = 40 + 26.5 + 23.5 = 90
+      expect(result.total).toBeCloseTo(90, 1)
+      expect(result.partial).toBe(true)
+      expect(result.unreliable).toBe(true) // 缺出网段
+    })
+
+    it('四段全到达 → 完整权重,unreliable=false,partial=false', () => {
+      const report: ExamReport = {
+        stability: { score: 85 } as any,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 50, up_mbps: 50, ttfb_ms: 10 }]
+        },
+        unlock: {
+          results: [
+            { target_name: 'Netflix', level: 'full' },
+            { target_name: 'YouTube Premium', level: 'full' },
+            { target_name: 'Disney+', level: 'full' },
+            { target_name: 'OpenAI', level: 'full' },
+            { target_name: 'Claude', level: 'full' },
+            { target_name: 'Gemini', level: 'full' }
+          ] as any[]
+        },
+        egress: {
+          ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
+          ipv6: { available: true, address: '2001::1' },
+          dns: { leak: false }
+        } as any
+      }
+      const result = calculateExamScore(report)
+      // 稳定性 85×0.4 + 速度 90×0.25 + 解锁 100×0.2 + 出网 100×0.15 = 91.5
+      expect(result.total).toBeCloseTo(91.5, 1)
+      expect(result.partial).toBe(false)
+      expect(result.unreliable).toBe(false)
+    })
+
+    it('出网全失败在渐进模式也强制 0 分', () => {
+      const report: ExamReport = {
+        stability: { score: 90 } as any,
+        region_speed: {
+          regions: [{ name: '基准', code: 'baseline', down_mbps: 100, ttfb_ms: 5 }]
+        },
+        egress: {
+          ipv4: { error: 'timeout' },
+          ipv6: { available: false, error: 'timeout' },
+          dns: { error: 'timeout' }
+        } as any
+      }
+      const result = calculateExamScore(report)
+      expect(result.total).toBe(0)
+      expect(result.unreliable).toBe(true)
+      expect(result.partial).toBe(true)
+    })
+
+    it('渐进式评分数值单调递增(段逐项到达)', () => {
+      // 第一帧:只有稳定性
+      const report1: ExamReport = { stability: { score: 80 } as any }
+      const score1 = calculateExamScore(report1).total
+
+      // 第二帧:稳定性 + 速度
+      const report2: ExamReport = {
+        stability: { score: 80 } as any,
+        region_speed: { regions: [{ name: '基准', code: 'baseline', down_mbps: 50, ttfb_ms: 10 }] }
+      }
+      const score2 = calculateExamScore(report2).total
+
+      // 第三帧:稳定性 + 速度 + 解锁
+      const report3: ExamReport = {
+        ...report2,
+        unlock: {
+          results: [
+            { target_name: 'Netflix', level: 'full' },
+            { target_name: 'YouTube Premium', level: 'full' },
+            { target_name: 'Disney+', level: 'full' },
+            { target_name: 'OpenAI', level: 'full' },
+            { target_name: 'Claude', level: 'full' },
+            { target_name: 'Gemini', level: 'full' }
+          ] as any[]
+        }
+      }
+      const score3 = calculateExamScore(report3).total
+
+      // 第四帧:四段全到
+      const report4: ExamReport = {
+        ...report3,
+        egress: {
+          ipv4: { ip: '1.2.3.4', hosting: false },
+          ipv6: { available: true },
+          dns: { leak: false }
+        } as any
+      }
+      const score4 = calculateExamScore(report4).total
+
+      // 验证单调递增(或相等,因为出网可能扣分)
+      expect(score2).toBeGreaterThan(score1)
+      expect(score3).toBeGreaterThan(score2)
+      expect(score4).toBeGreaterThanOrEqual(score3) // 出网满分时增长,扣分时可能减少
+    })
+  })
 })

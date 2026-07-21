@@ -61,20 +61,25 @@ export interface SparklinePoint {
 // buildSparklinePoints 把稳定性采样序列映射为 sparkline 折线坐标(SVG viewBox 内)。
 // 只画成功样本的延迟;丢包点跳过(不参与连线)。延迟按 [0, max] 归一到 [height, 0]。
 // 空序列 / 单点做退化处理,保证渲染不崩。
+// offsetX/offsetY: plot area offsets to reserve space for axis labels.
 export function buildSparklinePoints(
   samples: ExamStabilitySample[],
   width: number,
-  height: number
+  height: number,
+  offsetX = 0,
+  offsetY = 0
 ): SparklinePoint[] {
   const ok = samples.filter((s) => s.ok && Number.isFinite(s.latency_ms))
   if (ok.length === 0) return []
 
   const max = Math.max(...ok.map((s) => s.latency_ms), 1)
-  const stepX = ok.length > 1 ? width / (ok.length - 1) : 0
+  const plotWidth = width - offsetX
+  const plotHeight = height - offsetY
+  const stepX = ok.length > 1 ? plotWidth / (ok.length - 1) : 0
 
   return ok.map((s, i) => {
-    const x = ok.length > 1 ? i * stepX : width / 2
-    const y = height - (s.latency_ms / max) * height
+    const x = offsetX + (ok.length > 1 ? i * stepX : plotWidth / 2)
+    const y = offsetY + plotHeight - (s.latency_ms / max) * plotHeight
     return { x: round2(x), y: round2(y) }
   })
 }
