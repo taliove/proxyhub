@@ -33,7 +33,6 @@
           </div>
         </template>
       </el-table-column>
-
       <!-- 来源:自建/机场;来源筛选在工具栏 -->
       <el-table-column
         prop="source"
@@ -47,7 +46,6 @@
           <span v-else>{{ row.source }}</span>
         </template>
       </el-table-column>
-
       <el-table-column prop="type" label="类型" width="88" />
       <el-table-column prop="region" label="地区" width="80" sortable="custom">
         <template #default="{ row }">{{ row.region || '—' }}</template>
@@ -55,7 +53,6 @@
       <el-table-column prop="latency" label="延迟" width="90" sortable="custom">
         <template #default="{ row }">{{ latencyText(row) }}</template>
       </el-table-column>
-
       <!-- 稳定性:最近一次体检的稳定性分 + 语义色;无历史不占位 -->
       <el-table-column label="稳定性" width="96">
         <template #default="{ row }">
@@ -70,7 +67,6 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-
       <!-- 解锁:通过数摘要,悬浮展开各目标三档语义色 -->
       <el-table-column label="解锁" width="88">
         <template #default="{ row }">
@@ -119,7 +115,6 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-
       <!-- 出网:体检出口国家码 + 泄露/代理警示 -->
       <el-table-column label="出网" width="96">
         <template #default="{ row }">
@@ -137,7 +132,6 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-
       <!-- 标签:自动标签(票据 21 前无数据,走空态) -->
       <el-table-column label="标签" min-width="120">
         <template #default="{ row }">
@@ -149,7 +143,6 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-
       <!-- 体检时间:最近一次体检相对时间 -->
       <el-table-column label="体检时间" width="110">
         <template #default="{ row }">
@@ -159,9 +152,8 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-
       <!-- 操作:自建走 编辑/刷新名称/启停/删除;机场走 编辑/刷新名称/屏蔽;点击行打开详情抽屉 -->
-      <el-table-column label="操作" width="220">
+      <el-table-column label="操作" width="280">
         <template #default="{ row }">
           <span class="row-ops" @click.stop>
             <template v-if="isSelfHosted(row)">
@@ -183,9 +175,8 @@
           </span>
         </template>
       </el-table-column>
-
-      <!-- 测试列独立(所有节点均可测试,包括自建) -->
-      <el-table-column label="测试" width="120" fixed="right">
+      <!-- 测试+分享列合并(所有节点均可测试,支持协议的可分享) -->
+      <el-table-column label="测试/分享" width="190" fixed="right">
         <template #default="{ row }">
           <span class="row-ops" @click.stop>
             <el-dropdown
@@ -208,6 +199,22 @@
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
+            <el-button
+              link
+              type="primary"
+              :icon="DocumentCopy"
+              title="复制链接"
+              :disabled="!canShare(row)"
+              @click="emit('copy-link', row)"
+            />
+            <el-button
+              link
+              type="primary"
+              :icon="QrCode"
+              title="二维码"
+              :disabled="!canShare(row)"
+              @click="emit('show-qr', row)"
+            />
           </span>
         </template>
       </el-table-column>
@@ -228,11 +235,11 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, WarningFilled } from '@element-plus/icons-vue'
-import type { ScoreLevel } from '@/components/exam/stability'
+import { ArrowDown, WarningFilled, DocumentCopy, QrCode } from '@element-plus/icons-vue'
 import { isSelfHosted } from '../utils'
 import { isGenericVariant, unlockDisplayRows, unlockSummary } from '../unlock'
 import { latencyText, nameCell, stateTags, tagsDisplay, type NodeExamSummary } from '../nodecells'
+import { badgeTagType, canShare } from './node-table-utils'
 import type { UnifiedNode } from '../selfmerge'
 
 export type TestCommand = 'quick' | 'real' | 'bandwidth' | 'exam'
@@ -262,12 +269,6 @@ const summaryFor = (row: UnifiedNode): NodeExamSummary | undefined =>
 const badgeFor = (row: UnifiedNode) => summaryFor(row)?.badge ?? undefined
 const egressFor = (row: UnifiedNode) => summaryFor(row)?.egress ?? undefined
 
-const badgeTagType = (level: ScoreLevel): 'success' | 'warning' | 'danger' => {
-  if (level === 'good') return 'success'
-  if (level === 'fair') return 'warning'
-  return 'danger'
-}
-
 const emit = defineEmits<{
   (e: 'selection-change', rows: UnifiedNode[]): void
   (e: 'sort-change', payload: SortChange): void
@@ -282,6 +283,8 @@ const emit = defineEmits<{
   (e: 'unblock', row: UnifiedNode): void
   (e: 'refresh-name', row: UnifiedNode): void
   (e: 'test', row: UnifiedNode, mode: TestCommand): void
+  (e: 'copy-link', row: UnifiedNode): void
+  (e: 'show-qr', row: UnifiedNode): void
 }>()
 
 // Self-hosted nodes are now selectable for batch operations.

@@ -117,7 +117,7 @@ import { isGenericVariant, unlockDisplayRows } from '../unlock'
 import { fetchExamHistory } from '@/api/exam'
 import ExamHistoryTimeline from '@/components/exam/ExamHistoryTimeline.vue'
 import { generateQRCode, getNodeShareURI } from '@/composables/useQRCode'
-import client from '@/api/client'
+import { canGenerateShareLink } from '@/composables/useNodeShare'
 
 const visible = defineModel<boolean>({ required: true })
 
@@ -166,9 +166,7 @@ const qrError = ref('')
 const qrDataUrl = ref('')
 
 const canShowNodeQR = (node: Node): boolean => {
-  // Show QR button if node has share_link or backend can generate
-  const uri = getNodeShareURI(node)
-  return uri !== null || node.source === 'self-hosted'
+  return canGenerateShareLink(node)
 }
 
 const showNodeQR = async (node: Node) => {
@@ -178,27 +176,10 @@ const showNodeQR = async (node: Node) => {
   qrDataUrl.value = ''
 
   try {
-    let uri = getNodeShareURI(node)
-
-    // If no share_link, try backend generation for self-hosted
-    if (!uri && node.source === 'self-hosted') {
-      try {
-        const res: { uri: string } = await client.get(
-          `/nodes/${encodeURIComponent(node.node_key)}/share-uri`
-        )
-        uri = res.uri
-      } catch (err) {
-        throw new Error(`无法生成节点分享链接: ${err}`)
-      }
-    }
-
-    if (!uri) {
-      throw new Error('该节点不支持生成分享链接')
-    }
-
+    const uri = await getNodeShareURI(node)
     qrDataUrl.value = await generateQRCode(uri)
   } catch (err) {
-    qrError.value = `${err}`
+    qrError.value = err instanceof Error ? err.message : String(err)
   } finally {
     qrLoading.value = false
   }
