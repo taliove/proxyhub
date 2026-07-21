@@ -6,6 +6,7 @@ import {
   formatExamTime,
   shareScore,
   shareBaselineMbps,
+  shareBaselineUpMbps,
   shareRegionExtremes,
   shareUnlockCells,
   shareEgressSummary,
@@ -63,7 +64,6 @@ describe('displayNodeName', () => {
 
 describe('formatExamTime', () => {
   it('格式化为本地 YYYY-MM-DD HH:mm', () => {
-    // 用本地构造,避免时区断言脆弱
     const d = new Date(2026, 6, 20, 9, 5)
     expect(formatExamTime(d)).toBe('2026-07-20 09:05')
   })
@@ -115,8 +115,48 @@ describe('shareBaselineMbps', () => {
   })
 })
 
+describe('shareBaselineUpMbps', () => {
+  it('取基准行上行速率', () => {
+    const report = {
+      region_speed: {
+        regions: [
+          { code: 'x', name: '基准', ttfb_ms: 10, down_mbps: 500, up_mbps: 100 },
+          { code: 'us_west', name: '美西', ttfb_ms: 120, down_mbps: 80 }
+        ]
+      }
+    } as ExamReport
+    expect(shareBaselineUpMbps(report)).toBe(100)
+  })
+  it('基准行无上行字段返回 null(票据 33 未落地)', () => {
+    const report = {
+      region_speed: {
+        regions: [{ code: 'x', name: '基准', ttfb_ms: 10, down_mbps: 500 }]
+      }
+    } as ExamReport
+    expect(shareBaselineUpMbps(report)).toBeNull()
+  })
+  it('基准失败返回 null', () => {
+    const report = {
+      region_speed: {
+        regions: [
+          { code: 'x', name: '基准', ttfb_ms: 0, down_mbps: 0, up_mbps: 0, error: 'timeout' }
+        ]
+      }
+    } as ExamReport
+    expect(shareBaselineUpMbps(report)).toBeNull()
+  })
+  it('无基准返回 null', () => {
+    const report = {
+      region_speed: {
+        regions: [{ code: 'us_west', name: '美西', ttfb_ms: 1, down_mbps: 9, up_mbps: 5 }]
+      }
+    } as ExamReport
+    expect(shareBaselineUpMbps(report)).toBeNull()
+  })
+})
+
 describe('shareRegionExtremes', () => {
-  it('排除基准,取下行最高=最佳、最低=最差', () => {
+  it('排除基准,取下行最高=最佳、最低=最差;包含 ttfb_ms', () => {
     const report = {
       region_speed: {
         regions: [
@@ -131,8 +171,10 @@ describe('shareRegionExtremes', () => {
     const { best, worst } = shareRegionExtremes(report)
     expect(best?.name).toBe('东京')
     expect(best?.down_mbps).toBe(150)
+    expect(best?.ttfb_ms).toBe(60)
     expect(worst?.name).toBe('新加坡')
     expect(worst?.down_mbps).toBe(40)
+    expect(worst?.ttfb_ms).toBe(90)
   })
   it('单个有效区域:最佳=最差=该区', () => {
     const report = {
@@ -168,7 +210,7 @@ describe('shareUnlockCells', () => {
 })
 
 describe('shareEgressSummary', () => {
-  it('取 IPv4 地区与 DNS 泄露状态', () => {
+  it('取 IPv4 地区与 DNS 泄露状态;默认不返回 IP', () => {
     const report = {
       egress: {
         ipv4: {
@@ -185,6 +227,26 @@ describe('shareEgressSummary', () => {
     const s = shareEgressSummary(report)
     expect(s.ipv4Region).toBe('美国 · 加州 · 洛杉矶')
     expect(s.dnsLeak).toBe('leak')
+    expect(s.ipv4Address).toBeUndefined()
+  })
+  it('showIp=true 时返回 IPv4 地址', () => {
+    const report = {
+      egress: {
+        ipv4: {
+          ip: '203.0.113.7',
+          country: '美国',
+          region: '加州',
+          city: '洛杉矶',
+          proxy: false,
+          hosting: true
+        },
+        dns: { resolver_ip: '8.8.8.8', resolver_geo: '美国', leak: false }
+      }
+    } as ExamReport
+    const s = shareEgressSummary(report, true)
+    expect(s.ipv4Address).toBe('203.0.113.7')
+    expect(s.ipv4Region).toBe('美国 · 加州 · 洛杉矶')
+    expect(s.dnsLeak).toBe('ok')
   })
   it('DNS 无泄露 -> ok;探测异常 -> unknown', () => {
     expect(shareEgressSummary({ egress: { dns: { leak: false } } } as ExamReport).dnsLeak).toBe(
@@ -194,12 +256,14 @@ describe('shareEgressSummary', () => {
       shareEgressSummary({ egress: { dns: { leak: false, error: 'x' } } } as ExamReport).dnsLeak
     ).toBe('unknown')
   })
-  it('IPv4 探测失败 -> 地区为空', () => {
+  it('IPv4 探测失败 -> 地区为空,无 IP', () => {
     const report = { egress: { ipv4: { proxy: false, hosting: false, error: 'x' } } } as ExamReport
-    expect(shareEgressSummary(report).ipv4Region).toBe('')
+    const s = shareEgressSummary(report, true)
+    expect(s.ipv4Region).toBe('')
+    expect(s.ipv4Address).toBeUndefined()
   })
 
-  it('安全:摘要不含出口 IP / 解析器 IP 等地址字段', () => {
+  it('安全:默认态摘要不含出口 IP / 解析器 IP 等地址字段', () => {
     const report = {
       egress: {
         ipv4: {
@@ -215,10 +279,24 @@ describe('shareEgressSummary', () => {
         dns: { resolver_ip: '8.8.8.8', resolver_geo: '美国', leak: false }
       }
     } as ExamReport
-    const serialized = JSON.stringify(shareEgressSummary(report))
+    const serialized = JSON.stringify(shareEgressSummary(report, false))
     expect(serialized).not.toContain('203.0.113.7')
     expect(serialized).not.toContain('8.8.8.8')
     expect(serialized).not.toContain('AS64500')
+  })
+  it('安全:showIp=true 属用户明示,可序列化出 IP', () => {
+    const report = {
+      egress: {
+        ipv4: {
+          ip: '203.0.113.7',
+          country: '美国',
+          proxy: false,
+          hosting: true
+        }
+      }
+    } as ExamReport
+    const serialized = JSON.stringify(shareEgressSummary(report, true))
+    expect(serialized).toContain('203.0.113.7')
   })
 })
 

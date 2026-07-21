@@ -1,6 +1,6 @@
 // 分享卡的纯计算逻辑(与渲染解耦,便于单测)。
-// 只从 ExamReport 派生「可公开」字段:打码节点名、评分、基准下行、多地域最佳/最差、
-// 解锁 6 宫格、出口地区 + DNS 泄露状态。刻意不派生任何 IP/UUID/服务器地址类字段。
+// 只从 ExamReport 派生「可公开」字段:打码节点名、评分、基准下行/上行、多地域最佳/最差、
+// 解锁 6 宫格、出口地区 + DNS 泄露状态。出口 IPv4 仅当显式开关时返回,默认不派生。
 import type { ExamReport, ExamRegionResult, ExamUnlockResult } from '@/types'
 import { isBaselineRow, EXAM_UNLOCK_SLOTS } from './examrows'
 import { unlockLevel, unlockLabel, type UnlockLevel } from './unlock'
@@ -57,7 +57,17 @@ export function shareBaselineMbps(report: ExamReport): number | null {
   return Number.isFinite(baseline.down_mbps) ? baseline.down_mbps : null
 }
 
-// RegionExtreme 多地域极值行(仅展示区域名 + 速率/延迟,无任何地址)。
+// shareBaselineUpMbps 基准(Cloudflare 最近 POP)上行速率;无基准/失败/后端未返回上行字段返回 null。
+export function shareBaselineUpMbps(report: ExamReport): number | null {
+  const regions = report.region_speed?.regions ?? []
+  const baseline = regions.find((r) => isBaselineRow(r))
+  if (!baseline || baseline.error) return null
+  return baseline.up_mbps !== undefined && Number.isFinite(baseline.up_mbps)
+    ? baseline.up_mbps
+    : null
+}
+
+// RegionExtreme 多地域极值行(展示区域名 + 速率 + 延迟,无任何地址)。
 export interface RegionExtreme {
   name: string
   down_mbps: number
@@ -122,22 +132,24 @@ export function unlockLevelColorVar(level: UnlockLevel): string {
 // LeakStatus DNS 泄露三态:未泄露 ok / 疑似泄露 leak / 未知(缺失或探测异常)unknown。
 export type LeakStatus = 'ok' | 'leak' | 'unknown'
 
-// EgressSummary 出口摘要(只含地区与 DNS 泄露状态,绝不含出口 IP 地址)。
+// EgressSummary 出口摘要(地区 + DNS 泄露状态 + 可选 IPv4 地址)。
 export interface EgressSummary {
   ipv4Region: string // 国家·省·市;失败或缺失为空串
+  ipv4Address?: string // IPv4 地址;仅当 showIp=true 时填充
   dnsLeak: LeakStatus
 }
 
-// shareEgressSummary 出口摘要:IPv4 出口「地区」+ DNS 泄露状态。
-// 安全契约:只取地区文案(ipv4Location),绝不返回 ipv4.ip / resolver_ip 等地址字段。
-export function shareEgressSummary(report: ExamReport): EgressSummary {
+// shareEgressSummary 出口摘要:IPv4 出口「地区」+ 可选「地址」+ DNS 泄露状态。
+// 安全契约:默认不返回 IP 地址;仅当 showIp=true 时填充 ipv4Address 字段。
+export function shareEgressSummary(report: ExamReport, showIp = false): EgressSummary {
   const e = report.egress
   const ipv4 = e?.ipv4
   const ipv4Region = ipv4 && !ipv4.error ? ipv4Location(ipv4) : ''
+  const ipv4Address = showIp && ipv4 && !ipv4.error ? ipv4.ip : undefined
   const dns = e?.dns
   let dnsLeak: LeakStatus = 'unknown'
   if (dns && !dns.error) dnsLeak = dns.leak ? 'leak' : 'ok'
-  return { ipv4Region, dnsLeak }
+  return { ipv4Region, ipv4Address, dnsLeak }
 }
 
 // leakColorVar DNS 泄露状态色:未泄露 绿 / 疑似泄露 红 / 未知 中性。

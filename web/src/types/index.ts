@@ -174,6 +174,7 @@ export interface ExamRegionResult {
   name: string
   ttfb_ms: number
   down_mbps: number
+  up_mbps?: number // 上行速率(票据 33 新增;缺失时降级不渲染)
   error?: string
 }
 
