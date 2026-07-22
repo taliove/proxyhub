@@ -23,7 +23,7 @@
         :column="2"
         border
         size="small"
-        class="compact-descriptions"
+        class="compact-descriptions num"
       >
         <el-descriptions-item label="HTTP 状态">
           <el-tag :type="diagnosticResult.http_status === 200 ? 'success' : 'danger'" size="small">
@@ -307,25 +307,29 @@ onUnmounted(() => {
   min-height: 200px;
 }
 
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
 .phase-loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 20px 0;
-  font-size: 16px;
-  color: var(--el-text-color-secondary);
+  gap: var(--ph-space-3);
+  padding: var(--ph-space-5) 0;
+  font-size: var(--ph-text-md);
+  color: var(--ph-text-secondary);
 }
 
 .phase-loading .el-icon {
-  font-size: 24px;
+  font-size: var(--ph-text-2xl);
 }
 
 .compact-descriptions {
-  margin-bottom: 20px;
+  margin-bottom: var(--ph-space-5);
 }
 
 .diagnostic-alert {
-  margin-bottom: 20px;
+  margin-bottom: var(--ph-space-5);
 }
 </style>

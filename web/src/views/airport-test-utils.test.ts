@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { scoreColor, testTimeRelative, scoreDisplay } from './airport-test-utils'
+import {
+  scoreColor,
+  testTimeRelative,
+  scoreDisplay,
+  scoreTone,
+  scoreToneLabel
+} from './airport-test-utils'
 
 describe('scoreColor', () => {
   it('returns success for scores >= 80', () => {
@@ -28,6 +34,48 @@ describe('scoreColor', () => {
   it('returns info for failed status with null score', () => {
     expect(scoreColor(null, 'failed')).toBe('info')
     expect(scoreColor(undefined, 'failed')).toBe('info')
+  })
+})
+
+describe('scoreTone', () => {
+  it('returns success for scores >= 80', () => {
+    expect(scoreTone(80)).toBe('success')
+    expect(scoreTone(100)).toBe('success')
+  })
+
+  it('returns warning for scores >= 60 and < 80', () => {
+    expect(scoreTone(60)).toBe('warning')
+    expect(scoreTone(79.9)).toBe('warning')
+  })
+
+  it('returns danger for scores < 60', () => {
+    expect(scoreTone(0)).toBe('danger')
+    expect(scoreTone(59.9)).toBe('danger')
+  })
+
+  it('returns danger for failed status with null score', () => {
+    expect(scoreTone(null, 'failed')).toBe('danger')
+    expect(scoreTone(undefined, 'failed')).toBe('danger')
+  })
+
+  it('returns muted for untested (null score, no failed status)', () => {
+    expect(scoreTone(null)).toBe('muted')
+    expect(scoreTone(undefined)).toBe('muted')
+    expect(scoreTone(null, 'completed')).toBe('muted')
+  })
+})
+
+describe('scoreToneLabel', () => {
+  it('labels score bands', () => {
+    expect(scoreToneLabel(85)).toBe('健康')
+    expect(scoreToneLabel(70)).toBe('一般')
+    expect(scoreToneLabel(30)).toBe('异常')
+  })
+
+  it('labels failed and untested states', () => {
+    expect(scoreToneLabel(null, 'failed')).toBe('测试失败')
+    expect(scoreToneLabel(null)).toBe('未测试')
+    expect(scoreToneLabel(undefined)).toBe('未测试')
   })
 })
 

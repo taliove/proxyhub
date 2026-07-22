@@ -19,29 +19,30 @@
         <el-table-column prop="url" label="订阅 URL" show-overflow-tooltip />
         <el-table-column label="最近测试" width="180">
           <template #default="{ row }">
-            <div v-if="row.last_test_score !== null && row.last_test_score !== undefined">
-              <el-tag
-                :type="getScoreColor(row.last_test_score, row.last_test_status)"
-                size="small"
-                class="score-tag clickable"
-                @click="openTestDialog(row)"
-              >
-                {{ formatScore(row.last_test_score) }}
-              </el-tag>
-              <span class="test-time">{{ formatTestTime(row.last_test_at) }}</span>
-            </div>
-            <span v-else-if="row.last_test_status === 'failed'" class="failed-test">
-              <el-tag type="info" size="small">测试失败</el-tag>
-              <span class="test-time">{{ formatTestTime(row.last_test_at) }}</span>
+            <span class="test-cell">
+              <StatusDot :tone="testTone(row)" :label="testToneLabel(row)" />
+              <template v-if="row.last_test_score !== null && row.last_test_score !== undefined">
+                <span class="num score-text clickable" @click="openTestDialog(row)">
+                  {{ formatScore(row.last_test_score) }}
+                </span>
+                <span class="test-time">{{ formatTestTime(row.last_test_at) }}</span>
+              </template>
+              <template v-else-if="row.last_test_status === 'failed'">
+                <span class="failed-test">测试失败</span>
+                <span class="test-time">{{ formatTestTime(row.last_test_at) }}</span>
+              </template>
+              <span v-else class="no-test">-</span>
             </span>
-            <span v-else class="no-test">-</span>
           </template>
         </el-table-column>
         <el-table-column prop="enabled" label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.enabled ? 'success' : 'info'">
-              {{ row.enabled ? '启用' : '禁用' }}
-            </el-tag>
+            <StatusDot
+              :tone="row.enabled ? 'success' : 'muted'"
+              :label="row.enabled ? '启用' : '禁用'"
+              class="state-dot"
+            />
+            <span>{{ row.enabled ? '启用' : '禁用' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="330">
@@ -111,10 +112,11 @@ import client from '@/api/client'
 import { getJob } from '@/api/jobs'
 import { useDebouncedSuggest } from '@/composables/useDebouncedSuggest'
 import PageHeader from '@/components/PageHeader.vue'
+import StatusDot from '@/components/StatusDot.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { getAirportQRContent } from './airport-utils'
 import AirportTestDialog from '@/components/AirportTestDialog.vue'
-import { scoreColor, testTimeRelative, scoreDisplay } from './airport-test-utils'
+import { testTimeRelative, scoreDisplay, scoreTone, scoreToneLabel } from './airport-test-utils'
 
 const airports = ref<Airport[]>([])
 const loading = ref(false)
@@ -292,9 +294,13 @@ const showQRCode = (airport: Airport) => {
   qrDialog.value?.show(content)
 }
 
-// Format test score color based on value
-const getScoreColor = (score: number | null | undefined, status?: string | null) => {
-  return scoreColor(score, status)
+// 最近测试状态色点:tone 与文案由视图模型纯函数推导(与节点页 healthTone 同手法)
+const testTone = (row: Airport) => {
+  return scoreTone(row.last_test_score, row.last_test_status)
+}
+
+const testToneLabel = (row: Airport) => {
+  return scoreToneLabel(row.last_test_score, row.last_test_status)
 }
 
 // Format test score for display
@@ -317,10 +323,18 @@ onMounted(loadAirports)
   line-height: 1.5;
   margin-top: var(--ph-space-1);
 }
-.score-tag {
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.test-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ph-space-1);
+}
+.state-dot {
   margin-right: var(--ph-space-1);
 }
-.score-tag.clickable {
+.score-text.clickable {
   cursor: pointer;
 }
 .test-time {

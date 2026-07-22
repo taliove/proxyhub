@@ -3,9 +3,9 @@
     <h4>📉 历史趋势</h4>
     <svg class="trend-chart" viewBox="0 0 400 80" xmlns="http://www.w3.org/2000/svg">
       <polyline
+        class="trend-line"
         :points="trendPoints"
         fill="none"
-        stroke="#409eff"
         stroke-width="2"
         stroke-linejoin="round"
       />
@@ -15,7 +15,7 @@
         :cx="point.x"
         :cy="point.y"
         r="3"
-        :fill="getPointColor(point.score)"
+        :class="`is-${scoreColor(point.score)}`"
       />
     </svg>
     <div class="trend-legend">
@@ -27,6 +27,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { TestRun } from '@/composables/useAirportTest'
+import { scoreColor } from '@/views/airport-test-utils'
 
 interface Props {
   runs: TestRun[]
@@ -58,37 +59,51 @@ const trendPointsArray = computed(() => {
 const trendPoints = computed(() => {
   return trendPointsArray.value.map((p) => `${p.x},${p.y}`).join(' ')
 })
-
-function getPointColor(score: number): string {
-  if (score >= 80) return '#67c23a'
-  if (score >= 60) return '#e6a23c'
-  return '#f56c6c'
-}
 </script>
 
 <style scoped>
 .trend-section {
-  margin-top: 24px;
+  margin-top: var(--ph-space-5);
 }
 
 .trend-section h4 {
-  margin-bottom: 12px;
+  margin-bottom: var(--ph-space-3);
 }
 
 .trend-chart {
   width: 100%;
   height: 80px;
-  background: var(--el-fill-color-lighter);
-  border-radius: 4px;
+  background: var(--ph-bg-hover);
+  border-radius: var(--ph-radius-sm);
+}
+
+.trend-line {
+  stroke: var(--ph-color-primary);
+}
+
+.trend-chart circle.is-success {
+  fill: var(--ph-success);
+}
+
+.trend-chart circle.is-warning {
+  fill: var(--ph-warning);
+}
+
+.trend-chart circle.is-danger {
+  fill: var(--ph-danger);
+}
+
+.trend-chart circle.is-info {
+  fill: var(--ph-info);
 }
 
 .trend-legend {
-  margin-top: 8px;
+  margin-top: var(--ph-space-2);
   text-align: center;
 }
 
 .muted {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-xs);
 }
 </style>

@@ -2,8 +2,9 @@
   <div class="score-report">
     <div class="score-header">
       <div class="overall-score">
+        <StatusDot :tone="scoreTone" :label="scoreToneLabel" />
         <div class="score-label">综合得分</div>
-        <el-tag :type="scoreColor" size="large" class="score-value">
+        <el-tag :type="scoreColor" size="large" class="score-value num">
           {{ overallScore }}
         </el-tag>
       </div>
@@ -13,7 +14,7 @@
     <el-divider />
 
     <h4>📊 诊断结果</h4>
-    <el-descriptions :column="2" border size="small" class="compact-descriptions">
+    <el-descriptions :column="2" border size="small" class="compact-descriptions num">
       <el-descriptions-item label="HTTP 状态">
         <el-tag :type="diagnostic.http_status === 200 ? 'success' : 'danger'" size="small">
           {{ diagnostic.http_status }}
@@ -35,7 +36,7 @@
 
     <div v-if="completedResult" class="score-details">
       <h4>📈 维度明细</h4>
-      <el-descriptions :column="1" border size="small">
+      <el-descriptions :column="1" border size="small" class="num">
         <el-descriptions-item label="可用率">
           {{ (completedResult.availability_rate * 100).toFixed(1) }}%
           <span class="dimension-score"
@@ -72,6 +73,11 @@ import {
   type DiagnosticResult,
   type CompletedResult
 } from '@/composables/useAirportTest'
+import {
+  scoreTone as scoreToneOf,
+  scoreToneLabel as scoreToneLabelOf
+} from '@/views/airport-test-utils'
+import StatusDot from '@/components/StatusDot.vue'
 
 interface Props {
   overallScore: number
@@ -87,6 +93,8 @@ const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 const scoreColor = computed(() => getScoreColor(props.overallScore))
+const scoreTone = computed(() => scoreToneOf(props.overallScore))
+const scoreToneLabel = computed(() => scoreToneLabelOf(props.overallScore))
 </script>
 
 <style scoped>
@@ -94,43 +102,47 @@ const scoreColor = computed(() => getScoreColor(props.overallScore))
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px;
-  background: var(--el-fill-color-light);
-  border-radius: 4px;
+  padding: var(--ph-space-4);
+  background: var(--ph-bg-hover);
+  border-radius: var(--ph-radius-sm);
 }
 
 .overall-score {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--ph-space-3);
 }
 
 .score-label {
-  font-size: 16px;
+  font-size: var(--ph-text-md);
   font-weight: 500;
 }
 
 .score-value {
-  font-size: 24px;
+  font-size: var(--ph-text-2xl);
   font-weight: bold;
-  padding: 8px 16px;
+  padding: var(--ph-space-2) var(--ph-space-4);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
 .compact-descriptions {
-  margin-bottom: 20px;
+  margin-bottom: var(--ph-space-5);
 }
 
 .score-details {
-  margin-top: 20px;
+  margin-top: var(--ph-space-5);
 }
 
 .score-details h4 {
-  margin-bottom: 12px;
+  margin-bottom: var(--ph-space-3);
 }
 
 .dimension-score {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  margin-left: 8px;
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-xs);
+  margin-left: var(--ph-space-2);
 }
 </style>
