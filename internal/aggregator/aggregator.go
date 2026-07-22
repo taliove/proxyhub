@@ -63,10 +63,13 @@ type Aggregator struct {
 	// poolOps 单机场 upsert 口径(单机场刷新复用,见 ticket 01/04)
 	poolOps *poolops.StoreAdapter
 
-	// refreshStartMu 串行化"冲突检查+发起任务"临界区(机场级互斥的 TOCTOU 防护)
+	// refreshStartMu 串行化"冲突检查+发起任务"临界区(机场级互斥的 TOCTOU 防护;
+	// 跨 kind 互斥同用:机场测试发起走 StartAirportTestExclusive,见 refresh_job.go)
 	refreshStartMu sync.Mutex
-	// singleUpsertMu 串行化单机场刷新的池写(并行拉取允许,写池不允许)
-	singleUpsertMu sync.Mutex
+
+	// airportTestConflict 跨 kind 互斥的测试侧查询回调(server 装配期注入,issue 0025);
+	// nil 表示无测试运行时,冲突恒无。
+	airportTestConflict func(airportID int64) (string, bool)
 
 	// 告警冷却：同一问题只告警一次，恢复后清除
 	alerted map[string]bool

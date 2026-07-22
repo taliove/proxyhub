@@ -7,11 +7,18 @@ package poolops
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/taliove/proxyhub/internal/geoip"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
+
+// upsertMu 串行化全部 StoreAdapter 实例的池写。UpsertAirportNodes 是
+// "读全池-改本机场-写全池",并行写会 lost update(后写覆盖先写)。
+// 包级而非实例级:aggregator(单机场刷新)与 server(机场测试池空补救)
+// 各自 new 适配器,而节点池同一进程只有一份,写必须全局串行。
+var upsertMu sync.Mutex
 
 // Operations 抽象节点池的按源加载与单机场 upsert。
 type Operations interface {
@@ -49,8 +56,10 @@ func (a *StoreAdapter) LoadPoolBySource(source string) ([]*subscription.Node, er
 }
 
 // UpsertAirportNodes 单机场 upsert:复用全局刷新口径(地区识别 + MergePool + SaveNodePool)。
+// 池的读-改-写段由包级 upsertMu 串行,调用方无需自带锁。
 func (a *StoreAdapter) UpsertAirportNodes(airportName string, fetchedNodes []*subscription.Node) error {
-	// 第一步:地区识别(有离线 GeoIP 则兜底,不阻断)
+	// 第一步:地区识别(有离线 GeoIP 则兜底,不阻断)。
+	// 只改调用方自己的 fetchedNodes,不触碰共享池,留在临界区外缩短持锁时间。
 	for _, node := range fetchedNodes {
 		if node.Region == "" {
 			if country, err := geoip.LookupCountry(node.Server); err == nil {
@@ -58,6 +67,9 @@ func (a *StoreAdapter) UpsertAirportNodes(airportName string, fetchedNodes []*su
 			}
 		}
 	}
+
+	upsertMu.Lock()
+	defer upsertMu.Unlock()
 
 	// 第二步:加载当前池
 	oldPool, err := a.store.LoadNodePool()

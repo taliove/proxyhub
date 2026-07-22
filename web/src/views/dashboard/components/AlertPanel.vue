@@ -7,7 +7,7 @@
     <template v-else>
       <div v-if="alerts.length === 0" class="panel-empty">一切正常</div>
       <ul v-else class="alert-list">
-        <li v-for="a in alerts" :key="a.key" class="alert-item" @click="go(a.route)">
+        <li v-for="a in alerts" :key="a.key" class="alert-item" @click="go(a)">
           <el-tag :type="a.severity" size="small" class="item-tag">
             {{ categoryLabel(a.category) }}
           </el-tag>
@@ -15,7 +15,7 @@
         </li>
       </ul>
       <!-- 未测试机场不算异常,弱提示独立成行(有无异常都展示) -->
-      <div v-if="untestedCount > 0" class="panel-hint" @click="go('Airports')">
+      <div v-if="untestedCount > 0" class="panel-hint" @click="goRoute('Airports')">
         {{ untestedCount }} 个机场尚未测试
       </div>
     </template>
@@ -24,7 +24,7 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { useAlertPanel, type AlertCategory } from '../composables/useAlertPanel'
+import { useAlertPanel, type AlertCategory, type AlertItem } from '../composables/useAlertPanel'
 
 const { alerts, untestedCount, loading } = useAlertPanel()
 const router = useRouter()
@@ -38,8 +38,16 @@ const CATEGORY_LABELS: Record<AlertCategory, string> = {
 
 const categoryLabel = (c: AlertCategory) => CATEGORY_LABELS[c]
 
-// 各目标页暂不支持定位到具体记录,统一跳列表页
-const go = (route: string) => {
+// 任务类异常带 ?id= 直达任务详情(ticket 0023);其余类别跳对应列表页
+const go = (a: AlertItem) => {
+  if (a.category === 'job' && a.jobId !== undefined) {
+    router.push({ name: a.route, query: { id: String(a.jobId) } })
+  } else {
+    goRoute(a.route)
+  }
+}
+
+const goRoute = (route: string) => {
   router.push({ name: route })
 }
 </script>

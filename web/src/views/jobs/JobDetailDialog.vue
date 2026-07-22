@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" title="任务详情" width="560px">
+  <el-dialog v-model="visible" title="任务详情" :width="isWideDetail ? '720px' : '560px'">
     <template v-if="job">
       <el-descriptions :column="2" border size="small">
         <el-descriptions-item label="任务类型">{{ kindLabel(job.kind) }}</el-descriptions-item>
@@ -89,6 +89,68 @@
         <div v-else class="muted">暂无关联刷新记录(任务刚启动或记录已滚动清理)</div>
       </template>
 
+      <!-- 体检任务(exam/batch_exam):消费 GET /api/jobs/{id}/result 的报告(ticket 0023)。
+           exam 单份直出;batch_exam 按节点列表逐份展开(spec 遗留待决 1 定夺)。
+           报告卡复用 ExamReportCard(内置 ExamShareDialog 分享入口)。 -->
+      <template v-if="isExamKind">
+        <el-divider content-position="left">体检结果</el-divider>
+        <div v-if="examLoading" class="muted">加载体检报告…</div>
+        <div v-else-if="examResult?.reason === 'no_report'" class="muted">
+          本次任务未产生报告(可能已被中断)
+        </div>
+        <div v-else-if="reportRows.length === 0" class="muted">暂无体检报告</div>
+        <template v-else>
+          <template v-if="job.kind === 'exam'">
+            <el-alert
+              v-if="reportRows[0].fallback"
+              type="warning"
+              :closable="false"
+              class="fallback-alert"
+              title="非本次任务产出:该报告为任务时间窗内匹配的历史体检记录"
+            />
+            <ExamReportCard
+              v-if="reportRows[0].report"
+              :report="reportRows[0].report"
+              :node-name="reportRows[0].nodeKey"
+              :exam-time="reportRows[0].createdAt"
+            />
+          </template>
+          <ul v-else class="batch-report-list">
+            <li v-for="row in reportRows" :key="row.nodeKey" class="batch-report-item">
+              <button type="button" class="batch-report-row" @click="toggleReport(row.nodeKey)">
+                <span class="mono batch-report-key">{{ row.nodeKey }}</span>
+                <el-tag v-if="row.fallback" type="warning" size="small">非本次任务产出</el-tag>
+                <el-tag v-if="row.score !== null" :type="scoreTagType(row.score)" size="small">
+                  稳定性 {{ row.score }}
+                </el-tag>
+                <el-tag v-else size="small" type="info">稳定性 —</el-tag>
+                <span class="muted batch-report-time">{{ row.createdAt }}</span>
+                <el-icon
+                  class="batch-report-caret"
+                  :class="{ 'is-open': expandedReports.includes(row.nodeKey) }"
+                >
+                  <ArrowRight />
+                </el-icon>
+              </button>
+              <ExamReportCard
+                v-if="expandedReports.includes(row.nodeKey) && row.report"
+                :report="row.report"
+                :node-name="row.nodeKey"
+                :exam-time="row.createdAt"
+                class="batch-report-card"
+              />
+            </li>
+          </ul>
+        </template>
+      </template>
+
+      <!-- 机场测试任务(airport_test):报告区抽为 AirportTestJobResult(ticket 0026,
+           与 0023 exam 结果区同款 getJobResult 机制;cancelled 有对应展示) -->
+      <template v-if="job.kind === 'airport_test'">
+        <el-divider content-position="left">机场测试报告</el-divider>
+        <AirportTestJobResult :job-id="job.id" />
+      </template>
+
       <!-- 参数:key 列表可能数百个,默认折叠 -->
       <el-collapse v-if="paramsText" class="params-block">
         <el-collapse-item :title="`启动参数${nodeCount !== null ? `(节点数 ${nodeCount})` : ''}`">
@@ -101,9 +163,14 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { Job } from '@/api/jobs'
+import { ArrowRight } from '@element-plus/icons-vue'
+import type { Job, JobResult, ExamJobReport } from '@/api/jobs'
+import { getJobResult } from '@/api/jobs'
 import { findRefreshRunByJob, getRefreshRun } from '@/api/refresh'
-import type { RefreshRun, RefreshEvent, RefreshFetchDiag } from '@/types'
+import type { RefreshRun, RefreshEvent, RefreshFetchDiag, ExamReport } from '@/types'
+import ExamReportCard from '@/components/exam/ExamReportCard.vue'
+import AirportTestJobResult from './AirportTestJobResult.vue'
+import { scoreLevel } from '@/components/exam/stability'
 import {
   kindLabel,
   statusMeta,
@@ -163,12 +230,72 @@ const loadRefreshDetail = async (jobId: number) => {
   }
 }
 
+// 体检结果区:exam 单份 / batch_exam 按节点聚合;无结果 kind 不展示本区(isExamKind 把关)。
+const isExamKind = computed(() => props.job?.kind === 'exam' || props.job?.kind === 'batch_exam')
+
+const examResult = ref<JobResult | null>(null)
+const examLoading = ref(false)
+// batch_exam 逐份展开状态(node_key 列表)
+const expandedReports = ref<string[]>([])
+
+// ExamReportRow 体检报告条目视图模型(展平 entry,模板不直接碰嵌套可空)。
+interface ExamReportRow {
+  nodeKey: string
+  fallback: boolean
+  score: number | null
+  createdAt: string
+  report: ExamReport | null
+}
+
+const toRow = (r: ExamJobReport): ExamReportRow => ({
+  nodeKey: r.node_key,
+  fallback: r.fallback,
+  score: r.entry?.report.stability?.score ?? null,
+  createdAt: r.entry?.created_at ?? '',
+  report: r.entry?.report ?? null
+})
+
+const reportRows = computed<ExamReportRow[]>(() => (examResult.value?.reports ?? []).map(toRow))
+
+const loadExamResult = async (jobId: number) => {
+  examLoading.value = true
+  examResult.value = null
+  expandedReports.value = []
+  try {
+    examResult.value = await getJobResult(jobId)
+  } catch {
+    // 结果加载失败不阻塞弹框主信息(全局拦截器已提示)
+  } finally {
+    examLoading.value = false
+  }
+}
+
+const toggleReport = (nodeKey: string) => {
+  expandedReports.value = expandedReports.value.includes(nodeKey)
+    ? expandedReports.value.filter((k) => k !== nodeKey)
+    : [...expandedReports.value, nodeKey]
+}
+
+// 报告类任务(体检/机场测试)详情加宽容纳报告卡
+const isWideDetail = computed(() => isExamKind.value || props.job?.kind === 'airport_test')
+
+const scoreTagType = (score: number): 'success' | 'warning' | 'danger' => {
+  const lv = scoreLevel(score)
+  if (lv === 'good') return 'success'
+  if (lv === 'fair') return 'warning'
+  return 'danger'
+}
+
 watch(
   () => [props.job?.id, visible.value] as const,
   ([jobId, vis]) => {
-    if (vis && jobId && props.job?.kind === 'refresh') {
+    if (!vis || !jobId) return
+    if (props.job?.kind === 'refresh') {
       loadRefreshDetail(jobId)
+    } else if (isExamKind.value) {
+      loadExamResult(jobId)
     }
+    // airport_test 的结果加载由 AirportTestJobResult 组件自持(watch jobId)
   },
   { immediate: true }
 )
@@ -215,5 +342,54 @@ const formatEventTime = (ts: string) => (ts.length > 19 ? ts.slice(11, 19) : ts)
   max-height: 320px;
   overflow: auto;
   padding-left: 2px;
+}
+.fallback-alert {
+  margin-bottom: var(--ph-space-3);
+}
+.batch-report-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.batch-report-item {
+  border-bottom: 1px solid var(--ph-border-light);
+}
+.batch-report-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-3);
+  width: 100%;
+  padding: var(--ph-space-3) var(--ph-space-1);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.batch-report-row:hover {
+  background: var(--ph-bg-hover);
+}
+.batch-report-key {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batch-report-time {
+  flex-shrink: 0;
+  font-size: var(--ph-text-xs);
+}
+.batch-report-caret {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+  color: var(--ph-text-secondary);
+}
+.batch-report-caret.is-open {
+  transform: rotate(90deg);
+}
+.batch-report-card {
+  margin: 0 0 var(--ph-space-3);
 }
 </style>

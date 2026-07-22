@@ -2,6 +2,7 @@ package airporttest
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,8 +50,9 @@ func (f *FakePoolWriter) UpdateNodeTestResult(nodeKey, mode string, available bo
 	return true
 }
 
-// FakeStore 测试用假存储
+// FakeStore 测试用假存储(任务化后 kind 在 goroutine 里跑,读写须并发安全)
 type FakeStore struct {
+	mu        sync.Mutex
 	Runs      map[int64]*TestRun
 	NextRunID int64
 	t         *testing.T
@@ -65,6 +67,8 @@ func NewFakeStore(t *testing.T) *FakeStore {
 }
 
 func (s *FakeStore) CreateTestRun(ctx context.Context, run *TestRun) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	id := s.NextRunID
 	s.NextRunID++
 	run.ID = id
@@ -73,6 +77,8 @@ func (s *FakeStore) CreateTestRun(ctx context.Context, run *TestRun) (int64, err
 }
 
 func (s *FakeStore) GetTestRun(ctx context.Context, airportID, runID int64) (*TestRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	run, ok := s.Runs[runID]
 	if !ok {
 		return nil, nil
@@ -81,7 +87,26 @@ func (s *FakeStore) GetTestRun(ctx context.Context, airportID, runID int64) (*Te
 }
 
 func (s *FakeStore) UpdateTestRun(ctx context.Context, run *TestRun) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.Runs[run.ID] = run
+	return nil
+}
+
+// RunCount 并发安全地读已建行数(任务化取消测试轮询用)。
+func (s *FakeStore) RunCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.Runs)
+}
+
+// FirstRun 并发安全地取首条 run(单 run 场景断言用)。
+func (s *FakeStore) FirstRun() *TestRun {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.Runs {
+		return r
+	}
 	return nil
 }
 
@@ -105,7 +130,7 @@ func TestRunTest_EmptyPool(t *testing.T) {
 		NodeCount:      0,
 	}
 
-	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", []*subscription.Node{}, diagResult)
+	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", []*subscription.Node{}, diagResult, nil)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}
@@ -149,7 +174,7 @@ func TestRunTest_SamplingAndWriteback(t *testing.T) {
 		NodeCount:     8,
 	}
 
-	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", nodes, diagResult)
+	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", nodes, diagResult, nil)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}
@@ -193,7 +218,7 @@ func TestRunTest_FullMode(t *testing.T) {
 		NodeCount:     8,
 	}
 
-	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", nodes, diagResult)
+	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", nodes, diagResult, nil)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}
@@ -230,7 +255,7 @@ func TestRunTest_StatusFlow(t *testing.T) {
 		NodeCount:     1,
 	}
 
-	_, err := orch.RunTest(context.Background(), run, "TestAirport", nodes, diagResult)
+	_, err := orch.RunTest(context.Background(), run, "TestAirport", nodes, diagResult, nil)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}

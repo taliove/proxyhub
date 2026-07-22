@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -50,10 +51,16 @@ func (f *Fetcher) Fetch(name, subscriptionURL string) (*Subscription, error) {
 // diag 在请求已尝试时恒非 nil(含错误路径):网络错误 HTTPStatus=0,
 // 非 200 响应带真实状态码;调用方无论成败都可落诊断。
 func (f *Fetcher) FetchWithDiagnostics(name, subscriptionURL string) (*Subscription, *FetchDiagnostics, error) {
+	return f.FetchContext(context.Background(), name, subscriptionURL)
+}
+
+// FetchContext 同 FetchWithDiagnostics,但请求绑定调用方 ctx:
+// ctx 取消即中断拉取(机场测试任务化后取消语义需要,issue 0025)。
+func (f *Fetcher) FetchContext(ctx context.Context, name, subscriptionURL string) (*Subscription, *FetchDiagnostics, error) {
 	diag := &FetchDiagnostics{}
 	start := time.Now()
 
-	req, err := http.NewRequest(http.MethodGet, subscriptionURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, subscriptionURL, nil)
 	if err != nil {
 		return nil, diag, fmt.Errorf("build subscription request: %w", err)
 	}

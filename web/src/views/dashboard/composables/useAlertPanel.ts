@@ -33,6 +33,8 @@ export interface AlertItem {
   severity: 'danger' | 'warning'
   text: string
   route: string // vue-router 路由名
+  // jobId 任务类异常的 jobs.id:跳转带 ?id= 直达任务详情(ticket 0023)
+  jobId?: number
 }
 
 // BannedIP /audit/banned 记录(含仅失败计数未封禁的,需按 banned_until 过滤)。
@@ -88,7 +90,7 @@ function buildAirportAlerts(airports: Airport[]): { items: AlertItem[]; untested
   return { items, untested }
 }
 
-// buildJobAlerts 24h 内失败/中断任务(按 updated_at 落窗,倒序展示)。
+// buildJobAlerts 24h 内失败/中断任务(按 updated_at 落窗,倒序展示;带 jobId 供 ?id= 直达)。
 function buildJobAlerts(jobs: Job[]): AlertItem[] {
   return jobs
     .filter((j) => withinWindow(j.updated_at, WINDOW_MS))
@@ -99,7 +101,8 @@ function buildJobAlerts(jobs: Job[]): AlertItem[] {
       category: 'job' as const,
       severity: j.status === 'failed' ? ('danger' as const) : ('warning' as const),
       text: `${kindLabel(j.kind)}(${scopeLabel(j)})${statusMeta(j.status).label},${j.updated_at}`,
-      route: 'Jobs'
+      route: 'Jobs',
+      jobId: j.id
     }))
 }
 

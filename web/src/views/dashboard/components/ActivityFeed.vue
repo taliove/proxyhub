@@ -6,7 +6,7 @@
     <div v-if="loading" class="panel-empty">加载中...</div>
     <div v-else-if="jobs.length === 0" class="panel-empty">暂无任务</div>
     <ul v-else class="feed-list">
-      <li v-for="job in jobs" :key="job.id" class="feed-item" @click="goJobs">
+      <li v-for="job in jobs" :key="job.id" class="feed-item" @click="goJob(job)">
         <span class="item-kind">{{ kindLabel(job.kind) }}</span>
         <el-tag :type="statusMeta(job.status).tag" size="small" class="item-status">
           {{ statusMeta(job.status).label }}
@@ -21,15 +21,16 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import type { Job } from '@/api/jobs'
 import { kindLabel, statusMeta, scopeLabel, jobTrigger } from '@/views/jobs/jobmeta'
 import { useActivityFeed } from '../composables/useActivityFeed'
 
 const { jobs, loading } = useActivityFeed()
 const router = useRouter()
 
-// 任务中心暂不支持定位到具体 job 详情,先跳列表页
-const goJobs = () => {
-  router.push({ name: 'Jobs' })
+// 任务条目直达任务中心详情(?id= 定位自动打开任务详情,ticket 0023)
+const goJob = (job: Job) => {
+  router.push({ name: 'Jobs', query: { id: String(job.id) } })
 }
 </script>
 

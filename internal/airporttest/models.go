@@ -17,6 +17,11 @@ const (
 	StatusScoring    RunStatus = "scoring"
 	StatusCompleted  RunStatus = "completed"
 	StatusFailed     RunStatus = "failed"
+	// StatusCancelled 任务化(issue 0025)后被显式取消的 run 终态:
+	// 已写回的抽样检活结果不回滚,已产出诊断数据保留。
+	// 取独立枚举值(非 failed+标注),对齐 jobs.StatusCancelled 与
+	// refresh_runs 的 cancelled 口径,任务中心状态展示口径一致。
+	StatusCancelled RunStatus = "cancelled"
 )
 
 // DiagnosticResult contains the outcome of the diagnostic phase.
@@ -39,6 +44,9 @@ type TestRun struct {
 	OverallScore   *float64          `json:"overall_score,omitempty"`
 	DimensionsJSON string            `json:"dimensions_json"`
 	ErrorMessage   string            `json:"error_message,omitempty"`
+	// JobID 关联的 jobs 表任务 id(任务化后由 kind 建行时回填;
+	// 0 = 任务化前旧记录或未关联,对齐 refresh_runs.job_id 口径)。
+	JobID int64 `json:"job_id"`
 }
 
 // Orchestrator coordinates airport test execution.

@@ -72,7 +72,7 @@ describe('ActivityFeed', () => {
     ])
   })
 
-  it('条目渲染 kind 标签 / 状态 / 范围 / 触发源,点击跳任务中心', async () => {
+  it('条目渲染 kind 标签 / 状态 / 范围 / 触发源,点击直达任务详情', async () => {
     vi.mocked(listJobs).mockResolvedValue([
       makeJob({
         id: 1,
@@ -91,8 +91,9 @@ describe('ActivityFeed', () => {
     expect(item.text()).toContain('全部机场')
     expect(item.text()).toContain('定时')
 
+    // ?id= 定位直达任务详情(ticket 0023)
     await item.trigger('click')
-    expect(pushMock).toHaveBeenCalledWith({ name: 'Jobs' })
+    expect(pushMock).toHaveBeenCalledWith({ name: 'Jobs', query: { id: '1' } })
   })
 
   it('无任务时显示空态', async () => {

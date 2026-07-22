@@ -127,8 +127,9 @@ describe('AlertPanel', () => {
 
     await items[0].trigger('click')
     expect(pushMock).toHaveBeenCalledWith({ name: 'Airports' })
+    // 任务类异常直达详情:?id= 定位(ticket 0023)
     await items[1].trigger('click')
-    expect(pushMock).toHaveBeenCalledWith({ name: 'Jobs' })
+    expect(pushMock).toHaveBeenCalledWith({ name: 'Jobs', query: { id: '1' } })
     await items[3].trigger('click')
     expect(pushMock).toHaveBeenCalledWith({ name: 'Audit' })
   })

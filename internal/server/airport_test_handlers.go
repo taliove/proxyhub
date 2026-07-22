@@ -3,24 +3,24 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/taliove/proxyhub/internal/aggregator"
 	"github.com/taliove/proxyhub/internal/airporttest"
-	"github.com/taliove/proxyhub/internal/subscription"
 )
 
-// handleAirportTest executes airport test with pool-first logic.
-// Diagnostic runs sync, then dispatches async test (sampling + health check + scoring).
-// New flow: diagnostic non-blocking, pool-aware branching in RunTest.
+// handleAirportTest POST /api/airports/{id}/test 经 jobs 运行时发起机场测试任务
+// (issue 0025 迁入:与 /airports/{id}/refresh 同构,返回任务句柄)。
+// 诊断拉取与建行随任务执行(单实例语义下不再同步建行——连点附加到进行中任务,
+// 同步建行会产生永不推进的孤儿 run);同机场刷新在跑时返回 409(跨 kind 互斥);
+// 取消走通用 POST /api/jobs/{kind}/{key}/cancel(kind=airport_test)。
 func (s *Server) handleAirportTest(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimPrefix(r.URL.Path, "/api/airports/")
-	idStr = strings.TrimSuffix(idStr, "/test")
-	airportID, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
+	airportID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || airportID <= 0 {
 		http.Error(w, "invalid airport id", http.StatusBadRequest)
 		return
 	}
@@ -43,65 +43,51 @@ func (s *Server) handleAirportTest(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&body)
 	}
 
-	// Diagnostic phase: attempt fetch (non-blocking on failure in pool-aware mode)
-	ctx := context.Background()
-	start := time.Now()
-
-	var fetchedNodes []*subscription.Node
-	diagResult := &airporttest.DiagnosticResult{}
-
-	sub, fetchErr := subscription.NewFetcher(30 * time.Second).Fetch(airport.Name, airport.URL)
-	elapsed := time.Since(start)
-
-	if fetchErr != nil {
-		// Fetch failed: record diagnostic failure, but don't block run
-		diagResult.HTTPStatus = 0 // Will be interpreted as non-2xx
-		diagResult.DurationMs = elapsed.Milliseconds()
-		diagResult.NodeCount = 0
-		diagResult.ParseFailures = 0
-		diagResult.ProtocolCounts = make(map[string]int)
-	} else {
-		// Fetch succeeded: populate diagnostic result
-		diagResult.HTTPStatus = 200
-		diagResult.DurationMs = elapsed.Milliseconds()
-		diagResult.NodeCount = len(sub.Nodes)
-		diagResult.ParseFailures = 0 // subscription.Fetch doesn't expose parse stats, assume 0
-		diagResult.ProtocolCounts = make(map[string]int)
-		for _, node := range sub.Nodes {
-			diagResult.ProtocolCounts[node.Type]++
-		}
-		fetchedNodes = sub.Nodes
-	}
-
-	// Create run with diagnostic result
-	run := &airporttest.TestRun{
-		AirportID:    airport.ID,
-		CreatedAt:    time.Now().UTC(),
-		SampleParams: "{}",
-		IsFull:       body.Full,
-		Status:       airporttest.StatusDiagnosing,
-	}
-
-	dimsJSON, _ := json.Marshal(diagResult)
-	run.DimensionsJSON = string(dimsJSON)
-
-	// Use store adapter to create run (converts TestRun to store.AirportTestRun)
-	storeAdapter := airporttest.NewStoreAdapter(s.st)
-	runID, err := storeAdapter.CreateTestRun(ctx, run)
+	params, err := json.Marshal(airporttest.JobParams{
+		AirportID:   airport.ID,
+		AirportName: airport.Name,
+		AirportURL:  airport.URL,
+		Full:        body.Full,
+	})
 	if err != nil {
-		http.Error(w, fmt.Sprintf("create test run: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("marshal test params: %v", err), http.StatusInternalServerError)
 		return
 	}
-	run.ID = runID
 
-	// Async: pool-aware test execution (sampling + health check + scoring)
-	go func() {
-		ctx := context.Background()
-		s.testOrchestrator.RunTest(ctx, run, airport.Name, fetchedNodes, diagResult)
-	}()
+	startFn := func() (int64, string, bool, error) {
+		key := airporttest.JobKey(airport.ID)
+		rowID, started, err := s.airportTestJobs.OpenIDForce(airporttest.JobKindName, key, params)
+		return rowID, key, started, err
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(run)
+	var jobID int64
+	var key string
+	var started bool
+	if c, ok := s.nodes.(airportTestCoordinator); ok {
+		// 跨 kind 互斥临界区:同机场/全量刷新在跑 → 409
+		jobID, key, started, err = c.StartAirportTestExclusive(airport.ID, startFn)
+	} else {
+		// 无协调器(单测 fake):退化为无跨 kind 互斥,kind+key 单实例仍生效
+		jobID, key, started, err = startFn()
+	}
+	if err != nil {
+		if errors.Is(err, aggregator.ErrAirportTestConflict) {
+			http.Error(w, "conflicts with a running refresh", http.StatusConflict)
+			return
+		}
+		s.logger.Error("trigger airport test failed", "airport_id", airportID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.Info("airport test triggered", "airport_id", airportID, "job_id", jobID, "started", started)
+	writeJSON(w, map[string]any{
+		"ok":      true,
+		"jobId":   jobID,
+		"kind":    airporttest.JobKindName,
+		"key":     key,
+		"started": started,
+	})
 }
 
 // handleGetAirportTestRun retrieves a test run by ID.

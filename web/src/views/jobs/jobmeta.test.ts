@@ -15,6 +15,7 @@ describe('kindLabel', () => {
     expect(kindLabel('batch_exam')).toBe('批量体检')
     expect(kindLabel('batch_detection')).toBe('批量解锁检测')
     expect(kindLabel('retag_all')).toBe('晚间标签重算')
+    expect(kindLabel('airport_test')).toBe('机场测试')
   })
   it('未知 kind 原样返回', () => {
     expect(kindLabel('mystery_job')).toBe('mystery_job')
@@ -72,6 +73,14 @@ describe('parseProgress', () => {
   })
   it('总量为 0 或缺省时回落到计数', () => {
     expect(parseProgress('7', 0)).toBe('已处理 7')
+  })
+  it('airport_test 的 JSON cursor:检活阶段显示 x/N', () => {
+    expect(parseProgress('{"phase":"checking","checked":3,"total":12}')).toBe('检活 3/12')
+  })
+  it('airport_test 的 JSON cursor:诊断/评分阶段显示阶段名', () => {
+    expect(parseProgress('{"phase":"diagnosing","checked":0,"total":0}')).toBe('诊断中')
+    expect(parseProgress('{"phase":"scoring","checked":0,"total":0}')).toBe('评分中')
+    expect(parseProgress('{"phase":"checking","checked":0,"total":0}')).toBe('检活中')
   })
 })
 
@@ -159,6 +168,21 @@ describe('scopeLabel - refresh kind', () => {
     expect(scopeLabel({ kind: 'refresh', key: 'airport-3', params: '{"trigger":"manual"}' })).toBe(
       '单机场 airport-3'
     )
+  })
+})
+
+describe('scopeLabel - airport_test kind', () => {
+  it('优先用 params 里的机场名', () => {
+    expect(
+      scopeLabel({
+        kind: 'airport_test',
+        key: 'airport-3',
+        params: '{"airport_id":3,"airport_name":"极速","full":false}'
+      })
+    ).toBe('单机场「极速」')
+  })
+  it('无机场名时回退 key', () => {
+    expect(scopeLabel({ kind: 'airport_test', key: 'airport-3' })).toBe('单机场 airport-3')
   })
 })
 

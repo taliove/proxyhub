@@ -308,6 +308,18 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 任务结果关联:exam_history 记录产出它的 jobs 任务 id(ticket 0022;
+	// 0 = 任务结果关联前的旧数据或未关联,查询侧走任务时间窗回退)
+	if err := s.addColumnIfMissing("exam_history", "job_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	// 机场测试任务化前置:airport_test_runs 关联 jobs 任务 id(ticket 0024,
+	// 对齐 refresh_runs 的 job_id 模式;0 = 任务化前的旧记录或未关联)
+	if err := s.addColumnIfMissing("airport_test_runs", "job_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
 	// 初始化地区识别规则表
 	return s.InitRegionRules()
 }

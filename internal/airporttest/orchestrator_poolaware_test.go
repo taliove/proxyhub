@@ -48,7 +48,7 @@ func TestRunTestWithPool_PoolHasNodes_URLReachable(t *testing.T) {
 		NodeCount:     5,
 	}
 
-	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", poolNodes, diagResult)
+	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", poolNodes, diagResult, nil)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestRunTestWithPool_PoolHasNodes_URLUnreachable(t *testing.T) {
 		NodeCount:     0,
 	}
 
-	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", poolNodes, diagResult)
+	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", poolNodes, diagResult, nil)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestRunTestWithPool_PoolEmpty_URLReachable(t *testing.T) {
 		{Name: "SG-1", Server: "2.2.2.1", Port: 443, Region: "SG", Source: "TestAirport"},
 	}
 
-	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", fetchedNodes, diagResult)
+	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", fetchedNodes, diagResult, nil)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestRunTestWithPool_PoolEmpty_URLUnreachable(t *testing.T) {
 		NodeCount:     0,
 	}
 
-	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", []*subscription.Node{}, diagResult)
+	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", []*subscription.Node{}, diagResult, nil)
 	if err != nil {
 		t.Fatalf("RunTest failed: %v", err)
 	}

@@ -3,6 +3,7 @@ import {
   parseDiagnosticResult,
   parseCheckingProgress,
   parseCompletedResult,
+  parseAirportTestCursor,
   getScoreColor,
   formatDuration,
   isHttpSuccess,
@@ -73,6 +74,46 @@ describe('useAirportTest', () => {
       const result = parseCheckingProgress('invalid')
 
       expect(result).toBeNull()
+    })
+  })
+
+  describe('parseAirportTestCursor', () => {
+    it('parses diagnosing cursor (no progress numbers)', () => {
+      expect(parseAirportTestCursor('{"phase":"diagnosing","checked":0,"total":0}')).toEqual({
+        phase: 'diagnosing',
+        checked: 0,
+        total: 0
+      })
+    })
+
+    it('parses checking cursor with progress', () => {
+      expect(parseAirportTestCursor('{"phase":"checking","checked":3,"total":12}')).toEqual({
+        phase: 'checking',
+        checked: 3,
+        total: 12
+      })
+    })
+
+    it('parses scoring cursor', () => {
+      expect(parseAirportTestCursor('{"phase":"scoring","checked":0,"total":0}')?.phase).toBe(
+        'scoring'
+      )
+    })
+
+    it('tolerates missing checked/total', () => {
+      expect(parseAirportTestCursor('{"phase":"checking"}')).toEqual({
+        phase: 'checking',
+        checked: 0,
+        total: 0
+      })
+    })
+
+    it('returns null for empty/invalid/unknown phase', () => {
+      expect(parseAirportTestCursor(undefined)).toBeNull()
+      expect(parseAirportTestCursor('')).toBeNull()
+      expect(parseAirportTestCursor('not-json')).toBeNull()
+      expect(parseAirportTestCursor('7')).toBeNull()
+      expect(parseAirportTestCursor('{"phase":"completed","checked":1,"total":1}')).toBeNull()
     })
   })
 

@@ -113,6 +113,10 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		}
 	case "refresh":
 		cancelled = s.nodes.CancelRefresh(key)
+	case "airport_test":
+		if s.airportTestJobs != nil {
+			cancelled = s.airportTestJobs.Cancel("airport_test", key)
+		}
 	default:
 		http.Error(w, "unknown kind", http.StatusBadRequest)
 		return

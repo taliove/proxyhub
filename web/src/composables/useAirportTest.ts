@@ -36,7 +36,10 @@ export interface CompletedResult extends DiagnosticResult {
   score_breakdown: ScoreBreakdown
 }
 
-export type TestRunStatus = 'diagnosing' | 'checking' | 'scoring' | 'completed' | 'failed'
+// TestRunStatus 测试 run 行状态;cancelled 为任务化(issue 0025)后被显式取消的
+// 终态(独立枚举,对齐 jobs.StatusCancelled 与 refresh_runs 口径,ADR 0027)。
+export type TestRunStatus =
+  'diagnosing' | 'checking' | 'scoring' | 'completed' | 'failed' | 'cancelled'
 
 export interface TestRun {
   id: number
@@ -46,14 +49,38 @@ export interface TestRun {
   overall_score?: number
   dimensions_json: string
   error_message?: string
+  // job_id 关联的 jobs 任务 id(迁入 jobs 运行时后回填;0/缺省 = 任务化前旧记录)
+  job_id?: number
+}
+
+// AirportTestJobHandle POST /airports/{id}/test 的响应(issue 0025:机场测试迁入
+// jobs 运行时,与 /airports/{id}/refresh 同构,返回任务句柄而非 run 行)。
+// started=false 表示附加到同机场进行中任务(kind+key 单实例),jobId 为在跑任务 id。
+export interface AirportTestJobHandle {
+  jobId: number
+  kind: string
+  key: string
+  started: boolean
+}
+
+// AirportTestCursor 机场测试任务的 jobs cursor(ADR 0027:主进度源,
+// 轮询 /api/jobs/{id} 消费;run 行 sample_params 为镜像,前端不读)。
+export interface AirportTestCursor {
+  phase: 'diagnosing' | 'checking' | 'scoring'
+  checked: number
+  total: number
 }
 
 /**
- * Run airport test and return the test run result.
+ * Run airport test:发起机场测试任务,返回 jobs 任务句柄。
+ * 进度轮询 /api/jobs/{jobId} 的 cursor,报告走 /api/jobs/{jobId}/result。
  */
-export async function runAirportTest(airportId: number, full = false): Promise<TestRun> {
+export async function runAirportTest(
+  airportId: number,
+  full = false
+): Promise<AirportTestJobHandle> {
   // 拦截器已解包 response.data(client.post 直接返回数据体)
-  return client.post<unknown, TestRun>(`/airports/${airportId}/test`, { full })
+  return client.post<unknown, AirportTestJobHandle>(`/airports/${airportId}/test`, { full })
 }
 
 /**
@@ -71,6 +98,19 @@ export async function listTestRuns(airportId: number): Promise<TestRun[]> {
 }
 
 /**
+ * emptyDiagnostic 诊断数据空初始值(每次调用返回新对象,不共享引用)。
+ */
+export function emptyDiagnostic(): DiagnosticResult {
+  return {
+    http_status: 0,
+    duration_ms: 0,
+    node_count: 0,
+    protocol_counts: {},
+    parse_failures: 0
+  }
+}
+
+/**
  * Parse diagnostic result from dimensions_json string.
  * Pure function for easy testing.
  */
@@ -78,13 +118,7 @@ export function parseDiagnosticResult(dimensionsJson: string): DiagnosticResult 
   try {
     return JSON.parse(dimensionsJson) as DiagnosticResult
   } catch {
-    return {
-      http_status: 0,
-      duration_ms: 0,
-      node_count: 0,
-      protocol_counts: {},
-      parse_failures: 0
-    }
+    return emptyDiagnostic()
   }
 }
 
@@ -99,6 +133,27 @@ export function parseCheckingProgress(dimensionsJson: string): CheckingProgress 
       return { checked: data.checked, total: data.total }
     }
     return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Parse airport test job cursor (jobs cursor JSON: {"phase","checked","total"}).
+ * Pure function for easy testing. 非法/空/未知阶段返回 null。
+ */
+export function parseAirportTestCursor(cursor: string | undefined): AirportTestCursor | null {
+  if (!cursor) return null
+  try {
+    const data = JSON.parse(cursor)
+    if (data.phase !== 'diagnosing' && data.phase !== 'checking' && data.phase !== 'scoring') {
+      return null
+    }
+    return {
+      phase: data.phase,
+      checked: typeof data.checked === 'number' ? data.checked : 0,
+      total: typeof data.total === 'number' ? data.total : 0
+    }
   } catch {
     return null
   }

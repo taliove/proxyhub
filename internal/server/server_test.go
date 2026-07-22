@@ -26,6 +26,10 @@ type fakeNodes struct {
 	refreshErr  error // StartRefreshJob 返回的错误（模拟刷新冲突等场景）
 	purgeErr    error // PurgeAirportNodes 返回的错误（模拟清空与刷新冲突等场景）
 	lastTrigger string
+	// testExclusiveErr StartAirportTestExclusive 返回的错误(模拟跨 kind 互斥 409)
+	testExclusiveErr error
+	// testConflictChecker 记录装配期注入的测试侧冲突查询(验证跨 kind 装配)
+	testConflictChecker func(airportID int64) (string, bool)
 }
 
 func (f *fakeNodes) Nodes() []*subscription.Node { return f.nodes }
@@ -40,6 +44,20 @@ func (f *fakeNodes) StartRefreshJob(trigger string) (int64, string, bool, error)
 }
 
 func (f *fakeNodes) CancelRefresh(string) bool { return true }
+
+// StartAirportTestExclusive 测试 mock:默认直接在"临界区"内调 start
+// (fake 无并发,无 TOCTOU);testExclusiveErr 非空时模拟跨 kind 冲突。
+func (f *fakeNodes) StartAirportTestExclusive(airportID int64, start func() (int64, string, bool, error)) (int64, string, bool, error) {
+	if f.testExclusiveErr != nil {
+		return 0, "airport-1", false, f.testExclusiveErr
+	}
+	return start()
+}
+
+// SetAirportTestConflictChecker 测试 mock:记录注入的回调供断言。
+func (f *fakeNodes) SetAirportTestConflictChecker(fn func(airportID int64) (string, bool)) {
+	f.testConflictChecker = fn
+}
 
 func (f *fakeNodes) StartAirportRefreshJob(trigger string, airportID int64) (int64, string, bool, error) {
 	f.lastTrigger = trigger

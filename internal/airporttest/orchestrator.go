@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -117,13 +118,20 @@ func (o *Orchestrator) persistFailedRun(ctx context.Context, run *TestRun, start
 //  2. 分支判断(需 poolOps 支持):
 //     A. 池有该机场节点:直接用池节点测试,诊断结果仅作信息(URL不通不阻断)
 //     B. 池无该机场节点:
-//        - URL通(diagResult.HTTPStatus 2xx):upsert 拉到的节点入池,再测试
-//        - URL不通:failed,error_message 明确("订阅URL不可达且池内无已同步节点")
+//     - URL通(diagResult.HTTPStatus 2xx):upsert 拉到的节点入池,再测试
+//     - URL不通:failed,error_message 明确("订阅URL不可达且池内无已同步节点")
 //  3. 评分:URL不通时拉取健康N/A,权重重归一(可用率5/9+延迟3/9+地区1/9)
 //
 // airportName 用于 poolOps.LoadPoolBySource 匹配池内节点(按 nodes.source 字段)。
 // 返回更新后的 run(含 overall_score/dimensions_json)。
-func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName string, fetchedNodes []*subscription.Node, diagResult *DiagnosticResult) (*TestRun, error) {
+//
+// 取消语义(issue 0025 任务化):ctx 中断即停止;已完成的检活写回不回滚
+// (取消诱导的失败结果——Error 为 context.Canceled——不是真实测量,不回写池),
+// run 行标 cancelled 并保留已产出诊断数据,返回 (run, ctx.Err())。
+// progress 为检活进度上报(phase/checked/total;任务化后映射为 jobs cursor),
+// 传 nil 表示不上报。持久化一律走脱离取消的 ctx:任务被取消后 run 行收口仍须落库。
+func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName string, fetchedNodes []*subscription.Node, diagResult *DiagnosticResult, progress func(phase string, checked, total int)) (*TestRun, error) {
+	pctx := context.WithoutCancel(ctx)
 	urlReachable := diagResult.HTTPStatus >= 200 && diagResult.HTTPStatus < 300
 
 	// 决定测试哪批节点:优先用池,池空时条件入池
@@ -147,7 +155,7 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 				// URL不通或拉取失败:run failed
 				run.Status = StatusFailed
 				run.ErrorMessage = "subscription URL unreachable and no synced nodes in pool"
-				if err := o.store.UpdateTestRun(ctx, run); err != nil {
+				if err := o.store.UpdateTestRun(pctx, run); err != nil {
 					return nil, fmt.Errorf("update failed run: %w", err)
 				}
 				return run, nil
@@ -171,7 +179,7 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 		run.Status = StatusCompleted
 		run.OverallScore = &scoreVal
 		run.DimensionsJSON = string(dimsJSON)
-		if err := o.store.UpdateTestRun(ctx, run); err != nil {
+		if err := o.store.UpdateTestRun(pctx, run); err != nil {
 			return nil, fmt.Errorf("update run: %w", err)
 		}
 		return run, nil
@@ -179,7 +187,7 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 
 	// 阶段1:抽样
 	run.Status = StatusChecking
-	if err := o.store.UpdateTestRun(ctx, run); err != nil {
+	if err := o.store.UpdateTestRun(pctx, run); err != nil {
 		return nil, fmt.Errorf("update to checking: %w", err)
 	}
 
@@ -193,14 +201,21 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 	}
 	paramsJSON, _ := json.Marshal(sampleParams)
 	run.SampleParams = string(paramsJSON)
-	if err := o.store.UpdateTestRun(ctx, run); err != nil {
+	if err := o.store.UpdateTestRun(pctx, run); err != nil {
 		return nil, fmt.Errorf("update sample params: %w", err)
 	}
 
 	// 阶段2:检活写回(复用全局健康检查路径)
 	if o.healthChecker != nil && o.poolWriter != nil {
 		results := o.healthChecker.CheckAll(ctx, sampled)
-		for i, r := range results {
+		cancelled := ctx.Err() != nil
+		checked := 0
+		for _, r := range results {
+			// 取消诱导的失败(ctx.Canceled)不是真实测量:不回写池、不计进度,
+			// 避免把"被取消"误诊为节点不可用污染池状态(issue 0025)。
+			if cancelled && errors.Is(r.Error, context.Canceled) {
+				continue
+			}
 			// 写回节点池(复用 aggregator.UpdateNodeTestResult);失败时分类记录原因(ticket 0017)
 			failReason, failDetail := "", ""
 			if !r.Available && r.Error != nil {
@@ -212,17 +227,33 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 			r.Node.Available = r.Available
 			r.Node.Latency = r.Latency
 			// 更新进度
-			sampleParams["checked"] = i + 1
+			checked++
+			sampleParams["checked"] = checked
 			paramsJSON, _ = json.Marshal(sampleParams)
 			run.SampleParams = string(paramsJSON)
-			o.store.UpdateTestRun(ctx, run)
+			o.store.UpdateTestRun(pctx, run)
+			if progress != nil {
+				progress(string(StatusChecking), checked, len(sampled))
+			}
+		}
+		// 取消:已写回结果不回滚,run 标 cancelled 并保留已产出诊断数据,不再评分
+		if cancelled {
+			run.Status = StatusCancelled
+			run.ErrorMessage = "cancelled"
+			if err := o.store.UpdateTestRun(pctx, run); err != nil {
+				return nil, fmt.Errorf("update cancelled run: %w", err)
+			}
+			return run, ctx.Err()
 		}
 	}
 
 	// 阶段3:评分
 	run.Status = StatusScoring
-	if err := o.store.UpdateTestRun(ctx, run); err != nil {
+	if err := o.store.UpdateTestRun(pctx, run); err != nil {
 		return nil, fmt.Errorf("update to scoring: %w", err)
+	}
+	if progress != nil {
+		progress(string(StatusScoring), 0, 0)
 	}
 
 	// 使用全部测试节点评分(不仅是样本,反映整体质量)
@@ -233,7 +264,7 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 	run.Status = StatusCompleted
 	run.OverallScore = &scoreVal
 	run.DimensionsJSON = string(dimsJSON)
-	if err := o.store.UpdateTestRun(ctx, run); err != nil {
+	if err := o.store.UpdateTestRun(pctx, run); err != nil {
 		return nil, fmt.Errorf("finalize run: %w", err)
 	}
 	return run, nil

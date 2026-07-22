@@ -58,9 +58,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { listJobs, cancelJob, type Job } from '@/api/jobs'
+import { listJobs, cancelJob, getJob, type Job } from '@/api/jobs'
 import { kindLabel, statusMeta, isRunning, parseProgress, scopeLabel, jobTrigger } from './jobmeta'
 import PageHeader from '@/components/PageHeader.vue'
 import ScheduleCard from './ScheduleCard.vue'
@@ -86,6 +87,51 @@ const openDetail = (row: Job) => {
   detailJob.value = row
   detailVisible.value = true
 }
+
+// ?id= 定位(ticket 0023):/jobs?id=<jobId> 进入页面按 id 拉 GET /api/jobs/{id}
+// 自动打开详情;id 无效/任务不存在时提示并清 query 落回列表。
+// 与列表状态的交互(spec 遗留待决 3 定夺):定位只驱动详情弹框,不改来源筛选
+// 等列表状态(被定位任务可能不在当前筛选结果里,属正常);关闭弹框时清掉
+// query.id,URL 回到纯列表态。
+const route = useRoute()
+const router = useRouter()
+
+const clearLocateQuery = () => {
+  if (route.query.id !== undefined) {
+    router.replace({ name: 'Jobs' })
+  }
+}
+
+const locateJob = async (raw: unknown) => {
+  const idStr = Array.isArray(raw) ? raw[0] : raw
+  const id = Number(idStr)
+  if (typeof idStr !== 'string' || !Number.isInteger(id) || id <= 0) {
+    ElMessage.error('任务链接无效,已返回任务列表')
+    clearLocateQuery()
+    return
+  }
+  try {
+    const job = await getJob(id)
+    openDetail(job)
+  } catch {
+    // 全局拦截器已提示请求失败;此处补定位语义并落回列表
+    ElMessage.warning(`未找到任务 #${id},已返回任务列表`)
+    clearLocateQuery()
+  }
+}
+
+watch(
+  () => route.query.id,
+  (raw) => {
+    if (raw !== undefined) locateJob(raw)
+  },
+  { immediate: true }
+)
+
+// 关闭详情弹框时清掉 query.id(手动打开的行详情本就不带 query,replace 为幂等)
+watch(detailVisible, (vis) => {
+  if (!vis) clearLocateQuery()
+})
 
 const POLL_INTERVAL_MS = 4000
 

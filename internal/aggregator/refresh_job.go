@@ -18,7 +18,12 @@ const (
 
 // ErrRefreshConflict 发起的刷新与进行中的刷新在机场级互斥上冲突
 // (全量 vs 任何单机场互斥;同 key 不冲突,按 kind+key 单实例附加)。
+// 与进行中机场测试(kind=airport_test)的同机场冲突也归并到这个哨兵下(409 语义一致)。
 var ErrRefreshConflict = errors.New("refresh conflicts with a running refresh job")
+
+// ErrAirportTestConflict 发起的机场测试与进行中的刷新在机场级互斥上冲突
+// (同机场单机场刷新或全量刷新在跑;不同机场不互斥)。
+var ErrAirportTestConflict = errors.New("airport test conflicts with a running refresh job")
 
 // RefreshJobParams 刷新任务启动参数(params_json)。
 type RefreshJobParams struct {
@@ -111,11 +116,9 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 		return err
 	}
 
-	// 池写串行化:不同机场的单机场刷新允许并行拉取,但 UpsertAirportNodes
-	// 是"读全池-改本机场-写全池",并行写会丢更新(lost update);串行代价低(纯 DB 操作)
+	// 池写串行化已由 poolops 包内 upsertMu 保证(UpsertAirportNodes 是
+	// "读全池-改本机场-写全池",串行代价低);不同机场的单机场刷新拉取仍并行。
 	upsertErr := func() error {
-		k.agg.singleUpsertMu.Lock()
-		defer k.agg.singleUpsertMu.Unlock()
 		if err := k.agg.poolOps.UpsertAirportNodes(airport.Name, sub.Nodes); err != nil {
 			return err
 		}
@@ -188,12 +191,19 @@ func (a *Aggregator) StartAirportRefreshJob(trigger string, airportID int64) (in
 // startRefresh 发起刷新任务(全量 airportID=0 / 单机场)。
 // refreshStartMu 把冲突检查与 OpenIDForce 包成临界区,消除 TOCTOU:
 // 否则两个并发触发(全量 + 单机场)可同时通过检查,破坏机场级互斥。
+// 跨 kind 互斥(issue 0025):同机场机场测试在跑同样 409——与
+// StartAirportTestExclusive 共用同一把 refreshStartMu,双向互斥无竞态窗口。
 func (a *Aggregator) startRefresh(trigger string, airportID int64) (int64, string, bool, error) {
 	key := refreshJobKey(airportID)
 	a.refreshStartMu.Lock()
 	defer a.refreshStartMu.Unlock()
 	if conflictKey, ok := a.refreshConflict(key); ok {
 		return 0, key, false, fmt.Errorf("%w: running key %s", ErrRefreshConflict, conflictKey)
+	}
+	if a.airportTestConflict != nil {
+		if testKey, ok := a.airportTestConflict(airportID); ok {
+			return 0, key, false, fmt.Errorf("%w: airport test %s running", ErrRefreshConflict, testKey)
+		}
 	}
 	// 单机场任务带上机场名供任务中心展示(尽力而为,查不到不影响发起)
 	var airportName string
@@ -217,4 +227,30 @@ func (a *Aggregator) startRefresh(trigger string, airportID int64) (int64, strin
 // CancelRefresh 取消指定 key 的刷新任务;无进行中任务返回 false。
 func (a *Aggregator) CancelRefresh(key string) bool {
 	return a.refreshJobs.Cancel(refreshJobKindName, key)
+}
+
+// SetAirportTestConflictChecker 注入跨 kind 互斥的测试侧查询回调(issue 0025)。
+// 由机场测试任务运行时的持有方(server)在装配期、对外服务前调用一次;
+// airportID=0 表示全量刷新视角(任何进行中的机场测试都算冲突),
+// 否则只查同机场 key。nil(未注入)表示无测试运行时,冲突恒无。
+func (a *Aggregator) SetAirportTestConflictChecker(fn func(airportID int64) (string, bool)) {
+	a.refreshStartMu.Lock()
+	defer a.refreshStartMu.Unlock()
+	a.airportTestConflict = fn
+}
+
+// StartAirportTestExclusive 在 refreshStartMu 临界区内发起机场测试(issue 0025 跨 kind 互斥):
+// 同机场单机场刷新或全量刷新在跑 → ErrAirportTestConflict(调用方映射 409);
+// 否则在锁内回调 start 完成 kind+key 单实例发起。与 startRefresh 共用同一把锁,
+// 两个方向的"检查+发起"互为临界区,无 TOCTOU 窗口;不同机场不互斥。
+func (a *Aggregator) StartAirportTestExclusive(airportID int64, start func() (int64, string, bool, error)) (int64, string, bool, error) {
+	key := refreshJobKey(airportID) // 与单机场刷新同编码("airport-<id>")
+	a.refreshStartMu.Lock()
+	defer a.refreshStartMu.Unlock()
+	for _, running := range a.refreshJobs.RunningKeys(refreshJobKindName) {
+		if running == refreshKeyAll || running == key {
+			return 0, key, false, fmt.Errorf("%w: running refresh %s", ErrAirportTestConflict, running)
+		}
+	}
+	return start()
 }

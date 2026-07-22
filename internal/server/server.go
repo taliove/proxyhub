@@ -24,6 +24,7 @@ import (
 	"github.com/taliove/proxyhub/internal/generator"
 	"github.com/taliove/proxyhub/internal/geoip"
 	"github.com/taliove/proxyhub/internal/healthcheck"
+	"github.com/taliove/proxyhub/internal/jobs"
 	"github.com/taliove/proxyhub/internal/poolops"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
@@ -68,6 +69,9 @@ type Server struct {
 	examJobs         *detection.ExamJobManager
 	batchExamJobs    *detection.BatchExamJobManager
 	testOrchestrator *airporttest.Orchestrator
+	// airportTestJobs 机场测试任务运行时(kind=airport_test,issue 0025 迁入);
+	// 跨 kind 互斥经 airportTestCoordinator(aggregator 实现)协调。
+	airportTestJobs *jobs.Manager
 	// self-node region resolution seams: real by default, overridable in tests
 	// to drive the suggest/save paths without touching DNS or the embedded DB.
 	lookupHost    func(host string) ([]string, error)
@@ -95,7 +99,10 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 	if detectionService != nil {
 		s.examJobs = detection.NewExamJobManager(
 			detectionService.ExamStream,
-			s.onExamComplete,
+			// 写入侧反查 job id(ADR 0026 样板):回调时任务行仍 running,同 kind+key 单实例保证唯一。
+			func(nodeKey string, report detection.ExamReport) {
+				s.onExamComplete(nodeKey, report, s.findRunningJobID("exam", nodeKey))
+			},
 			detection.WithExamJobStore(st.Jobs()),
 			detection.WithExamErrorHandler(func(err error) {
 				logger.Warn("exam job persistence", "error", err)
@@ -104,9 +111,12 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 
 		// 批量体检任务管理器:精简体检(出网 + 稳定性 + 基准下行),游标续跑,
 		// 每节点完成回调复用 onExamComplete(落历史 + 触发标签重算)。
+		// 批量任务 per-node 回调在 Run 期间触发,任务行必处 running;key 是全局单例常量。
 		s.batchExamJobs = detection.NewBatchExamJobManager(
 			detectionService.ExamStreamSimplified,
-			s.onExamComplete,
+			func(nodeKey string, report detection.ExamReport) {
+				s.onExamComplete(nodeKey, report, s.findRunningJobID("batch_exam", "batch_exam"))
+			},
 			detection.WithBatchExamJobStore(st.Jobs()),
 			detection.WithBatchExamErrorHandler(func(err error) {
 				logger.Warn("batch exam job persistence", "error", err)
@@ -116,6 +126,11 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 
 	// 初始化机场测试编排器
 	// 抽样检活复用 healthcheck:直连出口配置热读(与检测主链路同一开关,TUN 下不假通)。
+	// 启动即收口上进程残留的进行态测试 run(对齐 FailRunningRefreshRuns 模式与时机:
+	// 本进程还没开始跑,任何 diagnosing/checking/scoring 行都是死进程残留)。
+	if err := st.FailRunningAirportTestRuns("process restarted"); err != nil {
+		logger.Warn("fail stale running airport test runs failed", "error", err)
+	}
 	storeAdapter := airporttest.NewStoreAdapter(st)
 	samplingChecker := healthcheck.NewChecker(
 		cfg.HealthCheck.Timeout.Latency,
@@ -128,19 +143,87 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 	poolOps := poolops.NewStoreAdapter(st)
 	s.testOrchestrator = airporttest.NewOrchestratorWithPoolOps(storeAdapter, healthChecker, nodes, poolOps)
 
+	// 机场测试任务运行时(issue 0025:迁入 jobs,ADR 0019 收口):
+	// kind 包装 Orchestrator,不可续跑(重启 interrupted);取消=ctx 中断,
+	// run 行标 cancelled 且已写回检活结果不回滚。RecoverOwn 不误标其他 Manager 的 kind。
+	s.airportTestJobs = jobs.NewManager(
+		st.Jobs(),
+		jobs.WithErrorHandler(func(err error) {
+			logger.Warn("airport test job persistence", "error", err)
+		}),
+	)
+	subFetcher := subscription.NewFetcher(30 * time.Second)
+	s.airportTestJobs.Register(airporttest.NewJobKind(
+		s.testOrchestrator,
+		storeAdapter,
+		airporttest.SubscriptionFetch(subFetcher),
+		// 写入侧反查 job id(ADR 0026 样板):Run 期间本任务行必 running,同 kind+key 单实例保证唯一。
+		func(key string) int64 { return s.findRunningJobID(airporttest.JobKindName, key) },
+	))
+	if err := s.airportTestJobs.RecoverOwn(); err != nil {
+		logger.Error("airport test jobs recover failed", "error", err)
+	}
+	// 跨 kind 互斥装配:把测试侧 RunningKeys 查询注入刷新侧临界区(aggregator)。
+	if c, ok := nodes.(airportTestCoordinator); ok {
+		c.SetAirportTestConflictChecker(s.airportTestConflict)
+	}
+
 	return s
 }
 
-// onExamComplete 体检自然完成的收口:落历史 + 按该节点重算自动标签 + 空/Unknown地区回写。
+// airportTestCoordinator 跨 kind 互斥协调(aggregator 实现,接口断言装配,issue 0025)。
+// 刷新↔测试同机场互斥:两个方向的"冲突检查+发起"共用同一把临界区锁,无 TOCTOU。
+type airportTestCoordinator interface {
+	// StartAirportTestExclusive 在刷新互斥临界区内查冲突并发起机场测试。
+	StartAirportTestExclusive(airportID int64, start func() (int64, string, bool, error)) (int64, string, bool, error)
+	// SetAirportTestConflictChecker 注入测试侧进行中任务查询(刷新发起方向用)。
+	SetAirportTestConflictChecker(fn func(airportID int64) (string, bool))
+}
+
+// airportTestConflict 刷新发起方向的跨 kind 冲突查询:
+// airportID=0(全量刷新)任一机场测试在跑即冲突;否则只查同机场 key。
+func (s *Server) airportTestConflict(airportID int64) (string, bool) {
+	if s.airportTestJobs == nil {
+		return "", false
+	}
+	for _, key := range s.airportTestJobs.RunningKeys(airporttest.JobKindName) {
+		if airportID <= 0 || key == airporttest.JobKey(airportID) {
+			return key, true
+		}
+	}
+	return "", false
+}
+
+// onExamComplete 体检自然完成的收口:落历史(带产出它的 jobs 任务 id,ticket 0022)
+// + 按该节点重算自动标签 + 空/Unknown地区回写。
 // 三步均为 best-effort:任一失败只记日志,不影响体检结果本身(下一场体检会再算)。
-func (s *Server) onExamComplete(nodeKey string, report detection.ExamReport) {
-	if err := s.st.SaveExamHistory(nodeKey, report); err != nil {
+// jobID=0 表示未关联(持久化退化或测试直调),落库后与旧数据同口径,查询侧走时间窗回退。
+func (s *Server) onExamComplete(nodeKey string, report detection.ExamReport, jobID int64) {
+	if err := s.st.SaveExamHistoryWithJob(nodeKey, report, jobID); err != nil {
 		s.logger.Warn("save exam history failed", "error", err)
 	}
 	if err := s.st.RecomputeNodeTags(nodeKey); err != nil {
 		s.logger.Warn("recompute node tags after exam failed", "error", err)
 	}
 	s.writebackRegionIfNeeded(nodeKey, report)
+}
+
+// findRunningJobID 反查进行中任务的 jobs 行 id(ADR 0026 写入侧反查样板,
+// 参照 aggregator.findRunningJobID):完成回调触发时本任务行仍处 running
+// (runJob 中 Finish 后于 OnComplete;批量任务 per-node 回调在 Run 期间),
+// 同 kind+key 单实例保证唯一;查不到退化 0(查询侧走任务时间窗回退)。
+func (s *Server) findRunningJobID(kind, key string) int64 {
+	recs, err := s.st.Jobs().LoadRunning()
+	if err != nil {
+		s.logger.Warn("load running jobs failed, exam history will not link job", "error", err)
+		return 0
+	}
+	for _, r := range recs {
+		if r.Kind == kind && r.Key == key {
+			return r.ID
+		}
+	}
+	return 0
 }
 
 // writebackRegionIfNeeded writes back node region from exam egress data.
@@ -357,6 +440,7 @@ func (s *Server) Handler() http.Handler {
 	// 通用任务 API(任务中心)
 	mux.HandleFunc("GET /api/jobs", s.requireAuth(s.handleListJobs))
 	mux.HandleFunc("GET /api/jobs/{id}", s.requireAuth(s.handleGetJobDetail))
+	mux.HandleFunc("GET /api/jobs/{id}/result", s.requireAuth(s.handleGetJobResult))
 	mux.HandleFunc("POST /api/jobs/{kind}/{key}/cancel", s.requireAuth(s.handleCancelJob))
 	mux.HandleFunc("POST /api/nodes/test", s.requireAuth(s.handleTestNode))
 	mux.HandleFunc("GET /api/nodes/test/stream", s.requireAuth(s.handleTestNodeStream))

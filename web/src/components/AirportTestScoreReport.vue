@@ -8,7 +8,9 @@
           {{ overallScore }}
         </el-tag>
       </div>
-      <el-button type="primary" size="small" @click="emit('runFull')">跑全量检测</el-button>
+      <el-button v-if="showRunFull" type="primary" size="small" @click="emit('runFull')">
+        跑全量检测
+      </el-button>
     </div>
 
     <el-divider />
@@ -83,13 +85,15 @@ interface Props {
   overallScore: number
   diagnostic: DiagnosticResult
   completedResult: CompletedResult | null
+  // showRunFull 是否展示"跑全量检测"入口;任务详情等只读场景置 false(ticket 0026)。
+  showRunFull?: boolean
 }
 
 interface Emits {
   (e: 'runFull'): void
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), { showRunFull: true })
 const emit = defineEmits<Emits>()
 
 const scoreColor = computed(() => getScoreColor(props.overallScore))

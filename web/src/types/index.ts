@@ -295,6 +295,8 @@ export interface ExamHistoryEntry {
   id: number
   node_key: string
   report: ExamReport
+  // job_id 产出本记录的 jobs 任务 id(ticket 0022;0/缺省 = 任务结果关联前的旧数据)
+  job_id?: number
   created_at: string // RFC3339
 }
 

@@ -49,7 +49,7 @@ func TestOnExamComplete_RecomputesTags(t *testing.T) {
 			IPv4: &detection.EgressIPv4{IP: "203.0.113.1", CountryCode: "SG", Hosting: false},
 		},
 	}
-	srv.onExamComplete(key, report)
+	srv.onExamComplete(key, report, 0)
 
 	// 历史已落。
 	entry, err := st.LatestExamHistory(key)

@@ -117,6 +117,22 @@ func (s *Store) GetRefreshRun(id int64) (*RefreshRun, error) {
 	return run, nil
 }
 
+// GetRefreshRunByJobID 按 jobs 任务 id 反查关联的刷新记录(ticket 0022 任务结果端点);
+// 无关联记录返回 (nil, nil)。
+func (s *Store) GetRefreshRunByJobID(jobID int64) (*RefreshRun, error) {
+	row := s.db.QueryRow(
+		`SELECT id, trigger_type, status, total_nodes, available_nodes, final_nodes, error, started_at, finished_at, job_id
+		 FROM refresh_runs WHERE job_id = ? ORDER BY id DESC LIMIT 1`, jobID)
+	run, err := scanRefreshRun(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query refresh run by job: %w", err)
+	}
+	return run, nil
+}
+
 // ListRefreshRuns 按时间倒序列出刷新记录
 func (s *Store) ListRefreshRuns(limit int) ([]*RefreshRun, error) {
 	rows, err := s.db.Query(

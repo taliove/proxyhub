@@ -1,6 +1,7 @@
 // 任务中心纯逻辑:kind 中文名映射、状态展示元数据、游标进度解析。
 // 无框架依赖,便于 vitest 覆盖。
 import type { JobStatus } from '@/api/jobs'
+import { parseAirportTestCursor } from '@/composables/useAirportTest'
 
 // KIND_LABELS 任务 kind -> 中文名。未知 kind 回落到原始值(见 kindLabel)。
 const KIND_LABELS: Record<string, string> = {
@@ -8,7 +9,8 @@ const KIND_LABELS: Record<string, string> = {
   batch_exam: '批量体检',
   batch_detection: '批量解锁检测',
   retag_all: '晚间标签重算',
-  refresh: '刷新'
+  refresh: '刷新',
+  airport_test: '机场测试'
 }
 
 // kindLabel 返回 kind 的中文名;未知 kind 原样返回(不掩盖新类型)。
@@ -42,14 +44,28 @@ export function isRunning(status: string): boolean {
   return statusMeta(status).running
 }
 
+// AIRPORT_TEST_PHASE_LABELS 机场测试 cursor 阶段 -> 中文标签。
+const AIRPORT_TEST_PHASE_LABELS: Record<string, string> = {
+  diagnosing: '诊断中',
+  checking: '检活中',
+  scoring: '评分中'
+}
+
 // parseProgress 解析游标进度。
 // 可续跑任务(batch_exam/batch_detection/retag_all)的 cursor 是已完成数的字符串。
 // 总量不在 jobs 表中,故只能给出已完成计数;total 已知时(前端启动批量体检时缓存)拼成 "x/N"。
+// airport_test 的 cursor 是 JSON {"phase","checked","total"}(ADR 0027 主进度源):
+// 检活阶段显示 "检活 x/N",其余阶段显示阶段名。
 export function parseProgress(cursor: string | undefined, total?: number): string {
   const done = parseCursor(cursor)
-  if (done === null) return '-'
-  if (total && total > 0) return `${done}/${total}`
-  return `已处理 ${done}`
+  if (done !== null) {
+    if (total && total > 0) return `${done}/${total}`
+    return `已处理 ${done}`
+  }
+  const c = parseAirportTestCursor(cursor)
+  if (!c) return '-'
+  if (c.phase === 'checking' && c.total > 0) return `检活 ${c.checked}/${c.total}`
+  return AIRPORT_TEST_PHASE_LABELS[c.phase] || '进行中'
 }
 
 // parseCursor 把 cursor 解析为非负整数;非法/空返回 null。
@@ -100,6 +116,11 @@ export function scopeLabel(job: { kind: string; key: string; params?: string }):
     case 'refresh': {
       // 刷新:全量 key=all -> 全部机场;单机场 key=airport-<id> -> 机场名(params 尽力填充)
       if (job.key === 'all') return '全部机场'
+      const p = parseJobParams(job.params)
+      return p?.airport_name ? `单机场「${p.airport_name}」` : `单机场 ${job.key}`
+    }
+    case 'airport_test': {
+      // 机场测试:key=airport-<id>(ADR 0027),params 带 airport_name(展示用)
       const p = parseJobParams(job.params)
       return p?.airport_name ? `单机场「${p.airport_name}」` : `单机场 ${job.key}`
     }

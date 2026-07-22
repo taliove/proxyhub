@@ -27,6 +27,7 @@ func (a *StoreAdapter) CreateTestRun(ctx context.Context, run *TestRun) (int64, 
 		OverallScore:   run.OverallScore,
 		DimensionsJSON: run.DimensionsJSON,
 		ErrorMessage:   run.ErrorMessage,
+		JobID:          run.JobID,
 	}
 	return a.s.CreateAirportTestRun(ctx, storeRun)
 }
@@ -47,6 +48,7 @@ func (a *StoreAdapter) GetTestRun(ctx context.Context, airportID, runID int64) (
 		OverallScore:   storeRun.OverallScore,
 		DimensionsJSON: storeRun.DimensionsJSON,
 		ErrorMessage:   storeRun.ErrorMessage,
+		JobID:          storeRun.JobID,
 	}, nil
 }
 
@@ -62,6 +64,7 @@ func (a *StoreAdapter) UpdateTestRun(ctx context.Context, run *TestRun) error {
 		OverallScore:   run.OverallScore,
 		DimensionsJSON: run.DimensionsJSON,
 		ErrorMessage:   run.ErrorMessage,
+		JobID:          run.JobID,
 	}
 	return a.s.UpdateAirportTestRun(ctx, storeRun)
 }
