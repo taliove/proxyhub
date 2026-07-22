@@ -42,6 +42,7 @@ type examParams struct {
 // examKind 把体检实现为一个 jobs.Kind。单发任务(不可续跑):进程重启时中断标记 interrupted。
 // 同一 kind 实例被多节点并发复用,故活节点存于按 key 索引的 sync.Map,而非实例字段。
 type examKind struct {
+	name       string // kind 名(默认 examKindName;出网+稳定性单节点检查等变体经 WithExamKindName 区分)
 	run        ExamRunner
 	onComplete func(nodeKey string, report ExamReport)
 	onErr      func(error)
@@ -49,7 +50,10 @@ type examKind struct {
 	pending    sync.Map // nodeKey -> *subscription.Node(open 暂存,OnStart 原子晋升进 nodes)
 }
 
-func (k *examKind) Name() string    { return "exam" }
+// examKindName 默认 kind 名(完整体检单发任务)。
+const examKindName = "exam"
+
+func (k *examKind) Name() string    { return k.name }
 func (k *examKind) Resumable() bool { return false }
 
 // CancelEvent 取消时补发的终止帧载荷({"phase":"cancelled"}),由 jobs 运行时在
@@ -203,8 +207,15 @@ type ExamJobManager struct {
 type ExamJobOption func(*examJobConfig)
 
 type examJobConfig struct {
-	store *jobs.Store
-	onErr func(error)
+	kindName string
+	store    *jobs.Store
+	onErr    func(error)
+}
+
+// WithExamKindName 覆盖 kind 名:同进程多套单发任务管理器并存时区分
+// (如出网+稳定性单节点检查用 "exam_stability",避免与完整体检的 "exam" 记录互相附加)。
+func WithExamKindName(name string) ExamJobOption {
+	return func(c *examJobConfig) { c.kindName = name }
 }
 
 // WithExamJobStore 注入 jobs 表存储:体检任务生命周期(running/终态/重启 interrupted)持久化。
@@ -219,11 +230,11 @@ func WithExamErrorHandler(h func(error)) ExamJobOption {
 
 // NewExamJobManager 构造体检任务管理器。onComplete 可为 nil(不落历史)。
 func NewExamJobManager(run ExamRunner, onComplete func(nodeKey string, report ExamReport), opts ...ExamJobOption) *ExamJobManager {
-	cfg := examJobConfig{}
+	cfg := examJobConfig{kindName: examKindName}
 	for _, o := range opts {
 		o(&cfg)
 	}
-	k := &examKind{run: run, onComplete: onComplete, onErr: cfg.onErr}
+	k := &examKind{name: cfg.kindName, run: run, onComplete: onComplete, onErr: cfg.onErr}
 
 	mopts := []jobs.Option{jobs.WithBufferCap(examLiveBuffer), jobs.WithTTL(5 * time.Minute)}
 	if cfg.onErr != nil {
