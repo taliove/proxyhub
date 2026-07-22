@@ -154,7 +154,13 @@ const sections = computed(() => getMenuSections(router))
   font-size: 20px;
 }
 
-/* 折叠态:图标居中,去掉 EP 默认右间距 */
+/* 折叠态:清掉 EP 菜单项默认左 padding,图标真正居中 */
+.ph-menu.el-menu--collapse .el-menu-item {
+  padding: 0;
+  display: flex;
+  justify-content: center;
+}
+
 .ph-menu.el-menu--collapse .el-menu-item .el-icon {
   margin-right: 0;
 }

@@ -2,8 +2,8 @@
   <div class="ph-navbar">
     <div class="ph-navbar__left">
       <el-icon class="ph-navbar__toggle" @click="emit('toggle')">
-        <IconLayoutSidebarLeftCollapse v-if="!collapsed" :size="22" />
-        <IconLayoutSidebarLeftExpand v-else :size="22" />
+        <IconLayoutSidebarLeftCollapse v-if="!collapsed" :size="26" />
+        <IconLayoutSidebarLeftExpand v-else :size="26" />
       </el-icon>
     </div>
 
@@ -109,11 +109,16 @@ async function onCommand(command: string): Promise<void> {
   font-size: 22px;
   cursor: pointer;
   color: var(--ph-text-regular);
-  padding: 6px;
+  padding: 8px;
   border-radius: var(--ph-radius-sm);
   transition:
     background-color var(--ph-transition),
     color var(--ph-transition);
+}
+
+/* 折叠/展开是导航主开关,视觉上要比其他动作重一档 */
+.ph-navbar__toggle {
+  color: var(--ph-text-primary);
 }
 
 .ph-navbar__toggle:hover,
