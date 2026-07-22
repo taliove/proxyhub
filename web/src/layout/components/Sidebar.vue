@@ -2,7 +2,8 @@
   <div class="ph-sidebar" :class="{ 'is-collapsed': collapsed }">
     <div class="ph-logo">
       <img class="ph-logo__mark" src="/proxyhub-icon.png" alt="" />
-      <span v-if="!collapsed" class="ph-logo__text">ProxyHub</span>
+      <!-- 折叠态优雅降级:隐藏字标,仅留图标 -->
+      <Wordmark v-if="!collapsed" class="ph-logo__wordmark" />
     </div>
 
     <el-menu
@@ -12,9 +13,18 @@
       router
       class="ph-menu"
     >
-      <template v-for="item in menu" :key="item.path">
-        <el-divider v-if="item.divider" class="menu-divider" />
-        <el-menu-item :index="item.path" @click="emit('navigate')">
+      <template v-for="(section, sectionIndex) in sections" :key="section.key">
+        <!-- 展开态:组标签;折叠态:组间分隔线(首组前不渲染) -->
+        <div v-if="!collapsed" class="nav-group-label" :class="{ 'is-first': sectionIndex === 0 }">
+          {{ section.label }}
+        </div>
+        <el-divider v-else-if="sectionIndex > 0" class="nav-group-divider" />
+        <el-menu-item
+          v-for="item in section.items"
+          :key="item.path"
+          :index="item.path"
+          @click="emit('navigate')"
+        >
           <el-icon><component :is="item.icon" /></el-icon>
           <template #title>{{ item.title }}</template>
         </el-menu-item>
@@ -26,7 +36,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getMenuItems } from '../nav'
+import Wordmark from '@/components/Wordmark.vue'
+import { getMenuSections } from '../nav'
 
 defineProps<{ collapsed: boolean }>()
 const emit = defineEmits<{ navigate: [] }>()
@@ -36,8 +47,8 @@ const router = useRouter()
 
 const activePath = computed(() => route.path)
 
-// 菜单从路由表派生(单一来源见 nav.ts)
-const menu = computed(() => getMenuItems(router))
+// 分组菜单从路由表派生(单一来源见 nav.ts)
+const sections = computed(() => getMenuSections(router))
 </script>
 
 <style scoped>
@@ -68,14 +79,6 @@ const menu = computed(() => getMenuItems(router))
   object-fit: contain;
 }
 
-.ph-logo__text {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--ph-primary);
-  white-space: nowrap;
-  letter-spacing: 0.5px;
-}
-
 .is-collapsed .ph-logo {
   justify-content: center;
   padding: 0;
@@ -93,6 +96,25 @@ const menu = computed(() => getMenuItems(router))
   width: 100%;
 }
 
+/* 组标签:小号弱色,与菜单项左边距对齐 */
+.nav-group-label {
+  padding: var(--ph-space-4) var(--ph-space-4) var(--ph-space-1);
+  font-size: var(--ph-text-xs);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: var(--ph-text-placeholder);
+  white-space: nowrap;
+}
+
+.nav-group-label.is-first {
+  padding-top: var(--ph-space-2);
+}
+
+.nav-group-divider {
+  margin: 8px 12px;
+  border-color: var(--ph-border-light);
+}
+
 .ph-menu .el-menu-item {
   margin: 4px 8px;
   border-radius: var(--ph-radius-sm);
@@ -103,10 +125,5 @@ const menu = computed(() => getMenuItems(router))
   background: color-mix(in srgb, var(--ph-primary) 12%, transparent);
   color: var(--ph-primary);
   font-weight: 600;
-}
-
-.menu-divider {
-  margin: 8px 12px;
-  border-color: var(--ph-border-light);
 }
 </style>
