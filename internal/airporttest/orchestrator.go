@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -200,8 +201,13 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 	if o.healthChecker != nil && o.poolWriter != nil {
 		results := o.healthChecker.CheckAll(ctx, sampled)
 		for i, r := range results {
-			// 写回节点池(复用 aggregator.UpdateNodeTestResult)
-			o.poolWriter.UpdateNodeTestResult(r.Node.NodeKey(), "quick", r.Available, r.Latency, 0, 0)
+			// 写回节点池(复用 aggregator.UpdateNodeTestResult);失败时分类记录原因(ticket 0017)
+			failReason, failDetail := "", ""
+			if !r.Available && r.Error != nil {
+				failReason = detection.ClassifyFailure(r.Error)
+				failDetail = r.Error.Error()
+			}
+			o.poolWriter.UpdateNodeTestResult(r.Node.NodeKey(), "quick", r.Available, r.Latency, 0, 0, failReason, failDetail)
 			// 同时更新内存中的节点状态,供评分使用
 			r.Node.Available = r.Available
 			r.Node.Latency = r.Latency

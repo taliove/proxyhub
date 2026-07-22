@@ -35,6 +35,11 @@ func MergePool(oldPool, newPool []*Node) []*Node {
 		if oldNode, exists := oldByKey[key]; exists {
 			// 同 NodeKey 存在：carry forward 检测状态，连接参数用新值
 			newNode.DetectionLastCheck = oldNode.DetectionLastCheck
+			// 判定来源与 DetectionLastCheck 同生命周期,一并 carry forward(ticket 0016)
+			newNode.DetectionKind = oldNode.DetectionKind
+			// 失败原因与判定来源同生命周期,一并 carry forward(ticket 0017)
+			newNode.DetectionFailReason = oldNode.DetectionFailReason
+			newNode.DetectionFailDetail = oldNode.DetectionFailDetail
 			// 只在旧节点有真实检测结果时才 carry forward Available/Latency
 			// （DetectionLastCheck 非零表示做过真实检测）
 			if !oldNode.DetectionLastCheck.IsZero() {

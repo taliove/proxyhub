@@ -88,15 +88,21 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 		fmt.Sprintf("单机场刷新「%s」(仅拉取入池,不含健康检查)", airport.Name),
 		map[string]any{"airport": airport.Name, "airport_id": airport.ID})
 
-	sub, err := k.agg.fetcher.Fetch(airport.Name, airport.URL)
+	sub, diag, err := k.agg.fetcher.FetchWithDiagnostics(airport.Name, airport.URL)
 	if err != nil {
+		rl.fetchDiag(airport, diag, err.Error())
 		rl.event(levelError, stageFetch, fmt.Sprintf("「%s」拉取失败:%s", airport.Name, err.Error()),
-			map[string]any{"airport": airport.Name})
+			map[string]any{"airport": airport.Name, "http_status": diag.HTTPStatus, "duration_ms": diag.DurationMs})
 		rl.finish(store.RefreshStatusFailed, 0, 0, 0, err.Error())
 		return fmt.Errorf("fetch airport %s: %w", airport.Name, err)
 	}
+	rl.fetchDiag(airport, diag, "")
 	rl.event(levelInfo, stageFetch, fmt.Sprintf("「%s」拉取成功,%d 个节点", airport.Name, len(sub.Nodes)),
-		map[string]any{"airport": airport.Name, "nodes": len(sub.Nodes)})
+		map[string]any{
+			"airport": airport.Name, "nodes": len(sub.Nodes),
+			"http_status": diag.HTTPStatus, "duration_ms": diag.DurationMs,
+			"parse_failures": diag.ParseFailures,
+		})
 
 	// 取消检查:拉取完成到入池之间被取消,不入池、状态记 cancelled,
 	// 与 jobs 行的 cancelled 终态保持口径一致

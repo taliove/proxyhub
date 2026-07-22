@@ -13,7 +13,9 @@ func TestMergePool_CarryForwardDetectionState(t *testing.T) {
 			Name: "香港01", Type: "ss", Server: "1.1.1.1", Port: 8388,
 			Region: "HK", Source: "机场A",
 			Available: false, Latency: 999, // 真实检测确认不可用
-			DetectionLastCheck: detectionTime,
+			DetectionLastCheck:  detectionTime,
+			DetectionFailReason: "timeout",
+			DetectionFailDetail: "dial tcp: i/o timeout",
 		},
 	}
 
@@ -45,6 +47,10 @@ func TestMergePool_CarryForwardDetectionState(t *testing.T) {
 	}
 	if !node.DetectionLastCheck.Equal(detectionTime) {
 		t.Errorf("DetectionLastCheck 未保留")
+	}
+	// 失败原因随检测状态一并 carry forward(ticket 0017)
+	if node.DetectionFailReason != "timeout" || node.DetectionFailDetail != "dial tcp: i/o timeout" {
+		t.Errorf("失败原因未保留: reason=%q detail=%q", node.DetectionFailReason, node.DetectionFailDetail)
 	}
 	// Stale 应为 false（active 节点）
 	if node.Stale {

@@ -63,8 +63,9 @@ type HealthCheckResult struct {
 }
 
 // PoolWriter abstracts node pool write operations (复用全局健康检查写回路径).
+// failReason/failDetail 为失败原因分类与短详情(成功时传空串清空,见 ticket 0017)。
 type PoolWriter interface {
-	UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool
+	UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) bool
 }
 
 // PoolOperations 是 poolops.Operations 的别名(单机场 upsert 口径已上移聚合层,

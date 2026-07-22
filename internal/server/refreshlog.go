@@ -22,7 +22,7 @@ func (s *Server) handleListRefreshRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, runs)
 }
 
-// handleGetRefreshRun 返回单次刷新的汇总和全部事件（前端轮询进度用）
+// handleGetRefreshRun 返回单次刷新的汇总、全部事件与每机场拉取诊断(前端轮询进度/任务详情用)
 func (s *Server) handleGetRefreshRun(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -51,8 +51,19 @@ func (s *Server) handleGetRefreshRun(w http.ResponseWriter, r *http.Request) {
 		events = []*store.RefreshEvent{}
 	}
 
+	diags, err := s.st.ListRefreshFetchDiags(id)
+	if err != nil {
+		s.logger.Error("list refresh fetch diags failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if diags == nil {
+		diags = []*store.RefreshFetchDiag{}
+	}
+
 	writeJSON(w, map[string]any{
 		"run":    run,
 		"events": events,
+		"diags":  diags,
 	})
 }

@@ -96,6 +96,10 @@ func TestRefreshRuns_ListAndDetail(t *testing.T) {
 	st.AppendRefreshEvent(second.ID, "info", "fetch", "拉取「机场A」…", "")
 	st.AppendRefreshEvent(second.ID, "warn", "fetch", "「机场A」拉取失败", `{"airport":"机场A"}`)
 	st.FinishRefreshRun(second.ID, store.RefreshStatusFailed, 0, 0, 0, "1/1 机场拉取失败")
+	st.InsertRefreshFetchDiag(&store.RefreshFetchDiag{
+		RunID: second.ID, Airport: "机场A", AirportID: 1,
+		HTTPStatus: 200, DurationMs: 123, NodeCount: 10, ParseFailures: 2,
+	})
 
 	// 列表：最新在前
 	w := authedRequest(t, h, "GET", "/api/refresh/runs", cookie)
@@ -110,14 +114,15 @@ func TestRefreshRuns_ListAndDetail(t *testing.T) {
 		t.Errorf("runs = %+v, want newest first", runs)
 	}
 
-	// 详情：run + events
+	// 详情：run + events + diags
 	w = authedRequest(t, h, "GET", "/api/refresh/runs/"+itoa(second.ID), cookie)
 	if w.Code != http.StatusOK {
 		t.Fatalf("detail status = %d (body %s)", w.Code, w.Body.String())
 	}
 	var detail struct {
-		Run    store.RefreshRun     `json:"run"`
-		Events []store.RefreshEvent `json:"events"`
+		Run    store.RefreshRun         `json:"run"`
+		Events []store.RefreshEvent     `json:"events"`
+		Diags  []store.RefreshFetchDiag `json:"diags"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("unmarshal detail: %v", err)
@@ -127,6 +132,28 @@ func TestRefreshRuns_ListAndDetail(t *testing.T) {
 	}
 	if len(detail.Events) != 2 || detail.Events[1].Level != "warn" {
 		t.Errorf("detail.Events = %+v", detail.Events)
+	}
+	if len(detail.Diags) != 1 {
+		t.Fatalf("detail.Diags = %+v, want 1 row", detail.Diags)
+	}
+	d := detail.Diags[0]
+	if d.Airport != "机场A" || d.HTTPStatus != 200 || d.DurationMs != 123 || d.NodeCount != 10 || d.ParseFailures != 2 {
+		t.Errorf("detail.Diags[0] = %+v", d)
+	}
+
+	// 无诊断的 run:diags 为空数组而非 null
+	w = authedRequest(t, h, "GET", "/api/refresh/runs/"+itoa(first.ID), cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("first detail status = %d (body %s)", w.Code, w.Body.String())
+	}
+	var firstDetail struct {
+		Diags []store.RefreshFetchDiag `json:"diags"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &firstDetail); err != nil {
+		t.Fatalf("unmarshal first detail: %v", err)
+	}
+	if firstDetail.Diags == nil || len(firstDetail.Diags) != 0 {
+		t.Errorf("first diags = %+v, want empty array", firstDetail.Diags)
 	}
 
 	// 不存在的 run → 404

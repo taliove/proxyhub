@@ -84,6 +84,7 @@
         :trigger-detection="triggerCleanupDetection"
         @done="reload"
       />
+      <PurgeAirportDialog ref="purgeDialog" @done="reload" />
       <SelfNodeFormDialog
         v-model="selfDialogVisible"
         v-model:form="selfForm"
@@ -120,6 +121,7 @@ import NodeDetailDrawer from './components/NodeDetailDrawer.vue'
 import NodeOverrideDialog from './components/NodeOverrideDialog.vue'
 import SourceBlockDialog from './components/SourceBlockDialog.vue'
 import CleanupDialog from './components/CleanupDialog.vue'
+import PurgeAirportDialog from './components/PurgeAirportDialog.vue'
 import SelfNodeFormDialog from './components/SelfNodeFormDialog.vue'
 import SelfNodeImportDialog from './components/SelfNodeImportDialog.vue'
 import { useNodePool } from './composables/useNodePool'
@@ -232,10 +234,12 @@ const triggerCleanupDetection = (onComplete: () => void) =>
 // 全局操作
 const sourceBlockDialog = ref<InstanceType<typeof SourceBlockDialog> | null>(null)
 const cleanupDialog = ref<InstanceType<typeof CleanupDialog> | null>(null)
+const purgeDialog = ref<InstanceType<typeof PurgeAirportDialog> | null>(null)
 const onGlobalCommand = (cmd: string) => {
   if (cmd === 'detect-all') detect({ type: 'all' })
   else if (cmd === 'detect-filtered') detect({ type: 'selected', node_keys: filteredKeys.value })
   else if (cmd === 'block-source') sourceBlockDialog.value?.open()
+  else if (cmd === 'purge-airport') purgeDialog.value?.open()
   else if (cmd === 'cleanup') cleanupDialog.value?.open()
 }
 

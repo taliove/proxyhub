@@ -150,3 +150,86 @@ func TestRefreshRunCleanup_KeepsRecent(t *testing.T) {
 		t.Errorf("orphan events = %d, want 0", len(events))
 	}
 }
+
+func TestRefreshFetchDiags_InsertAndList(t *testing.T) {
+	s := newTestStore(t)
+
+	run, err := s.CreateRefreshRun(RefreshTriggerManual, 0)
+	if err != nil {
+		t.Fatalf("CreateRefreshRun() error = %v", err)
+	}
+
+	diags := []*RefreshFetchDiag{
+		{RunID: run.ID, Airport: "机场A", AirportID: 1, HTTPStatus: 200, DurationMs: 321, NodeCount: 12, ParseFailures: 3},
+		{RunID: run.ID, Airport: "机场B", AirportID: 2, HTTPStatus: 503, DurationMs: 88, Error: "fetch subscription: status 503"},
+		{RunID: run.ID, Airport: "机场C", AirportID: 3, HTTPStatus: 0, DurationMs: 1500, Error: "fetch subscription: dial tcp: connection refused"},
+	}
+	for _, d := range diags {
+		if err := s.InsertRefreshFetchDiag(d); err != nil {
+			t.Fatalf("InsertRefreshFetchDiag() error = %v", err)
+		}
+		if d.ID == 0 {
+			t.Error("ID should be backfilled after insert")
+		}
+	}
+
+	got, err := s.ListRefreshFetchDiags(run.ID)
+	if err != nil {
+		t.Fatalf("ListRefreshFetchDiags() error = %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len(diags) = %d, want 3", len(got))
+	}
+	// 写入序返回
+	if got[0].Airport != "机场A" || got[1].Airport != "机场B" || got[2].Airport != "机场C" {
+		t.Errorf("order = %s/%s/%s, want 机场A/机场B/机场C", got[0].Airport, got[1].Airport, got[2].Airport)
+	}
+	a := got[0]
+	if a.HTTPStatus != 200 || a.DurationMs != 321 || a.NodeCount != 12 || a.ParseFailures != 3 || a.Error != "" {
+		t.Errorf("diag A = %+v", a)
+	}
+	if got[1].HTTPStatus != 503 || got[1].Error == "" {
+		t.Errorf("diag B = %+v", got[1])
+	}
+	if got[2].HTTPStatus != 0 {
+		t.Errorf("diag C HTTPStatus = %d, want 0", got[2].HTTPStatus)
+	}
+
+	// 其他 run 不可见
+	other, _ := s.CreateRefreshRun(RefreshTriggerScheduled, 0)
+	otherDiags, err := s.ListRefreshFetchDiags(other.ID)
+	if err != nil {
+		t.Fatalf("ListRefreshFetchDiags(other) error = %v", err)
+	}
+	if len(otherDiags) != 0 {
+		t.Errorf("other run diags = %d, want 0", len(otherDiags))
+	}
+}
+
+func TestRefreshFetchDiags_CleanupWithRuns(t *testing.T) {
+	s := newTestStore(t)
+
+	var firstID int64
+	for i := 0; i < MaxRefreshRuns+5; i++ {
+		run, err := s.CreateRefreshRun(RefreshTriggerScheduled, 0)
+		if err != nil {
+			t.Fatalf("CreateRefreshRun() error = %v", err)
+		}
+		if i == 0 {
+			firstID = run.ID
+		}
+		d := &RefreshFetchDiag{RunID: run.ID, Airport: "机场A", HTTPStatus: 200, NodeCount: 1}
+		if err := s.InsertRefreshFetchDiag(d); err != nil {
+			t.Fatalf("InsertRefreshFetchDiag() error = %v", err)
+		}
+	}
+
+	// 最旧 run 的诊断随 run 滚动清理
+	diags, err := s.ListRefreshFetchDiags(firstID)
+	if err != nil {
+		t.Fatalf("ListRefreshFetchDiags() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Errorf("orphan diags = %d, want 0", len(diags))
+	}
+}

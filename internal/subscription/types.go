@@ -8,6 +8,22 @@ import (
 // SourceSelfHosted 自建节点的来源标记（FailBack 安全网，豁免关键词过滤，见 ADR 0001/0005）
 const SourceSelfHosted = "self-hosted"
 
+// 可用性判定来源(见 ticket 0016):当前 Available 值由哪类检测最近一次写下。
+// 持久化在 nodes.detection_kind 列,随 MergePool carry-forward 跨刷新保留。
+const (
+	// DetectionKindHealth 仅健康检查(TCP 快检):聚合健康检查、quick 即时测试、机场测试抽样检活。
+	DetectionKindHealth = "health"
+	// DetectionKindReal 真实代理检测(real 即时测试:构 mihomo adapter 经代理请求)。
+	DetectionKindReal = "real"
+)
+
+// 可用性判定来源的对外枚举(nodeView.availability_source / 前端展示文案)。
+const (
+	AvailabilitySourceNever  = "never"  // 从未检测(如单机场刷新新入池,未跑任何检查)
+	AvailabilitySourceHealth = "health" // 仅健康检查(TCP 快检)
+	AvailabilitySourceReal   = "real"   // 真实代理检测
+)
+
 // Node 代理节点
 type Node struct {
 	// 基本信息
@@ -50,6 +66,20 @@ type Node struct {
 	// 真实检测时间戳(区分 TCP 快检 vs 真实代理检测)
 	DetectionLastCheck time.Time `json:"detection_last_check,omitempty"`
 
+	// DetectionKind 当前 Available 判定所依据的最近检测类型(DetectionKindHealth/DetectionKindReal,
+	// 空 = 从未检测)。注意 DetectionLastCheck 无法担此任:quick(TCP)与 real(代理)即时测试都会
+	// 写 DetectionLastCheck,单靠时间戳区分不了快检与真实检测,故需此最小标记(见 ticket 0016)。
+	// 语义为"最近一次写下 Available 的检测类型",如实跟随 quick/real 覆盖,不做单调升级。
+	DetectionKind string `json:"detection_kind,omitempty"`
+
+	// DetectionFailReason 最近一次检测失败的原因分类(detection.FailReason* 枚举,
+	// 空 = 最近检测成功或从未检测)。与 DetectionKind 同生命周期:检测写回时失败填分类、
+	// 成功清空;随 MergePool carry-forward 跨刷新保留(见 ticket 0017)。
+	DetectionFailReason string `json:"detection_fail_reason,omitempty"`
+	// DetectionFailDetail 失败短详情(截断到 detection.MaxFailDetailLen,不含凭证;
+	// 可能含 server:port 等非敏感排障信息)。分类是主信号,详情仅辅助。
+	DetectionFailDetail string `json:"detection_fail_detail,omitempty"`
+
 	// RawLink 保留订阅解析时的原始分享 URI(含凭证)。仅供 share-uri 端点按原样
 	// 回放节点二维码,避免走生成器重造丢失机场特有参数(见 ticket 56)。
 	// json:"-" 确保它绝不出现在 /nodes 视图或任何 JSON 序列化输出;同理禁止写入日志。
@@ -79,6 +109,19 @@ func (n *Node) NodeKey() string {
 		return fmt.Sprintf("%s:%d:%s", n.Server, n.Port, n.SNI)
 	}
 	return fmt.Sprintf("%s:%d", n.Server, n.Port)
+}
+
+// AvailabilitySource 返回可用性判定来源的对外枚举(never/health/real)。
+// 未知/空值一律归并为 never,保证全池口径一致、前端只处理三态。
+func (n *Node) AvailabilitySource() string {
+	switch n.DetectionKind {
+	case DetectionKindHealth:
+		return AvailabilitySourceHealth
+	case DetectionKindReal:
+		return AvailabilitySourceReal
+	default:
+		return AvailabilitySourceNever
+	}
 }
 
 // EffectiveName 返回下发订阅时应使用的节点名:标准化名(DisplayName)非空则用它,

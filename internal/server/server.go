@@ -43,11 +43,15 @@ type NodeSource interface {
 	// CancelRefresh 取消指定 key 的刷新任务;无进行中任务返回 false。
 	CancelRefresh(key string) bool
 	// UpdateNodeTestResult 将单节点即时测试结果写回内存池（按 NodeKey 匹配）。
+	// failReason/failDetail 为失败原因分类与短详情(成功时传空串清空,见 ticket 0017)。
 	// 找到返回 true；池中无此节点返回 false。
-	UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool
+	UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) bool
 	// UpdateNodeIdentity 按 NodeKey 更新内存池中节点的身份字段(名称/地区)。
 	// name/region 为空表示本次不改该字段。找到返回 true；池中无此节点返回 false。
 	UpdateNodeIdentity(nodeKey, name, region string) bool
+	// PurgeAirportNodes 一键清空机场节点(内存池+DB 双清,自建豁免,屏蔽/覆盖保留)。
+	// 有刷新任务进行中时返回 aggregator.ErrPurgeConflict(拒绝而非等待)。
+	PurgeAirportNodes() (int, error)
 }
 
 // Server HTTP 服务
@@ -365,6 +369,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/nodes/override", s.requireAuth(s.handleSetNodeOverride))
 	mux.HandleFunc("DELETE /api/nodes/override", s.requireAuth(s.handleClearNodeOverride))
 	mux.HandleFunc("POST /api/nodes/cleanup", s.requireAuth(s.handleCleanupNodes))
+	mux.HandleFunc("POST /api/nodes/purge-airport", s.requireAuth(s.handlePurgeAirportNodes))
 
 	// 系统设置
 	mux.HandleFunc("GET /api/settings", s.requireAuth(s.handleGetSettings))
@@ -810,13 +815,30 @@ type nodeView struct {
 	Network     string `json:"network,omitempty"` // 传输方式 tcp/ws/grpc
 	TLS         bool   `json:"tls"`
 	SNI         string `json:"sni,omitempty"`
-	Region      string `json:"region"`
-	Source      string `json:"source"`
-	Latency     int    `json:"latency"`
-	Available   bool   `json:"available"`
-	NodeKey     string `json:"node_key"`
-	Blocked     bool   `json:"blocked"`
-	Stale       bool   `json:"stale"` // 机场订阅中消失的节点
+	// 排障用协议参数(ticket 0016):数据早已落库,此前被视图裁剪。
+	// uuid/password 属凭证,仍不透出。
+	Cipher          string `json:"cipher,omitempty"`
+	AlterID         int    `json:"alter_id,omitempty"`
+	Plugin          string `json:"plugin,omitempty"`      // SS 插件(simple-obfs/v2ray-plugin)
+	PluginOpts      string `json:"plugin_opts,omitempty"` // 插件参数原始串("obfs=http;obfs-host=x")
+	GrpcServiceName string `json:"grpc_service_name,omitempty"`
+	Insecure        bool   `json:"insecure,omitempty"` // 跳过证书校验(订阅里的 insecure=1)
+	Region          string `json:"region"`
+	Source          string `json:"source"`
+	Latency         int    `json:"latency"`
+	Available       bool   `json:"available"`
+	NodeKey         string `json:"node_key"`
+	Blocked         bool   `json:"blocked"`
+	Stale           bool   `json:"stale"` // 机场订阅中消失的节点
+	// AvailabilitySource 可用性判定来源:never(从未检测)/health(仅健康检查,TCP 快检)/real(真实检测)。
+	// 口径由 subscription.Node.AvailabilitySource 统一定义,全池一致(ticket 0016)。
+	AvailabilitySource string `json:"availability_source"`
+	// DetectionLastCheck 最近一次检测(快检或真实)时间;零值=从未检测,指针省略不与"很久以前"混淆。
+	DetectionLastCheck *time.Time `json:"detection_last_check,omitempty"`
+	// 最近检测失败原因(ticket 0017):分类为 detection.FailReason* 有限枚举,
+	// 详情为截断短文本(不含凭证)。检测成功/从未检测时为空,omitempty 省略键。
+	DetectionFailReason string `json:"detection_fail_reason,omitempty"`
+	DetectionFailDetail string `json:"detection_fail_detail,omitempty"`
 	// 多维解锁检测结果(target_name -> 结果),无检测记录时为 nil
 	UnlockResults map[string]unlockResultView `json:"unlock_results,omitempty"`
 	// 带宽测试结果（最近一次）
@@ -840,10 +862,21 @@ func toNodeViews(nodes []*subscription.Node, blocked map[string]bool, unlockResu
 		view := nodeView{
 			Name: n.Name, DisplayName: n.DisplayName, Type: n.Type, Region: n.Region,
 			Server: n.Server, Port: n.Port, Network: n.Network, TLS: n.TLS, SNI: n.SNI,
+			Cipher: n.Cipher, AlterID: n.AlterID,
+			Plugin: n.Plugin, PluginOpts: n.PluginOpts,
+			GrpcServiceName: n.GrpcServiceName, Insecure: n.Insecure,
 			Source: n.Source, Latency: n.Latency, Available: n.Available,
 			NodeKey: key, Blocked: blocked[key], Stale: n.Stale,
-			BandwidthDownMbps: n.BandwidthDownMbps,
-			BandwidthUpMbps:   n.BandwidthUpMbps,
+			AvailabilitySource:  n.AvailabilitySource(),
+			DetectionFailReason: n.DetectionFailReason,
+			DetectionFailDetail: n.DetectionFailDetail,
+			BandwidthDownMbps:   n.BandwidthDownMbps,
+			BandwidthUpMbps:     n.BandwidthUpMbps,
+		}
+		// 最近检测时间:零值(从未检测)留 nil,JSON 省略键
+		if !n.DetectionLastCheck.IsZero() {
+			t := n.DetectionLastCheck
+			view.DetectionLastCheck = &t
 		}
 		// 附加自动标签(无记录时留空,JSON omitempty 省略)
 		if nodeTags != nil {
@@ -1007,6 +1040,10 @@ func (s *Server) mergeSelfHosted(nodes []*subscription.Node) []*subscription.Nod
 			node.Latency = h.Latency
 			node.LastCheck = h.LastCheck
 			node.DetectionLastCheck = h.DetectionLastCheck
+			node.DetectionKind = h.DetectionKind // 判定来源随健康状态一并覆盖(ticket 0016)
+			// 失败原因与判定来源同生命周期,一并覆盖(ticket 0017)
+			node.DetectionFailReason = h.DetectionFailReason
+			node.DetectionFailDetail = h.DetectionFailDetail
 		}
 		result = append(result, node)
 	}

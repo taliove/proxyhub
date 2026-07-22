@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/taliove/proxyhub/internal/config"
+	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/filter"
 	"github.com/taliove/proxyhub/internal/healthcheck"
 	"github.com/taliove/proxyhub/internal/jobs"
@@ -149,25 +150,44 @@ func (a *Aggregator) LastUpdate() time.Time {
 }
 
 // UpdateNodeTestResult 将单节点即时测试结果写回内存池（按 NodeKey 匹配）。
-// quick/real 更新 Available/Latency/DetectionLastCheck；bandwidth 更新带宽字段。
+// quick/real 更新 Available/Latency/DetectionLastCheck 与失败原因(failReason/failDetail,
+// 见 ticket 0017:失败填分类与截断详情,成功清空);bandwidth 更新带宽字段,不动失败原因。
 // 找到并更新返回 true；池中无此节点（如自建节点未入池）返回 false。
-func (a *Aggregator) UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool {
+func (a *Aggregator) UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := time.Now()
-	for _, n := range a.nodes {
+	for i, n := range a.nodes {
 		if n.NodeKey() != nodeKey {
 			continue
 		}
+		// 不可变语义:浅拷贝再改,与 UpdateNodeIdentity 一致,和 Nodes() 返回引用的并发读者隔离。
+		updated := *n
 		if mode == "bandwidth" {
-			n.BandwidthDownMbps = downMbps
-			n.BandwidthUpMbps = upMbps
-			n.BandwidthCheck = now
+			updated.BandwidthDownMbps = downMbps
+			updated.BandwidthUpMbps = upMbps
+			updated.BandwidthCheck = now
 		} else {
-			n.Available = available
-			n.Latency = latency
-			n.DetectionLastCheck = now
+			updated.Available = available
+			updated.Latency = latency
+			updated.DetectionLastCheck = now
+			// 判定来源如实跟随本次测试类型:quick=TCP 快检,real=真实代理检测(ticket 0016)。
+			// 不做单调升级——real 之后再 quick,Available 已被快检覆盖,来源须回落为 health。
+			if mode == "real" {
+				updated.DetectionKind = subscription.DetectionKindReal
+			} else {
+				updated.DetectionKind = subscription.DetectionKindHealth
+			}
+			// 失败原因:成功清空(不残留旧失败误导排障),失败记录分类+截断详情(ticket 0017)
+			if available {
+				updated.DetectionFailReason = ""
+				updated.DetectionFailDetail = ""
+			} else {
+				updated.DetectionFailReason = failReason
+				updated.DetectionFailDetail = detection.TruncateFailDetail(failDetail)
+			}
 		}
+		a.nodes[i] = &updated
 		return true
 	}
 	return false
@@ -305,6 +325,27 @@ func (r *runLog) finish(status string, total, available, final int, errMsg strin
 	}
 	if err := r.st.FinishRefreshRun(r.runID, status, total, available, final, errMsg); err != nil {
 		r.logger.Warn("finish refresh run failed", "error", err)
+	}
+}
+
+// fetchDiag 落一条机场拉取诊断(ticket 0018);失败不阻断,仅丢本条诊断。
+// errMsg 为空表示拉取成功。
+func (r *runLog) fetchDiag(airport *store.Airport, diag *subscription.FetchDiagnostics, errMsg string) {
+	if r.runID == 0 || diag == nil {
+		return
+	}
+	d := &store.RefreshFetchDiag{
+		RunID:         r.runID,
+		Airport:       airport.Name,
+		AirportID:     airport.ID,
+		HTTPStatus:    diag.HTTPStatus,
+		DurationMs:    diag.DurationMs,
+		NodeCount:     diag.NodeCount,
+		ParseFailures: diag.ParseFailures,
+		Error:         errMsg,
+	}
+	if err := r.st.InsertRefreshFetchDiag(d); err != nil {
+		r.logger.Warn("insert refresh fetch diag failed", "error", err, "airport", airport.Name)
 	}
 }
 
@@ -459,17 +500,23 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 			}
 
 			rl.event(levelInfo, stageFetch, fmt.Sprintf("拉取「%s」…", airport.Name), nil)
-			sub, err := a.fetcher.Fetch(airport.Name, airport.URL)
+			sub, diag, err := a.fetcher.FetchWithDiagnostics(airport.Name, airport.URL)
 			if err != nil {
 				a.logger.Warn("fetch airport failed", "airport", airport.Name, "error", err)
+				rl.fetchDiag(airport, diag, err.Error())
 				rl.event(levelWarn, stageFetch, fmt.Sprintf("「%s」拉取失败：%s", airport.Name, err.Error()),
-					map[string]any{"airport": airport.Name})
+					map[string]any{"airport": airport.Name, "http_status": diag.HTTPStatus, "duration_ms": diag.DurationMs})
 				outcomes[i] = outcome{err: err}
 				return
 			}
 			a.logger.Info("fetched airport", "airport", airport.Name, "nodes", len(sub.Nodes))
+			rl.fetchDiag(airport, diag, "")
 			rl.event(levelInfo, stageFetch, fmt.Sprintf("「%s」拉取成功，%d 个节点", airport.Name, len(sub.Nodes)),
-				map[string]any{"airport": airport.Name, "nodes": len(sub.Nodes)})
+				map[string]any{
+					"airport": airport.Name, "nodes": len(sub.Nodes),
+					"http_status": diag.HTTPStatus, "duration_ms": diag.DurationMs,
+					"parse_failures": diag.ParseFailures,
+				})
 			outcomes[i] = outcome{nodes: sub.Nodes}
 		}(i, airport)
 	}
@@ -540,6 +587,16 @@ func (a *Aggregator) checkHealth(ctx context.Context, rl *runLog, allNodes []*su
 		// 降级逻辑:如果节点从未做过真实检测(DetectionLastCheck 零值),用 TCP 连通性给个初始 Available
 		if r.Node.DetectionLastCheck.IsZero() {
 			r.Node.Available = r.Available
+			// 来源标记:本次 Available 由 TCP 快检写下(幂等;真实检测节点进不了此分支,不会被降级)
+			r.Node.DetectionKind = subscription.DetectionKindHealth
+			// 失败原因:TCP 不通时分类记录,连通时清空(ticket 0017)
+			if r.Available {
+				r.Node.DetectionFailReason = ""
+				r.Node.DetectionFailDetail = ""
+			} else if r.Error != nil {
+				r.Node.DetectionFailReason = detection.ClassifyFailure(r.Error)
+				r.Node.DetectionFailDetail = detection.TruncateFailDetail(r.Error.Error())
+			}
 		}
 
 		healthRecords = append(healthRecords, store.HealthRecord{

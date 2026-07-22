@@ -43,6 +43,37 @@
               {{ refreshRun.error }}
             </el-descriptions-item>
           </el-descriptions>
+          <el-table
+            v-if="refreshDiags.length"
+            :data="refreshDiags"
+            size="small"
+            border
+            class="refresh-diags"
+          >
+            <el-table-column label="机场" min-width="110">
+              <template #default="{ row }">
+                <span>{{ row.airport }}</span>
+                <el-tooltip v-if="row.error" :content="row.error" placement="top">
+                  <el-tag type="danger" size="small" class="diag-fail-tag">失败</el-tag>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column label="HTTP" width="70" align="right">
+              <template #default="{ row }">{{ row.http_status || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="耗时" width="90" align="right">
+              <template #default="{ row }">{{ row.duration_ms }}ms</template>
+            </el-table-column>
+            <el-table-column prop="node_count" label="解析成功" width="80" align="right" />
+            <el-table-column label="解析失败行" width="90" align="right">
+              <template #default="{ row }">
+                <el-tag v-if="row.parse_failures > 0" type="warning" size="small">
+                  {{ row.parse_failures }}
+                </el-tag>
+                <span v-else>0</span>
+              </template>
+            </el-table-column>
+          </el-table>
           <el-timeline v-if="refreshEvents.length" class="refresh-events">
             <el-timeline-item
               v-for="ev in refreshEvents"
@@ -72,7 +103,7 @@
 import { computed, ref, watch } from 'vue'
 import type { Job } from '@/api/jobs'
 import { findRefreshRunByJob, getRefreshRun } from '@/api/refresh'
-import type { RefreshRun, RefreshEvent } from '@/types'
+import type { RefreshRun, RefreshEvent, RefreshFetchDiag } from '@/types'
 import {
   kindLabel,
   statusMeta,
@@ -105,12 +136,14 @@ const paramsText = computed(() => {
 // 刷新详情:run 记录异步创建,反查失败时短重试几次
 const refreshRun = ref<RefreshRun | null>(null)
 const refreshEvents = ref<RefreshEvent[]>([])
+const refreshDiags = ref<RefreshFetchDiag[]>([])
 const refreshLoading = ref(false)
 
 const loadRefreshDetail = async (jobId: number) => {
   refreshLoading.value = true
   refreshRun.value = null
   refreshEvents.value = []
+  refreshDiags.value = []
   try {
     let run: RefreshRun | null = null
     for (let i = 0; i < 5 && !run; i++) {
@@ -121,6 +154,7 @@ const loadRefreshDetail = async (jobId: number) => {
       refreshRun.value = run
       const detail = await getRefreshRun(run.id)
       refreshEvents.value = detail.events || []
+      refreshDiags.value = detail.diags || []
     }
   } catch {
     // 详情加载失败不阻塞弹框主信息
@@ -170,6 +204,12 @@ const formatEventTime = (ts: string) => (ts.length > 19 ? ts.slice(11, 19) : ts)
 }
 .refresh-stats {
   margin-bottom: var(--ph-space-3);
+}
+.refresh-diags {
+  margin-bottom: var(--ph-space-3);
+}
+.diag-fail-tag {
+  margin-left: var(--ph-space-1, 4px);
 }
 .refresh-events {
   max-height: 320px;

@@ -220,6 +220,11 @@ func (d *Detector) detectNode(ctx context.Context, node *subscription.Node, targ
 
 // tcpQuickCheck TCP 快筛:端口能否连通
 func (d *Detector) tcpQuickCheck(ctx context.Context, node *subscription.Node) bool {
+	return d.tcpQuickCheckErr(ctx, node) == nil
+}
+
+// tcpQuickCheckErr 同 tcpQuickCheck,但返回底层拨号错误供失败原因分类(ticket 0017)。
+func (d *Detector) tcpQuickCheckErr(ctx context.Context, node *subscription.Node) error {
 	ctx, cancel := context.WithTimeout(ctx, d.tcpTimeout)
 	defer cancel()
 
@@ -227,10 +232,10 @@ func (d *Detector) tcpQuickCheck(ctx context.Context, node *subscription.Node) b
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return false
+		return err
 	}
 	conn.Close()
-	return true
+	return nil
 }
 
 // detectTarget 通过节点代理访问目标,判定解锁状态
@@ -270,6 +275,7 @@ func (d *Detector) detectTarget(ctx context.Context, proxyAdapter *ProxyAdapter,
 	resp, err := d.requestViaProxy(ctx, proxyAdapter, target)
 	if err != nil {
 		result.Error = fmt.Sprintf("request failed: %v", err)
+		result.cause = err // 结构化底层错误,供失败原因分类(ticket 0017)与重试分类器判定
 		return result
 	}
 	defer resp.Body.Close()
@@ -314,8 +320,12 @@ func (d *Detector) TestNode(ctx context.Context, node *subscription.Node, mode s
 
 func (d *Detector) testQuick(ctx context.Context, node *subscription.Node) TestResult {
 	start := time.Now()
-	if !d.tcpQuickCheck(ctx, node) {
-		return TestResult{Available: false, Mode: "quick", Error: "TCP connection failed"}
+	if err := d.tcpQuickCheckErr(ctx, node); err != nil {
+		return TestResult{
+			Available: false, Mode: "quick",
+			Error:      fmt.Sprintf("TCP connection failed: %v", err),
+			FailReason: ClassifyFailure(err),
+		}
 	}
 	latency := int(time.Since(start).Milliseconds())
 	if latency == 0 {
@@ -325,27 +335,51 @@ func (d *Detector) testQuick(ctx context.Context, node *subscription.Node) TestR
 }
 
 func (d *Detector) testReal(ctx context.Context, node *subscription.Node) TestResult {
-	if !d.tcpQuickCheck(ctx, node) {
-		return TestResult{Available: false, Mode: "real", Error: "TCP connection failed"}
+	if err := d.tcpQuickCheckErr(ctx, node); err != nil {
+		return TestResult{
+			Available: false, Mode: "real",
+			Error:      fmt.Sprintf("TCP connection failed: %v", err),
+			FailReason: ClassifyFailure(err),
+		}
 	}
 	adapter, err := NewProxyAdapter(node)
 	if err != nil {
-		return TestResult{Available: false, Mode: "real", Error: fmt.Sprintf("create proxy adapter: %v", err)}
+		return TestResult{
+			Available: false, Mode: "real",
+			Error:      fmt.Sprintf("create proxy adapter: %v", err),
+			FailReason: FailReasonProtocol,
+		}
 	}
 	res := d.detectTarget(ctx, adapter, node, connectivityTarget)
-	return TestResult{Available: res.Available, Latency: res.Latency, Mode: "real", Error: res.Error}
+	tr := TestResult{Available: res.Available, Latency: res.Latency, Mode: "real", Error: res.Error}
+	if !res.Available {
+		// 优先结构化底层错误分类;无 cause(判定类失败)退化到文本分类
+		tr.FailReason = ClassifyFailure(res.cause)
+		if tr.FailReason == "" {
+			tr.FailReason = ClassifyFailureText(res.Error)
+		}
+	}
+	return tr
 }
 
 // testBandwidth 带宽测试：下行+上行，任一方向失败或低于阈值则不可用。
 // 配置来自 settings（缺省用 DefaultBandwidthConfig）。
 func (d *Detector) testBandwidth(ctx context.Context, node *subscription.Node) TestResult {
-	if !d.tcpQuickCheck(ctx, node) {
-		return TestResult{Available: false, Mode: "bandwidth", Error: "TCP connection failed"}
+	if err := d.tcpQuickCheckErr(ctx, node); err != nil {
+		return TestResult{
+			Available: false, Mode: "bandwidth",
+			Error:      fmt.Sprintf("TCP connection failed: %v", err),
+			FailReason: ClassifyFailure(err),
+		}
 	}
 
 	adapter, err := NewProxyAdapter(node)
 	if err != nil {
-		return TestResult{Available: false, Mode: "bandwidth", Error: fmt.Sprintf("create proxy adapter: %v", err)}
+		return TestResult{
+			Available: false, Mode: "bandwidth",
+			Error:      fmt.Sprintf("create proxy adapter: %v", err),
+			FailReason: FailReasonProtocol,
+		}
 	}
 
 	cfg := d.resolveBandwidthConfig()

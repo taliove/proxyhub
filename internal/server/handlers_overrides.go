@@ -2,8 +2,10 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
+	"github.com/taliove/proxyhub/internal/aggregator"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -145,4 +147,23 @@ func (s *Server) handleCleanupNodes(w http.ResponseWriter, r *http.Request) {
 		"disabled": disabled,
 		"deleted":  deleted,
 	})
+}
+
+// handlePurgeAirportNodes 一键清空机场节点(内存池+DB 双清,自建节点豁免,
+// 屏蔽名单/名称覆盖保留;CONTEXT.md「机场节点清空」)。
+// 并发语义(拒绝而非等待):有刷新任务进行中返回 409,由前端提示稍后重试——
+// 否则进行中的刷新可能在清空后把旧节点写回池。
+func (s *Server) handlePurgeAirportNodes(w http.ResponseWriter, r *http.Request) {
+	removed, err := s.nodes.PurgeAirportNodes()
+	if errors.Is(err, aggregator.ErrPurgeConflict) {
+		http.Error(w, "有刷新任务进行中,请稍后重试", http.StatusConflict)
+		return
+	}
+	if err != nil {
+		s.logger.Error("purge airport nodes failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]any{"success": true, "removed": removed})
 }

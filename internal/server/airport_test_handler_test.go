@@ -25,7 +25,7 @@ func (noopHealthChecker) CheckAll(_ context.Context, _ []*subscription.Node) []*
 // noopPoolWriter 诊断阶段测试用:不写回节点池
 type noopPoolWriter struct{}
 
-func (noopPoolWriter) UpdateNodeTestResult(_, _ string, _ bool, _ int, _, _ float64) bool {
+func (noopPoolWriter) UpdateNodeTestResult(_, _ string, _ bool, _ int, _, _ float64, _, _ string) bool {
 	return false
 }
 

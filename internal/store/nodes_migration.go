@@ -41,6 +41,19 @@ func (s *Store) migrateNodesToUpsert() error {
 	if err := s.addColumnIfMissing("nodes", "plugin_opts", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// 可用性判定来源标记(""/health/real):quick/real 即时测试都写 detection_last_check,
+	// 单靠时间戳区分不了 TCP 快检与真实检测,故需此列(见 ticket 0016)
+	if err := s.addColumnIfMissing("nodes", "detection_kind", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// 最近检测失败原因(见 ticket 0017):分类为有限枚举(timeout/refused/unreachable/
+	// handshake/protocol/other),详情为截断短文本;检测成功或从未检测时为空串。
+	if err := s.addColumnIfMissing("nodes", "detection_fail_reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("nodes", "detection_fail_detail", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 
 	// 2. 回填 node_key（旧行的 node_key 列为空，需从 server/port/sni 计算）
 	if err := s.backfillNodeKeys(); err != nil {

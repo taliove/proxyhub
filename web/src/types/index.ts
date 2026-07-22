@@ -49,6 +49,21 @@ export interface Node {
   node_key: string
   blocked: boolean
   stale: boolean // 机场订阅中已消失的节点
+  // 排障用协议参数(ticket 0016;uuid/password 属凭证,后端不透出)
+  cipher?: string
+  alter_id?: number
+  plugin?: string // SS 插件(simple-obfs/v2ray-plugin)
+  plugin_opts?: string // 插件参数原始串("obfs=http;obfs-host=x")
+  grpc_service_name?: string
+  insecure?: boolean // 跳过证书校验(订阅里的 insecure=1)
+  // 可用性判定来源(与后端 subscription.AvailabilitySource* 对齐):
+  // never=从未检测 / health=仅健康检查(TCP 快检)/ real=真实代理检测
+  availability_source: 'never' | 'health' | 'real'
+  detection_last_check?: string // 最近一次检测时间(RFC3339;从未检测时缺省)
+  // 最近检测失败原因(ticket 0017;与后端 detection.FailReason* 对齐):
+  // 分类为有限枚举,详情为截断短文本;检测成功/从未检测时缺省
+  detection_fail_reason?: 'timeout' | 'refused' | 'unreachable' | 'handshake' | 'protocol' | 'other'
+  detection_fail_detail?: string
   unlock_results?: Record<string, UnlockResult> // 多维解锁检测结果
   bandwidth_down_mbps?: number // 最近一次带宽测试下行
   bandwidth_up_mbps?: number // 最近一次带宽测试上行
@@ -131,6 +146,20 @@ export interface RefreshEvent {
   stage: string // fetch | check | filter | done
   message: string
   data: string // JSON 字符串，可能为空
+  created_at: string
+}
+
+// 每机场结构化拉取诊断(ticket 0018);http_status=0 表示网络错误未拿到响应
+export interface RefreshFetchDiag {
+  id: number
+  run_id: number
+  airport: string
+  airport_id: number
+  http_status: number
+  duration_ms: number
+  node_count: number
+  parse_failures: number
+  error: string
   created_at: string
 }
 

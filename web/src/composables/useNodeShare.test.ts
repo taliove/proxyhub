@@ -35,6 +35,7 @@ describe('useNodeShare', () => {
     node_key: 'example.com:443',
     blocked: false,
     stale: false,
+    availability_source: 'never',
     ...overrides
   })
 

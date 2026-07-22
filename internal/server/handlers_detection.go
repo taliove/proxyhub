@@ -156,7 +156,7 @@ func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 写回内存池，前端列表无需等下次读库即可见到最新结果（自建节点未入池时返回 false，忽略）
-	s.nodes.UpdateNodeTestResult(node.NodeKey(), req.Mode, result.Available, result.Latency, result.DownMbps, result.UpMbps)
+	s.nodes.UpdateNodeTestResult(node.NodeKey(), req.Mode, result.Available, result.Latency, result.DownMbps, result.UpMbps, result.FailReason, result.Error)
 
 	writeJSON(w, result)
 }
@@ -241,7 +241,7 @@ func (s *Server) handleTestNodeStream(w http.ResponseWriter, r *http.Request) {
 	if err := s.st.SaveTestResult(node.NodeKey(), node.Name, node.Source, result); err != nil {
 		s.logger.Warn("save test result failed", "error", err)
 	}
-	s.nodes.UpdateNodeTestResult(node.NodeKey(), "bandwidth", result.Available, result.Latency, result.DownMbps, result.UpMbps)
+	s.nodes.UpdateNodeTestResult(node.NodeKey(), "bandwidth", result.Available, result.Latency, result.DownMbps, result.UpMbps, "", "")
 
 	// done 帧(包含最终 TestResult 全字段)
 	emit("done", map[string]any{

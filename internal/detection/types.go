@@ -56,6 +56,9 @@ type TestResult struct {
 	Latency   int    `json:"latency"` // 毫秒
 	Mode      string `json:"mode"`    // "quick" / "real" / "bandwidth"
 	Error     string `json:"error,omitempty"`
+	// FailReason 失败原因分类(FailReason* 枚举,ticket 0017);成功时为空。
+	// Error 是自由文本详情,FailReason 是有限枚举——列表/诊断展示以分类为准。
+	FailReason string `json:"fail_reason,omitempty"`
 	// 带宽测试结果(仅 mode=bandwidth 时非零)
 	DownMbps    float64 `json:"down_mbps,omitempty"`
 	UpMbps      float64 `json:"up_mbps,omitempty"`

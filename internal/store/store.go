@@ -298,6 +298,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 常规刷新每机场拉取诊断表（015_refresh_fetch_diags.sql,ticket 0018）
+	if err := s.applyMigrationFile("015_refresh_fetch_diags.sql"); err != nil {
+		return err
+	}
+
 	// 刷新任务化:refresh_runs 关联 jobs 任务 id(ticket 03,刷新迁入 jobs 运行时)
 	if err := s.addColumnIfMissing("refresh_runs", "job_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
@@ -468,6 +473,24 @@ CREATE TABLE IF NOT EXISTS airport_test_runs (
 
 CREATE INDEX IF NOT EXISTS idx_airport_test_runs_airport ON airport_test_runs(airport_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_airport_test_runs_created ON airport_test_runs(created_at);
+`
+	case "015_refresh_fetch_diags.sql":
+		checkTable = "refresh_fetch_diags"
+		migrationSQL = `
+CREATE TABLE IF NOT EXISTS refresh_fetch_diags (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id         INTEGER NOT NULL REFERENCES refresh_runs(id),
+    airport        TEXT NOT NULL,
+    airport_id     INTEGER NOT NULL DEFAULT 0,
+    http_status    INTEGER NOT NULL DEFAULT 0,
+    duration_ms    INTEGER NOT NULL DEFAULT 0,
+    node_count     INTEGER NOT NULL DEFAULT 0,
+    parse_failures INTEGER NOT NULL DEFAULT 0,
+    error          TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_fetch_diags_run ON refresh_fetch_diags(run_id);
 `
 	default:
 		return fmt.Errorf("unknown migration file: %s", filename)

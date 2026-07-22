@@ -171,10 +171,66 @@ func (s *Store) ListRefreshEvents(runID int64) ([]*RefreshEvent, error) {
 	return events, rows.Err()
 }
 
+// RefreshFetchDiag 一次刷新中单个机场的结构化拉取诊断(ticket 0018)。
+// 口径与机场测试 RunDiagnostic 对齐;拉取失败时 Error 非空、HTTPStatus 可能为 0(网络错误)。
+type RefreshFetchDiag struct {
+	ID            int64     `json:"id"`
+	RunID         int64     `json:"run_id"`
+	Airport       string    `json:"airport"`
+	AirportID     int64     `json:"airport_id"`
+	HTTPStatus    int       `json:"http_status"`
+	DurationMs    int64     `json:"duration_ms"`
+	NodeCount     int       `json:"node_count"`
+	ParseFailures int       `json:"parse_failures"`
+	Error         string    `json:"error"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// InsertRefreshFetchDiag 写入一条机场拉取诊断
+func (s *Store) InsertRefreshFetchDiag(d *RefreshFetchDiag) error {
+	res, err := s.db.Exec(
+		`INSERT INTO refresh_fetch_diags
+		 (run_id, airport, airport_id, http_status, duration_ms, node_count, parse_failures, error, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.RunID, d.Airport, d.AirportID, d.HTTPStatus, d.DurationMs, d.NodeCount, d.ParseFailures, d.Error, time.Now())
+	if err != nil {
+		return fmt.Errorf("insert refresh fetch diag: %w", err)
+	}
+	d.ID, _ = res.LastInsertId()
+	return nil
+}
+
+// ListRefreshFetchDiags 按机场列表顺序(写入序)列出某次刷新的全部拉取诊断
+func (s *Store) ListRefreshFetchDiags(runID int64) ([]*RefreshFetchDiag, error) {
+	rows, err := s.db.Query(
+		`SELECT id, run_id, airport, airport_id, http_status, duration_ms, node_count, parse_failures, error, created_at
+		 FROM refresh_fetch_diags WHERE run_id = ? ORDER BY id ASC`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("query refresh fetch diags: %w", err)
+	}
+	defer rows.Close()
+
+	var diags []*RefreshFetchDiag
+	for rows.Next() {
+		var d RefreshFetchDiag
+		if err := rows.Scan(&d.ID, &d.RunID, &d.Airport, &d.AirportID,
+			&d.HTTPStatus, &d.DurationMs, &d.NodeCount, &d.ParseFailures, &d.Error, &d.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan refresh fetch diag: %w", err)
+		}
+		diags = append(diags, &d)
+	}
+	return diags, rows.Err()
+}
+
 // cleanupRefreshRuns 在事务内删除超出保留上限的旧记录及其事件
 func cleanupRefreshRuns(tx *sql.Tx) error {
 	if _, err := tx.Exec(
 		`DELETE FROM refresh_events WHERE run_id NOT IN
+		 (SELECT id FROM refresh_runs ORDER BY id DESC LIMIT ?)`, MaxRefreshRuns); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM refresh_fetch_diags WHERE run_id NOT IN
 		 (SELECT id FROM refresh_runs ORDER BY id DESC LIMIT ?)`, MaxRefreshRuns); err != nil {
 		return err
 	}

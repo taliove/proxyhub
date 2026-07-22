@@ -24,6 +24,7 @@ import (
 type fakeNodes struct {
 	nodes       []*subscription.Node
 	refreshErr  error // StartRefreshJob 返回的错误（模拟刷新冲突等场景）
+	purgeErr    error // PurgeAirportNodes 返回的错误（模拟清空与刷新冲突等场景）
 	lastTrigger string
 }
 
@@ -48,7 +49,7 @@ func (f *fakeNodes) StartAirportRefreshJob(trigger string, airportID int64) (int
 	return 43, "airport-1", true, nil
 }
 
-func (f *fakeNodes) UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool {
+func (f *fakeNodes) UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) bool {
 	// 测试 mock：查找并更新节点，模拟真实行为
 	for _, n := range f.nodes {
 		if n.NodeKey() == nodeKey {
@@ -58,6 +59,8 @@ func (f *fakeNodes) UpdateNodeTestResult(nodeKey, mode string, available bool, l
 			} else {
 				n.Available = available
 				n.Latency = latency
+				n.DetectionFailReason = failReason
+				n.DetectionFailDetail = failDetail
 			}
 			return true
 		}
@@ -83,6 +86,22 @@ func (f *fakeNodes) UpdateNodeIdentity(nodeKey, name, region string) bool {
 		return true
 	}
 	return false
+}
+
+// PurgeAirportNodes 测试 mock：剔除机场节点、保留自建节点，与真实 Aggregator 行为一致。
+func (f *fakeNodes) PurgeAirportNodes() (int, error) {
+	if f.purgeErr != nil {
+		return 0, f.purgeErr
+	}
+	var kept []*subscription.Node
+	for _, n := range f.nodes {
+		if n.Source == subscription.SourceSelfHosted {
+			kept = append(kept, n)
+		}
+	}
+	removed := len(f.nodes) - len(kept)
+	f.nodes = kept
+	return removed, nil
 }
 
 func newTestServer(t *testing.T, nodes []*subscription.Node) (*Server, *store.Store) {

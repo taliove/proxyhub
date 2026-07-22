@@ -11,7 +11,10 @@
           检测筛选结果
         </el-dropdown-item>
         <el-dropdown-item command="block-source">按机场屏蔽</el-dropdown-item>
-        <el-dropdown-item command="cleanup" divided :disabled="detecting">
+        <el-dropdown-item command="purge-airport" divided :disabled="detecting">
+          <span class="danger-item">清空机场节点</span>
+        </el-dropdown-item>
+        <el-dropdown-item command="cleanup" :disabled="detecting">
           <span class="danger-item">清理失败节点</span>
         </el-dropdown-item>
       </el-dropdown-menu>

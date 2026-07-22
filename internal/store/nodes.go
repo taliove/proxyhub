@@ -45,8 +45,9 @@ func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
 		INSERT INTO nodes (
 			node_key, name, type, server, port, uuid, password, alter_id, cipher, network, tls,
 			sni, grpc_service_name, region, source, available, latency_ms, position, stale, last_seen,
-			detection_last_check, bandwidth_down, bandwidth_up, bandwidth_check, plugin, plugin_opts
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			detection_last_check, bandwidth_down, bandwidth_up, bandwidth_check, plugin, plugin_opts,
+			detection_kind, detection_fail_reason, detection_fail_detail
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(node_key) DO UPDATE SET
 			name = excluded.name,
 			type = excluded.type,
@@ -72,7 +73,10 @@ func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
 			bandwidth_up = excluded.bandwidth_up,
 			bandwidth_check = excluded.bandwidth_check,
 			plugin = excluded.plugin,
-			plugin_opts = excluded.plugin_opts
+			plugin_opts = excluded.plugin_opts,
+			detection_kind = excluded.detection_kind,
+			detection_fail_reason = excluded.detection_fail_reason,
+			detection_fail_detail = excluded.detection_fail_detail
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare upsert: %w", err)
@@ -88,7 +92,7 @@ func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
 			boolToInt(n.Stale), timeOrNull(n.LastSeen),
 			timeOrNull(n.DetectionLastCheck),
 			n.BandwidthDownMbps, n.BandwidthUpMbps, timeOrNull(n.BandwidthCheck),
-			n.Plugin, n.PluginOpts,
+			n.Plugin, n.PluginOpts, n.DetectionKind, n.DetectionFailReason, n.DetectionFailDetail,
 		); err != nil {
 			return fmt.Errorf("upsert node %s: %w", key, err)
 		}
@@ -191,7 +195,8 @@ func (s *Store) LoadNodePool() ([]*subscription.Node, error) {
 	rows, err := s.db.Query(`
 		SELECT node_key, name, type, server, port, uuid, password, alter_id, cipher, network, tls,
 		       sni, grpc_service_name, region, source, available, latency_ms, stale, last_seen,
-		       detection_last_check, bandwidth_down, bandwidth_up, bandwidth_check, plugin, plugin_opts
+		       detection_last_check, bandwidth_down, bandwidth_up, bandwidth_check, plugin, plugin_opts,
+		       detection_kind, detection_fail_reason, detection_fail_detail
 		FROM nodes
 		ORDER BY position
 	`)
@@ -211,7 +216,7 @@ func (s *Store) LoadNodePool() ([]*subscription.Node, error) {
 			&n.Cipher, &n.Network, &tls, &n.SNI, &n.GrpcServiceName,
 			&n.Region, &n.Source, &available, &n.Latency, &stale, &lastSeen,
 			&detectionLastCheck, &n.BandwidthDownMbps, &n.BandwidthUpMbps, &bandwidthCheck,
-			&n.Plugin, &n.PluginOpts,
+			&n.Plugin, &n.PluginOpts, &n.DetectionKind, &n.DetectionFailReason, &n.DetectionFailDetail,
 		); err != nil {
 			return nil, fmt.Errorf("scan node: %w", err)
 		}

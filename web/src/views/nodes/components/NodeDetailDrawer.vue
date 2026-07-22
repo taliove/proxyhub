@@ -19,6 +19,67 @@
         </el-descriptions-item>
       </el-descriptions>
 
+      <!-- 可用性诊断:回答"这个节点为什么可用/不可用、进没进订阅"(ticket 0016);
+           「失败原因」行由 ticket 0017 落地:检测写回链路结构化记录分类+短详情 -->
+      <div class="drawer-block">
+        <div class="drawer-section-title">可用性诊断</div>
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="可用状态">
+            <el-tag :type="node.available ? 'success' : 'danger'" size="small">
+              {{ node.available ? '可用' : '不可用' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="判定来源">
+            {{ availabilitySourceText(node) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="最近检测时间">
+            <span v-if="node.detection_last_check">{{
+              formatTime(node.detection_last_check)
+            }}</span>
+            <span v-else class="muted">—</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="失败原因">
+            <!-- 可用:原因已随成功清空;从未检测:引导文案;失败:分类 + 短详情(ticket 0017) -->
+            <span v-if="node.available" class="muted">—</span>
+            <span v-else-if="node.availability_source === 'never'" class="muted">
+              从未检测;需真实检测后才会进入订阅
+            </span>
+            <template v-else-if="node.detection_fail_reason">
+              <span class="error-text">{{ failReasonText(node.detection_fail_reason) }}</span>
+              <span v-if="node.detection_fail_detail" class="muted fail-detail">
+                {{ node.detection_fail_detail }}
+              </span>
+            </template>
+            <span v-else class="muted">—</span>
+          </el-descriptions-item>
+        </el-descriptions>
+        <div class="diag-hint">{{ subscriptionHint(node) }}</div>
+      </div>
+
+      <!-- 完整协议参数(排障用):plugin/plugin_opts 等已落库字段透出(ticket 0016);
+           uuid/password 属凭证,后端不透出 -->
+      <div class="drawer-block">
+        <div class="drawer-section-title">协议参数</div>
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="加密方式">{{ node.cipher || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="AlterID">
+            <span class="num">{{ node.alter_id ?? '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="gRPC Service">{{
+            node.grpc_service_name || '—'
+          }}</el-descriptions-item>
+          <el-descriptions-item label="跳过证书校验">{{
+            node.insecure ? '是' : '否'
+          }}</el-descriptions-item>
+          <el-descriptions-item label="插件" :span="2">{{
+            node.plugin || '—'
+          }}</el-descriptions-item>
+          <el-descriptions-item label="插件参数" :span="2">
+            <span class="plugin-opts">{{ node.plugin_opts || '—' }}</span>
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+
       <div class="drawer-block">
         <div class="drawer-section-title">解锁检测结果</div>
         <el-table v-if="rows.length > 0" :data="rows" size="small" border>
@@ -119,6 +180,7 @@ import { computed, ref, watch } from 'vue'
 import type { ExamHistoryEntry, Node } from '@/types'
 import { isGenericVariant, unlockDisplayRows } from '../unlock'
 import { latencyText } from '../nodecells'
+import { availabilitySourceText, failReasonText, formatTime, subscriptionHint } from '../utils'
 import { fetchExamHistory } from '@/api/exam'
 import ExamHistoryTimeline from '@/components/exam/ExamHistoryTimeline.vue'
 import { generateQRCode } from '@/composables/useQRCode'
@@ -206,11 +268,23 @@ const showNodeQR = async (node: Node) => {
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-sm);
 }
+.diag-hint {
+  margin-top: var(--ph-space-2);
+  font-size: var(--ph-text-sm);
+  color: var(--ph-text-secondary);
+}
+.plugin-opts {
+  word-break: break-all;
+}
 .num {
   font-variant-numeric: tabular-nums;
 }
 .error-text {
   color: var(--ph-danger);
+}
+.fail-detail {
+  display: block;
+  word-break: break-all;
 }
 .status-cell {
   display: inline-flex;

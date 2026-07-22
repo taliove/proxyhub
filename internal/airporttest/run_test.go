@@ -40,7 +40,7 @@ type PoolUpdate struct {
 	Latency   int
 }
 
-func (f *FakePoolWriter) UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64) bool {
+func (f *FakePoolWriter) UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) bool {
 	f.Updates = append(f.Updates, PoolUpdate{
 		NodeKey:   nodeKey,
 		Available: available,

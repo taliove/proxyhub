@@ -31,27 +31,51 @@ func NewFetcher(timeout time.Duration) *Fetcher {
 	}
 }
 
+// FetchDiagnostics 单次订阅拉取的结构化诊断(ticket 0018)。
+// 口径与机场测试 RunDiagnostic 对齐:HTTP 状态、拉取耗时、解析成功节点数、解析失败行数。
+type FetchDiagnostics struct {
+	HTTPStatus    int   `json:"http_status"`    // 0 = 请求未发出/网络错误
+	DurationMs    int64 `json:"duration_ms"`    // 请求发出到 body 读完
+	NodeCount     int   `json:"node_count"`     // 解析成功节点数
+	ParseFailures int   `json:"parse_failures"` // 解析失败行数(非空行中无法解析的)
+}
+
 // Fetch 从 URL 获取订阅
 func (f *Fetcher) Fetch(name, subscriptionURL string) (*Subscription, error) {
+	sub, _, err := f.FetchWithDiagnostics(name, subscriptionURL)
+	return sub, err
+}
+
+// FetchWithDiagnostics 从 URL 获取订阅,并返回结构化拉取诊断。
+// diag 在请求已尝试时恒非 nil(含错误路径):网络错误 HTTPStatus=0,
+// 非 200 响应带真实状态码;调用方无论成败都可落诊断。
+func (f *Fetcher) FetchWithDiagnostics(name, subscriptionURL string) (*Subscription, *FetchDiagnostics, error) {
+	diag := &FetchDiagnostics{}
+	start := time.Now()
+
 	req, err := http.NewRequest(http.MethodGet, subscriptionURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build subscription request: %w", err)
+		return nil, diag, fmt.Errorf("build subscription request: %w", err)
 	}
 	req.Header.Set("User-Agent", subscriptionUserAgent)
 
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch subscription: %w", err)
+		diag.DurationMs = time.Since(start).Milliseconds()
+		return nil, diag, fmt.Errorf("fetch subscription: %w", err)
 	}
 	defer resp.Body.Close()
+	diag.HTTPStatus = resp.StatusCode
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch subscription: status %d", resp.StatusCode)
+		diag.DurationMs = time.Since(start).Milliseconds()
+		return nil, diag, fmt.Errorf("fetch subscription: status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
+	diag.DurationMs = time.Since(start).Milliseconds()
 	if err != nil {
-		return nil, fmt.Errorf("read subscription body: %w", err)
+		return nil, diag, fmt.Errorf("read subscription body: %w", err)
 	}
 
 	// 尝试 Base64 解码（订阅整体可能是 base64 编码，支持 raw/padded）
@@ -64,16 +88,19 @@ func (f *Fetcher) Fetch(name, subscriptionURL string) (*Subscription, error) {
 		}
 	}
 
-	nodes, err := f.parse(string(decoded), name)
-	if err != nil {
-		return nil, fmt.Errorf("parse subscription: %w", err)
+	// 复用 ParseWithStats 的解析统计口径(与机场测试诊断同源)
+	parsed := ParseWithStats(string(decoded), name)
+	diag.NodeCount = len(parsed.Nodes)
+	diag.ParseFailures = parsed.ParseFailures
+	if len(parsed.Nodes) == 0 {
+		return nil, diag, fmt.Errorf("parse subscription: no valid nodes found")
 	}
 
 	return &Subscription{
 		Name:  name,
 		URL:   subscriptionURL,
-		Nodes: nodes,
-	}, nil
+		Nodes: parsed.Nodes,
+	}, diag, nil
 }
 
 // parse 解析订阅内容
