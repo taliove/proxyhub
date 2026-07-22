@@ -297,7 +297,7 @@ func (s *Server) syncSelfHostedNodeIdentity(nodeKey, name, regionCode string) {
 }
 
 // RecoverJobs 重启恢复:把上次进程遗留的 running 任务恢复或标记中断。
-// 单发任务(exam)标记 interrupted,批量任务(batch_exam/batch_speedtest)从游标续跑。
+// 单发任务(exam/exam_stability)标记 interrupted,批量任务(batch_exam/batch_stability/batch_speedtest)从游标续跑。
 // best-effort:失败只记日志。由 main 在对外服务前调用。
 func (s *Server) RecoverJobs() {
 	if s.examJobs != nil {
