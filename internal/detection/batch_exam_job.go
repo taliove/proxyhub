@@ -296,10 +296,10 @@ func (m *BatchExamJobManager) Start(nodeKeys []string, nodes []*subscription.Nod
 }
 
 // Subscribe 订阅批量体检任务事件流:回放 + 直播。任务不存在时返回错误。
+// 用 Attach 而非 Open:订阅不得幻影启动一个 params 为空的假任务。
 // 调用方需在订阅结束时 Close。
 func (m *BatchExamJobManager) Subscribe(key string) (*jobs.Subscription, error) {
-	// 使用空 params 附加到现有任务(params 只在启动时用,附加时不读取)
-	return m.mgr.Open(m.kind.Name(), key, nil)
+	return m.mgr.Attach(m.kind.Name(), key)
 }
 
 // Cancel 取消批量体检任务。

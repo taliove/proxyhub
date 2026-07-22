@@ -63,8 +63,9 @@ func (m *BatchDetectionManager) Cancel() bool {
 }
 
 // Subscribe 订阅批量检测任务事件:回放 + 直播。无任务时返回空订阅(已关闭通道)。
+// 用 Attach 而非 Open:订阅不得幻影启动新任务。
 func (m *BatchDetectionManager) Subscribe() *jobs.Subscription {
-	sub, err := m.mgr.Open(m.kind.Name(), "all", nil)
+	sub, err := m.mgr.Attach(m.kind.Name(), "all")
 	if err != nil {
 		// 无任务或 kind 未注册(后者是编程错误,已在 Register 时 panic 拦截)
 		return &jobs.Subscription{Live: closedChan()}

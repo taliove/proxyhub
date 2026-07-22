@@ -213,9 +213,10 @@ func (m *BatchStabilityJobManager) Start(nodeKeys []string, nodes []*subscriptio
 }
 
 // Subscribe 订阅批量检查任务事件流:回放 + 直播。任务不存在时返回错误。
+// 用 Attach 而非 Open:订阅不得幻影启动新任务。
 // 调用方需在订阅结束时 Close。
 func (m *BatchStabilityJobManager) Subscribe(key string) (*jobs.Subscription, error) {
-	return m.mgr.Open(m.kind.Name(), key, nil)
+	return m.mgr.Attach(m.kind.Name(), key)
 }
 
 // Cancel 取消批量检查任务。
