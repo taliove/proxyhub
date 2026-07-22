@@ -131,7 +131,7 @@ function buildAuditAlerts(events: AuditEvent[]): AlertItem[] {
 }
 
 // useAlertPanel 聚合四路现成接口生成异常面板数据:
-// /airports(低分机场 + 未测试弱提示)、/jobs?status=failed|interrupted(24h 失败/中断任务)、
+// /airports(低分机场 + 未测试弱提示)、/jobs?status=failed,interrupted(24h 失败/中断任务)、
 // /audit/banned(当前封禁 IP)、/audit/events(24h 审计异常)。
 // 四路独立降级:单路失败只缺席该路数据(全局拦截器已提示),不拖垮整板。
 export function useAlertPanel() {
@@ -140,11 +140,10 @@ export function useAlertPanel() {
   const loading = ref(true)
 
   onMounted(async () => {
-    // 后端 status 过滤为单值等值匹配,failed/interrupted 分两次请求再合并
-    const [airportsR, failedR, interruptedR, bannedR, eventsR] = await Promise.allSettled([
+    // 后端 status 过滤支持逗号多值(ANY 匹配),failed/interrupted 一次请求
+    const [airportsR, jobsR, bannedR, eventsR] = await Promise.allSettled([
       client.get<unknown, Airport[]>('/airports'),
-      listJobs({ status: 'failed' }),
-      listJobs({ status: 'interrupted' }),
+      listJobs({ status: 'failed,interrupted' }),
       client.get<unknown, { banned: BannedIP[] }>('/audit/banned'),
       client.get<unknown, { events: AuditEvent[]; total: number }>(
         `/audit/events?event_type=${AUDIT_ALERT_TYPES.join(',')}&time_range=24h&limit=${AUDIT_EVENTS_LIMIT}`
@@ -159,12 +158,7 @@ export function useAlertPanel() {
       untestedCount.value = r.untested
     }
 
-    items.push(
-      ...buildJobAlerts([
-        ...(failedR.status === 'fulfilled' ? failedR.value : []),
-        ...(interruptedR.status === 'fulfilled' ? interruptedR.value : [])
-      ])
-    )
+    items.push(...buildJobAlerts(jobsR.status === 'fulfilled' ? jobsR.value : []))
 
     if (bannedR.status === 'fulfilled') {
       items.push(...buildBannedAlerts(bannedR.value?.banned || []))

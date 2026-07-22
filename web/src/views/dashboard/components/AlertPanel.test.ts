@@ -16,6 +16,9 @@ vi.mock('vue-router', () => ({
 const AUDIT_EVENTS_URL =
   '/audit/events?event_type=login_failure,honeypot_ban,threshold_ban&time_range=24h&limit=500'
 
+// 异常任务一次请求:status 逗号多值经 URLSearchParams 编码为 %2C
+const JOBS_ALERT_URL = '/jobs?status=failed%2Cinterrupted'
+
 // 造本地时间串 "YYYY-MM-DD HH:mm:ss"(与 jobs 表 updated_at 格式一致),msAgo 为距现在的毫秒数
 const tsAgo = (msAgo: number) => {
   const d = new Date(Date.now() - msAgo)
@@ -47,8 +50,7 @@ const makeJob = (overrides: Partial<Job>): Job => ({
 const mockAll = (overrides: Record<string, unknown> = {}) => {
   const table: Record<string, unknown> = {
     '/airports': [],
-    '/jobs?status=failed': [],
-    '/jobs?status=interrupted': [],
+    [JOBS_ALERT_URL]: [],
     '/audit/banned': { banned: [] },
     [AUDIT_EVENTS_URL]: { events: [], total: 0 },
     ...overrides
@@ -78,8 +80,8 @@ describe('AlertPanel', () => {
   it('四类异常齐备时聚合渲染,各条目点击跳转对应页面', async () => {
     mockAll({
       '/airports': [makeAirport({ last_test_status: 'completed', last_test_score: 45.4 })],
-      '/jobs?status=failed': [makeJob({ id: 1, status: 'failed' })],
-      '/jobs?status=interrupted': [
+      [JOBS_ALERT_URL]: [
+        makeJob({ id: 1, status: 'failed' }),
         makeJob({
           id: 2,
           kind: 'batch_exam',
@@ -131,13 +133,14 @@ describe('AlertPanel', () => {
     expect(pushMock).toHaveBeenCalledWith({ name: 'Audit' })
   })
 
-  it('jobs 过滤参数:failed/interrupted 分两次带 status 请求', async () => {
+  it('jobs 过滤参数:failed/interrupted 合并为一次逗号多值请求', async () => {
     mockAll()
     mountPanel()
     await flushPromises()
 
-    expect(client.get).toHaveBeenCalledWith('/jobs?status=failed')
-    expect(client.get).toHaveBeenCalledWith('/jobs?status=interrupted')
+    expect(client.get).toHaveBeenCalledWith(JOBS_ALERT_URL)
+    expect(client.get).not.toHaveBeenCalledWith('/jobs?status=failed')
+    expect(client.get).not.toHaveBeenCalledWith('/jobs?status=interrupted')
   })
 
   it('四路全空时显示一切正常', async () => {
@@ -188,8 +191,8 @@ describe('AlertPanel', () => {
 
   it('超过 24h 的失败/中断任务不展示', async () => {
     mockAll({
-      '/jobs?status=failed': [makeJob({ id: 1, updated_at: tsAgo(25 * 3600e3) })],
-      '/jobs?status=interrupted': [
+      [JOBS_ALERT_URL]: [
+        makeJob({ id: 1, updated_at: tsAgo(25 * 3600e3) }),
         makeJob({ id: 2, status: 'interrupted', updated_at: tsAgo(26 * 3600e3) })
       ]
     })

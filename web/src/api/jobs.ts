@@ -24,7 +24,7 @@ export interface ScheduleConfig {
 }
 
 // ListJobsFilter 任务列表可选过滤(对应后端 handleListJobs 的 kind/status 查询参数;
-// 后端 status 为单值等值匹配,多状态需调用方分次请求再合并)。
+// status 支持逗号分隔多值,ANY 匹配,如 'failed,interrupted')。
 export interface ListJobsFilter {
   kind?: string
   status?: string

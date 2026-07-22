@@ -6,8 +6,8 @@ import { isRunning } from '@/views/jobs/jobmeta'
 const RECENT_FINISHED_LIMIT = 5
 
 // useActivityFeed 拉取任务活动流水:running 全部在前 + 非 running 最近 5 条。
-// listJobs 已支持 status 过滤,但后端为单值等值匹配且本模块需要跨多状态,
-// 拉全量在前端过滤一次到位;后端按 created_at 倒序返回,running 段保持该顺序,
+// 本模块需要跨全部状态(running + 各终态),拉全量在前端过滤一次到位;
+// 后端按 created_at 倒序返回,running 段保持该顺序,
 // finished 段按 updated_at 重排。失败时全局拦截器已提示,此处静默降级为空列表。
 export function useActivityFeed() {
   const jobs = ref<Job[]>([])

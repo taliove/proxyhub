@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/taliove/proxyhub/internal/jobs"
 )
@@ -27,9 +28,22 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 查询参数:kind/status 筛选(可选)
+	// 查询参数:kind 单值筛选(可选);status 支持逗号分隔多值(ANY 匹配),
+	// 空段忽略,参数非空但无任何有效段时结果为空(不回退为不过滤)。
 	kindFilter := r.URL.Query().Get("kind")
 	statusFilter := r.URL.Query().Get("status")
+
+	// statusSet 为 nil 表示未传 status 参数(不过滤);非 nil 即使为空集也参与过滤。
+	var statusSet map[string]struct{}
+	if statusFilter != "" {
+		statusSet = make(map[string]struct{})
+		for _, seg := range strings.Split(statusFilter, ",") {
+			if seg == "" {
+				continue
+			}
+			statusSet[seg] = struct{}{}
+		}
+	}
 
 	// 从 jobs 表加载所有记录(当前无分页,任务表行数可控)
 	records, err := s.st.Jobs().LoadAll()
@@ -45,8 +59,10 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		if kindFilter != "" && rec.Kind != kindFilter {
 			continue
 		}
-		if statusFilter != "" && string(rec.Status) != statusFilter {
-			continue
+		if statusSet != nil {
+			if _, ok := statusSet[string(rec.Status)]; !ok {
+				continue
+			}
 		}
 		jobs = append(jobs, JobInfo{
 			ID:        rec.ID,
