@@ -1,0 +1,250 @@
+<template>
+  <el-drawer v-model="visible" :title="drawerTitle" size="720px">
+    <template v-if="endpoint">
+      <!-- 概况段:基础信息 + 轻管理动作(启停/命名设置/节点范围/删除)。
+           变更逻辑全部上抛给订阅管理页既有处理函数,抽屉不持有任何变更逻辑(哑组件)。 -->
+      <div class="drawer-block">
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="别名">{{ endpoint.alias }}</el-descriptions-item>
+          <el-descriptions-item label="订阅 URL">
+            <span class="url-cell">
+              <span class="url-text">{{ subscriptionUrl }}</span>
+              <el-button link type="primary" @click="copyUrl">复制</el-button>
+              <el-button link type="primary" @click="emit('qrcode', endpoint)">二维码</el-button>
+            </span>
+          </el-descriptions-item>
+          <el-descriptions-item label="命名模式">
+            <el-tag :type="nameModeTag(endpoint.name_mode)" size="small">
+              {{ nameModeLabel(endpoint.name_mode) }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="节点范围">
+            <el-tag :type="hasConditions(endpoint.conditions) ? 'warning' : 'info'" size="small">
+              {{ hasConditions(endpoint.conditions) ? '自定义' : '全量' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <StatusDot
+              :tone="endpoint.enabled ? 'success' : 'muted'"
+              :label="endpoint.enabled ? '启用' : '禁用'"
+              class="state-dot"
+            />
+            <span>{{ endpoint.enabled ? '启用' : '禁用' }}</span>
+          </el-descriptions-item>
+        </el-descriptions>
+        <div class="drawer-actions">
+          <el-button size="small" @click="emit('toggle', endpoint)">
+            {{ endpoint.enabled ? '禁用' : '启用' }}
+          </el-button>
+          <el-button size="small" @click="emit('name-config', endpoint)">命名设置</el-button>
+          <el-button size="small" @click="emit('conditions', endpoint)">节点范围</el-button>
+          <el-button size="small" type="danger" @click="emit('delete', endpoint)">删除</el-button>
+        </div>
+      </div>
+
+      <!-- 下发节点清单段:与 /sub 同一生成链的所见即所得(吸收原预览对话框);
+           订阅原文折叠展示,Clash/V2Ray 切换重拉。 -->
+      <div class="drawer-block">
+        <div class="drawer-section-title">下发节点清单</div>
+        <div class="preview-toolbar">
+          <el-radio-group v-model="format" size="small" @change="loadPreview">
+            <el-radio-button label="clash">Clash</el-radio-button>
+            <el-radio-button label="v2ray">V2Ray</el-radio-button>
+          </el-radio-group>
+          <span class="preview-hint">
+            共 {{ preview.count }} 个节点(已应用节点范围条件,与终端拉取到的完全一致)
+          </span>
+        </div>
+        <el-table
+          v-loading="previewLoading"
+          :data="preview.nodes"
+          size="small"
+          border
+          max-height="300"
+        >
+          <el-table-column label="名称" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.display_name || row.name }}</template>
+          </el-table-column>
+          <el-table-column label="地区" width="72">
+            <template #default="{ row }">{{ regionDisplay(row.region) }}</template>
+          </el-table-column>
+          <el-table-column label="延迟" width="80">
+            <template #default="{ row }">
+              <span class="num">{{ nodeLatencyText(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="可用" width="80">
+            <template #default="{ row }">
+              <el-tag :type="row.available ? 'success' : 'info'" size="small">
+                {{ row.available ? '可用' : '不可用' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="source" label="来源" width="110" show-overflow-tooltip />
+          <template #empty>
+            <span class="muted">当前节点范围条件下无可下发节点。</span>
+          </template>
+        </el-table>
+        <el-collapse class="raw-collapse">
+          <el-collapse-item title="订阅原文" name="raw">
+            <el-input
+              v-model="preview.content"
+              type="textarea"
+              :rows="8"
+              readonly
+              placeholder="(无节点内容)"
+            />
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+
+      <!-- 订阅测试段:关闭抽屉时卸载(v-if),内部轮询随卸载停止;打开不自动测 -->
+      <div class="drawer-block">
+        <EndpointTestSection v-if="visible" :endpoint="endpoint" />
+      </div>
+
+      <!-- 拉取统计段:真实客户端拉取明细(吸收原统计抽屉) -->
+      <div class="drawer-block">
+        <div class="drawer-section-title">拉取统计</div>
+        <IPStatsTable :endpoint-id="endpoint.id" />
+      </div>
+    </template>
+  </el-drawer>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import type { Endpoint } from '@/types'
+import client from '@/api/client'
+import StatusDot from '@/components/StatusDot.vue'
+import IPStatsTable from '@/components/IPStatsTable.vue'
+import EndpointTestSection from '@/components/EndpointTestSection.vue'
+import { hasConditions } from '@/utils/conditions'
+import { nameModeLabel, nameModeTag } from '@/utils/namemode'
+import { regionDisplay } from '@/views/nodes/nodecells'
+
+// 预览节点(与后端 toNodeViews 输出对齐,只取本段所需字段)
+interface PreviewNode {
+  name: string
+  display_name?: string
+  region?: string
+  latency?: number
+  source?: string
+  available: boolean
+}
+
+const visible = defineModel<boolean>({ required: true })
+
+const props = defineProps<{
+  endpoint: Endpoint | null
+  // 完整订阅 URL(由父级按 origin+path+token 拼好;二维码与复制共用)
+  subscriptionUrl: string
+}>()
+
+const emit = defineEmits<{
+  (e: 'toggle', endpoint: Endpoint): void
+  (e: 'name-config', endpoint: Endpoint): void
+  (e: 'conditions', endpoint: Endpoint): void
+  (e: 'delete', endpoint: Endpoint): void
+  (e: 'qrcode', endpoint: Endpoint): void
+}>()
+
+const drawerTitle = computed(() =>
+  props.endpoint ? `订阅详情 - ${props.endpoint.alias}` : '订阅详情'
+)
+
+// ---- 下发节点清单段:打开抽屉按当前格式拉一次;切换格式重拉。失败降级空态,不阻塞抽屉。 ----
+const format = ref<'clash' | 'v2ray'>('clash')
+const preview = ref<{ count: number; content: string; nodes: PreviewNode[] }>({
+  count: 0,
+  content: '',
+  nodes: []
+})
+const previewLoading = ref(false)
+
+const loadPreview = async () => {
+  if (!props.endpoint) return
+  previewLoading.value = true
+  try {
+    preview.value = await client.get(
+      `/endpoints/${props.endpoint.id}/preview?format=${format.value}`
+    )
+  } catch {
+    preview.value = { count: 0, content: '', nodes: [] }
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+const nodeLatencyText = (n: PreviewNode): string =>
+  n.latency && n.latency > 0 ? `${n.latency}ms` : '—'
+
+// 打开抽屉/切换端点(父级在启停/命名/范围变更后刷新端点对象)时重拉清单;
+// 关闭时清空,避免下次闪现旧端点数据。
+watch(
+  () => [visible.value, props.endpoint] as const,
+  ([open, endpoint]) => {
+    if (open && endpoint) {
+      format.value = 'clash'
+      loadPreview()
+    } else if (!open) {
+      preview.value = { count: 0, content: '', nodes: [] }
+    }
+  },
+  { immediate: true }
+)
+
+const copyUrl = async () => {
+  try {
+    await navigator.clipboard.writeText(props.subscriptionUrl)
+    ElMessage.success('订阅 URL 已复制到剪贴板')
+  } catch (err) {
+    ElMessage.error(`复制失败: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+</script>
+
+<style scoped>
+.drawer-block {
+  margin-bottom: var(--ph-space-5);
+}
+.drawer-section-title {
+  font-weight: 600;
+  margin-bottom: var(--ph-space-2);
+}
+.drawer-actions {
+  margin-top: var(--ph-space-3);
+}
+.url-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+}
+.url-text {
+  word-break: break-all;
+}
+.state-dot {
+  margin-right: var(--ph-space-1);
+}
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--ph-space-3);
+}
+.preview-hint {
+  margin-left: var(--ph-space-3);
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
+}
+.raw-collapse {
+  margin-top: var(--ph-space-3);
+}
+.muted {
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-sm);
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+</style>

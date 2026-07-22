@@ -40,38 +40,23 @@
             </el-tag>
           </template>
         </el-table-column>
-        <!-- 行内操作 <=3:预览 / 统计(详情抽屉);低频与删除收进「更多」下拉 -->
-        <el-table-column label="操作" width="220">
+        <!-- 可用 x/y:池状态实时算(ADR 0027 决策 2),不依赖测试记录 -->
+        <el-table-column label="可用" width="80">
           <template #default="{ row }">
-            <span class="row-ops">
-              <el-button link type="primary" @click="previewEndpoint(row)">预览</el-button>
-              <el-button link type="primary" @click="openStats(row)">统计</el-button>
-              <el-dropdown trigger="click" @command="(cmd: string) => onRowCommand(cmd, row)">
-                <el-button link type="primary">
-                  更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
-                </el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="toggle">
-                      {{ row.enabled ? '禁用' : '启用' }}
-                    </el-dropdown-item>
-                    <el-dropdown-item command="name-config">命名设置</el-dropdown-item>
-                    <el-dropdown-item command="conditions">节点范围</el-dropdown-item>
-                    <el-dropdown-item command="delete" divided>
-                      <span class="danger-item">删除</span>
-                    </el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
+            <span v-if="row.availability" class="num">
+              {{ row.availability.available }}/{{ row.availability.total }}
             </span>
+            <span v-else class="muted">-</span>
+          </template>
+        </el-table-column>
+        <!-- 行内极简:只留「详情」;启停/命名/范围/删除收敛进详情抽屉概况段 -->
+        <el-table-column label="操作" width="80">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
-
-    <el-drawer v-model="statsVisible" :title="`访问统计 - ${statsAlias}`" size="640px">
-      <IPStatsTable v-if="statsEndpointId" :endpoint-id="statsEndpointId" />
-    </el-drawer>
 
     <el-dialog v-model="dialogVisible" title="新建订阅地址" width="500px">
       <el-form :model="form">
@@ -118,11 +103,17 @@
       @saved="loadEndpoints"
     />
 
-    <!-- 预览对话框:所见即所得,与真实订阅走同一条节点池→条件过滤→生成链 -->
-    <EndpointPreviewDialog
-      v-model="previewVisible"
-      :endpoint="previewEndpointRow"
-      :subscription-url="previewEndpointRow ? getSubscriptionUrl(previewEndpointRow) : ''"
+    <!-- 详情抽屉(四段式:概况/下发节点清单/订阅测试/拉取统计);
+         概况段变更动作全部复用本页既有处理函数(事件上抛) -->
+    <EndpointDetailDrawer
+      v-model="detailVisible"
+      :endpoint="detailEndpoint"
+      :subscription-url="detailEndpoint ? getSubscriptionUrl(detailEndpoint) : ''"
+      @toggle="toggleEndpoint"
+      @name-config="openNameConfig"
+      @conditions="openConditions"
+      @delete="deleteEndpoint"
+      @qrcode="showSubscriptionQR"
     />
 
     <!-- 订阅地址二维码:扫码导入客户端 -->
@@ -138,41 +129,37 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown } from '@element-plus/icons-vue'
 import type { Endpoint } from '@/types'
 import client from '@/api/client'
-import IPStatsTable from '@/components/IPStatsTable.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
-import EndpointPreviewDialog from '@/components/EndpointPreviewDialog.vue'
+import EndpointDetailDrawer from '@/components/EndpointDetailDrawer.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { hasConditions } from '@/utils/conditions'
+import { nameModeLabel, nameModeTag } from '@/utils/namemode'
 
 const endpoints = ref<Endpoint[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
 const form = ref({ alias: '' })
-const statsVisible = ref(false)
-const statsEndpointId = ref<number | null>(null)
-const statsAlias = ref('')
 
-const openStats = (row: Endpoint) => {
-  statsEndpointId.value = row.id
-  statsAlias.value = row.alias
-  statsVisible.value = true
-}
-
-const onRowCommand = (cmd: string, row: Endpoint) => {
-  if (cmd === 'toggle') toggleEndpoint(row)
-  else if (cmd === 'name-config') openNameConfig(row)
-  else if (cmd === 'conditions') openConditions(row)
-  else if (cmd === 'delete') deleteEndpoint(row)
+// 详情抽屉状态:行内「详情」打开;抽屉内动作复用本页既有处理函数(事件上抛)。
+const detailVisible = ref(false)
+const detailEndpoint = ref<Endpoint | null>(null)
+const openDetail = (row: Endpoint) => {
+  detailEndpoint.value = row
+  detailVisible.value = true
 }
 
 const loadEndpoints = async () => {
   loading.value = true
   endpoints.value = await client.get('/endpoints')
   loading.value = false
+  // 抽屉打开期间数据变更(启停/命名/范围)后,同步最新端点对象进抽屉
+  if (detailEndpoint.value) {
+    const fresh = endpoints.value.find((e) => e.id === detailEndpoint.value?.id)
+    if (fresh) detailEndpoint.value = fresh
+  }
 }
 
 const getSubscriptionUrl = (row: Endpoint) => {
@@ -202,6 +189,11 @@ const deleteEndpoint = async (row: Endpoint) => {
   await ElMessageBox.confirm('确定删除此订阅地址？', '确认')
   await client.delete(`/endpoints/${row.id}`)
   ElMessage.success('已删除')
+  // 删除发生在抽屉内时,关闭抽屉(对象已不存在)
+  if (detailEndpoint.value?.id === row.id) {
+    detailVisible.value = false
+    detailEndpoint.value = null
+  }
   loadEndpoints()
 }
 
@@ -211,11 +203,6 @@ const nameConfigForm = ref<{ name_mode: '' | 'on' | 'off'; name_template: string
   name_mode: '',
   name_template: ''
 })
-
-const nameModeLabel = (mode: string) =>
-  mode === 'on' ? '强制开' : mode === 'off' ? '强制关' : '跟随全局'
-const nameModeTag = (mode: string) =>
-  mode === 'on' ? 'success' : mode === 'off' ? 'info' : 'warning'
 
 const openNameConfig = (row: Endpoint) => {
   nameConfigId.value = row.id
@@ -238,15 +225,6 @@ const openConditions = (row: Endpoint) => {
   conditionsVisible.value = true
 }
 
-// 预览:随时查看某订阅地址当前会下发的订阅内容与节点清单,不产生拉取统计。
-// 对话框实现收敛在 EndpointPreviewDialog,本页只持有打开状态与目标端点。
-const previewVisible = ref(false)
-const previewEndpointRow = ref<Endpoint | null>(null)
-
-const previewEndpoint = (row: Endpoint) => {
-  previewEndpointRow.value = row
-  previewVisible.value = true
-}
 const qrVisible = ref(false)
 const qrDialog = ref<InstanceType<typeof QRCodeDialog>>()
 
@@ -259,11 +237,6 @@ onMounted(loadEndpoints)
 </script>
 
 <style scoped>
-.row-ops {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ph-space-2);
-}
 /* append 槽内容器:EP 默认给 append 内 el-button 设 flex:1 + margin:0 -20px(单按钮填满),
    多按钮会重叠;容器改为整体撑满 append(负边距抵消内边距),按钮均分宽度并填满高度 */
 .url-actions {
@@ -280,13 +253,16 @@ onMounted(loadEndpoints)
 .url-actions .el-button + .el-button {
   border-left: 1px solid var(--el-border-color);
 }
-.danger-item {
-  color: var(--ph-danger);
-}
 .cfg-hint {
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
   line-height: 1.5;
   margin-top: var(--ph-space-1);
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.muted {
+  color: var(--ph-text-secondary);
 }
 </style>
