@@ -7,6 +7,10 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
+// ExamStabilityKindName 单节点"出网+稳定性"检查任务的 kind 名
+// (与完整体检的 "exam" 区分,避免两套单发任务管理器在同一 jobs 表互相附加)。
+const ExamStabilityKindName = "exam_stability"
+
 // ExamStreamEgressStability 单节点"出网+稳定性"检查:复用体检出网段(IPv4/IPv6/DNS 画像,
 // 语义与 ExamStream 出网段一致)与稳定性段(多次采样,0-100 评分),不含解锁目标、不测速
 // ——即精简体检(ExamStreamSimplified)去掉基准下行的变体,逐段组合复用既有实现。

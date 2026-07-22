@@ -56,18 +56,20 @@ type NodeSource interface {
 
 // Server HTTP 服务
 type Server struct {
-	cfg              *config.Config
-	st               *store.Store
-	nodes            NodeSource
-	webFS            embed.FS
-	sessions         *SessionManager
-	logger           *slog.Logger
-	detectionService *DetectionService
-	detectionJobs    *DetectionServiceJobs
-	geo              *geoip.Resolver
-	examJobs         *detection.ExamJobManager
-	batchExamJobs    *detection.BatchExamJobManager
-	testOrchestrator *airporttest.Orchestrator
+	cfg                *config.Config
+	st                 *store.Store
+	nodes              NodeSource
+	webFS              embed.FS
+	sessions           *SessionManager
+	logger             *slog.Logger
+	detectionService   *DetectionService
+	detectionJobs      *DetectionServiceJobs
+	geo                *geoip.Resolver
+	examJobs           *detection.ExamJobManager
+	batchExamJobs      *detection.BatchExamJobManager
+	stabilityExamJobs  *detection.ExamJobManager
+	batchStabilityJobs *detection.BatchStabilityJobManager
+	testOrchestrator   *airporttest.Orchestrator
 	// self-node region resolution seams: real by default, overridable in tests
 	// to drive the suggest/save paths without touching DNS or the embedded DB.
 	lookupHost    func(host string) ([]string, error)
@@ -110,6 +112,29 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 			detection.WithBatchExamJobStore(st.Jobs()),
 			detection.WithBatchExamErrorHandler(func(err error) {
 				logger.Warn("batch exam job persistence", "error", err)
+			}),
+		)
+
+		// 单节点"出网+稳定性"检查任务管理器:与完整体检同构(单发任务/附加回放/取消),
+		// kind 名 exam_stability 区分于 exam,避免同一节点两套任务互相附加。
+		// 收口复用 onExamComplete:落历史带 source=stability_check 来源标记 + 标签重算。
+		s.stabilityExamJobs = detection.NewExamJobManager(
+			detectionService.ExamStreamEgressStability,
+			s.onExamComplete,
+			detection.WithExamKindName(detection.ExamStabilityKindName),
+			detection.WithExamJobStore(st.Jobs()),
+			detection.WithExamErrorHandler(func(err error) {
+				logger.Warn("stability exam job persistence", "error", err)
+			}),
+		)
+
+		// 批量"出网+稳定性"任务管理器:全局单例 + 游标续跑,契约同批量体检。
+		s.batchStabilityJobs = detection.NewBatchStabilityJobManager(
+			detectionService.ExamStreamEgressStability,
+			s.onExamComplete,
+			detection.WithBatchStabilityJobStore(st.Jobs()),
+			detection.WithBatchStabilityErrorHandler(func(err error) {
+				logger.Warn("batch stability job persistence", "error", err)
 			}),
 		)
 	}
@@ -246,6 +271,16 @@ func (s *Server) RecoverJobs() {
 			s.logger.Warn("recover interrupted batch exam jobs failed", "error", err)
 		}
 	}
+	if s.stabilityExamJobs != nil {
+		if err := s.stabilityExamJobs.RecoverInterrupted(); err != nil {
+			s.logger.Warn("recover interrupted stability exam jobs failed", "error", err)
+		}
+	}
+	if s.batchStabilityJobs != nil {
+		if err := s.batchStabilityJobs.RecoverInterrupted(); err != nil {
+			s.logger.Warn("recover interrupted batch stability jobs failed", "error", err)
+		}
+	}
 	if s.detectionJobs != nil {
 		if err := s.detectionJobs.Recover(); err != nil {
 			s.logger.Warn("recover batch detection job failed", "error", err)
@@ -276,6 +311,9 @@ func (s *Server) StartExamSweeper(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.examJobs.SweepExpired()
+			if s.stabilityExamJobs != nil {
+				s.stabilityExamJobs.SweepExpired()
+			}
 		}
 	}
 }
@@ -367,6 +405,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/nodes/exam/batch", s.requireAuth(s.handleBatchExam))
 	mux.HandleFunc("GET /api/nodes/exam/batch/stream", s.requireAuth(s.handleBatchExamStream))
 	mux.HandleFunc("POST /api/nodes/exam/batch/cancel", s.requireAuth(s.handleBatchExamCancel))
+	// 出网+稳定性检查(动作2):批量形态(任务化) + 单节点形态(行内 SSE)
+	mux.HandleFunc("GET /api/nodes/stability/stream", s.requireAuth(s.handleNodeStabilityStream))
+	mux.HandleFunc("POST /api/nodes/stability/cancel", s.requireAuth(s.handleNodeStabilityCancel))
+	mux.HandleFunc("POST /api/nodes/stability/batch", s.requireAuth(s.handleBatchStability))
+	mux.HandleFunc("GET /api/nodes/stability/batch/stream", s.requireAuth(s.handleBatchStabilityStream))
+	mux.HandleFunc("POST /api/nodes/stability/batch/cancel", s.requireAuth(s.handleBatchStabilityCancel))
 
 	// 节点管理（覆盖层 + 清理）
 	mux.HandleFunc("PUT /api/nodes/override", s.requireAuth(s.handleSetNodeOverride))
