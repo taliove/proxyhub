@@ -113,11 +113,11 @@ func TestSpeedtest_Download(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != "application/octet-stream" {
 		t.Errorf("download Content-Type = %q, want application/octet-stream", ct)
 	}
-	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
-		t.Errorf("download Cache-Control = %q, want no-store", cc)
+	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") || !strings.Contains(cc, "no-transform") {
+		t.Errorf("download Cache-Control = %q, want no-store + no-transform", cc)
 	}
-	if ce := w.Header().Get("Content-Encoding"); ce != "identity" {
-		t.Errorf("download Content-Encoding = %q, want identity (explicit no-compression)", ce)
+	if ce := w.Header().Get("Content-Encoding"); ce != "" {
+		t.Errorf("download Content-Encoding = %q, want unset (default identity, no compression)", ce)
 	}
 	if w.Body.Len() < speedtest.DownloadBlockSize {
 		t.Errorf("download body = %d bytes, want at least one block (%d)", w.Body.Len(), speedtest.DownloadBlockSize)

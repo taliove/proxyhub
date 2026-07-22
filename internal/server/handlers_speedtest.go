@@ -61,10 +61,10 @@ func (s *Server) handleSpeedtestDownload(w http.ResponseWriter, r *http.Request)
 
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")
-	h.Set("Cache-Control", "no-store")
-	// 显式声明无内容编码:Caddy gzip / 节点压缩见到已设置的 Content-Encoding
-	// 不再二次压缩测速流(压缩会让浏览器端字节数虚高)。
-	h.Set("Content-Encoding", "identity")
+	// no-store 防缓存;no-transform 防中间层(Caddy gzip / 节点压缩)变换测速流
+	// (压缩会让浏览器端字节数虚高)。不显式设 Content-Encoding(缺省即 identity,
+	// 显式写 "identity" 非 RFC 推荐用法)。
+	h.Set("Cache-Control", "no-store, no-transform")
 	h.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 
