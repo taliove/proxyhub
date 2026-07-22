@@ -4,35 +4,38 @@
    取值唯一事实源:docs/design-frontend.md
    ========================================================================== */
 :root {
-  /* 品牌色:靛蓝 9 级刻度 */
-  --ph-indigo-50: #eef2ff;
-  --ph-indigo-100: #e0e7ff;
-  --ph-indigo-200: #c7d2fe;
-  --ph-indigo-300: #a5b4fc;
-  --ph-indigo-400: #818cf8;
-  --ph-indigo-500: #6366f1;
-  --ph-indigo-600: #4f46e5;
-  --ph-indigo-700: #4338ca;
-  --ph-indigo-800: #3730a3;
-  --ph-indigo-900: #312e81;
+  /* 品牌色:电波青(teal-cyan)9 级刻度
+     "电光"参考区(#0ABAB5~#06B6D4)白底对比度仅 ~2.4,落在 400-500 级,
+     只用于暗色主色、强调图形,不承载白底文本;亮主题主色取 600 级
+     (#0c8078,白底对比度 4.8:1,过 WCAG AA)。 */
+  --ph-teal-50: #effcfa;
+  --ph-teal-100: #d1f6f0;
+  --ph-teal-200: #a3ece1;
+  --ph-teal-300: #68dccf;
+  --ph-teal-400: #30c4b8;
+  --ph-teal-500: #0faea2;
+  --ph-teal-600: #0c8078;
+  --ph-teal-700: #0a6963;
+  --ph-teal-800: #085350;
+  --ph-teal-900: #063f3d;
 
-  /* 中性灰阶:冷灰 10 级(与靛蓝同色系) */
-  --ph-gray-50: #f8fafc;
-  --ph-gray-100: #f1f5f9;
-  --ph-gray-200: #e2e8f0;
-  --ph-gray-300: #cbd5e1;
-  --ph-gray-400: #94a3b8;
-  --ph-gray-500: #64748b;
-  --ph-gray-600: #475569;
-  --ph-gray-700: #334155;
-  --ph-gray-800: #1e293b;
-  --ph-gray-900: #0f172a;
+  /* 中性灰阶:青灰 10 级(低彩度青相,与电波青同色系) */
+  --ph-gray-50: #f7fafb;
+  --ph-gray-100: #eff4f5;
+  --ph-gray-200: #e0e8ea;
+  --ph-gray-300: #c7d3d6;
+  --ph-gray-400: #91a3a8;
+  --ph-gray-500: #617379;
+  --ph-gray-600: #45565c;
+  --ph-gray-700: #324249;
+  --ph-gray-800: #1e2b31;
+  --ph-gray-900: #0f1b20;
 
   /* 功能色基色(600 级中调,与主色同明度体系) */
   --ph-success-base: #059669;
   --ph-warning-base: #d97706;
   --ph-danger-base: #dc2626;
-  --ph-info-base: #475569;
+  --ph-info-base: #45565c; /* gray-600 */
 
   /* 间距刻度:4px 基网,space-1..8 */
   --ph-space-1: 4px;
@@ -63,10 +66,10 @@
   --ph-radius-xl: 12px;
   --ph-radius-full: 999px;
 
-  /* 阴影刻度(亮主题基准;暗色由 semantics.css 的 html.dark 覆盖同名令牌) */
-  --ph-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
-  --ph-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
-  --ph-shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.12);
+  /* 阴影刻度(亮主题基准,gray-900 基底;暗色由 semantics.css 的 html.dark 覆盖同名令牌) */
+  --ph-shadow-sm: 0 1px 2px rgba(15, 27, 32, 0.05);
+  --ph-shadow: 0 2px 8px rgba(15, 27, 32, 0.08);
+  --ph-shadow-lg: 0 8px 24px rgba(15, 27, 32, 0.12);
 
   /* z-index 刻度(页面代码不允许出现刻度外的 z-index 字面量) */
   --ph-z-sticky: 100;
