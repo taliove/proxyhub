@@ -1,4 +1,4 @@
-.PHONY: help build build-frontend build-backend build-all clean test test-all test-v test-cover vet lint-frontend test-frontend test-shell check dev-frontend dev-backend start stop restart status install geoip-update geoip-check
+.PHONY: help build build-frontend build-backend build-all clean test test-all test-v test-cover vet lint-frontend test-frontend test-shell check dev-frontend dev-backend start stop restart status install geoip-update geoip-check hooks
 
 BINARY_NAME=proxyhub
 
@@ -138,7 +138,11 @@ clean: ## 清理构建产物
 	rm -rf .test/data/*.db .test/logs/* .test/tmp/* .test/*.out .test/*.html
 	cd web && rm -rf dist node_modules
 
-deps: ## 安装依赖
+hooks: ## 激活本地 git hooks(core.hooksPath=.githooks,幂等)
+	@git config core.hooksPath .githooks
+	@echo "✅ git hooks 已激活: .githooks/"
+
+deps: hooks ## 安装依赖(含激活 git hooks)
 	go mod download
 	go mod tidy
 	cd web && npm install

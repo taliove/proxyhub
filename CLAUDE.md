@@ -102,6 +102,7 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 
 - 每次签入前:`make check`(vet + Go 测试 + shell 套件 + 前端 lint)
 - 推送前:`make check` 全量 + `make build` 验证完整构建
+- 机械门禁由 git hooks 硬约束(`.githooks/`,`make hooks` 激活,已挂入 `make deps`):pre-commit = gitleaks staged + 垃圾文件守卫,commit-msg = 格式 + ASCII,pre-push = `make check`。hook 管"过不过";判断类步骤与 go-reviewer 语义审查仍在 skill(§8)
 - 测试套件保持全绿,无隔离名单。2026-07-21 起,原 3 处既有失败已按维护者决策清零(模板断言改为从模板内容推导;nodetest 缺失目标拆分 400/404 语义)。**不许用 `-skip` 或改测试来掩盖真实回归**;发现失败先定位原因,再决定修代码还是修断言。
 
 ## 7. 安全红线

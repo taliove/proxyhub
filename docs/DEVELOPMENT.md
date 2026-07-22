@@ -15,6 +15,7 @@
 ```bash
 git clone https://github.com/taliove/proxyhub.git
 cd proxyhub
+make deps   # 安装 Go/前端依赖,并激活本地 git hooks(.githooks/)
 ```
 
 ## 开发循环
@@ -40,7 +41,7 @@ make dev-backend
 ```bash
 make build         # 完整构建(前端 + 后端,产物在 dist/)
 make build-all     # 多平台构建
-make test          # Go 测试(隔离 3 处既有失败)
+make test          # Go 测试
 make test-shell    # 安装/运维脚本测试套件
 make check         # 签入前聚合检查(vet + test + test-shell + lint-frontend)
 make restart       # 重启本地服务(start/stop/status 同族)

@@ -9,6 +9,8 @@ description: 推送到任何远端前的最终门禁(全量测试、全历史泄
 
 ## 1. 全量测试与完整构建
 
+`make check` 已由 `.githooks/pre-push` 在推送时自动执行;本步骤补充完整构建验证:
+
 ```bash
 make check   # vet + Go 测试 + shell 套件
 make build   # 验证完整构建(前端 + 后端)可用

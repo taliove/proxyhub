@@ -7,6 +7,8 @@ description: 每次 git commit 前必须执行的检查流程(泄密、垃圾文
 
 任何 `git commit` 之前,按顺序执行以下全部步骤。任何一步失败,先修复再提交。
 
+> 机械环节(gitleaks staged、`docs/spec-*`/死备份/运行时产物路径守卫、commit message 格式与 ASCII)已由 `.githooks/` 硬拦截,绕过本 skill 也提交不进去。本流程聚焦 hook 替代不了的环节:内容判断、全量构建测试、go-reviewer 语义审查。
+
 ## 1. 内容审查(防垃圾入库)
 
 ```bash
@@ -30,6 +32,8 @@ git diff --cached --stat
 
 ## 2. 泄密扫描
 
+`.githooks/pre-commit` 已对暂存区自动执行 `gitleaks protect --staged`;本步骤保留全量扫描作手动复核(可选):
+
 ```bash
 gitleaks dir --redact=100 .
 ```
@@ -52,6 +56,8 @@ make check   # = vet + Go 测试 + shell 套件 + 前端 lint,一把全过
 diff 涉及 Go 代码且非 trivial(改逻辑而非改文案)时,在提交前 dispatch `go-reviewer` agent 审查 `git diff HEAD`,拿到 SHIP  verdict 或修掉它报的 CRITICAL/HIGH。机械门禁抓不住的语义问题(真实感凭证、默认路径越界、错误被吞)由它兜底。
 
 ## 5. 提交消息
+
+格式与 ASCII 由 `.githooks/commit-msg` 硬拦截;语义要求(一个提交一个语义)仍需人工遵守:
 
 - 纯英文、纯 ASCII(`-` 和 `->`,不用 `—`/`→`)
 - 格式:`<type>: <description>`,type ∈ feat/fix/refactor/docs/test/chore/perf/ci

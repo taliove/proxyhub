@@ -1,0 +1,16 @@
+#!/bin/sh
+# Commit message gates (CLAUDE.md §4): conventional format + pure ASCII.
+msg_file=$1
+subject=$(head -n 1 "$msg_file")
+
+if ! printf '%s' "$subject" | grep -qE '^(feat|fix|refactor|docs|test|chore|perf|ci)(\([^)]*\))?: .+'; then
+  echo "commit-msg: subject must be '<type>: <description>'" >&2
+  echo "  type: feat fix refactor docs test chore perf ci" >&2
+  exit 1
+fi
+
+# Reject any byte outside printable ASCII (tab tolerated). BSD grep safe.
+if LC_ALL=C grep -q '[^ -~	]' "$msg_file"; then
+  echo "commit-msg: message must be pure ASCII (use '-' and '->', not em dash/unicode arrows)" >&2
+  exit 1
+fi
