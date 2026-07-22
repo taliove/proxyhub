@@ -23,9 +23,21 @@ export interface ScheduleConfig {
   retag_enabled: boolean
 }
 
+// ListJobsFilter 任务列表可选过滤(对应后端 handleListJobs 的 kind/status 查询参数;
+// 后端 status 为单值等值匹配,多状态需调用方分次请求再合并)。
+export interface ListJobsFilter {
+  kind?: string
+  status?: string
+}
+
 // listJobs 拉取任务列表(后端按 created_at 倒序)。
-export function listJobs(): Promise<Job[]> {
-  return client.get<unknown, Job[]>('/jobs')
+// filter 缺省时请求 /jobs,行为与原先一致(向后兼容)。
+export function listJobs(filter: ListJobsFilter = {}): Promise<Job[]> {
+  const params = new URLSearchParams()
+  if (filter.kind) params.set('kind', filter.kind)
+  if (filter.status) params.set('status', filter.status)
+  const qs = params.toString()
+  return client.get<unknown, Job[]>(qs ? `/jobs?${qs}` : '/jobs')
 }
 
 // getJob 拉取单个任务详情。
