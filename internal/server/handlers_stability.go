@@ -163,7 +163,11 @@ func (s *Server) handleNodeStabilityStream(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeFrame := func(f detection.ExamFrame) {
-		b, _ := json.Marshal(f)
+		b, err := json.Marshal(f)
+		if err != nil {
+			s.logger.Warn("marshal stability exam frame failed", "error", err)
+			return
+		}
 		fmt.Fprintf(w, "data: %s\n\n", b)
 		flusher.Flush()
 	}

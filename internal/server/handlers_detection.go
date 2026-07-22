@@ -305,7 +305,11 @@ func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeFrame := func(f detection.ExamFrame) {
-		b, _ := json.Marshal(f)
+		b, err := json.Marshal(f)
+		if err != nil {
+			s.logger.Warn("marshal exam frame failed", "error", err)
+			return
+		}
 		fmt.Fprintf(w, "data: %s\n\n", b)
 		flusher.Flush()
 	}
