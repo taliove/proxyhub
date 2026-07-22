@@ -15,6 +15,34 @@ import (
 // 设为 2 供未来调优(现串行实现,带注释常量)。
 const batchExamConcurrency = 2
 
+// 批量体检模式:simplified(默认,出网+稳定性+基准下行)| full(完整四段,与单节点深度体检同口径)。
+const (
+	BatchExamModeSimplified = "simplified"
+	BatchExamModeFull       = "full"
+)
+
+// normalizeBatchExamMode 归一化批量体检模式:空(老任务 params 无此字段,或调用方未指定)
+// 一律落 simplified,保证升级后重启游标续跑口径不漂移;未知值报错而非静默降级。
+func normalizeBatchExamMode(mode string) (string, error) {
+	switch mode {
+	case "", BatchExamModeSimplified:
+		return BatchExamModeSimplified, nil
+	case BatchExamModeFull:
+		return BatchExamModeFull, nil
+	default:
+		return "", fmt.Errorf("batch_exam: unknown mode %q", mode)
+	}
+}
+
+// newBatchExamParams 构造批量体检参数:mode 归一化后显式落 params,任务中心与续跑口径自描述。
+func newBatchExamParams(nodeKeys []string, scope, mode string) (batchExamParams, error) {
+	normalized, err := normalizeBatchExamMode(mode)
+	if err != nil {
+		return batchExamParams{}, err
+	}
+	return batchExamParams{NodeKeys: nodeKeys, Scope: scope, Mode: normalized}, nil
+}
+
 // BatchExamEvent 批量体检事件:进度更新(每节点一行)。
 type BatchExamEvent struct {
 	Phase    string      `json:"phase"` // "node_start" | "node_done" | "node_error" | "done" | "cancelled"
@@ -31,15 +59,19 @@ type batchExamParams struct {
 	NodeKeys []string `json:"node_keys"`
 	// Scope 触发范围标记("all"/"selected"),仅用于任务中心展示,不影响执行语义
 	Scope string `json:"scope,omitempty"`
+	// Mode 体检模式:simplified(默认)| full(完整四段)。老任务 params 无此字段,
+	// 归一化时按 simplified 处理(升级后重启游标续跑口径不漂移)。
+	Mode string `json:"mode,omitempty"`
 }
 
 // SimplifiedExamRunner 运行精简体检:出网 + 稳定性 + 基准下行,跳过多地域 8 区与解锁。
 // 与 ExamRunner 签名一致,可直接注入。
 type SimplifiedExamRunner func(ctx context.Context, node *subscription.Node, emit func(ExamEvent)) ExamReport
 
-// batchExamKind 批量体检 kind:逐节点跑精简体检,串行或低并发,游标续跑,每节点落历史。
+// batchExamKind 批量体检 kind:逐节点体检(模式由 params 选 runner),串行或低并发,游标续跑,每节点落历史。
 type batchExamKind struct {
 	runSimplified SimplifiedExamRunner
+	runFull       ExamRunner                              // full 模式:完整四段,与单节点深度体检同口径
 	onComplete    func(nodeKey string, report ExamReport) // 落历史 + 触发标签重算
 	onErr         func(error)
 	nodes         sync.Map // nodeKey -> *subscription.Node(活节点,仅内存)
@@ -60,11 +92,36 @@ func (k *batchExamKind) CancelEvent() (json.RawMessage, bool) {
 	return b, true
 }
 
-// Run 批量体检主循环:解析参数 -> 从游标续跑 -> 逐节点串行体检 -> 每节点落历史 + 推进度。
+// resolveRunner 按 params mode 选 runner:空/simplified 用精简 runner,full 用完整 runner。
+// SimplifiedExamRunner 与 ExamRunner 签名一致,选中后统一为同一调用形态。
+func (k *batchExamKind) resolveRunner(mode string) (SimplifiedExamRunner, error) {
+	normalized, err := normalizeBatchExamMode(mode)
+	if err != nil {
+		return nil, err
+	}
+	if normalized == BatchExamModeFull {
+		if k.runFull == nil {
+			return nil, fmt.Errorf("batch_exam: full mode requested but full runner not configured")
+		}
+		return SimplifiedExamRunner(k.runFull), nil
+	}
+	if k.runSimplified == nil {
+		return nil, fmt.Errorf("batch_exam: simplified runner not configured")
+	}
+	return k.runSimplified, nil
+}
+
+// Run 批量体检主循环:解析参数 -> 按 mode 选 runner -> 从游标续跑 -> 逐节点串行体检 -> 每节点落历史 + 推进度。
 func (k *batchExamKind) Run(ctx context.Context, params json.RawMessage, cursor string, emit func(json.RawMessage), progress func(string)) error {
 	var p batchExamParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return fmt.Errorf("batch_exam: unmarshal params: %w", err)
+	}
+
+	// mode 决定每节点跑精简还是完整四段;老任务 params 无 mode 字段,归一化为 simplified。
+	runExam, err := k.resolveRunner(p.Mode)
+	if err != nil {
+		return err
 	}
 
 	total := len(p.NodeKeys)
@@ -112,8 +169,8 @@ func (k *batchExamKind) Run(ctx context.Context, params json.RawMessage, cursor 
 
 		node := v.(*subscription.Node)
 
-		// 运行精简体检(出网 + 稳定性 + 基准下行)
-		report := k.runSimplified(ctx, node, func(e ExamEvent) {
+		// 运行体检(精简或完整四段,由 params mode 决定)
+		report := runExam(ctx, node, func(e ExamEvent) {
 			// 体检内部事件不转发(批量体检只推进度,不推详细采样)
 		})
 
@@ -183,9 +240,10 @@ func WithBatchExamErrorHandler(h func(error)) BatchExamJobOption {
 }
 
 // NewBatchExamJobManager 构造批量体检任务管理器。
-// runSimplified: 精简体检运行器(出网 + 稳定性 + 基准下行)。
+// runSimplified: 精简体检运行器(出网 + 稳定性 + 基准下行),mode=simplified 或未指定时使用。
+// runFull: 完整体检运行器(完整四段,与单节点深度体检同口径),mode=full 时使用。
 // onComplete: 每节点完成回调(落历史 + 触发标签重算)。
-func NewBatchExamJobManager(runSimplified SimplifiedExamRunner, onComplete func(nodeKey string, report ExamReport), opts ...BatchExamJobOption) *BatchExamJobManager {
+func NewBatchExamJobManager(runSimplified SimplifiedExamRunner, runFull ExamRunner, onComplete func(nodeKey string, report ExamReport), opts ...BatchExamJobOption) *BatchExamJobManager {
 	cfg := batchExamJobConfig{}
 	for _, o := range opts {
 		o(&cfg)
@@ -193,6 +251,7 @@ func NewBatchExamJobManager(runSimplified SimplifiedExamRunner, onComplete func(
 
 	k := &batchExamKind{
 		runSimplified: runSimplified,
+		runFull:       runFull,
 		onComplete:    onComplete,
 		onErr:         cfg.onErr,
 	}
@@ -209,14 +268,18 @@ func NewBatchExamJobManager(runSimplified SimplifiedExamRunner, onComplete func(
 
 // Start 启动批量体检任务:nodeKeys 为空则对全部节点体检。返回任务 key(供订阅/取消)。
 // nodes 是活节点列表(含凭证),存入内存旁路。scope 为触发范围标记("all"/"selected"),
-// 仅记录进 params 供任务中心展示。
-func (m *BatchExamJobManager) Start(nodeKeys []string, nodes []*subscription.Node, scope string) (string, error) {
+// 仅记录进 params 供任务中心展示。mode 为体检模式(simplified/full),空按 simplified。
+func (m *BatchExamJobManager) Start(nodeKeys []string, nodes []*subscription.Node, scope string, mode string) (string, error) {
 	// 活节点存内存旁路
 	for _, n := range nodes {
 		m.kind.nodes.Store(n.NodeKey(), n)
 	}
 
-	params, err := json.Marshal(batchExamParams{NodeKeys: nodeKeys, Scope: scope})
+	p, err := newBatchExamParams(nodeKeys, scope, mode)
+	if err != nil {
+		return "", err
+	}
+	params, err := json.Marshal(p)
 	if err != nil {
 		return "", fmt.Errorf("batch_exam: marshal params: %w", err)
 	}
