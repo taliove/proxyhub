@@ -75,6 +75,10 @@ type Server struct {
 	// airportTestJobs 机场测试任务运行时(kind=airport_test,issue 0025 迁入);
 	// 跨 kind 互斥经 airportTestCoordinator(aggregator 实现)协调。
 	airportTestJobs *jobs.Manager
+	// 订阅现场实测(ADR 0027):检活器与机场测试同源,run 状态只存内存。
+	// probeChecker 可在测试中替换为桩实现;写回池直接走 s.nodes(PoolWriter)。
+	probeChecker airporttest.HealthChecker
+	probeRuns    *probeRunRegistry
 	// self-node region resolution seams: real by default, overridable in tests
 	// to drive the suggest/save paths without touching DNS or the embedded DB.
 	lookupHost    func(host string) ([]string, error)
@@ -209,6 +213,10 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 	if c, ok := nodes.(airportTestCoordinator); ok {
 		c.SetAirportTestConflictChecker(s.airportTestConflict)
 	}
+
+	// 订阅现场实测:复用同一检活器,run 注册表只存内存(带 TTL)
+	s.probeChecker = healthChecker
+	s.probeRuns = newProbeRunRegistry(endpointProbeRunTTL)
 
 	return s
 }
@@ -478,6 +486,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/endpoints/{id}", s.requireAuth(s.handleDeleteEndpoint))
 	mux.HandleFunc("GET /api/endpoints/{id}/stats", s.requireAuth(s.handleEndpointStats))
 	mux.HandleFunc("GET /api/endpoints/{id}/preview", s.requireAuth(s.handleEndpointPreview))
+	mux.HandleFunc("POST /api/endpoints/{id}/test", s.requireAuth(s.handleEndpointTest))
+	mux.HandleFunc("POST /api/endpoints/{id}/test/probe", s.requireAuth(s.handleEndpointTestProbe))
+	mux.HandleFunc("GET /api/endpoints/{id}/test/probe/{runId}", s.requireAuth(s.handleGetEndpointTestProbe))
 
 	// 机场管理
 	mux.HandleFunc("GET /api/airports", s.requireAuth(s.handleListAirports))
@@ -890,7 +901,17 @@ func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, eps)
+	// 可用性汇总加性附加(ADR 0027 决策 2):池在内存,全局过滤链只跑一遍,
+	// 各端点仅条件维度不同,逐个叠加计算。
+	base := s.filteredNodes(s.nodes.Nodes())
+	items := make([]endpointListItem, 0, len(eps))
+	for _, ep := range eps {
+		items = append(items, endpointListItem{
+			Endpoint:     ep,
+			Availability: s.availabilityFor(base, ep),
+		})
+	}
+	writeJSON(w, items)
 }
 
 func (s *Server) handleCreateEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -1460,10 +1481,8 @@ func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
 		format = "clash"
 	}
 
-	nodes := s.filteredNodes(s.nodes.Nodes())
-	// 与 /sub 同源:预览也套用该端点的节点范围条件与标准化，保证所见即所得（见 ADR 0012 / internal/subfilter）
-	nodes = s.applyConditions(nodes, ep)
-	nodes = s.standardizeNodesForEndpoint(nodes, ep)
+	// 与 /sub 同源的会下发节点集合(过滤链 + 条件 + 标准化),四处共用,见 endpoint_test.go
+	nodes := s.endpointDeliverableNodes(ep)
 
 	// 过滤后可能为空（节点池未就绪或全被过滤链剔除）；此时返回空内容而非 500，方便后台排查
 	content := ""

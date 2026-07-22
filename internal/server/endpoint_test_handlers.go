@@ -1,0 +1,252 @@
+package server
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/taliove/proxyhub/internal/airporttest"
+	"github.com/taliove/proxyhub/internal/store"
+	"github.com/taliove/proxyhub/internal/subscription"
+)
+
+// endpointDeliverableNodes 计算该订阅地址"此刻会下发的节点集合":
+// 池 → 全局过滤链 → 端点条件 → 名称标准化,与 /sub 生成链同源(所见即所得)。
+// 拉取验证、池快照、现场实测、后台预览四处共用这一个选择逻辑(ADR 0027 决策 1)。
+func (s *Server) endpointDeliverableNodes(ep *store.Endpoint) []*subscription.Node {
+	nodes := s.filteredNodes(s.nodes.Nodes())
+	nodes = s.applyConditions(nodes, ep)
+	return s.standardizeNodesForEndpoint(nodes, ep)
+}
+
+// formatCheckResult 单格式拉取验证结果。
+type formatCheckResult struct {
+	Valid      bool   `json:"valid"`
+	NodeCount  int    `json:"node_count"`
+	DurationMs int64  `json:"duration_ms"`
+	Error      string `json:"error,omitempty"`
+}
+
+// poolSnapshotView 会下发节点的池状态快照。口径与机场测试评分一致:
+// 可用数/均值只算可用节点,地区覆盖 = 非空地区去重计数。
+type poolSnapshotView struct {
+	Total       int      `json:"total"`
+	Available   int      `json:"available"`
+	MeanLatency float64  `json:"mean_latency_ms"`
+	RegionCount int      `json:"region_count"`
+	Regions     []string `json:"regions"`
+}
+
+// endpointTestResponse 拉取验证(双格式)+ 池快照。
+type endpointTestResponse struct {
+	Pull     map[string]formatCheckResult `json:"pull"`
+	Snapshot poolSnapshotView             `json:"snapshot"`
+}
+
+// handleEndpointTest 订阅测试(拉取验证 + 池快照):走内部生成链,不发真实 HTTP、
+// 不记 pull_logs(ADR 0027 决策 1/2)。禁用态可测(决策 4),端点存在即可。
+func (s *Server) handleEndpointTest(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	ep, err := s.st.GetEndpointByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	nodes := s.endpointDeliverableNodes(ep)
+	writeJSON(w, endpointTestResponse{
+		Pull: map[string]formatCheckResult{
+			"clash": s.validateFormat(nodes, "clash"),
+			"v2ray": s.validateFormat(nodes, "v2ray"),
+		},
+		Snapshot: snapshotDeliverable(nodes),
+	})
+}
+
+// validateFormat 生成单格式订阅内容并校验合法性。空集合不生成(生成器对空集报错),
+// 直接判 invalid 并给出原因。
+func (s *Server) validateFormat(nodes []*subscription.Node, format string) formatCheckResult {
+	if len(nodes) == 0 {
+		return formatCheckResult{Valid: false, Error: "no deliverable nodes"}
+	}
+	start := time.Now()
+	data, _, err := s.renderSubscription(nodes, format)
+	result := formatCheckResult{DurationMs: time.Since(start).Milliseconds()}
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+
+	var count int
+	var vErr error
+	if format == "v2ray" {
+		count, vErr = validateV2RayContent(data)
+	} else {
+		count, vErr = validateClashContent(data)
+	}
+	if vErr != nil {
+		result.Error = vErr.Error()
+		return result
+	}
+	result.Valid = true
+	result.NodeCount = count
+	return result
+}
+
+// validateClashContent 校验 Clash 产出:YAML 可解析,返回 proxies 条目数。
+func validateClashContent(data []byte) (int, error) {
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return 0, fmt.Errorf("clash output not parseable: %w", err)
+	}
+	proxies, _ := doc["proxies"].([]any)
+	return len(proxies), nil
+}
+
+// validateV2RayContent 校验 v2ray 产出:base64 可解码,返回非空分享链接行数。
+func validateV2RayContent(data []byte) (int, error) {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, fmt.Errorf("v2ray output not decodable: %w", err)
+	}
+	count := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	if count == 0 {
+		return 0, fmt.Errorf("v2ray output has no share links")
+	}
+	return count, nil
+}
+
+// snapshotDeliverable 计算池快照。返回新对象,不改动入参。
+func snapshotDeliverable(nodes []*subscription.Node) poolSnapshotView {
+	snap := poolSnapshotView{Total: len(nodes), Regions: []string{}}
+	regionSet := make(map[string]bool)
+	latencySum := 0
+	for _, n := range nodes {
+		if n.Available {
+			snap.Available++
+			latencySum += n.Latency
+		}
+		if n.Region != "" {
+			regionSet[n.Region] = true
+		}
+	}
+	if snap.Available > 0 {
+		snap.MeanLatency = float64(latencySum) / float64(snap.Available)
+	}
+	for region := range regionSet {
+		snap.Regions = append(snap.Regions, region)
+	}
+	sort.Strings(snap.Regions)
+	snap.RegionCount = len(snap.Regions)
+	return snap
+}
+
+// handleEndpointTestProbe 现场实测(ADR 0027 决策 3/5):立即返回 run 句柄,
+// 后台 goroutine 用 ProbeCore 对会下发节点抽样(full=true 全量)检活并写回池;
+// run 状态只存内存,重启即弃。禁用态可测(决策 4)。
+func (s *Server) handleEndpointTestProbe(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	ep, err := s.st.GetEndpointByID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	var body struct {
+		Full bool `json:"full"`
+	}
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&body)
+	}
+
+	nodes := s.endpointDeliverableNodes(ep)
+	if len(nodes) == 0 {
+		http.Error(w, "no deliverable nodes to probe", http.StatusBadRequest)
+		return
+	}
+
+	run := s.probeRuns.create(ep.ID, body.Full, len(nodes))
+	go s.runEndpointProbe(run.RunID, nodes, body.Full)
+	writeJSON(w, run)
+}
+
+// runEndpointProbe 后台执行:抽样检活 + 写回池(与健康检查同语义),
+// 进度经 hooks 落入内存注册表。
+func (s *Server) runEndpointProbe(runID string, nodes []*subscription.Node, full bool) {
+	core := airporttest.NewProbeCore(s.probeChecker, s.nodes)
+	_, err := core.Probe(context.Background(), nodes, full, airporttest.ProbeHooks{
+		OnSampled: func(sampled int) error {
+			s.probeRuns.markSampled(runID, sampled)
+			return nil
+		},
+		OnProgress: func(checked int) {
+			s.probeRuns.markChecked(runID, checked)
+		},
+	})
+	if err != nil {
+		s.logger.Warn("endpoint probe failed", "run", runID, "error", err)
+	}
+	s.probeRuns.finish(runID, err)
+}
+
+// handleGetEndpointTestProbe 轮询实测进度。run 只存内存且按端点隔离:
+// 不存在(含重启丢失、TTL 过期、属于其他端点)一律 404,前端据此提示重跑。
+func (s *Server) handleGetEndpointTestProbe(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	run, ok := s.probeRuns.get(r.PathValue("runId"))
+	if !ok || run.EndpointID != id {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, run)
+}
+
+// endpointAvailability 列表项的可用性汇总(池在内存,实时算)。
+type endpointAvailability struct {
+	Available int `json:"available"`
+	Total     int `json:"total"`
+}
+
+// endpointListItem 列表响应项:既有 Endpoint 字段原样内嵌,加性附加可用性。
+type endpointListItem struct {
+	*store.Endpoint
+	Availability endpointAvailability `json:"availability"`
+}
+
+// availabilityFor 计算单个端点会下发集合的可用 x/y。
+// base 为全局过滤链产物(调用方批量复用);名称标准化不影响计数,跳过。
+func (s *Server) availabilityFor(base []*subscription.Node, ep *store.Endpoint) endpointAvailability {
+	nodes := s.applyConditions(base, ep)
+	result := endpointAvailability{Total: len(nodes)}
+	for _, n := range nodes {
+		if n.Available {
+			result.Available++
+		}
+	}
+	return result
+}
