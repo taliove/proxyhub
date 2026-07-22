@@ -45,9 +45,10 @@
             <span>{{ row.enabled ? '启用' : '禁用' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="330">
+        <!-- 行内极简:只留「详情」(打开详情抽屉)+「刷新」;编辑/启停/删除/测试/二维码收敛进抽屉概况段 -->
+        <el-table-column label="操作" width="140">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openTestDialog(row)">测试</el-button>
+            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
             <el-button
               link
               type="primary"
@@ -55,12 +56,6 @@
               @click="refreshAirport(row)"
               >刷新</el-button
             >
-            <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
-            <el-button link @click="toggleAirport(row)">
-              {{ row.enabled ? '禁用' : '启用' }}
-            </el-button>
-            <el-button link type="primary" @click="showQRCode(row)">二维码</el-button>
-            <el-button link type="danger" @click="deleteAirport(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -98,6 +93,17 @@
       title="机场订阅二维码"
       hint="扫码导入该机场原始订阅(未经过 ProxyHub 聚合)"
     />
+    <AirportDetailDrawer
+      v-model="detailVisible"
+      :airport="detailAirport"
+      :refreshing="detailAirport ? refreshingIds.includes(detailAirport.id) : false"
+      @edit="openEditDialog"
+      @toggle="toggleAirport"
+      @delete="deleteAirport"
+      @refresh="refreshAirport"
+      @test="openTestDialog"
+      @qrcode="showQRCode"
+    />
     <AirportTestDialog v-model="testDialogVisible" :airport="testingAirport" />
   </div>
 </template>
@@ -116,6 +122,7 @@ import StatusDot from '@/components/StatusDot.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { getAirportQRContent } from './airport-utils'
 import AirportTestDialog from '@/components/AirportTestDialog.vue'
+import AirportDetailDrawer from '@/components/AirportDetailDrawer.vue'
 import { testTimeRelative, scoreDisplay, scoreTone, scoreToneLabel } from './airport-test-utils'
 
 const airports = ref<Airport[]>([])
@@ -134,6 +141,14 @@ const qrDialog = ref<InstanceType<typeof QRCodeDialog> | null>(null)
 // Test dialog state
 const testDialogVisible = ref(false)
 const testingAirport = ref<Airport | null>(null)
+
+// 详情抽屉状态:行内「详情」打开;抽屉内动作复用本页既有处理函数(事件上抛)。
+const detailVisible = ref(false)
+const detailAirport = ref<Airport | null>(null)
+const openDetail = (row: Airport) => {
+  detailAirport.value = row
+  detailVisible.value = true
+}
 
 // Debounced auto-suggestion: name input -> abbr suggestion
 const abbrRef = computed({
@@ -163,6 +178,11 @@ const loadAirports = async () => {
   loading.value = true
   airports.value = await client.get('/airports')
   loading.value = false
+  // 抽屉打开期间数据变更(启停/编辑/刷新)后,同步最新机场对象进抽屉
+  if (detailAirport.value) {
+    const fresh = airports.value.find((a) => a.id === detailAirport.value?.id)
+    if (fresh) detailAirport.value = fresh
+  }
 }
 
 const openAddDialog = () => {
@@ -286,6 +306,11 @@ const deleteAirport = async (row: Airport) => {
   await ElMessageBox.confirm('确定删除此机场？', '确认')
   await client.delete(`/airports/${row.id}`)
   ElMessage.success('已删除')
+  // 删除发生在抽屉内时,关闭抽屉(对象已不存在)
+  if (detailAirport.value?.id === row.id) {
+    detailVisible.value = false
+    detailAirport.value = null
+  }
   loadAirports()
 }
 

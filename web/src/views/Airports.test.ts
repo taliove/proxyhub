@@ -1,6 +1,25 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent, h, inject, provide, toRef, type Ref } from 'vue'
 import type { Airport } from '@/types'
 import { getAirportQRContent } from './airport-utils'
+import Airports from './Airports.vue'
+import client from '@/api/client'
+
+// Mock API client:列表页只读 /api/airports
+vi.mock('@/api/client', () => ({
+  default: {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn()
+  }
+}))
+vi.mock('@/api/jobs', () => ({ getJob: vi.fn() }))
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useRoute: () => ({ query: {} })
+}))
 
 describe('Airports QR Code', () => {
   describe('getAirportQRContent', () => {
@@ -31,5 +50,125 @@ describe('Airports QR Code', () => {
       const content = getAirportQRContent(airport)
       expect(content).toBe('https://another.example.com/sub/abc')
     })
+  })
+})
+
+// ---------- 行内按钮收敛(ticket 0036):只留「详情」+「刷新」,其余动作进详情抽屉 ----------
+
+const ElTableStub = defineComponent({
+  name: 'ElTable',
+  props: { data: { type: Array, default: () => [] } },
+  setup(props, { slots }) {
+    provide('rows', toRef(props, 'data'))
+    return () => h('div', { class: 'el-table-stub' }, slots.default?.())
+  }
+})
+const ElTableColumnStub = defineComponent({
+  name: 'ElTableColumn',
+  props: { label: { type: String, default: '' } },
+  setup(props, { slots }) {
+    const rows = inject<Ref<unknown[]>>('rows')!
+    return () =>
+      h('div', { class: 'el-column-stub', 'data-label': props.label }, [
+        h('div', { class: 'tc-label' }, props.label),
+        ...rows.value.map((row, i) =>
+          h('div', { class: 'tc-row', key: i }, slots.default?.({ row }))
+        )
+      ])
+  }
+})
+const ElButtonStub = defineComponent({
+  name: 'ElButton',
+  emits: ['click'],
+  setup(_, { slots, emit }) {
+    return () => h('button', { onClick: () => emit('click') }, slots.default?.())
+  }
+})
+const SimpleSlotStub = (name: string) =>
+  defineComponent({
+    name,
+    setup(_, { slots }) {
+      return () => h('div', { class: `${name}-stub` }, slots.default?.())
+    }
+  })
+// 对话框/抽屉类:关闭态不渲染内容(modelValue=false 时)
+const ModelStub = (name: string) =>
+  defineComponent({
+    name,
+    props: {
+      modelValue: { type: Boolean, default: false },
+      airport: { type: Object, default: null }
+    },
+    emits: ['update:modelValue'],
+    setup(props, { slots }) {
+      return () =>
+        props.modelValue ? h('div', { class: `${name}-stub` }, slots.default?.()) : null
+    }
+  })
+
+describe('Airports 行内操作收敛', () => {
+  const airport: Airport = {
+    id: 1,
+    name: '极速机场',
+    url: 'https://example.com/sub/token123',
+    abbr: 'JS',
+    enabled: true,
+    created_at: '2026-01-01T00:00:00Z'
+  }
+
+  const mountView = () => {
+    vi.mocked(client.get).mockImplementation(async (url: unknown) => {
+      if (url === '/airports') return [airport]
+      return {}
+    })
+    return mount(Airports, {
+      global: {
+        directives: { loading: {} },
+        stubs: {
+          PageHeader: SimpleSlotStub('PageHeader'),
+          StatusDot: SimpleSlotStub('StatusDot'),
+          QRCodeDialog: ModelStub('QRCodeDialog'),
+          AirportTestDialog: ModelStub('AirportTestDialog'),
+          AirportDetailDrawer: ModelStub('AirportDetailDrawer'),
+          'el-table': ElTableStub,
+          'el-table-column': ElTableColumnStub,
+          'el-button': ElButtonStub,
+          'el-tag': SimpleSlotStub('ElTag'),
+          'el-icon': SimpleSlotStub('ElIcon'),
+          'el-card': SimpleSlotStub('ElCard'),
+          'el-dialog': ModelStub('ElDialog'),
+          'el-form': SimpleSlotStub('ElForm'),
+          'el-form-item': SimpleSlotStub('ElFormItem'),
+          'el-input': SimpleSlotStub('ElInput')
+        }
+      }
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('行内只留「详情」「刷新」两个按钮', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const opsColumn = wrapper.find('.el-column-stub[data-label="操作"]')
+    expect(opsColumn.exists()).toBe(true)
+    const buttons = opsColumn.findAll('button').map((b) => b.text())
+    expect(buttons).toEqual(['详情', '刷新'])
+  })
+
+  it('点「详情」打开机场详情抽屉并传入当前机场', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const opsColumn = wrapper.find('.el-column-stub[data-label="操作"]')
+    const detailBtn = opsColumn.findAll('button').find((b) => b.text() === '详情')
+    await detailBtn!.trigger('click')
+
+    const drawer = wrapper.findComponent({ name: 'AirportDetailDrawer' })
+    expect(drawer.props('modelValue')).toBe(true)
+    expect(drawer.props('airport')).toEqual(airport)
   })
 })
