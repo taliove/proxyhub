@@ -256,6 +256,17 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 		progress(string(StatusScoring), 0, 0)
 	}
 
+	// 取消若落在评分窗口(CheckAll 返回后),收口口径与检活阶段一致:
+	// run 标 cancelled,不与 jobs 行的 cancelled 产生终态分歧(go-reviewer MEDIUM-1)
+	if ctx.Err() != nil {
+		run.Status = StatusCancelled
+		run.ErrorMessage = "cancelled"
+		if err := o.store.UpdateTestRun(pctx, run); err != nil {
+			return nil, fmt.Errorf("update cancelled run: %w", err)
+		}
+		return run, ctx.Err()
+	}
+
 	// 使用全部测试节点评分(不仅是样本,反映整体质量)
 	// CalculateScore 内部按 httpStatus 自动重归一权重
 	score, dims := CalculateScore(nodesToTest, diagResult.HTTPStatus, diagResult.ParseFailures, diagResult.NodeCount+diagResult.ParseFailures)

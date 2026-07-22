@@ -6,6 +6,9 @@ import type { TestRun } from '@/composables/useAirportTest'
 // JobStatus 任务生命周期状态(与后端 jobs.Status 对齐)。
 export type JobStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted'
 
+// 机场测试任务的 kind 名(与后端 airporttest.JobKindName 对齐,改名单点维护)
+export const JOB_KIND_AIRPORT_TEST = 'airport_test'
+
 // Job 通用任务信息(后端 JobInfo)。cursor 为游标进度(已完成数的字符串)。
 // params 为启动参数 JSON 串(含 node_keys/scope,用于生成可读范围标识)。
 export interface Job {

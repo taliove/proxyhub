@@ -99,7 +99,7 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { Airport } from '@/types'
-import { getJob, getJobResult, cancelJob, type JobStatus } from '@/api/jobs'
+import { getJob, getJobResult, cancelJob, JOB_KIND_AIRPORT_TEST, type JobStatus } from '@/api/jobs'
 import {
   runAirportTest,
   listTestRuns,
@@ -311,7 +311,7 @@ const onCancel = async () => {
   if (!currentJobKey.value) return
   cancelling.value = true
   try {
-    await cancelJob('airport_test', currentJobKey.value)
+    await cancelJob(JOB_KIND_AIRPORT_TEST, currentJobKey.value)
     ElMessage.success('已发送取消')
   } catch {
     // 409 = 任务已结束,轮询会纠正视图

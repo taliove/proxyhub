@@ -3,7 +3,6 @@ package airporttest
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -117,10 +116,8 @@ func (k *JobKind) Run(ctx context.Context, params json.RawMessage, _ string, _ f
 		reportProgress(progress, jobCursor{Phase: phase, Checked: checked, Total: total})
 	})
 	if err != nil {
-		// ctx 取消:run 行已被 RunTest 标 cancelled,jobs 行由运行时标 cancelled
-		if errors.Is(err, context.Canceled) {
-			return err
-		}
+		// ctx 取消:run 行已被 RunTest 标 cancelled,jobs 行由运行时标 cancelled;
+		// 错误原样上抛(含 context.Canceled),运行时据此收口
 		return err
 	}
 	// 编排内业务失败(池空+URL不通):run 行 failed,jobs 行同步 failed(任务中心口径一致)
