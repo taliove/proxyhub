@@ -1,5 +1,5 @@
 <template>
-  <!-- 订阅测试段(ADR 0027):即时诊断不落库,显式动作才发请求。
+  <!-- 订阅测试段(ADR 0028):即时诊断不落库,显式动作才发请求。
        拉取验证 = 内部生成链校验(不发真实 HTTP、不计 pull_logs);
        现场实测 = 抽样检活(可升级全量),run 只存内存,轮询 404 提示重跑。 -->
   <div class="test-section">
@@ -124,7 +124,7 @@ const snapshotLatencyText = computed(() => {
 })
 
 // 现场实测:POST 拿 run 句柄后轮询(1.5s),completed 后刷新拉取验证与池快照;
-// 轮询 404(run 重启丢失/过期)停止轮询并提示重跑(ADR 0027 决策 5)。
+// 轮询 404(run 重启丢失/过期)停止轮询并提示重跑(ADR 0028 决策 5)。
 const PROBE_POLL_INTERVAL_MS = 1500
 const probeRun = ref<ProbeRun | null>(null)
 const probeLost = ref(false)

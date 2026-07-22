@@ -19,7 +19,7 @@ const (
 // 完成/失败后保留一个 TTL 供前端轮询,随后清理。
 const endpointProbeRunTTL = 30 * time.Minute
 
-// endpointProbeRun 订阅现场实测的内存态 run(ADR 0027 决策 5:不落库,重启即弃)。
+// endpointProbeRun 订阅现场实测的内存态 run(ADR 0028 决策 5:不落库,重启即弃)。
 // 实例归属 probeRunRegistry,字段只在注册表锁内变更;外部一律持 snapshot 副本。
 type endpointProbeRun struct {
 	RunID      string `json:"run_id"`

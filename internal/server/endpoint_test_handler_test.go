@@ -116,7 +116,7 @@ func TestHandleEndpointTest_PullAndSnapshot(t *testing.T) {
 		t.Errorf("region_count = %d, want 2 (HK+JP)", resp.Snapshot.RegionCount)
 	}
 
-	// 拉取验证不记 pull_logs(ADR 0027 决策 1:统计只反映真实客户端拉取)
+	// 拉取验证不记 pull_logs(ADR 0028 决策 1:统计只反映真实客户端拉取)
 	stats, err := st.EndpointStats(ep.ID)
 	if err != nil {
 		t.Fatalf("EndpointStats: %v", err)
@@ -137,7 +137,7 @@ func TestHandleEndpointTest_NotFound(t *testing.T) {
 	}
 }
 
-// 禁用态可测(ADR 0027 决策 4):测"如果启用会下发什么",不被启停拦截。
+// 禁用态可测(ADR 0028 决策 4):测"如果启用会下发什么",不被启停拦截。
 func TestHandleEndpointTest_DisabledEndpoint(t *testing.T) {
 	srv, st := newEndpointTestServer(t, endpointTestPool())
 	h := srv.Handler()
@@ -351,7 +351,7 @@ func TestHandleEndpointTestProbe_FullFlagEchoed(t *testing.T) {
 	pollProbeRun(t, h, cookie, ep.ID, created.RunID)
 }
 
-// 禁用态实测(ADR 0027 决策 4):与拉取验证对称,不被启停拦截。
+// 禁用态实测(ADR 0028 决策 4):与拉取验证对称,不被启停拦截。
 func TestHandleEndpointTestProbe_DisabledEndpoint(t *testing.T) {
 	srv, st := newEndpointTestServer(t, endpointTestPool())
 	srv.probeChecker = stubProbeChecker{}

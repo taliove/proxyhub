@@ -1,6 +1,6 @@
 import client from '@/api/client'
 
-// 订阅测试(见 CONTEXT.md「订阅测试」与 ADR 0027):即时诊断,不落库;
+// 订阅测试(见 CONTEXT.md「订阅测试」与 ADR 0028):即时诊断,不落库;
 // 拉取验证走内部生成链不记 pull_logs,现场实测 run 只存内存(重启/过期即失,404 需容错)。
 
 // 单格式拉取验证结果(与后端 formatCheckResult 对齐)

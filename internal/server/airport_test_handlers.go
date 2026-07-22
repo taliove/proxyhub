@@ -31,7 +31,7 @@ func (s *Server) handleAirportTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 禁用机场可测(与订阅测试对称,ADR 0027 决策 4):测"如果启用会怎样",不被启停拦截。
+	// 禁用机场可测(与订阅测试对称,ADR 0028 决策 4):测"如果启用会怎样",不被启停拦截。
 
 	var body struct {
 		Full bool `json:"full"`

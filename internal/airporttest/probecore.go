@@ -28,7 +28,7 @@ type ProbeHooks struct {
 
 // ProbeCore is the persistence-free sampling + health-check + writeback
 // core shared by airport tests and endpoint (subscription) tests
-// (ADR 0027, decision 3). It knows nothing about AirportID, test-run
+// (ADR 0028, decision 3). It knows nothing about AirportID, test-run
 // persistence, scoring, or HTTP diagnostics.
 type ProbeCore struct {
 	checker HealthChecker

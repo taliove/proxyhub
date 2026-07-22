@@ -20,7 +20,7 @@ import (
 
 // endpointDeliverableNodes 计算该订阅地址"此刻会下发的节点集合":
 // 池 → 全局过滤链 → 端点条件 → 名称标准化,与 /sub 生成链同源(所见即所得)。
-// 拉取验证、池快照、现场实测、后台预览四处共用这一个选择逻辑(ADR 0027 决策 1)。
+// 拉取验证、池快照、现场实测、后台预览四处共用这一个选择逻辑(ADR 0028 决策 1)。
 func (s *Server) endpointDeliverableNodes(ep *store.Endpoint) []*subscription.Node {
 	nodes := s.filteredNodes(s.nodes.Nodes())
 	nodes = s.applyConditions(nodes, ep)
@@ -52,7 +52,7 @@ type endpointTestResponse struct {
 }
 
 // handleEndpointTest 订阅测试(拉取验证 + 池快照):走内部生成链,不发真实 HTTP、
-// 不记 pull_logs(ADR 0027 决策 1/2)。禁用态可测(决策 4),端点存在即可。
+// 不记 pull_logs(ADR 0028 决策 1/2)。禁用态可测(决策 4),端点存在即可。
 func (s *Server) handleEndpointTest(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -158,7 +158,7 @@ func snapshotDeliverable(nodes []*subscription.Node) poolSnapshotView {
 	return snap
 }
 
-// handleEndpointTestProbe 现场实测(ADR 0027 决策 3/5):立即返回 run 句柄,
+// handleEndpointTestProbe 现场实测(ADR 0028 决策 3/5):立即返回 run 句柄,
 // 后台 goroutine 用 ProbeCore 对会下发节点抽样(full=true 全量)检活并写回池;
 // run 状态只存内存,重启即弃。禁用态可测(决策 4)。
 func (s *Server) handleEndpointTestProbe(w http.ResponseWriter, r *http.Request) {

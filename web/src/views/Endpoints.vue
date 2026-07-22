@@ -40,7 +40,7 @@
             </el-tag>
           </template>
         </el-table-column>
-        <!-- 可用 x/y:池状态实时算(ADR 0027 决策 2),不依赖测试记录 -->
+        <!-- 可用 x/y:池状态实时算(ADR 0028 决策 2),不依赖测试记录 -->
         <el-table-column label="可用" width="80">
           <template #default="{ row }">
             <span v-if="row.availability" class="num">

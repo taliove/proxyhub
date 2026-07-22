@@ -209,7 +209,7 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 		return run, nil
 	}
 
-	// 阶段1+2:抽样 + 检活写回,委托给无持久化的抽样检活核心(ADR 0027 决策 3)。
+	// 阶段1+2:抽样 + 检活写回,委托给无持久化的抽样检活核心(ADR 0028 决策 3)。
 	// run 持久化由 hooks 驱动,保持原有的状态流转与进度落库时序。
 	run.Status = StatusChecking
 	if err := o.store.UpdateTestRun(pctx, run); err != nil {

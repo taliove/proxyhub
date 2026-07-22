@@ -75,7 +75,7 @@ type Server struct {
 	// airportTestJobs 机场测试任务运行时(kind=airport_test,issue 0025 迁入);
 	// 跨 kind 互斥经 airportTestCoordinator(aggregator 实现)协调。
 	airportTestJobs *jobs.Manager
-	// 订阅现场实测(ADR 0027):检活器与机场测试同源,run 状态只存内存。
+	// 订阅现场实测(ADR 0028):检活器与机场测试同源,run 状态只存内存。
 	// probeChecker 可在测试中替换为桩实现;写回池直接走 s.nodes(PoolWriter)。
 	probeChecker airporttest.HealthChecker
 	probeRuns    *probeRunRegistry
@@ -901,7 +901,7 @@ func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	// 可用性汇总加性附加(ADR 0027 决策 2):池在内存,全局过滤链只跑一遍,
+	// 可用性汇总加性附加(ADR 0028 决策 2):池在内存,全局过滤链只跑一遍,
 	// 各端点仅条件维度不同,逐个叠加计算。
 	base := s.filteredNodes(s.nodes.Nodes())
 	items := make([]endpointListItem, 0, len(eps))

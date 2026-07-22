@@ -10,7 +10,7 @@ export interface Endpoint {
   name_template: string
   // 节点范围筛选条件的原始 JSON(见 internal/subfilter.Conditions);''=不筛选=全量
   conditions: string
-  // 会下发集合的可用性汇总(列表接口加性附加,池状态实时算,见 ADR 0027 决策 2)
+  // 会下发集合的可用性汇总(列表接口加性附加,池状态实时算,见 ADR 0028 决策 2)
   availability?: { available: number; total: number }
 }
 

@@ -442,7 +442,7 @@ func TestHandleAirportTest_NotFound(t *testing.T) {
 	}
 }
 
-// 禁用机场可测(ADR 0027 决策 4 对齐:与订阅测试对称,测"如果启用会怎样")。
+// 禁用机场可测(ADR 0028 决策 4 对齐:与订阅测试对称,测"如果启用会怎样")。
 // URL 不可达 + 池空 → run 终态 failed,但 handler 不被启停拦截。
 func TestHandleAirportTest_Disabled(t *testing.T) {
 	srv, st := newTestServer(t, nil)
