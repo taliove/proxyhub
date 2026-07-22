@@ -410,6 +410,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/stats/global", s.requireAuth(s.handleGlobalStats))
 	mux.HandleFunc("GET /api/stats/trend", s.requireAuth(s.handlePullTrend))
 
+	// 本机实测（浏览器端测速,入站服务,与检测出站链路无关;ticket 0032）:
+	// 下行发流是带宽放大器,全部过 requireAuth,不挂公开面
+	mux.HandleFunc("GET /api/speedtest/ping", s.requireAuth(s.handleSpeedtestPing))
+	mux.HandleFunc("GET /api/speedtest/download", s.requireAuth(s.handleSpeedtestDownload))
+	mux.HandleFunc("POST /api/speedtest/upload", s.requireAuth(s.handleSpeedtestUpload))
+	mux.HandleFunc("POST /api/speedtest/results", s.requireAuth(s.handleSaveSpeedtestResult))
+	mux.HandleFunc("GET /api/speedtest/results", s.requireAuth(s.handleListSpeedtestResults))
+	mux.HandleFunc("DELETE /api/speedtest/results/{id}", s.requireAuth(s.handleDeleteSpeedtestResult))
+
 	// 订阅拉取端点（随机 Path + Token，公开访问）
 	mux.HandleFunc("GET /sub/{path}", s.handleSubscription)
 
