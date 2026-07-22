@@ -161,6 +161,13 @@ ep-theme.css    Element Plus 映射("EP 怎么穿这套衣服")
 
 共享组件 `components/Wordmark.vue`:等宽字体的 "ProxyHub" 文本 + 主色光标方块(0.55em × 1em,1.2s 步进闪烁;`prefers-reduced-motion` 下静止)。字号以 em 为基准,宿主用 `font-size` 覆盖即可等比缩放(光标随字号等比)。使用点:侧边栏顶部(默认 text-md)、登录页与 Setup 页(text-display-sm 28px)。
 
+### 图形标(BrandMark)与图标
+
+- **图形标**:共享组件 `components/BrandMark.vue`,内联 SVG(hub 辐条 + P 弧字形),渐变消费 `--ph-teal-*` 刻度,em 尺寸宿主可控。侧边栏顶部与 favicon 同源(favicon PNG 由同一图形渲染生成)。**禁止**再放与品牌色不一致的位图 logo。
+- **图标集**:布局 chrome(侧边栏导航、顶栏动作)一律用 **Tabler Icons**(`@tabler/icons-vue`,2px 描边);Element Plus 自带图标只留在页面内部语境。导航图标在 `Sidebar.vue` 的 `NAV_ICONS` 映射(route meta.icon 名 → Tabler 组件),新增页面在此登记。
+- **EP `el-icon` 盒子陷阱**(2026-07 三轮返工的教训):`.el-icon` 把容器钉死 `width/height: 1em`,全局 `box-sizing: border-box` 下任何 padding 都吃内容区——曾把顶栏图标实际渲染压到 6px,调 font-size 只让内容区更小。规则:**给 `el-icon` 加 padding 前必须同时 `width/height: auto`**;图标实际尺寸由 Tabler 的 `size` prop 或 font-size 控制,不要指望 padding。
+- **scoped 样式够不到子组件内部**:EP 在折叠态把菜单项内容包进 `.el-menu-tooltip__trigger`(ElMenuItem 模板内部),父组件 scoped 选择器匹配不到,居中/ padding 修正必须走 `:deep()`。判断口诀:改 EP 组件内部结构前,先想"这个元素是我的模板写的还是子组件模板写的",后者一律 `:deep()`。
+
 ## 页面模式
 
 后台页面只有两种标准模式:**列表页**与**详情**。新页面先归入其一,套对应骨架;所有内容页页首统一使用 PageHeader(见下)。
