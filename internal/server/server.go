@@ -957,8 +957,9 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		nodeTags = nil
 	}
 
-	// 查当前页节点最近体检的稳定性分(供前端稳定性分档筛选;降级为空不阻塞)
-	stabilityScores, err := s.st.LatestExamScores(pageKeys)
+	// 查当前页节点最近体检的稳定性分(完整体检口径:排除"出网+稳定性"任务的缺段报告;
+	// 降级为空不阻塞)
+	stabilityScores, err := s.st.LatestCompleteExamScores(pageKeys)
 	if err != nil {
 		s.logger.Warn("get exam scores failed", "error", err)
 		stabilityScores = nil
