@@ -112,6 +112,49 @@ func TestHandleNodeShareURI_PrefersRawLink(t *testing.T) {
 	}
 }
 
+// TestHandleNodeShareURI_RawLinkFragmentNormalized 验证 RawLink 回放时 fragment(备注)
+// 中的 + 被规范为 %20:+ 是 query 表单编码约定,fragment 只做 percent-decode,
+// Shadowrocket 等客户端会把 + 原样显示在备注里。除 fragment 外其余部分必须
+// 逐字节保真(ticket 56)。
+func TestHandleNodeShareURI_RawLinkFragmentNormalized(t *testing.T) {
+	rawLink := "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:8080/?plugin=simple-obfs%3Bobfs%3Dhttp%3Bobfs-host%3Dobfs.example.com#HK+%E9%A6%99%E6%B8%AF+01"
+	node := &subscription.Node{
+		Name:    "HK 香港 01",
+		Type:    "ss",
+		Server:  "example.com",
+		Port:    8080,
+		Cipher:  "aes-256-gcm",
+		Password: "password",
+		Source:  "test-source",
+		RawLink: rawLink,
+	}
+	s, _ := newTestServer(t, []*subscription.Node{node})
+
+	req := httptest.NewRequest("GET", "/api/nodes/"+node.NodeKey()+"/share-uri", nil)
+	req.SetPathValue("nodeKey", node.NodeKey())
+	rec := httptest.NewRecorder()
+	s.handleNodeShareURI(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var res map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&res); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	wantPrefix := "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:8080/?plugin=simple-obfs%3Bobfs%3Dhttp%3Bobfs-host%3Dobfs.example.com#"
+	if !strings.HasPrefix(res["uri"], wantPrefix) {
+		t.Errorf("uri body changed, want prefix %q, got %q", wantPrefix, res["uri"])
+	}
+	frag := res["uri"][len(wantPrefix):]
+	if strings.Contains(frag, "+") {
+		t.Errorf("fragment %q still contains +", frag)
+	}
+	if frag != "HK%20%E9%A6%99%E6%B8%AF%2001" {
+		t.Errorf("fragment = %q, want HK%%20...%%2001", frag)
+	}
+}
+
 // TestHandleNodeShareURI_FallsBackToGenerator 验证 RawLink 缺失时(如自建节点或
 // 本字段引入前解析的节点)端点回退到生成器生成分享 URI(ticket 56)。
 func TestHandleNodeShareURI_FallsBackToGenerator(t *testing.T) {

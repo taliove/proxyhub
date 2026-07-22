@@ -33,8 +33,12 @@ func (s *Server) handleNodeShareURI(w http.ResponseWriter, r *http.Request) {
 	// Prefer the original share URI preserved at subscription parse time (ticket 56):
 	// it carries airport-specific params the generator may drop. Fall back to the
 	// generator when absent (self-hosted nodes, or pool restored before this field existed).
+	// RawLink 回放时规范化 fragment:机场原文可能用 + 编码空格,Shadowrocket 等客户端
+	// 会原样显示 +(fragment 只做 percent-decode)。
 	uri := targetNode.RawLink
-	if uri == "" {
+	if uri != "" {
+		uri = generator.NormalizeShareURIFragment(uri)
+	} else {
 		var err error
 		uri, err = generator.GenerateShareURI(targetNode)
 		if err != nil {

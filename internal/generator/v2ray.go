@@ -89,6 +89,27 @@ func vmessLink(node *subscription.Node) (string, error) {
 	return "vmess://" + base64.StdEncoding.EncodeToString(data), nil
 }
 
+// escapeFragment 编码分享链接 #fragment(备注):空格必须是 %20 而非 +。
+// + 是 query 表单编码约定,fragment 只做 percent-decode,客户端会把 + 原样显示。
+func escapeFragment(s string) string {
+	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+}
+
+// NormalizeShareURIFragment 规范化已有分享链接的 fragment:+ 与 %20 统一解码后
+// 按 %20 重编码,其余部分(userinfo/host/query)逐字节保持原样。
+// 用于 RawLink 保真回放路径:机场原文的备注编码不一定是 fragment 安全的。
+func NormalizeShareURIFragment(uri string) string {
+	idx := strings.LastIndex(uri, "#")
+	if idx < 0 {
+		return uri
+	}
+	name, err := url.QueryUnescape(uri[idx+1:])
+	if err != nil {
+		return uri // 非法转义序列:保持原文,不破坏链接
+	}
+	return uri[:idx+1] + escapeFragment(name)
+}
+
 func vlessLink(node *subscription.Node) string {
 	params := url.Values{}
 	network := node.Network
@@ -100,12 +121,12 @@ func vlessLink(node *subscription.Node) string {
 		params.Set("security", "tls")
 	}
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
-		node.UUID, node.Server, node.Port, params.Encode(), url.QueryEscape(node.EffectiveName()))
+		node.UUID, node.Server, node.Port, params.Encode(), escapeFragment(node.EffectiveName()))
 }
 
 func trojanLink(node *subscription.Node) string {
 	return fmt.Sprintf("trojan://%s@%s:%d#%s",
-		node.Password, node.Server, node.Port, url.QueryEscape(node.EffectiveName()))
+		node.Password, node.Server, node.Port, escapeFragment(node.EffectiveName()))
 }
 
 // anytlsLink 还原 anytls 分享链接：anytls://password@server:port?sni=&insecure=1#name
@@ -122,7 +143,7 @@ func anytlsLink(node *subscription.Node) string {
 		suffix = "?" + enc
 	}
 	return fmt.Sprintf("anytls://%s@%s:%d%s#%s",
-		node.Password, node.Server, node.Port, suffix, url.QueryEscape(node.EffectiveName()))
+		node.Password, node.Server, node.Port, suffix, escapeFragment(node.EffectiveName()))
 }
 
 func ssLink(node *subscription.Node) string {
@@ -137,5 +158,5 @@ func ssLink(node *subscription.Node) string {
 		}
 		link += "/?plugin=" + url.QueryEscape(raw)
 	}
-	return link + "#" + url.QueryEscape(node.EffectiveName())
+	return link + "#" + escapeFragment(node.EffectiveName())
 }
