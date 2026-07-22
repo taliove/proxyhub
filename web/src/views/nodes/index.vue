@@ -1,110 +1,107 @@
 <template>
-  <el-card>
-    <template #header>
-      <div class="card-header">
-        <span>节点管理</span>
-        <div class="header-actions">
-          <span v-if="lastUpdate" class="muted">最后更新:{{ formatTime(lastUpdate) }}</span>
-          <el-button @click="openImport">一键导入</el-button>
-          <el-button type="primary" @click="openAddSelf">添加自建节点</el-button>
-          <NodeGlobalActions :detecting="detecting" @command="onGlobalCommand" />
-        </div>
-      </div>
-    </template>
+  <div>
+    <PageHeader>
+      <span v-if="lastUpdate" class="muted">最后更新:{{ formatTime(lastUpdate) }}</span>
+      <el-button @click="openImport">一键导入</el-button>
+      <el-button type="primary" @click="openAddSelf">添加自建节点</el-button>
+      <NodeGlobalActions :detecting="detecting" @command="onGlobalCommand" />
+    </PageHeader>
 
-    <NodeFilterBar
-      v-model:source="criteria.source"
-      v-model:region="criteria.region"
-      v-model:keyword="criteria.keyword"
-      v-model:type="criteria.type"
-      v-model:available="criteria.available"
-      v-model:blocked="criteria.blocked"
-      v-model:stale="criteria.stale"
-      v-model:tags="criteria.tags"
-      v-model:unlock="criteria.unlock"
-      v-model:stability-band="criteria.stabilityBand"
-      :regions="regions"
-      :sources="airportSources"
-      :tag-options="tagOptions"
-      :unlock-targets="unlockTargets"
-      :detecting="detecting"
-      @cancel-detect="cancelDetection"
-    />
+    <el-card>
+      <NodeFilterBar
+        v-model:source="criteria.source"
+        v-model:region="criteria.region"
+        v-model:keyword="criteria.keyword"
+        v-model:type="criteria.type"
+        v-model:available="criteria.available"
+        v-model:blocked="criteria.blocked"
+        v-model:stale="criteria.stale"
+        v-model:tags="criteria.tags"
+        v-model:unlock="criteria.unlock"
+        v-model:stability-band="criteria.stabilityBand"
+        :regions="regions"
+        :sources="airportSources"
+        :tag-options="tagOptions"
+        :unlock-targets="unlockTargets"
+        :detecting="detecting"
+        @cancel-detect="cancelDetection"
+      />
 
-    <NodeBatchBar
-      v-if="selection.length > 0"
-      :count="selection.length"
-      :blockable-count="selectableSelection.length"
-      :detecting="detecting"
-      :examining="examining"
-      :exam-completed="examCompleted"
-      :exam-total="examTotal"
-      @block="blockSelected"
-      @unblock="unblockSelected"
-      @detect="detectSelected"
-      @exam="examSelected"
-      @cancel-exam="cancelExam"
-      @refresh-names="refreshNamesSelected"
-    />
+      <NodeBatchBar
+        v-if="selection.length > 0"
+        :count="selection.length"
+        :blockable-count="selectableSelection.length"
+        :detecting="detecting"
+        :examining="examining"
+        :exam-completed="examCompleted"
+        :exam-total="examTotal"
+        @block="blockSelected"
+        @unblock="unblockSelected"
+        @detect="detectSelected"
+        @exam="examSelected"
+        @cancel-exam="cancelExam"
+        @refresh-names="refreshNamesSelected"
+      />
 
-    <NodeTable
-      :nodes="pagedNodes"
-      :loading="loading"
-      :testing="testing"
-      :page="pagination.page"
-      :page-size="pagination.pageSize"
-      :total="total"
-      :exam-summaries="examSummaries"
-      :running-exam-keys="runningExamKeys"
-      @selection-change="onSelectionChange"
-      @sort-change="onSortChange"
-      @page-change="setPage"
-      @size-change="setPageSize"
-      @view="openDetail"
-      @edit-override="openOverride"
-      @edit-self="openEditSelf"
-      @toggle-self="onToggleSelf"
-      @delete-self="onDeleteSelf"
-      @block="blockNode"
-      @unblock="unblockNode"
-      @refresh-name="refreshNameOne"
-      @test="runTest"
-      @copy-link="copyNodeShareLink"
-      @show-qr="showNodeQR"
-    />
+      <NodeTable
+        :nodes="pagedNodes"
+        :loading="loading"
+        :testing="testing"
+        :page="pagination.page"
+        :page-size="pagination.pageSize"
+        :total="total"
+        :exam-summaries="examSummaries"
+        :running-exam-keys="runningExamKeys"
+        @selection-change="onSelectionChange"
+        @sort-change="onSortChange"
+        @page-change="setPage"
+        @size-change="setPageSize"
+        @view="openDetail"
+        @edit-override="openOverride"
+        @edit-self="openEditSelf"
+        @toggle-self="onToggleSelf"
+        @delete-self="onDeleteSelf"
+        @block="blockNode"
+        @unblock="unblockNode"
+        @refresh-name="refreshNameOne"
+        @test="runTest"
+        @copy-link="copyNodeShareLink"
+        @show-qr="showNodeQR"
+      />
 
-    <NodeDetailDrawer
-      v-model="detailVisible"
-      :node="detailNode"
-      :detecting="detecting"
-      @detect="detectOne"
-      @exam="openExam"
-    />
-    <NodeOverrideDialog ref="overrideDialog" :regions="regions" @saved="reload" />
-    <SourceBlockDialog ref="sourceBlockDialog" :sources="airportSources" @done="reload" />
-    <CleanupDialog
-      ref="cleanupDialog"
-      :detecting="detecting"
-      :trigger-detection="triggerCleanupDetection"
-      @done="reload"
-    />
-    <SelfNodeFormDialog
-      v-model="selfDialogVisible"
-      v-model:form="selfForm"
-      :edit-mode="selfEditMode"
-      :submitting="selfSubmitting"
-      @submit="submitSelfForm"
-    />
-    <SelfNodeImportDialog v-model="importDialogVisible" @imported="onImported" />
-    <BandwidthTestDialog ref="bwDialog" />
-    <NodeExamDialog ref="examDialog" />
-    <QRCodeDialog
-      ref="qrDialog"
-      v-model="qrDialogVisible"
-      title="节点分享二维码"
-      hint="使用客户端扫码即可导入此节点"
-    />
-  </el-card>
+      <NodeDetailDrawer
+        v-model="detailVisible"
+        :node="detailNode"
+        :detecting="detecting"
+        @detect="detectOne"
+        @exam="openExam"
+      />
+      <NodeOverrideDialog ref="overrideDialog" :regions="regions" @saved="reload" />
+      <SourceBlockDialog ref="sourceBlockDialog" :sources="airportSources" @done="reload" />
+      <CleanupDialog
+        ref="cleanupDialog"
+        :detecting="detecting"
+        :trigger-detection="triggerCleanupDetection"
+        @done="reload"
+      />
+      <SelfNodeFormDialog
+        v-model="selfDialogVisible"
+        v-model:form="selfForm"
+        :edit-mode="selfEditMode"
+        :submitting="selfSubmitting"
+        @submit="submitSelfForm"
+      />
+      <SelfNodeImportDialog v-model="importDialogVisible" @imported="onImported" />
+      <BandwidthTestDialog ref="bwDialog" />
+      <NodeExamDialog ref="examDialog" />
+      <QRCodeDialog
+        ref="qrDialog"
+        v-model="qrDialogVisible"
+        title="节点分享二维码"
+        hint="使用客户端扫码即可导入此节点"
+      />
+    </el-card>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -113,6 +110,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useNodeTest } from '@/composables/useNodeTest'
 import BandwidthTestDialog from '@/components/BandwidthTestDialog.vue'
 import NodeExamDialog from '@/components/NodeExamDialog.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import NodeFilterBar from './components/NodeFilterBar.vue'
 import NodeGlobalActions from './components/NodeGlobalActions.vue'
@@ -382,17 +380,6 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ph-space-3);
-}
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--ph-space-2);
-}
 .muted {
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-sm);

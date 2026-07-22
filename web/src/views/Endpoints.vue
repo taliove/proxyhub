@@ -1,13 +1,10 @@
 <template>
   <div>
-    <el-card>
-      <template #header>
-        <div class="card-header">
-          <span>订阅地址管理</span>
-          <el-button type="primary" @click="dialogVisible = true">新建订阅地址</el-button>
-        </div>
-      </template>
+    <PageHeader>
+      <el-button type="primary" @click="dialogVisible = true">新建订阅地址</el-button>
+    </PageHeader>
 
+    <el-card>
       <el-table v-loading="loading" :data="endpoints" row-key="id">
         <el-table-column prop="alias" label="别名" />
         <el-table-column label="订阅 URL">
@@ -145,6 +142,7 @@ import { ArrowDown } from '@element-plus/icons-vue'
 import type { Endpoint } from '@/types'
 import client from '@/api/client'
 import IPStatsTable from '@/components/IPStatsTable.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
 import EndpointPreviewDialog from '@/components/EndpointPreviewDialog.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
@@ -261,11 +259,6 @@ onMounted(loadEndpoints)
 </script>
 
 <style scoped>
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
 .row-ops {
   display: inline-flex;
   align-items: center;

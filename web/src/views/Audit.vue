@@ -1,41 +1,38 @@
 <template>
   <div>
+    <PageHeader>
+      <div class="filter-bar">
+        <el-select
+          v-model="filterTypes"
+          multiple
+          collapse-tags
+          placeholder="事件类型"
+          class="ctl-types"
+          @change="reload"
+        >
+          <el-option label="登录成功" value="login_success" />
+          <el-option label="登录失败" value="login_failure" />
+          <el-option label="蜜罐封禁" value="honeypot_ban" />
+          <el-option label="阈值封禁" value="threshold_ban" />
+        </el-select>
+        <el-input
+          v-model="filterIP"
+          placeholder="按 IP 搜索"
+          class="ctl-ip"
+          clearable
+          @change="reload"
+        />
+        <el-select v-model="timeRange" class="ctl-range" @change="reload">
+          <el-option label="最近 24h" value="24h" />
+          <el-option label="最近 7 天" value="7d" />
+          <el-option label="最近 30 天" value="30d" />
+          <el-option label="全部" value="all" />
+        </el-select>
+      </div>
+    </PageHeader>
+
     <!-- 审计事件流水 -->
     <el-card>
-      <template #header>
-        <div class="card-header">
-          <span>安全审计</span>
-          <div class="filter-bar">
-            <el-select
-              v-model="filterTypes"
-              multiple
-              collapse-tags
-              placeholder="事件类型"
-              class="ctl-types"
-              @change="reload"
-            >
-              <el-option label="登录成功" value="login_success" />
-              <el-option label="登录失败" value="login_failure" />
-              <el-option label="蜜罐封禁" value="honeypot_ban" />
-              <el-option label="阈值封禁" value="threshold_ban" />
-            </el-select>
-            <el-input
-              v-model="filterIP"
-              placeholder="按 IP 搜索"
-              class="ctl-ip"
-              clearable
-              @change="reload"
-            />
-            <el-select v-model="timeRange" class="ctl-range" @change="reload">
-              <el-option label="最近 24h" value="24h" />
-              <el-option label="最近 7 天" value="7d" />
-              <el-option label="最近 30 天" value="30d" />
-              <el-option label="全部" value="all" />
-            </el-select>
-          </div>
-        </div>
-      </template>
-
       <el-table v-loading="loading" :data="events">
         <el-table-column label="时间" width="180">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
@@ -99,6 +96,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import client from '@/api/client'
+import PageHeader from '@/components/PageHeader.vue'
 
 interface AuditEvent {
   event_type: string

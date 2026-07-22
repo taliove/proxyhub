@@ -22,8 +22,6 @@
         <Navbar :collapsed="navCollapsed" @toggle="onToggle" />
       </el-header>
 
-      <TagsView />
-
       <el-main class="ph-main">
         <router-view v-slot="{ Component }">
           <transition name="ph-fade" mode="out-in">
@@ -40,7 +38,6 @@ import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useLayoutStore } from '@/stores/layout'
 import Sidebar from './components/Sidebar.vue'
 import Navbar from './components/Navbar.vue'
-import TagsView from './components/TagsView.vue'
 
 const layout = useLayoutStore()
 

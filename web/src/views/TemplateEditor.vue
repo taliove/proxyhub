@@ -1,33 +1,29 @@
 <template>
-  <el-card v-loading="loading">
-    <template #header>
-      <div class="header">
-        <div>
-          <span class="title">配置模板</span>
-          <span class="subtitle">
-            订阅生成的 Clash 配置骨架（hosts / dns / proxy-groups / rules）。 用
-            <code>{{ placeholder }}</code> 占位当前聚合的所有节点，生成订阅时自动展开。
-          </span>
-        </div>
-        <div class="actions">
-          <el-button :disabled="saving" @click="handleReset">恢复默认</el-button>
-          <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
-        </div>
-      </div>
-    </template>
+  <div>
+    <PageHeader>
+      <template #description>
+        订阅生成的 Clash 配置骨架（hosts / dns / proxy-groups / rules）。 用
+        <code class="desc-code">{{ placeholder }}</code>
+        占位当前聚合的所有节点，生成订阅时自动展开。
+      </template>
+      <el-button :disabled="saving" @click="handleReset">恢复默认</el-button>
+      <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
+    </PageHeader>
 
-    <el-alert
-      v-if="errorMsg"
-      class="editor-alert"
-      :title="errorMsg"
-      type="error"
-      show-icon
-      :closable="true"
-      @close="errorMsg = ''"
-    />
+    <el-card v-loading="loading">
+      <el-alert
+        v-if="errorMsg"
+        class="editor-alert"
+        :title="errorMsg"
+        type="error"
+        show-icon
+        :closable="true"
+        @close="errorMsg = ''"
+      />
 
-    <div ref="editorEl" class="editor"></div>
-  </el-card>
+      <div ref="editorEl" class="editor"></div>
+    </el-card>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -38,6 +34,7 @@ import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
+import PageHeader from '@/components/PageHeader.vue'
 import { useLayoutStore } from '@/stores/layout'
 
 const layout = useLayoutStore()
@@ -136,28 +133,10 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--ph-space-4);
-}
-.title {
-  font-size: var(--ph-text-md);
-  font-weight: 600;
-  margin-right: var(--ph-space-3);
-}
-.subtitle {
-  font-size: var(--ph-text-xs);
-  color: var(--ph-text-secondary);
-}
-.subtitle code {
+.desc-code {
   background: var(--ph-bg-hover);
   padding: 1px var(--ph-space-1);
   border-radius: var(--ph-radius-sm);
-}
-.actions {
-  flex-shrink: 0;
 }
 .editor-alert {
   margin-bottom: var(--ph-space-3);

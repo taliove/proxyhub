@@ -1,24 +1,19 @@
 <template>
   <div>
+    <PageHeader>
+      <span v-if="polling" class="muted">运行中,自动刷新</span>
+      <el-select v-model="sourceFilter" class="source-filter" size="small">
+        <el-option label="手动发起" value="手动" />
+        <el-option label="定时" value="定时" />
+        <el-option label="启动" value="启动" />
+        <el-option label="全部来源" value="" />
+      </el-select>
+      <el-button :loading="loading" @click="reload">刷新</el-button>
+    </PageHeader>
+
     <ScheduleCard />
 
     <el-card>
-      <template #header>
-        <div class="card-header">
-          <span>任务中心</span>
-          <div class="header-actions">
-            <span v-if="polling" class="muted">运行中,自动刷新</span>
-            <el-select v-model="sourceFilter" class="source-filter" size="small">
-              <el-option label="手动发起" value="手动" />
-              <el-option label="定时" value="定时" />
-              <el-option label="启动" value="启动" />
-              <el-option label="全部来源" value="" />
-            </el-select>
-            <el-button :loading="loading" @click="reload">刷新</el-button>
-          </div>
-        </div>
-      </template>
-
       <el-table v-loading="loading" :data="filteredJobs" @row-click="openDetail">
         <el-table-column label="任务" min-width="140">
           <template #default="{ row }">{{ kindLabel(row.kind) }}</template>
@@ -67,6 +62,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listJobs, cancelJob, type Job } from '@/api/jobs'
 import { kindLabel, statusMeta, isRunning, parseProgress, scopeLabel, jobTrigger } from './jobmeta'
+import PageHeader from '@/components/PageHeader.vue'
 import ScheduleCard from './ScheduleCard.vue'
 import JobDetailDialog from './JobDetailDialog.vue'
 
@@ -146,16 +142,6 @@ onUnmounted(stopPolling)
 </script>
 
 <style scoped>
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--ph-space-2);
-}
 .muted {
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-sm);

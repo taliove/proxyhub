@@ -5,7 +5,6 @@
         <Fold v-if="!collapsed" />
         <Expand v-else />
       </el-icon>
-      <Breadcrumb class="ph-navbar__breadcrumb" />
     </div>
 
     <div class="ph-navbar__right">
@@ -57,7 +56,6 @@ import {
 import { useLayoutStore } from '@/stores/layout'
 import { useAuthStore } from '@/stores/auth'
 import client from '@/api/client'
-import Breadcrumb from './Breadcrumb.vue'
 
 defineProps<{ collapsed: boolean }>()
 const emit = defineEmits<{ toggle: [] }>()

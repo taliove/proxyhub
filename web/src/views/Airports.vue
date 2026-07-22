@@ -1,18 +1,13 @@
 <template>
   <div>
-    <el-card>
-      <template #header>
-        <div class="card-header">
-          <span>机场管理</span>
-          <div class="header-actions">
-            <el-button type="success" :loading="refreshing" @click="refreshNodes">
-              <el-icon><Refresh /></el-icon> 立即刷新节点
-            </el-button>
-            <el-button type="primary" @click="openAddDialog">添加机场</el-button>
-          </div>
-        </div>
-      </template>
+    <PageHeader>
+      <el-button type="success" :loading="refreshing" @click="refreshNodes">
+        <el-icon><Refresh /></el-icon> 立即刷新节点
+      </el-button>
+      <el-button type="primary" @click="openAddDialog">添加机场</el-button>
+    </PageHeader>
 
+    <el-card>
       <el-table v-loading="loading" :data="airports">
         <el-table-column prop="name" label="名称" />
         <el-table-column label="简称" width="110">
@@ -115,6 +110,7 @@ import type { Airport } from '@/types'
 import client from '@/api/client'
 import { getJob } from '@/api/jobs'
 import { useDebouncedSuggest } from '@/composables/useDebouncedSuggest'
+import PageHeader from '@/components/PageHeader.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { getAirportQRContent } from './airport-utils'
 import AirportTestDialog from '@/components/AirportTestDialog.vue'
@@ -315,15 +311,6 @@ onMounted(loadAirports)
 </script>
 
 <style scoped>
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.header-actions {
-  display: flex;
-  gap: var(--ph-space-2);
-}
 .form-hint {
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-xs);

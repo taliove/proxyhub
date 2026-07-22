@@ -23,17 +23,10 @@ function writeBool(key: string, val: boolean): void {
   }
 }
 
-export interface RouteTag {
-  path: string
-  title: string
-  name: string
-}
-
 export const useLayoutStore = defineStore('layout', () => {
   const sidebarCollapsed = ref(readBool(LS_COLLAPSE, false))
   const isDark = ref(readBool(LS_DARK, false))
   const mobileDrawerOpen = ref(false)
-  const visitedTags = ref<RouteTag[]>([])
 
   function toggleSidebar(): void {
     sidebarCollapsed.value = !sidebarCollapsed.value
@@ -61,36 +54,13 @@ export const useLayoutStore = defineStore('layout', () => {
     applyDark(isDark.value)
   }
 
-  // 以下 tags 操作均返回新数组,遵循不可变更新
-  function addTag(tag: RouteTag): void {
-    if (visitedTags.value.some((t) => t.path === tag.path)) return
-    visitedTags.value = [...visitedTags.value, tag]
-  }
-
-  function removeTag(path: string): void {
-    visitedTags.value = visitedTags.value.filter((t) => t.path !== path)
-  }
-
-  function removeOtherTags(path: string): void {
-    visitedTags.value = visitedTags.value.filter((t) => t.path === path)
-  }
-
-  function clearTags(): void {
-    visitedTags.value = []
-  }
-
   return {
     sidebarCollapsed,
     isDark,
     mobileDrawerOpen,
-    visitedTags,
     toggleSidebar,
     setMobileDrawer,
     toggleDark,
-    initTheme,
-    addTag,
-    removeTag,
-    removeOtherTags,
-    clearTags
+    initTheme
   }
 })
