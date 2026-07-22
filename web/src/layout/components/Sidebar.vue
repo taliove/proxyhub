@@ -83,6 +83,11 @@ const sections = computed(() => getMenuSections(router))
   padding: 0;
 }
 
+/* 折叠态图形标收小一档,不顶满 rail */
+.is-collapsed .ph-logo__mark {
+  font-size: 26px;
+}
+
 .ph-menu {
   flex: 1;
   border-right: none;
@@ -118,6 +123,16 @@ const sections = computed(() => getMenuSections(router))
   margin: 4px 8px;
   border-radius: var(--ph-radius-sm);
   height: 44px;
+}
+
+/* 菜单图标:EP 各字形视觉大小不一,统一放大到 20px 让细线图标更有存在感 */
+.ph-menu .el-menu-item .el-icon {
+  font-size: 20px;
+}
+
+/* 折叠态:图标居中,去掉 EP 默认右间距 */
+.ph-menu.el-menu--collapse .el-menu-item .el-icon {
+  margin-right: 0;
 }
 
 .ph-menu .el-menu-item.is-active {
