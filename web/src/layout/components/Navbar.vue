@@ -106,6 +106,10 @@ async function onCommand(command: string): Promise<void> {
 
 .ph-navbar__toggle,
 .ph-navbar__action {
+  /* EP .el-icon 把盒子钉死 1em,border-box 下 padding 会吃掉内容区把图标挤没;
+     放开宽高让盒子 = 图标 + padding */
+  width: auto;
+  height: auto;
   font-size: 22px;
   cursor: pointer;
   color: var(--ph-text-regular);
@@ -118,6 +122,7 @@ async function onCommand(command: string): Promise<void> {
 
 /* 折叠/展开是导航主开关,视觉上要比其他动作重一档 */
 .ph-navbar__toggle {
+  font-size: 26px;
   color: var(--ph-text-primary);
 }
 
