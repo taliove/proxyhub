@@ -442,18 +442,23 @@ func TestHandleAirportTest_NotFound(t *testing.T) {
 	}
 }
 
+// 禁用机场可测(ADR 0027 决策 4 对齐:与订阅测试对称,测"如果启用会怎样")。
+// URL 不可达 + 池空 → run 终态 failed,但 handler 不被启停拦截。
 func TestHandleAirportTest_Disabled(t *testing.T) {
 	srv, st := newTestServer(t, nil)
-	airport, _ := st.CreateAirport("DisabledAirport", "https://example.com/sub")
+	airport, _ := st.CreateAirport("DisabledAirport", "http://localhost:1")
 	st.SetAirportEnabled(airport.ID, false)
+	replaceAirportTestRuntime(t, srv, st, noopHealthChecker{}, &fakePoolOps{})
 
-	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/airports/%d/test", airport.ID), nil)
-	req.SetPathValue("id", fmt.Sprintf("%d", airport.ID))
-	w := httptest.NewRecorder()
-	srv.handleAirportTest(w, req)
+	code, resp := postAirportTest(t, srv, airport.ID, "")
+	if code != http.StatusOK {
+		t.Fatalf("disabled airport must be testable, status = %d", code)
+	}
+	jobID := int64(resp["jobId"].(float64))
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", w.Code)
+	run := waitAirportTestRun(t, st, jobID)
+	if run.Status != "failed" {
+		t.Errorf("run status = %s, want failed (pool empty + URL unreachable)", run.Status)
 	}
 }
 
