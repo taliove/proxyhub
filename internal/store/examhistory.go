@@ -141,6 +141,58 @@ func (s *Store) LatestExamScores(nodeKeys []string) (map[string]int, error) {
 	return result, rows.Err()
 }
 
+// LatestExamReports 批量取多个节点最近一次体检记录,返回 map[nodeKey]entry。
+// 每节点只取最新一条(id 最大);无体检记录的节点不出现在结果中
+// (调用方按"缺省=未体检"处理,同 LatestExamScores 的空态约定)。
+// 与 LatestExamScores 的区别:本方法返回 report 本体(含无稳定性段的报告),
+// 供管理面聚合接口透传给前端算分,分数提取与否由调用方决定。
+func (s *Store) LatestExamReports(nodeKeys []string) (map[string]ExamHistoryEntry, error) {
+	result := make(map[string]ExamHistoryEntry)
+	if len(nodeKeys) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, len(nodeKeys))
+	args := make([]any, len(nodeKeys))
+	for i, k := range nodeKeys {
+		placeholders[i] = "?"
+		args[i] = k
+	}
+
+	// 子查询取每节点最大 id(=最近一条),外层回连取报告 JSON(同 LatestExamScores)。
+	in := joinPlaceholders(placeholders)
+	query := fmt.Sprintf(`
+		SELECT id, node_key, report_json, created_at FROM exam_history
+		WHERE id IN (
+			SELECT MAX(id) FROM exam_history
+			WHERE node_key IN (%s)
+			GROUP BY node_key
+		)`, in)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query latest exam reports: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			entry      ExamHistoryEntry
+			reportJSON string
+			createdStr string
+		)
+		if err := rows.Scan(&entry.ID, &entry.NodeKey, &reportJSON, &createdStr); err != nil {
+			return nil, fmt.Errorf("scan latest exam report: %w", err)
+		}
+		if err := json.Unmarshal([]byte(reportJSON), &entry.Report); err != nil {
+			return nil, fmt.Errorf("unmarshal exam report: %w", err)
+		}
+		entry.CreatedAt = parseTimeOrZero(&createdStr)
+		result[entry.NodeKey] = entry
+	}
+	return result, rows.Err()
+}
+
 // ListExamHistory 返回某节点体检历史(时间倒序);无记录返回空切片。
 func (s *Store) ListExamHistory(nodeKey string) ([]ExamHistoryEntry, error) {
 	rows, err := s.db.Query(`

@@ -388,8 +388,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/settings/template", s.requireAuth(s.handleSaveTemplate))
 	mux.HandleFunc("POST /api/settings/template/reset", s.requireAuth(s.handleResetTemplate))
 
-	// 仪表盘统计
+	// 仪表盘统计 + 优质节点聚合
 	mux.HandleFunc("GET /api/dashboard/stats", s.requireAuth(s.handleDashboardStats))
+	mux.HandleFunc("GET /api/dashboard/top-nodes", s.requireAuth(s.handleDashboardTopNodes))
 
 	// 安全审计（登录/封禁事件流水 + 当前封禁 IP 管理）
 	mux.HandleFunc("GET /api/audit/events", s.requireAuth(s.handleAuditEvents))
