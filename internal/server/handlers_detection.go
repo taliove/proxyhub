@@ -123,8 +123,8 @@ func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	// 支持三档：quick/real/bandwidth
-	if req.Mode != "quick" && req.Mode != "real" && req.Mode != "bandwidth" {
+	// 支持四档：quick/real/bandwidth/speedtest(快速测速:基准下行 + 保留上行)
+	if req.Mode != "quick" && req.Mode != "real" && req.Mode != "bandwidth" && req.Mode != "speedtest" {
 		req.Mode = "quick"
 	}
 
@@ -139,9 +139,9 @@ func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// bandwidth 模式超时更长
+	// bandwidth/speedtest 模式超时更长
 	timeout := 20 * time.Second
-	if req.Mode == "bandwidth" {
+	if req.Mode == "bandwidth" || req.Mode == "speedtest" {
 		timeout = 90 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
@@ -155,8 +155,9 @@ func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
 		// 不阻断响应，测试结果仍返回
 	}
 
-	// 写回内存池，前端列表无需等下次读库即可见到最新结果（自建节点未入池时返回 false，忽略）
-	s.nodes.UpdateNodeTestResult(node.NodeKey(), req.Mode, result.Available, result.Latency, result.DownMbps, result.UpMbps, result.FailReason, result.Error)
+	// 写回内存池，前端列表无需等下次读库即可见到最新结果（自建节点未入池时返回 false，忽略）。
+	// 用 result.Mode 而非 req.Mode:speedtest 档结果 Mode=bandwidth,写回走带宽字段分支。
+	s.nodes.UpdateNodeTestResult(node.NodeKey(), result.Mode, result.Available, result.Latency, result.DownMbps, result.UpMbps, result.FailReason, result.Error)
 
 	writeJSON(w, result)
 }
@@ -185,7 +186,9 @@ func (s *Server) resolveTestNode(selfNodeID int64, nodeKey string) *subscription
 }
 
 // handleTestNodeStream 单节点带宽测试流式端点(SSE):实时推送采样点,完成后推 done。
-// 只用于 bandwidth 模式(EventSource 只能 GET+query)。
+// 只用于带宽类模式(EventSource 只能 GET+query)。
+// mode=speedtest 时走快速测速档(基准端点 Cloudflare __down/__up,采样帧契约不变);
+// 缺省保持 legacy bandwidth 口径(双档并存,现有 UX 零破坏)。
 func (s *Server) handleTestNodeStream(w http.ResponseWriter, r *http.Request) {
 	if s.detectionService == nil {
 		http.Error(w, "detection service not initialized", http.StatusServiceUnavailable)
@@ -231,11 +234,18 @@ func (s *Server) handleTestNodeStream(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	// 流式测速,采样帧即时推送
+	// 流式测速,采样帧即时推送(双档:mode=speedtest 走基准端点,缺省 legacy)
 	ctx := r.Context()
-	result := s.detectionService.TestBandwidthStream(ctx, node, func(sample detection.Sample) {
-		emit("sample", sample)
-	})
+	var result detection.TestResult
+	if q.Get("mode") == "speedtest" {
+		result = s.detectionService.TestSpeedtestStream(ctx, node, func(sample detection.Sample) {
+			emit("sample", sample)
+		})
+	} else {
+		result = s.detectionService.TestBandwidthStream(ctx, node, func(sample detection.Sample) {
+			emit("sample", sample)
+		})
+	}
 
 	// 持久化(SaveTestResult + UpdateNodeTestResult,与现有 handleTestNode 一致)
 	if err := s.st.SaveTestResult(node.NodeKey(), node.Name, node.Source, result); err != nil {
@@ -509,6 +519,122 @@ func (s *Server) handleBatchExamCancel(w http.ResponseWriter, r *http.Request) {
 
 	if !s.batchExamJobs.Cancel(key) {
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": "no active batch exam"})
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "cancelled"})
+}
+
+// handleBatchSpeedtest 启动批量快速测速:对勾选节点逐个测基准下行(与体检基准行同口径)。
+// node_keys 为空则对全部节点测速。
+func (s *Server) handleBatchSpeedtest(w http.ResponseWriter, r *http.Request) {
+	if s.detectionService == nil || s.speedtestJobs == nil {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "detection service not initialized"})
+		return
+	}
+
+	var req struct {
+		NodeKeys []string `json:"node_keys"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+
+	// node_keys 为空时对全部节点测速
+	nodeKeys := req.NodeKeys
+	scope := "selected"
+	if len(nodeKeys) == 0 {
+		scope = "all"
+		for _, n := range s.nodes.Nodes() {
+			nodeKeys = append(nodeKeys, n.NodeKey())
+		}
+	}
+
+	// 收集活节点(含凭证)
+	var nodes []*subscription.Node
+	for _, nk := range nodeKeys {
+		for _, n := range s.nodes.Nodes() {
+			if n.NodeKey() == nk {
+				nodes = append(nodes, n)
+				break
+			}
+		}
+	}
+
+	key, err := s.speedtestJobs.Start(nodeKeys, nodes, scope)
+	if err != nil {
+		s.logger.Error("start batch speedtest failed", "error", err)
+		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, map[string]string{"status": "started", "key": key})
+}
+
+// handleBatchSpeedtestStream 订阅批量快速测速任务事件流(SSE):回放 + 直播。
+func (s *Server) handleBatchSpeedtestStream(w http.ResponseWriter, r *http.Request) {
+	if s.detectionService == nil || s.speedtestJobs == nil {
+		http.Error(w, "detection service not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	// 任务 key 固定为 "batch_speedtest"(全局单例)
+	key := "batch_speedtest"
+
+	sub, err := s.speedtestJobs.Subscribe(key)
+	if err != nil {
+		http.Error(w, "no active batch speedtest", http.StatusNotFound)
+		return
+	}
+	defer sub.Close()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	writeFrame := func(data []byte) {
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// 回放缓冲事件
+	for _, ev := range sub.Replay {
+		writeFrame(ev.Data)
+	}
+
+	// 转直播
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev, ok := <-sub.Live:
+			if !ok {
+				return
+			}
+			writeFrame(ev.Data)
+		}
+	}
+}
+
+// handleBatchSpeedtestCancel 取消批量快速测速任务。
+func (s *Server) handleBatchSpeedtestCancel(w http.ResponseWriter, r *http.Request) {
+	if s.detectionService == nil || s.speedtestJobs == nil {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "detection service not initialized"})
+		return
+	}
+
+	// 任务 key 固定为 "batch_speedtest"
+	key := "batch_speedtest"
+
+	if !s.speedtestJobs.Cancel(key) {
+		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": "no active batch speedtest"})
 		return
 	}
 
