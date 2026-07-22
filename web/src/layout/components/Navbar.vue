@@ -2,35 +2,35 @@
   <div class="ph-navbar">
     <div class="ph-navbar__left">
       <el-icon class="ph-navbar__toggle" @click="emit('toggle')">
-        <Fold v-if="!collapsed" />
-        <Expand v-else />
+        <IconLayoutSidebarLeftCollapse v-if="!collapsed" :size="22" />
+        <IconLayoutSidebarLeftExpand v-else :size="22" />
       </el-icon>
     </div>
 
     <div class="ph-navbar__right">
       <el-tooltip :content="isDark ? '切换亮色' : '切换暗色'" placement="bottom">
         <el-icon class="ph-navbar__action" @click="layout.toggleDark()">
-          <Moon v-if="!isDark" />
-          <Sunny v-else />
+          <IconMoon v-if="!isDark" :size="22" />
+          <IconSun v-else :size="22" />
         </el-icon>
       </el-tooltip>
 
       <el-tooltip content="全屏" placement="bottom">
         <el-icon class="ph-navbar__action" @click="toggleFullscreen">
-          <FullScreen />
+          <IconMaximize :size="22" />
         </el-icon>
       </el-tooltip>
 
       <el-dropdown @command="onCommand">
         <span class="ph-navbar__user">
-          <el-icon><User /></el-icon>
+          <el-icon><IconUser :size="18" /></el-icon>
           <span class="ph-navbar__username">{{ authStore.username }}</span>
-          <el-icon><ArrowDown /></el-icon>
+          <el-icon><IconChevronDown :size="16" /></el-icon>
         </span>
         <template #dropdown>
           <el-dropdown-menu>
             <el-dropdown-item command="logout">
-              <el-icon><SwitchButton /></el-icon> 退出登录
+              <el-icon><IconLogout :size="16" /></el-icon> 退出登录
             </el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -44,15 +44,15 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  Fold,
-  Expand,
-  Moon,
-  Sunny,
-  FullScreen,
-  User,
-  ArrowDown,
-  SwitchButton
-} from '@element-plus/icons-vue'
+  IconLayoutSidebarLeftCollapse,
+  IconLayoutSidebarLeftExpand,
+  IconMoon,
+  IconSun,
+  IconMaximize,
+  IconUser,
+  IconChevronDown,
+  IconLogout
+} from '@tabler/icons-vue'
 import { useLayoutStore } from '@/stores/layout'
 import { useAuthStore } from '@/stores/auth'
 import client from '@/api/client'

@@ -25,7 +25,7 @@
           :index="item.path"
           @click="emit('navigate')"
         >
-          <el-icon><component :is="item.icon" /></el-icon>
+          <el-icon><component :is="navIcon(item.icon)" :size="20" /></el-icon>
           <template #title>{{ item.title }}</template>
         </el-menu-item>
       </template>
@@ -36,9 +36,33 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import {
+  IconDashboard,
+  IconCloud,
+  IconCpu,
+  IconLink,
+  IconTemplate,
+  IconShieldCheck,
+  IconListCheck,
+  IconSettings,
+  IconMenu2
+} from '@tabler/icons-vue'
 import BrandMark from '@/components/BrandMark.vue'
 import Wordmark from '@/components/Wordmark.vue'
 import { getMenuSections } from '../nav'
+
+// 导航图标:route meta.icon 名(EP 旧名)→ Tabler 组件(2px 描边,存在感强一档)
+const NAV_ICONS: Record<string, unknown> = {
+  Monitor: IconDashboard,
+  Connection: IconCloud,
+  Cpu: IconCpu,
+  Link: IconLink,
+  Document: IconTemplate,
+  Warning: IconShieldCheck,
+  List: IconListCheck,
+  Setting: IconSettings
+}
+const navIcon = (name: string): unknown => NAV_ICONS[name] ?? IconMenu2
 
 defineProps<{ collapsed: boolean }>()
 const emit = defineEmits<{ navigate: [] }>()

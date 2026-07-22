@@ -17,6 +17,7 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.0",
     "@guolao/vue-monaco-editor": "^1.5.4",
+    "@tabler/icons-vue": "^3.45.0",
     "axios": "^1.6.0",
     "echarts": "^5.5.1",
     "element-plus": "^2.5.0",
