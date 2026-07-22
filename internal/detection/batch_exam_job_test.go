@@ -358,6 +358,204 @@ func TestBatchExamKind_Run_InvalidParams(t *testing.T) {
 	}
 }
 
+// TestNormalizeBatchExamMode covers default and validation of the batch exam mode.
+func TestNormalizeBatchExamMode(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"empty defaults to simplified", "", BatchExamModeSimplified, false},
+		{"explicit simplified", "simplified", BatchExamModeSimplified, false},
+		{"full", "full", BatchExamModeFull, false},
+		{"uppercase rejected", "FULL", "", true},
+		{"unknown rejected", "deep", "", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizeBatchExamMode(tc.in)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("normalizeBatchExamMode(%q) error = nil, want error", tc.in)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeBatchExamMode(%q) error = %v, want nil", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("normalizeBatchExamMode(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNewBatchExamParams_NormalizesMode verifies params always persist an explicit mode.
+func TestNewBatchExamParams_NormalizesMode(t *testing.T) {
+	p, err := newBatchExamParams([]string{"k1"}, "selected", "")
+	if err != nil {
+		t.Fatalf("newBatchExamParams empty mode error = %v, want nil", err)
+	}
+	if p.Mode != BatchExamModeSimplified {
+		t.Errorf("newBatchExamParams empty mode Mode = %q, want %q", p.Mode, BatchExamModeSimplified)
+	}
+
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	if !strings.Contains(string(raw), `"mode":"simplified"`) {
+		t.Errorf("marshaled params = %s, want explicit mode field", raw)
+	}
+
+	if _, err := newBatchExamParams([]string{"k1"}, "selected", "bogus"); err == nil {
+		t.Error("newBatchExamParams bogus mode error = nil, want error")
+	}
+}
+
+// TestBatchExamKind_Run_ModeFull_UsesFullRunner verifies mode=full selects the full runner.
+func TestBatchExamKind_Run_ModeFull_UsesFullRunner(t *testing.T) {
+	node := &subscription.Node{Name: "full-node", Type: "ss", Server: "example.com", Port: 443}
+
+	var simplifiedCalled, fullCalled bool
+	var completedReport ExamReport
+
+	k := &batchExamKind{
+		runSimplified: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			simplifiedCalled = true
+			return ExamReport{Stability: &StabilityMetrics{Total: 10, Succeeded: 10, Score: 100}}
+		},
+		runFull: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			fullCalled = true
+			return ExamReport{
+				Stability: &StabilityMetrics{Total: 10, Succeeded: 10, Score: 100},
+				Unlock:    &UnlockMetrics{},
+			}
+		},
+		onComplete: func(nodeKey string, report ExamReport) {
+			completedReport = report
+		},
+	}
+	k.nodes.Store(node.NodeKey(), node)
+
+	params, _ := json.Marshal(batchExamParams{NodeKeys: []string{node.NodeKey()}, Mode: BatchExamModeFull})
+	err := k.Run(context.Background(), params, "", func(data json.RawMessage) {}, func(cursor string) {})
+
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if simplifiedCalled {
+		t.Error("runSimplified was called in full mode, want not called")
+	}
+	if !fullCalled {
+		t.Error("runFull was not called in full mode")
+	}
+	if completedReport.Unlock == nil {
+		t.Errorf("onComplete report.Unlock = nil, want full report with unlock section")
+	}
+}
+
+// TestBatchExamKind_Run_LegacyParamsResume_KeepsSimplified verifies upgrade compatibility:
+// params persisted before the mode field existed must resume with the simplified runner.
+func TestBatchExamKind_Run_LegacyParamsResume_KeepsSimplified(t *testing.T) {
+	nodes := []*subscription.Node{
+		{Name: "node-1", Type: "ss", Server: "example.com", Port: 443},
+		{Name: "node-2", Type: "ss", Server: "example.com", Port: 8443},
+	}
+
+	var simplifiedRuns, fullRuns []string
+	k := &batchExamKind{
+		runSimplified: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			simplifiedRuns = append(simplifiedRuns, n.Name)
+			return ExamReport{Stability: &StabilityMetrics{Total: 10, Succeeded: 10, Score: 100}}
+		},
+		runFull: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			fullRuns = append(fullRuns, n.Name)
+			return ExamReport{Stability: &StabilityMetrics{Total: 10, Succeeded: 10, Score: 100}}
+		},
+		onComplete: func(nodeKey string, report ExamReport) {},
+	}
+
+	var nodeKeys []string
+	for _, n := range nodes {
+		k.nodes.Store(n.NodeKey(), n)
+		nodeKeys = append(nodeKeys, n.NodeKey())
+	}
+
+	// Legacy params: marshaled before the mode field existed (no "mode" key at all).
+	legacyParams, _ := json.Marshal(map[string]any{"node_keys": nodeKeys})
+
+	// Resume from cursor "1": only node-2 remains.
+	err := k.Run(context.Background(), legacyParams, "1", func(data json.RawMessage) {}, func(cursor string) {})
+
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if len(fullRuns) != 0 {
+		t.Errorf("runFull called for legacy params (%v), want simplified only", fullRuns)
+	}
+	if len(simplifiedRuns) != 1 || simplifiedRuns[0] != "node-2" {
+		t.Errorf("runSimplified runs = %v, want [node-2]", simplifiedRuns)
+	}
+}
+
+// TestBatchExamKind_Run_ModeUnknown_ReturnsError verifies unknown persisted mode fails fast.
+func TestBatchExamKind_Run_ModeUnknown_ReturnsError(t *testing.T) {
+	k := &batchExamKind{
+		runSimplified: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			t.Fatal("runSimplified should not be called for unknown mode")
+			return ExamReport{}
+		},
+	}
+
+	params, _ := json.Marshal(batchExamParams{NodeKeys: []string{"k"}, Mode: "bogus"})
+	err := k.Run(context.Background(), params, "", func(data json.RawMessage) {}, func(cursor string) {})
+
+	if err == nil {
+		t.Fatal("Run() error = nil, want error for unknown mode")
+	}
+	if !strings.Contains(err.Error(), "mode") {
+		t.Errorf("Run() error = %v, want mode error", err)
+	}
+}
+
+// TestBatchExamKind_Run_ModeFull_MissingFullRunner_ReturnsError verifies full mode without
+// a configured full runner fails fast instead of silently degrading.
+func TestBatchExamKind_Run_ModeFull_MissingFullRunner_ReturnsError(t *testing.T) {
+	k := &batchExamKind{
+		runSimplified: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			t.Fatal("runSimplified should not be called when full mode requested")
+			return ExamReport{}
+		},
+	}
+
+	params, _ := json.Marshal(batchExamParams{NodeKeys: []string{"k"}, Mode: BatchExamModeFull})
+	err := k.Run(context.Background(), params, "", func(data json.RawMessage) {}, func(cursor string) {})
+
+	if err == nil {
+		t.Fatal("Run() error = nil, want error for missing full runner")
+	}
+}
+
+// TestBatchExamJobManager_Start_InvalidMode verifies Start rejects unknown modes.
+func TestBatchExamJobManager_Start_InvalidMode(t *testing.T) {
+	mgr := NewBatchExamJobManager(
+		func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			return ExamReport{}
+		},
+		func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			return ExamReport{}
+		},
+		nil,
+	)
+
+	if _, err := mgr.Start([]string{"k"}, nil, "selected", "bogus"); err == nil {
+		t.Error("Start() error = nil, want error for invalid mode")
+	}
+}
+
 // TestBatchExamKind_CancelEvent verifies cancel event generation.
 func TestBatchExamKind_CancelEvent(t *testing.T) {
 	k := &batchExamKind{}

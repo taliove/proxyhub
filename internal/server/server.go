@@ -106,6 +106,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		// 每节点完成回调复用 onExamComplete(落历史 + 触发标签重算)。
 		s.batchExamJobs = detection.NewBatchExamJobManager(
 			detectionService.ExamStreamSimplified,
+			detectionService.ExamStream,
 			s.onExamComplete,
 			detection.WithBatchExamJobStore(st.Jobs()),
 			detection.WithBatchExamErrorHandler(func(err error) {

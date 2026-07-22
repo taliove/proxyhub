@@ -409,9 +409,16 @@ func (s *Server) handleBatchExam(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		NodeKeys []string `json:"node_keys"`
+		Mode     string   `json:"mode"` // simplified(默认)| full(完整四段)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+
+	// mode 校验:空按 simplified(老客户端不变);未知值 400,不静默降级。
+	if req.Mode != "" && req.Mode != detection.BatchExamModeSimplified && req.Mode != detection.BatchExamModeFull {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid mode: want simplified or full"})
 		return
 	}
 
@@ -436,7 +443,7 @@ func (s *Server) handleBatchExam(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	key, err := s.batchExamJobs.Start(nodeKeys, nodes, scope)
+	key, err := s.batchExamJobs.Start(nodeKeys, nodes, scope, req.Mode)
 	if err != nil {
 		s.logger.Error("start batch exam failed", "error", err)
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": err.Error()})
