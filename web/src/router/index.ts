@@ -22,37 +22,36 @@ const routes: RouteRecordRaw[] = [
         path: '',
         name: 'Dashboard',
         component: () => import('@/views/dashboard/index.vue'),
-        meta: { title: '仪表盘', icon: 'Monitor' }
+        meta: { title: '仪表盘', icon: 'Monitor', group: 'overview' }
       },
       {
         path: 'airports',
         name: 'Airports',
         component: () => import('@/views/Airports.vue'),
-        meta: { title: '机场管理', icon: 'Connection' }
+        meta: { title: '机场管理', icon: 'Connection', group: 'resources' }
       },
       {
         path: 'nodes',
         name: 'Nodes',
         component: () => import('@/views/nodes/index.vue'),
-        meta: { title: '节点管理', icon: 'Cpu' }
+        meta: { title: '节点管理', icon: 'Cpu', group: 'resources' }
       },
       {
         path: 'endpoints',
         name: 'Endpoints',
         component: () => import('@/views/Endpoints.vue'),
-        meta: { title: '我的订阅', icon: 'Link' }
+        meta: { title: '我的订阅', icon: 'Link', group: 'resources' }
       },
       {
         path: 'template',
         name: 'Template',
         component: () => import('@/views/TemplateEditor.vue'),
-        meta: { title: '订阅模板', icon: 'Document' }
+        meta: { title: '订阅模板', icon: 'Document', group: 'config' }
       },
       {
+        // 独立流量统计入口已撤(ticket 0010):统计图表并入仪表盘,旧链接重定向
         path: 'stats',
-        name: 'Stats',
-        component: () => import('@/views/Stats.vue'),
-        meta: { title: '流量统计', icon: 'TrendCharts', divider: true }
+        redirect: '/'
       },
       {
         // 独立刷新日志入口已撤(ticket 05):刷新历史并入任务中心,旧链接重定向
@@ -63,19 +62,19 @@ const routes: RouteRecordRaw[] = [
         path: 'audit',
         name: 'Audit',
         component: () => import('@/views/Audit.vue'),
-        meta: { title: '安全审计', icon: 'Warning' }
+        meta: { title: '安全审计', icon: 'Warning', group: 'config' }
       },
       {
         path: 'jobs',
         name: 'Jobs',
         component: () => import('@/views/jobs/index.vue'),
-        meta: { title: '任务中心', icon: 'List' }
+        meta: { title: '任务中心', icon: 'List', group: 'config' }
       },
       {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/Settings.vue'),
-        meta: { title: '系统设置', icon: 'Setting', divider: true }
+        meta: { title: '系统设置', icon: 'Setting', group: 'config' }
       }
     ]
   },
