@@ -106,7 +106,7 @@ async function onCommand(command: string): Promise<void> {
 
 .ph-navbar__toggle,
 .ph-navbar__action {
-  font-size: 18px;
+  font-size: 20px;
   cursor: pointer;
   color: var(--ph-text-regular);
   padding: 6px;

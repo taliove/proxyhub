@@ -1,7 +1,7 @@
 <template>
   <div class="ph-sidebar" :class="{ 'is-collapsed': collapsed }">
     <div class="ph-logo">
-      <img class="ph-logo__mark" src="/proxyhub-icon.png" alt="" />
+      <BrandMark class="ph-logo__mark" />
       <!-- 折叠态优雅降级:隐藏字标,仅留图标 -->
       <Wordmark v-if="!collapsed" class="ph-logo__wordmark" />
     </div>
@@ -36,6 +36,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import BrandMark from '@/components/BrandMark.vue'
 import Wordmark from '@/components/Wordmark.vue'
 import { getMenuSections } from '../nav'
 
@@ -73,10 +74,8 @@ const sections = computed(() => getMenuSections(router))
 }
 
 .ph-logo__mark {
-  width: 30px;
-  height: 30px;
+  font-size: 30px;
   flex: none;
-  object-fit: contain;
 }
 
 .is-collapsed .ph-logo {
