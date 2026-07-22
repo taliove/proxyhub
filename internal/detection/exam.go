@@ -48,8 +48,16 @@ func (c ExamConfig) stabilitySampleCount() int {
 	return n
 }
 
+// ExamSourceStabilityCheck 体检报告来源标记:"出网+稳定性"检查任务(只有出网+稳定性两段,
+// 无多地域测速/解锁)。完整体检与历史记录无 source 字段(空串),落 exam_history 时借此区分;
+// "最近体检"消费方(节点列表分/时间线/总分)只认完整体检口径,过滤掉该来源的缺段报告。
+const ExamSourceStabilityCheck = "stability_check"
+
 // ExamReport 体检报告。出网信息段 + 稳定性段 + 多地域测速段 + 解锁段。
+// Source 为来源标记:空串 = 完整体检口径(含精简批量体检);ExamSourceStabilityCheck =
+// "出网+稳定性"检查的缺段报告。
 type ExamReport struct {
+	Source      string              `json:"source,omitempty"`
 	Stability   *StabilityMetrics   `json:"stability,omitempty"`
 	RegionSpeed *RegionSpeedMetrics `json:"region_speed,omitempty"`
 	Unlock      *UnlockMetrics      `json:"unlock,omitempty"`

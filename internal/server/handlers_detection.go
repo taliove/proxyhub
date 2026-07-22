@@ -368,14 +368,15 @@ func (s *Server) resolveExamNodeKey(r *http.Request) string {
 	return ""
 }
 
-// handleGetExamLatest 查询某节点最近一次深度体检报告。无历史返回 JSON null(200),不报错。
+// handleGetExamLatest 查询某节点最近一次深度体检报告(完整体检口径:排除"出网+稳定性"
+// 任务的缺段报告)。无历史返回 JSON null(200),不报错。
 func (s *Server) handleGetExamLatest(w http.ResponseWriter, r *http.Request) {
 	nodeKey := s.resolveExamNodeKey(r)
 	if nodeKey == "" {
 		http.Error(w, "missing node_key or self_node_id", http.StatusBadRequest)
 		return
 	}
-	entry, err := s.st.LatestExamHistory(nodeKey)
+	entry, err := s.st.LatestCompleteExamHistory(nodeKey)
 	if err != nil {
 		s.logger.Error("get latest exam history failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -384,14 +385,15 @@ func (s *Server) handleGetExamLatest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, entry) // entry 可能为 nil -> null,前端据此判定"暂无体检"
 }
 
-// handleGetExamHistory 查询某节点深度体检历史(时间倒序)。无历史返回空数组(200),不报错。
+// handleGetExamHistory 查询某节点深度体检历史(时间倒序,完整体检口径:排除"出网+稳定性"
+// 任务的缺段报告)。无历史返回空数组(200),不报错。
 func (s *Server) handleGetExamHistory(w http.ResponseWriter, r *http.Request) {
 	nodeKey := s.resolveExamNodeKey(r)
 	if nodeKey == "" {
 		http.Error(w, "missing node_key or self_node_id", http.StatusBadRequest)
 		return
 	}
-	list, err := s.st.ListExamHistory(nodeKey)
+	list, err := s.st.ListCompleteExamHistory(nodeKey)
 	if err != nil {
 		s.logger.Error("list exam history failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

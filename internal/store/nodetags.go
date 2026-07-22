@@ -105,7 +105,8 @@ func (s *Store) RecomputeNodeTags(nodeKey string) error {
 		unlocks = append(unlocks, nodetag.UnlockResult{Kind: kind, Level: v.Level})
 	}
 
-	// 3. 最近一次体检报告(无则 nil)。
+	// 3. 最近体检报告(任意来源):"出网+稳定性"任务的新鲜评分/出网画像同样参与派生,
+	// stable-* 与 region 等标签取最新数据。
 	var report *detection.ExamReport
 	entry, err := s.LatestExamHistory(nodeKey)
 	if err != nil {
@@ -115,6 +116,33 @@ func (s *Store) RecomputeNodeTags(nodeKey string) error {
 		report = &entry.Report
 	}
 
-	// 4. 派生并全量替换。
+	// 4. 区域测速段只认完整体检口径(排除 source=stability_check 的缺段报告):
+	// 新鲜报告缺基准行时从最近完整体检回填,防止重算误撤 fast 标签。
+	if report == nil || report.RegionSpeed == nil {
+		complete, err := s.LatestCompleteExamHistory(nodeKey)
+		if err != nil {
+			return fmt.Errorf("latest complete exam history: %w", err)
+		}
+		if complete != nil {
+			report = mergeExamReportForDerive(report, &complete.Report)
+		}
+	}
+
+	// 5. 派生并全量替换。
 	return s.ReplaceNodeTags(nodeKey, nodetag.Derive(unlocks, report))
+}
+
+// mergeExamReportForDerive 组合派生输入(不可变:返回新对象,不改入参):
+// 稳定性/出网段取新鲜报告(任意来源),区域测速段在新鲜报告缺失时回填完整体检口径的
+// 基准行——缺段报告(出网+稳定性任务)不含基准行,直接派生会把既有 fast 标签误撤。
+func mergeExamReportForDerive(fresh, complete *detection.ExamReport) *detection.ExamReport {
+	if fresh == nil {
+		return complete
+	}
+	if fresh.RegionSpeed != nil || complete == nil {
+		return fresh
+	}
+	merged := *fresh
+	merged.RegionSpeed = complete.RegionSpeed
+	return &merged
 }

@@ -178,3 +178,9 @@ func (ds *DetectionService) ExamStream(ctx context.Context, node *subscription.N
 func (ds *DetectionService) ExamStreamSimplified(ctx context.Context, node *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
 	return ds.detector.ExamStreamSimplified(ctx, node, emit)
 }
+
+// ExamStreamEgressStability 单节点"出网+稳定性"检查流式版本:出网画像 + 稳定性评分,
+// 不含解锁目标、不测速;报告带 source=stability_check 来源标记。
+func (ds *DetectionService) ExamStreamEgressStability(ctx context.Context, node *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
+	return ds.detector.ExamStreamEgressStability(ctx, node, emit)
+}
