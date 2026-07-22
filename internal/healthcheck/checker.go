@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -26,6 +27,15 @@ type Checker struct {
 	requestTimeout time.Duration
 	testURL        string
 	concurrent     int
+
+	// directEgressConfig 返回直连出口配置(nil = 不启用,保持系统拨号)。
+	// 用函数注入:每次检查实时读取(settings 热改无需重启),且线程安全。
+	// 与 detection.Detector 的 provider 模式一致(ticket 0019/0020)。
+	directEgressConfig func() detection.DirectEgressConfig
+
+	// directDialerCache 按配置记忆化直连拨号器(配置相同复用,变才重建;
+	// 并发安全,与 detection.Detector 共用同一实现)。
+	directDialerCache detection.DirectDialerCache
 }
 
 // NewChecker 创建健康检查器
@@ -36,6 +46,52 @@ func NewChecker(latencyTimeout, requestTimeout time.Duration, testURL string, co
 		testURL:        testURL,
 		concurrent:     concurrent,
 	}
+}
+
+// SetDirectEgressConfigProvider 注入直连出口配置提供函数(每次检查调用,返回实时配置)。
+// 未注入或开关关 = 健康检查保持系统拨号(现状行为)。
+func (c *Checker) SetDirectEgressConfigProvider(provider func() detection.DirectEgressConfig) {
+	c.directEgressConfig = provider
+}
+
+// directDialer 按当前设置取直连拨号器;未注入 provider 或开关关返回 (nil, nil)。
+// 拨号器按配置记忆化(见 detection.DirectDialerCache);装配失败(网卡识别/绑定/
+// DoH 端点校验)严格报错,绝不静默退化为系统拨号(0019 严格模式)。
+func (c *Checker) directDialer() (*detection.DirectDialer, error) {
+	if c.directEgressConfig == nil {
+		return nil, nil
+	}
+	cfg := c.directEgressConfig()
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	return c.directDialerCache.Get(cfg)
+}
+
+// dialTCP 建立一次 TCP 连接并立即关闭(连通性探测)。
+// 直连出口开启时经直连拨号器(DoH 解析 + 绑物理网卡,TUN 共存下不对假 IP 假通);
+// 否则用系统 dialer(现状行为)。拨号器装配/拨号错误原样上抛。
+func (c *Checker) dialTCP(ctx context.Context, addr string) error {
+	direct, err := c.directDialer()
+	if err != nil {
+		return err // 严格:装配失败直接报错,不静默退化
+	}
+	if direct != nil {
+		conn, err := direct.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return err
+		}
+		conn.Close()
+		return nil
+	}
+
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
 }
 
 // CheckAll 并发检查所有节点
@@ -89,12 +145,9 @@ func (c *Checker) measureLatency(ctx context.Context, node *subscription.Node) (
 	addr := fmt.Sprintf("%s:%d", node.Server, node.Port)
 	start := time.Now()
 
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
+	if err := c.dialTCP(ctx, addr); err != nil {
 		return 0, err
 	}
-	conn.Close()
 
 	elapsed := time.Since(start)
 	latency := int(elapsed.Milliseconds())
@@ -116,14 +169,7 @@ func (c *Checker) testRealRequest(ctx context.Context, node *subscription.Node) 
 	defer cancel()
 
 	addr := fmt.Sprintf("%s:%d", node.Server, node.Port)
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return err
-	}
-	conn.Close()
-
-	return nil
+	return c.dialTCP(ctx, addr)
 }
 
 // testRealRequestViaHTTP 通过 HTTP 代理测试（仅支持 HTTP/SOCKS5 代理）

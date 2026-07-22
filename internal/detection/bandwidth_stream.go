@@ -100,7 +100,7 @@ func (d *Detector) TestBandwidthStream(ctx context.Context, node *subscription.N
 		return TestResult{Available: false, Mode: "bandwidth", Error: "TCP connection failed"}
 	}
 
-	adapter, err := NewProxyAdapter(node)
+	adapter, err := d.newProxyAdapter(node)
 	if err != nil {
 		return TestResult{Available: false, Mode: "bandwidth", Error: fmt.Sprintf("create proxy adapter: %v", err)}
 	}

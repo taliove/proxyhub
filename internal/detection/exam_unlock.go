@@ -117,7 +117,7 @@ func newUnlockProbe(client *http.Client, node *subscription.Node) UnlockProbe {
 // defaultUnlockProbe 生产探测器:从 node 建一条 mihomo 会话(整段 6 个判定复用该 client 连接池),
 // 判定经注册表分发。与稳定性/多地域段同构:每场体检独立会话,测试可注入假探测器绕过真实网络。
 func (d *Detector) defaultUnlockProbe(node *subscription.Node) (UnlockProbe, error) {
-	adapter, err := NewProxyAdapter(node)
+	adapter, err := d.newProxyAdapter(node)
 	if err != nil {
 		return nil, err
 	}

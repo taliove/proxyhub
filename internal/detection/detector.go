@@ -26,6 +26,14 @@ type Detector struct {
 	// examConfig 返回深度体检配置(nil 时用默认值),注入方式同 bandwidthConfig。
 	examConfig func() ExamConfig
 
+	// directEgressConfig 返回直连出口配置(nil = 不启用,保持系统拨号)。
+	// 用函数注入:每次检测实时读取(settings 热改无需重启),且线程安全。
+	directEgressConfig func() DirectEgressConfig
+
+	// directDialerCache 按配置记忆化直连拨号器(配置相同复用,变才重建;
+	// 并发安全)。避免每次检测都 net.Interfaces + probe + 新建 DoH transport。
+	directDialerCache DirectDialerCache
+
 	// stabilityProbeFactory 为一次体检构造稳定性探测器(默认经 mihomo 会话请求 generate_204)。
 	// 用工厂而非固定实现:每场体检独立会话,且测试可注入假探测器(不触真实网络)。
 	stabilityProbeFactory func(*subscription.Node) (StabilityProbe, error)
@@ -94,6 +102,39 @@ func (d *Detector) SetBandwidthConfigProvider(provider func() BandwidthConfig) {
 // SetExamConfigProvider 注入体检配置提供函数(每场体检调用,返回实时配置)
 func (d *Detector) SetExamConfigProvider(provider func() ExamConfig) {
 	d.examConfig = provider
+}
+
+// SetDirectEgressConfigProvider 注入直连出口配置提供函数(每次检测调用,返回实时配置)。
+// 未注入或开关关 = 检测链路保持系统拨号(现状行为)。
+func (d *Detector) SetDirectEgressConfigProvider(provider func() DirectEgressConfig) {
+	d.directEgressConfig = provider
+}
+
+// directDialer 按当前设置取直连拨号器;未注入 provider 或开关关返回 (nil, nil)。
+// 拨号器按配置记忆化(见 DirectDialerCache);装配失败(网卡识别/绑定/DoH 端点校验)
+// 严格报错,绝不静默退化为系统拨号。
+func (d *Detector) directDialer() (*DirectDialer, error) {
+	if d.directEgressConfig == nil {
+		return nil, nil
+	}
+	cfg := d.directEgressConfig()
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	return d.directDialerCache.Get(cfg)
+}
+
+// newProxyAdapter 构造 mihomo adapter:直连出口开启时注入直连拨号器
+// (覆盖各协议 outbound 到节点服务器的全部连接),否则保持系统拨号。
+func (d *Detector) newProxyAdapter(node *subscription.Node) (*ProxyAdapter, error) {
+	dialer, err := d.directDialer()
+	if err != nil {
+		return nil, err
+	}
+	if dialer == nil {
+		return buildProxyAdapter(node, nil)
+	}
+	return buildProxyAdapter(node, dialer)
 }
 
 // SetStabilityProbeFactory 覆盖稳定性探测器工厂(测试用:注入假探测器绕过真实网络)。
@@ -180,7 +221,7 @@ func (d *Detector) detectNode(ctx context.Context, node *subscription.Node, targ
 	}
 
 	// 构造 mihomo adapter(任务内复用)
-	proxyAdapter, err := NewProxyAdapter(node)
+	proxyAdapter, err := d.newProxyAdapter(node)
 	if err != nil {
 		// adapter 构造失败,所有目标标记为不可用
 		results := make([]Result, len(targets))
@@ -224,11 +265,26 @@ func (d *Detector) tcpQuickCheck(ctx context.Context, node *subscription.Node) b
 }
 
 // tcpQuickCheckErr 同 tcpQuickCheck,但返回底层拨号错误供失败原因分类(ticket 0017)。
+// 直连出口开启时经直连拨号器(DoH 解析 + 绑物理网卡,TUN 共存下结果可信);
+// 否则用系统 dialer(现状行为)。
 func (d *Detector) tcpQuickCheckErr(ctx context.Context, node *subscription.Node) error {
 	ctx, cancel := context.WithTimeout(ctx, d.tcpTimeout)
 	defer cancel()
 
 	addr := fmt.Sprintf("%s:%d", node.Server, node.Port)
+	direct, err := d.directDialer()
+	if err != nil {
+		return err // 严格:装配失败直接报错,不静默退化
+	}
+	if direct != nil {
+		conn, err := direct.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return err
+		}
+		conn.Close()
+		return nil
+	}
+
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
@@ -342,7 +398,7 @@ func (d *Detector) testReal(ctx context.Context, node *subscription.Node) TestRe
 			FailReason: ClassifyFailure(err),
 		}
 	}
-	adapter, err := NewProxyAdapter(node)
+	adapter, err := d.newProxyAdapter(node)
 	if err != nil {
 		return TestResult{
 			Available: false, Mode: "real",
@@ -373,7 +429,7 @@ func (d *Detector) testBandwidth(ctx context.Context, node *subscription.Node) T
 		}
 	}
 
-	adapter, err := NewProxyAdapter(node)
+	adapter, err := d.newProxyAdapter(node)
 	if err != nil {
 		return TestResult{
 			Available: false, Mode: "bandwidth",

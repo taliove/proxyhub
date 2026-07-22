@@ -175,6 +175,11 @@
           </el-form>
         </el-tab-pane>
 
+        <!-- 直连出口(见 CONTEXT.md「直连出口」;ticket 0021) -->
+        <el-tab-pane label="直连出口">
+          <DirectEgressSettings />
+        </el-tab-pane>
+
         <!-- 检测目标配置 -->
         <el-tab-pane label="检测目标配置">
           <div class="target-toolbar">
@@ -241,10 +246,15 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import client from '@/api/client'
+import { getSettings, saveSettings as persistSettings, MAIN_SETTINGS_KEYS } from '@/api/settings'
 import PageHeader from '@/components/PageHeader.vue'
 import RegionWhitelist from '@/components/RegionWhitelist.vue'
+import DirectEgressSettings from '@/components/DirectEgressSettings.vue'
 
-const settings = ref({
+// 主保存 payload 只含主表单自己的键(白名单见 MAIN_SETTINGS_KEYS):
+// onMounted 的 Object.assign 会吞进全量键(含 direct_egress_* 等其他 tab 的键),
+// 全量回写会把挂载时的旧值静默覆盖其他 tab 刚保存的新值;各 tab 只写自己的键。
+const settings = ref<Record<string, string | number>>({
   ban_threshold: 5,
   ban_duration: '1h',
   feishu_webhook: '',
@@ -289,7 +299,7 @@ interface DetectionTarget {
 const detectionTargets = ref<DetectionTarget[]>([])
 
 onMounted(async () => {
-  const data = await client.get('/settings')
+  const data = await getSettings()
   Object.assign(settings.value, data)
   await loadTargets()
 })
@@ -297,8 +307,9 @@ onMounted(async () => {
 const saveSettings = async () => {
   // 后端 /settings 解码为 map[string]string,数字/布尔值会导致 400。
   // 统一序列化为字符串,兼容 el-input-number(数字)与 el-switch(字符串)取值。
-  const payload = Object.fromEntries(Object.entries(settings.value).map(([k, v]) => [k, String(v)]))
-  await client.post('/settings', payload)
+  // 只回写主表单白名单键(见 MAIN_SETTINGS_KEYS),不覆盖其他 tab 的键。
+  const payload = Object.fromEntries(MAIN_SETTINGS_KEYS.map((k) => [k, String(settings.value[k])]))
+  await persistSettings(payload)
   ElMessage.success('保存成功')
 }
 

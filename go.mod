@@ -5,9 +5,12 @@ go 1.26.3
 require (
 	github.com/maxmind/mmdbwriter v1.2.0
 	github.com/metacubex/mihomo v1.19.28
+	github.com/miekg/dns v1.1.72
 	github.com/mozillazg/go-pinyin v0.21.0
 	github.com/oschwald/maxminddb-golang v1.12.0
 	golang.org/x/crypto v0.54.0
+	golang.org/x/sync v0.22.0
+	golang.org/x/sys v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.53.0
 )
@@ -91,7 +94,6 @@ require (
 	github.com/metacubex/utls v1.8.7 // indirect
 	github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f // indirect
 	github.com/metacubex/yamux v0.0.0-20250918083631-dd5f17c0be49 // indirect
-	github.com/miekg/dns v1.1.72 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/mroth/weightedrand/v2 v2.1.0 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
@@ -125,8 +127,6 @@ require (
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/oauth2 v0.24.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.12.0 // indirect

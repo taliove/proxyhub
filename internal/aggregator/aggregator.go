@@ -81,15 +81,19 @@ func New(cfg *config.Config, alerter Notifier, st *store.Store, logger *slog.Log
 		logger.Warn("failed to load region recognizer, region recognition disabled", "error", err)
 	}
 
+	// 健康检查器:直连出口配置热读(settings 改后下一轮检查即生效,与检测主链路同一开关)。
+	checker := healthcheck.NewChecker(
+		cfg.HealthCheck.Timeout.Latency,
+		cfg.HealthCheck.Timeout.Request,
+		cfg.HealthCheck.TestURL,
+		cfg.HealthCheck.Concurrent,
+	)
+	checker.SetDirectEgressConfigProvider(st.GetDirectEgressConfig)
+
 	a := &Aggregator{
 		cfg:     cfg,
 		fetcher: subscription.NewFetcher(30 * time.Second),
-		checker: healthcheck.NewChecker(
-			cfg.HealthCheck.Timeout.Latency,
-			cfg.HealthCheck.Timeout.Request,
-			cfg.HealthCheck.TestURL,
-			cfg.HealthCheck.Concurrent,
-		),
+		checker: checker,
 		filt:       filter.NewFilter(cfg.Filter.NodesPerRegion, cfg.Filter.Deduplicate),
 		alerter:    alerter,
 		st:         st,

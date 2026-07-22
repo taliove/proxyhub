@@ -158,7 +158,7 @@ func regionSpeedErrorStage(regions []Region, cause error) examStage {
 // defaultRegionSpeedProbe 生产测速器:从 node 另建一条 mihomo 会话(独立于稳定性段),整段 8 区复用该会话串行测量。
 // 无 client.Timeout:每区硬超时经 ctx 控制(见 measureRegionSpeed)。
 func (d *Detector) defaultRegionSpeedProbe(node *subscription.Node) (RegionSpeedProbe, error) {
-	adapter, err := NewProxyAdapter(node)
+	adapter, err := d.newProxyAdapter(node)
 	if err != nil {
 		return nil, err
 	}

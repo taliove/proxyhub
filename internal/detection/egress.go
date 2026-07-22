@@ -218,7 +218,7 @@ func newEgressProbe(client *http.Client) EgressProbe {
 // defaultEgressProbe 生产探测器:从 node 建一条 mihomo 会话(整段三类探测复用该 client 连接池),
 // 各类经该会话请求对应端点。与解锁/多地域段同构:每场体检独立会话,测试可注入假探测器绕过真实网络。
 func (d *Detector) defaultEgressProbe(node *subscription.Node) (EgressProbe, error) {
-	adapter, err := NewProxyAdapter(node)
+	adapter, err := d.newProxyAdapter(node)
 	if err != nil {
 		return EgressProbe{}, err
 	}

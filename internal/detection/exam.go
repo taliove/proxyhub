@@ -189,7 +189,7 @@ func (d *Detector) ExamStream(ctx context.Context, node *subscription.Node, emit
 // defaultStabilityProbe 生产探测器:从 node 构造一次 mihomo 会话(整场体检复用),
 // 每次探测经该会话请求 generate_204,返回 RTT 与是否命中 204。
 func (d *Detector) defaultStabilityProbe(node *subscription.Node) (StabilityProbe, error) {
-	adapter, err := NewProxyAdapter(node)
+	adapter, err := d.newProxyAdapter(node)
 	if err != nil {
 		return nil, err
 	}

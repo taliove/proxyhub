@@ -126,6 +126,17 @@ export interface SystemSettings {
   }
 }
 
+// 直连出口(Direct Egress)设置项(见 CONTEXT.md「直连出口」;ticket 0019/0021)。
+// 后端 /api/settings 为 map[string]string 契约,三个键均为字符串;enabled 取 'true'/'false'。
+export interface DirectEgressSettings {
+  // 'true'=开启(默认):检测连接经自带 DoH 解析 + 绑定物理网卡;'false'=恢复系统网络栈
+  direct_egress_enabled: string
+  // DoH 端点,须 http(s) URL 且 host 为 IP 字面量;留空用默认 https://223.5.5.5/dns-query
+  direct_egress_doh_url: string
+  // 物理网卡名;留空=自动识别
+  direct_egress_interface: string
+}
+
 export interface RefreshRun {
   id: number
   trigger: string // manual | scheduled | startup

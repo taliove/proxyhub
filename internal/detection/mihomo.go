@@ -20,8 +20,15 @@ type ProxyAdapter struct {
 	proxy C.ProxyAdapter
 }
 
-// NewProxyAdapter 从 Node 构造 mihomo adapter
+// NewProxyAdapter 从 Node 构造 mihomo adapter(系统拨号,不注入直连出口)
 func NewProxyAdapter(node *subscription.Node) (*ProxyAdapter, error) {
+	return buildProxyAdapter(node, nil)
+}
+
+// buildProxyAdapter 从 Node 构造 mihomo adapter;dialer 非 nil 时经
+// adapter.WithDialerForAPI 注入(直连出口),覆盖各协议 outbound 到节点服务器的全部连接。
+// (包级构造函数,命名与 Detector.newProxyAdapter 方法区分。)
+func buildProxyAdapter(node *subscription.Node, dialer C.Dialer) (*ProxyAdapter, error) {
 	// 复用 generator.ClashProxy 把 Node 转成 Clash 配置 map
 	proxyMap, err := generator.ClashProxy(node, node.Name)
 	if err != nil {
@@ -29,7 +36,11 @@ func NewProxyAdapter(node *subscription.Node) (*ProxyAdapter, error) {
 	}
 
 	// mihomo 的 adapter.ParseProxy 从配置 map 构造 ProxyAdapter
-	proxy, err := adapter.ParseProxy(proxyMap)
+	var opts []adapter.ProxyOption
+	if dialer != nil {
+		opts = append(opts, adapter.WithDialerForAPI(dialer))
+	}
+	proxy, err := adapter.ParseProxy(proxyMap, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("parse mihomo proxy: %w", err)
 	}

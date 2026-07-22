@@ -201,6 +201,8 @@ func initDetectionService(cfg *config.Config, st *store.Store, nodes server.Node
 	detector.SetBandwidthConfigProvider(st.GetBandwidthConfig)
 	// 注入体检配置提供函数（每场深度体检实时从 settings 读取，缺省用默认值）
 	detector.SetExamConfigProvider(st.GetExamConfig)
+	// 注入直连出口配置提供函数（每次检测实时从 settings 读取;TUN 共存下保检测可信）
+	detector.SetDirectEgressConfigProvider(st.GetDirectEgressConfig)
 
 	// 批量检测任务(jobs 运行时):游标续跑,每节点结果即时落库 + 标签重算。
 	detectNode := func(ctx context.Context, n *subscription.Node, targets []detection.Target) []detection.Result {

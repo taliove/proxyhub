@@ -115,13 +115,16 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 	}
 
 	// 初始化机场测试编排器
+	// 抽样检活复用 healthcheck:直连出口配置热读(与检测主链路同一开关,TUN 下不假通)。
 	storeAdapter := airporttest.NewStoreAdapter(st)
-	healthChecker := NewHealthCheckAdapter(healthcheck.NewChecker(
+	samplingChecker := healthcheck.NewChecker(
 		cfg.HealthCheck.Timeout.Latency,
 		cfg.HealthCheck.Timeout.Request,
 		cfg.HealthCheck.TestURL,
 		cfg.HealthCheck.Concurrent,
-	))
+	)
+	samplingChecker.SetDirectEgressConfigProvider(st.GetDirectEgressConfig)
+	healthChecker := NewHealthCheckAdapter(samplingChecker)
 	poolOps := poolops.NewStoreAdapter(st)
 	s.testOrchestrator = airporttest.NewOrchestratorWithPoolOps(storeAdapter, healthChecker, nodes, poolOps)
 
