@@ -169,6 +169,16 @@ func (ds *DetectionService) TestBandwidthStream(ctx context.Context, node *subsc
 	return ds.detector.TestBandwidthStream(ctx, node, onSample)
 }
 
+// TestBaselineDown 批量快速测速档透传:仅基准下行(与体检基准行同口径)。
+func (ds *DetectionService) TestBaselineDown(ctx context.Context, node *subscription.Node) detection.TestResult {
+	return ds.detector.TestBaselineDown(ctx, node)
+}
+
+// TestSpeedtestStream 单节点快速测速流式档透传:基准端点 + 既有采样流。
+func (ds *DetectionService) TestSpeedtestStream(ctx context.Context, node *subscription.Node, onSample func(detection.Sample)) detection.TestResult {
+	return ds.detector.TestSpeedtestStream(ctx, node, onSample)
+}
+
 // ExamStream 单节点深度体检流式版本:各段串行执行,实时推送事件。
 func (ds *DetectionService) ExamStream(ctx context.Context, node *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
 	return ds.detector.ExamStream(ctx, node, emit)
@@ -177,4 +187,10 @@ func (ds *DetectionService) ExamStream(ctx context.Context, node *subscription.N
 // ExamStreamSimplified 单节点精简体检流式版本(批量体检专用):出网 + 稳定性 + 基准下行。
 func (ds *DetectionService) ExamStreamSimplified(ctx context.Context, node *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
 	return ds.detector.ExamStreamSimplified(ctx, node, emit)
+}
+
+// ExamStreamEgressStability 单节点"出网+稳定性"检查流式版本:出网画像 + 稳定性评分,
+// 不含解锁目标、不测速;报告带 source=stability_check 来源标记。
+func (ds *DetectionService) ExamStreamEgressStability(ctx context.Context, node *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
+	return ds.detector.ExamStreamEgressStability(ctx, node, emit)
 }

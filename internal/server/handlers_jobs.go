@@ -107,9 +107,21 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		if s.batchExamJobs != nil {
 			cancelled = s.batchExamJobs.Cancel(key)
 		}
+	case "batch_stability":
+		if s.batchStabilityJobs != nil {
+			cancelled = s.batchStabilityJobs.Cancel(key)
+		}
+	case "batch_speedtest":
+		if s.speedtestJobs != nil {
+			cancelled = s.speedtestJobs.Cancel(key)
+		}
 	case "exam":
 		if s.examJobs != nil {
 			cancelled = s.examJobs.Cancel(key)
+		}
+	case "exam_stability":
+		if s.stabilityExamJobs != nil {
+			cancelled = s.stabilityExamJobs.Cancel(key)
 		}
 	case "refresh":
 		cancelled = s.nodes.CancelRefresh(key)

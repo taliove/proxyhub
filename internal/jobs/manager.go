@@ -355,6 +355,25 @@ func (m *Manager) runJob(j *job, params json.RawMessage, cursor string) {
 	}
 }
 
+// Attach 仅附加到已存在的(kind,key)任务(进行中或 TTL 内未清扫的已收口任务),
+// 绝不新启动。供订阅类端点使用:Open 语义是"无则启动",订阅不存在的任务会幻影启动
+// 一个 params 为空、立即失败的假任务并污染 jobs 表;Attach 则如实报错。
+func (m *Manager) Attach(kind, key string) (*Subscription, error) {
+	m.mu.Lock()
+	if _, ok := m.kinds[kind]; !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("jobs: unknown kind %q", kind)
+	}
+	m.sweepLocked(m.now())
+	j, ok := m.jobs[jobID{kind: kind, key: key}]
+	m.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("jobs: no job %s/%s to attach", kind, key)
+	}
+	replay, live, unsub := j.subscribe(m.bufferCap)
+	return &Subscription{Replay: replay, Live: live, unsub: unsub}, nil
+}
+
 // RunningKeys 返回内存中进行中的指定 kind 任务的 key 列表。
 // 持久化是尽力而为(Insert 失败退化为纯内存任务),做跨 key 互斥判断时
 // 必须以内存态为准(DB 为辅),否则纯内存任务对互斥检查完全隐身。

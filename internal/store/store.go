@@ -303,6 +303,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 本机实测历史表（016_speedtest_results.sql,ticket 0032）
+	if err := s.applyMigrationFile("016_speedtest_results.sql"); err != nil {
+		return err
+	}
+
 	// 刷新任务化:refresh_runs 关联 jobs 任务 id(ticket 03,刷新迁入 jobs 运行时)
 	if err := s.addColumnIfMissing("refresh_runs", "job_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
@@ -503,6 +508,22 @@ CREATE TABLE IF NOT EXISTS refresh_fetch_diags (
 );
 
 CREATE INDEX IF NOT EXISTS idx_refresh_fetch_diags_run ON refresh_fetch_diags(run_id);
+`
+	case "016_speedtest_results.sql":
+		checkTable = "speedtest_results"
+		migrationSQL = `
+CREATE TABLE IF NOT EXISTS speedtest_results (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_key        TEXT,
+    down_mbps       REAL NOT NULL DEFAULT 0,
+    up_mbps         REAL NOT NULL DEFAULT 0,
+    idle_latency_ms REAL NOT NULL DEFAULT 0,
+    jitter_ms       REAL NOT NULL DEFAULT 0,
+    client_info     TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_speedtest_results_node ON speedtest_results(node_key, id DESC);
 `
 	default:
 		return fmt.Errorf("unknown migration file: %s", filename)

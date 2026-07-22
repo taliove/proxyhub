@@ -57,18 +57,21 @@ type NodeSource interface {
 
 // Server HTTP 服务
 type Server struct {
-	cfg              *config.Config
-	st               *store.Store
-	nodes            NodeSource
-	webFS            embed.FS
-	sessions         *SessionManager
-	logger           *slog.Logger
-	detectionService *DetectionService
-	detectionJobs    *DetectionServiceJobs
-	geo              *geoip.Resolver
-	examJobs         *detection.ExamJobManager
-	batchExamJobs    *detection.BatchExamJobManager
-	testOrchestrator *airporttest.Orchestrator
+	cfg                *config.Config
+	st                 *store.Store
+	nodes              NodeSource
+	webFS              embed.FS
+	sessions           *SessionManager
+	logger             *slog.Logger
+	detectionService   *DetectionService
+	detectionJobs      *DetectionServiceJobs
+	geo                *geoip.Resolver
+	examJobs           *detection.ExamJobManager
+	batchExamJobs      *detection.BatchExamJobManager
+	stabilityExamJobs  *detection.ExamJobManager
+	batchStabilityJobs *detection.BatchStabilityJobManager
+	speedtestJobs      *detection.BatchSpeedtestJobManager
+	testOrchestrator   *airporttest.Orchestrator
 	// airportTestJobs 机场测试任务运行时(kind=airport_test,issue 0025 迁入);
 	// 跨 kind 互斥经 airportTestCoordinator(aggregator 实现)协调。
 	airportTestJobs *jobs.Manager
@@ -114,12 +117,51 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		// 批量任务 per-node 回调在 Run 期间触发,任务行必处 running;key 是全局单例常量。
 		s.batchExamJobs = detection.NewBatchExamJobManager(
 			detectionService.ExamStreamSimplified,
+			detectionService.ExamStream,
 			func(nodeKey string, report detection.ExamReport) {
 				s.onExamComplete(nodeKey, report, s.findRunningJobID("batch_exam", "batch_exam"))
 			},
 			detection.WithBatchExamJobStore(st.Jobs()),
 			detection.WithBatchExamErrorHandler(func(err error) {
 				logger.Warn("batch exam job persistence", "error", err)
+			}),
+		)
+
+		// 单节点"出网+稳定性"检查任务管理器:与完整体检同构(单发任务/附加回放/取消),
+		// kind 名 exam_stability 区分于 exam,避免同一节点两套任务互相附加。
+		// 收口复用 onExamComplete:落历史带 source=stability_check 来源标记 + 标签重算。
+		s.stabilityExamJobs = detection.NewExamJobManager(
+			detectionService.ExamStreamEgressStability,
+			func(nodeKey string, report detection.ExamReport) {
+				s.onExamComplete(nodeKey, report, s.findRunningJobID("exam_stability", nodeKey))
+			},
+			detection.WithExamKindName(detection.ExamStabilityKindName),
+			detection.WithExamJobStore(st.Jobs()),
+			detection.WithExamErrorHandler(func(err error) {
+				logger.Warn("stability exam job persistence", "error", err)
+			}),
+		)
+
+		// 批量"出网+稳定性"任务管理器:全局单例 + 游标续跑,契约同批量体检。
+		s.batchStabilityJobs = detection.NewBatchStabilityJobManager(
+			detectionService.ExamStreamEgressStability,
+			func(nodeKey string, report detection.ExamReport) {
+				s.onExamComplete(nodeKey, report, s.findRunningJobID("batch_stability", "batch_stability"))
+			},
+			detection.WithBatchStabilityJobStore(st.Jobs()),
+			detection.WithBatchStabilityErrorHandler(func(err error) {
+				logger.Warn("batch stability job persistence", "error", err)
+			}),
+		)
+
+		// 批量快速测速任务管理器:仅基准下行(与体检基准行同口径),游标续跑,
+		// 每节点完成回调写回节点视图带宽字段(node_health + 内存池,上行保留)。
+		s.speedtestJobs = detection.NewBatchSpeedtestJobManager(
+			detectionService.TestBaselineDown,
+			s.onSpeedtestComplete,
+			detection.WithBatchSpeedtestJobStore(st.Jobs()),
+			detection.WithBatchSpeedtestErrorHandler(func(err error) {
+				logger.Warn("batch speedtest job persistence", "error", err)
 			}),
 		)
 	}
@@ -226,6 +268,38 @@ func (s *Server) findRunningJobID(kind, key string) int64 {
 	return 0
 }
 
+// onSpeedtestComplete 批量快速测速每节点完成的写回:基准下行写回节点视图带宽字段
+// (node_health target_name=bandwidth + 内存池),与 handleTestNode 既有写回路径同轨。
+// 批量只测下行:上行沿用池内现值写回,避免 up=0 覆盖既有测量(best-effort,失败只记日志)。
+func (s *Server) onSpeedtestComplete(node *subscription.Node, result detection.TestResult) {
+	res := result // 局部副本:补上行保留值,不改调用方结果(不可变语义)
+	res.UpMbps = s.currentBandwidthUp(node.NodeKey())
+	// 可用判定与单节点 bandwidth 档同轨(down+up 双阈值):池内有上行测量(或上行阈值为 0)
+	// 时按双阈值重算,仅下行合格不得翻转既有双阈值判定;池内无上行测量时保留批量档
+	// 自身的下行判定,不以"缺数据"推翻节点。
+	if res.UpMbps > 0 || res.MinUpMbps == 0 {
+		res.Available = res.DownMbps >= res.MinDownMbps && res.UpMbps >= res.MinUpMbps
+	}
+	if err := s.st.SaveTestResult(node.NodeKey(), node.Name, node.Source, res); err != nil {
+		s.logger.Warn("save speedtest result failed", "node_key", node.NodeKey(), "error", err)
+	}
+	s.nodes.UpdateNodeTestResult(node.NodeKey(), "bandwidth", res.Available, res.Latency, res.DownMbps, res.UpMbps, "", "")
+}
+
+// currentBandwidthUp 读池内节点当前上行带宽(无此节点或池为空返回 0)。
+// 从池实时查而非用任务启动时的旁路指针:池写回是不可变替换,旁路指针可能已腐化。
+func (s *Server) currentBandwidthUp(nodeKey string) float64 {
+	if s.nodes == nil {
+		return 0
+	}
+	for _, n := range s.nodes.Nodes() {
+		if n.NodeKey() == nodeKey {
+			return n.BandwidthUpMbps
+		}
+	}
+	return 0
+}
+
 // writebackRegionIfNeeded writes back node region from exam egress data.
 // Egress country code is the real exit point (ground truth), while GeoIP is just a guess.
 // Therefore, when egress data is available, ALWAYS overwrite the node's region with it,
@@ -316,7 +390,7 @@ func (s *Server) syncSelfHostedNodeIdentity(nodeKey, name, regionCode string) {
 }
 
 // RecoverJobs 重启恢复:把上次进程遗留的 running 任务恢复或标记中断。
-// 单发任务(exam)标记 interrupted,批量任务(batch_exam)从游标续跑。
+// 单发任务(exam/exam_stability)标记 interrupted,批量任务(batch_exam/batch_stability/batch_speedtest)从游标续跑。
 // best-effort:失败只记日志。由 main 在对外服务前调用。
 func (s *Server) RecoverJobs() {
 	if s.examJobs != nil {
@@ -327,6 +401,21 @@ func (s *Server) RecoverJobs() {
 	if s.batchExamJobs != nil {
 		if err := s.batchExamJobs.RecoverInterrupted(); err != nil {
 			s.logger.Warn("recover interrupted batch exam jobs failed", "error", err)
+		}
+	}
+	if s.stabilityExamJobs != nil {
+		if err := s.stabilityExamJobs.RecoverInterrupted(); err != nil {
+			s.logger.Warn("recover interrupted stability exam jobs failed", "error", err)
+		}
+	}
+	if s.batchStabilityJobs != nil {
+		if err := s.batchStabilityJobs.RecoverInterrupted(); err != nil {
+			s.logger.Warn("recover interrupted batch stability jobs failed", "error", err)
+		}
+	}
+	if s.speedtestJobs != nil {
+		if err := s.speedtestJobs.RecoverInterrupted(); err != nil {
+			s.logger.Warn("recover interrupted batch speedtest jobs failed", "error", err)
 		}
 	}
 	if s.detectionJobs != nil {
@@ -359,6 +448,9 @@ func (s *Server) StartExamSweeper(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.examJobs.SweepExpired()
+			if s.stabilityExamJobs != nil {
+				s.stabilityExamJobs.SweepExpired()
+			}
 		}
 	}
 }
@@ -451,7 +543,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/nodes/exam/batch", s.requireAuth(s.handleBatchExam))
 	mux.HandleFunc("GET /api/nodes/exam/batch/stream", s.requireAuth(s.handleBatchExamStream))
 	mux.HandleFunc("POST /api/nodes/exam/batch/cancel", s.requireAuth(s.handleBatchExamCancel))
+	// 出网+稳定性检查(动作2):批量形态(任务化) + 单节点形态(行内 SSE)
+	mux.HandleFunc("GET /api/nodes/stability/stream", s.requireAuth(s.handleNodeStabilityStream))
+	mux.HandleFunc("POST /api/nodes/stability/cancel", s.requireAuth(s.handleNodeStabilityCancel))
+	mux.HandleFunc("POST /api/nodes/stability/batch", s.requireAuth(s.handleBatchStability))
+	mux.HandleFunc("GET /api/nodes/stability/batch/stream", s.requireAuth(s.handleBatchStabilityStream))
+	mux.HandleFunc("POST /api/nodes/stability/batch/cancel", s.requireAuth(s.handleBatchStabilityCancel))
 
+	// 快速测速(动作3):批量形态(任务化,仅基准下行)
+	mux.HandleFunc("POST /api/nodes/speedtest/batch", s.requireAuth(s.handleBatchSpeedtest))
+	mux.HandleFunc("GET /api/nodes/speedtest/batch/stream", s.requireAuth(s.handleBatchSpeedtestStream))
+	mux.HandleFunc("POST /api/nodes/speedtest/batch/cancel", s.requireAuth(s.handleBatchSpeedtestCancel))
 	// 节点管理（覆盖层 + 清理）
 	mux.HandleFunc("PUT /api/nodes/override", s.requireAuth(s.handleSetNodeOverride))
 	mux.HandleFunc("DELETE /api/nodes/override", s.requireAuth(s.handleClearNodeOverride))
@@ -492,6 +594,15 @@ func (s *Server) Handler() http.Handler {
 	// 访问统计（全局汇总 + 拉取趋势）
 	mux.HandleFunc("GET /api/stats/global", s.requireAuth(s.handleGlobalStats))
 	mux.HandleFunc("GET /api/stats/trend", s.requireAuth(s.handlePullTrend))
+
+	// 本机实测（浏览器端测速,入站服务,与检测出站链路无关;ticket 0032）:
+	// 下行发流是带宽放大器,全部过 requireAuth,不挂公开面
+	mux.HandleFunc("GET /api/speedtest/ping", s.requireAuth(s.handleSpeedtestPing))
+	mux.HandleFunc("GET /api/speedtest/download", s.requireAuth(s.handleSpeedtestDownload))
+	mux.HandleFunc("POST /api/speedtest/upload", s.requireAuth(s.handleSpeedtestUpload))
+	mux.HandleFunc("POST /api/speedtest/results", s.requireAuth(s.handleSaveSpeedtestResult))
+	mux.HandleFunc("GET /api/speedtest/results", s.requireAuth(s.handleListSpeedtestResults))
+	mux.HandleFunc("DELETE /api/speedtest/results/{id}", s.requireAuth(s.handleDeleteSpeedtestResult))
 
 	// 订阅拉取端点（随机 Path + Token，公开访问）
 	mux.HandleFunc("GET /sub/{path}", s.handleSubscription)
@@ -1041,8 +1152,9 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		nodeTags = nil
 	}
 
-	// 查当前页节点最近体检的稳定性分(供前端稳定性分档筛选;降级为空不阻塞)
-	stabilityScores, err := s.st.LatestExamScores(pageKeys)
+	// 查当前页节点最近体检的稳定性分(完整体检口径:排除"出网+稳定性"任务的缺段报告;
+	// 降级为空不阻塞)
+	stabilityScores, err := s.st.LatestCompleteExamScores(pageKeys)
 	if err != nil {
 		s.logger.Warn("get exam scores failed", "error", err)
 		stabilityScores = nil

@@ -37,9 +37,10 @@ func (s *Server) handleDashboardTopNodes(w http.ResponseWriter, r *http.Request)
 		keys = append(keys, n.NodeKey())
 	}
 
-	// 以池内 node_key 为查询域取每节点最新 report:无体检记录的节点不出现在
+	// 以池内 node_key 为查询域取每节点最新 report(完整体检口径:排除"出网+稳定性"
+	// 任务的缺段报告,总分聚合不被抢占):无体检记录的节点不出现在
 	// 结果中,"已离池"的体检记录天然不在查询域内——两重过滤一次完成。
-	reports, err := s.st.LatestExamReports(keys)
+	reports, err := s.st.LatestCompleteExamReports(keys)
 	if err != nil {
 		s.logger.Error("get latest exam reports failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
