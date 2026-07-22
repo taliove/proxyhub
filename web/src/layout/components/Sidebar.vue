@@ -154,10 +154,13 @@ const sections = computed(() => getMenuSections(router))
   font-size: 20px;
 }
 
-/* 折叠态:清掉 EP 菜单项默认左 padding,图标真正居中 */
+/* 折叠态:EP 把菜单项内容包进 tooltip trigger(ElMenuItem 内部元素,scoped 够不到,必须 :deep),居中作用在这一层 */
 .ph-menu.el-menu--collapse .el-menu-item {
   padding: 0;
-  display: flex;
+}
+
+.ph-menu.el-menu--collapse :deep(.el-menu-tooltip__trigger) {
+  padding: 0;
   justify-content: center;
 }
 
