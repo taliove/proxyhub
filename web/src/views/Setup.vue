@@ -1,12 +1,28 @@
 <template>
-  <div class="setup-container">
-    <el-card class="setup-card">
-      <template #header>
-        <div class="card-header">
-          <img src="/proxyhub-icon.png" alt="" />
-          <h1>ProxyHub 系统初始化</h1>
-        </div>
-      </template>
+  <div class="setup">
+    <!-- 装饰背景:与登录页同族,渐变网格 + 漂浮光斑,明暗自适应 -->
+    <div class="setup__bg" aria-hidden="true">
+      <span class="blob blob--1"></span>
+      <span class="blob blob--2"></span>
+      <span class="blob blob--3"></span>
+      <div class="grid"></div>
+    </div>
+
+    <!-- 主题切换 -->
+    <button
+      class="setup__theme"
+      type="button"
+      :title="isDark ? '切换浅色' : '切换深色'"
+      @click="layout.toggleDark()"
+    >
+      <el-icon :size="18"><Moon v-if="!isDark" /><Sunny v-else /></el-icon>
+    </button>
+
+    <div class="setup__card">
+      <div class="brand">
+        <Wordmark class="brand__wordmark" />
+        <p class="brand__subtitle">系统初始化</p>
+      </div>
 
       <el-steps :active="step" finish-status="success" align-center>
         <el-step title="管理员账户" />
@@ -70,17 +86,23 @@
         <el-button v-if="step > 0 && step < 2" @click="step--">上一步</el-button>
         <el-button v-if="step < 2" type="primary" @click="nextStep">下一步</el-button>
       </div>
-    </el-card>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
+import { useLayoutStore } from '@/stores/layout'
 import { ElMessage } from 'element-plus'
+import { Moon, Sunny } from '@element-plus/icons-vue'
+import Wordmark from '@/components/Wordmark.vue'
 import client from '@/api/client'
 
 const router = useRouter()
+const layout = useLayoutStore()
+const { isDark } = storeToRefs(layout)
 const step = ref(0)
 
 const form = reactive({
@@ -130,38 +152,153 @@ const nextStep = async () => {
 </script>
 
 <style scoped>
-.setup-container {
+.setup {
+  position: relative;
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: var(--ph-space-5);
+  overflow: hidden;
   background: var(--ph-bg-page);
 }
 
-.setup-card {
-  width: 100%;
-  max-width: 800px;
-  border-radius: var(--ph-radius-lg) !important;
-  box-shadow: var(--ph-shadow-lg) !important;
+/* ---------- 装饰背景(与登录页同族) ---------- */
+.setup__bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
 }
 
-.card-header {
+.grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, var(--ph-border-light) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--ph-border-light) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 75%);
+  -webkit-mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 75%);
+  opacity: 0.6;
+}
+
+.blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(64px);
+  opacity: 0.5;
+  will-change: transform;
+}
+.blob--1 {
+  width: 460px;
+  height: 460px;
+  top: -120px;
+  left: -100px;
+  background: radial-gradient(circle, var(--ph-color-primary), transparent 70%);
+  animation: drift 18s ease-in-out infinite;
+}
+.blob--2 {
+  width: 380px;
+  height: 380px;
+  bottom: -140px;
+  right: -80px;
+  background: radial-gradient(circle, var(--ph-color-primary-hover), transparent 70%);
+  animation: drift 22s ease-in-out infinite reverse;
+  opacity: 0.35;
+}
+.blob--3 {
+  width: 300px;
+  height: 300px;
+  top: 40%;
+  right: 18%;
+  background: radial-gradient(circle, var(--ph-color-primary-active), transparent 70%);
+  animation: drift 26s ease-in-out infinite;
+  opacity: 0.25;
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(40px, -30px) scale(1.08);
+  }
+  66% {
+    transform: translate(-30px, 24px) scale(0.94);
+  }
+}
+
+/* ---------- 主题切换 ---------- */
+.setup__theme {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 2;
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--ph-space-2);
+  border: 1px solid var(--ph-border);
+  border-radius: var(--ph-radius);
+  background: var(--ph-bg-surface);
+  color: var(--ph-text-regular);
+  cursor: pointer;
+  box-shadow: var(--ph-shadow-sm);
+  transition:
+    color var(--ph-transition),
+    border-color var(--ph-transition),
+    transform var(--ph-transition);
 }
-
-.card-header img {
-  width: 36px;
-  height: 36px;
-}
-
-.card-header h1 {
-  margin: 0;
-  font-size: var(--ph-text-xl);
+.setup__theme:hover {
   color: var(--ph-primary);
+  border-color: var(--ph-primary);
+  transform: translateY(-1px);
+}
+
+/* ---------- 卡片(与登录页同族) ---------- */
+.setup__card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 640px;
+  padding: 40px 36px 28px;
+  border-radius: var(--ph-radius-lg);
+  border: 1px solid var(--ph-border-light);
+  background: color-mix(in srgb, var(--ph-bg-surface) 82%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: var(--ph-shadow-lg);
+  animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---------- 品牌(与登录页同族) ---------- */
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ph-space-3);
+  margin-bottom: var(--ph-space-6);
+}
+.brand__wordmark {
+  font-size: var(--ph-text-display-sm);
+}
+.brand__subtitle {
+  margin: 0;
+  font-size: var(--ph-text-sm);
+  color: var(--ph-text-secondary);
 }
 
 .step-alert {
@@ -182,5 +319,18 @@ const nextStep = async () => {
   margin-left: var(--ph-space-2);
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-xs);
+}
+
+@media (max-width: 480px) {
+  .setup__card {
+    padding: 32px 22px 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blob,
+  .setup__card {
+    animation: none;
+  }
 }
 </style>

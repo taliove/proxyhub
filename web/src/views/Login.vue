@@ -20,13 +20,8 @@
 
     <div class="login__card">
       <div class="brand">
-        <div class="brand__logo">
-          <img src="/proxyhub-icon.png" alt="" />
-        </div>
-        <div class="brand__text">
-          <h1 class="brand__title">ProxyHub</h1>
-          <p class="brand__subtitle">代理订阅聚合系统</p>
-        </div>
+        <Wordmark class="brand__wordmark" />
+        <p class="brand__subtitle">代理订阅聚合系统</p>
       </div>
 
       <el-form
@@ -88,6 +83,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useLayoutStore } from '@/stores/layout'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { User, Lock, Moon, Sunny } from '@element-plus/icons-vue'
+import Wordmark from '@/components/Wordmark.vue'
 import client from '@/api/client'
 
 const router = useRouter()
@@ -260,36 +256,18 @@ const handleLogin = async () => {
 /* ---------- 品牌 ---------- */
 .brand {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 30px;
+  gap: var(--ph-space-3);
+  margin-bottom: var(--ph-space-6);
 }
-.brand__logo {
-  flex: none;
-  width: 52px;
-  height: 52px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--ph-color-primary) 40%, transparent);
-  border-radius: 14px;
-}
-.brand__logo img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-.brand__title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: var(--ph-text-primary);
-  line-height: 1.2;
+/* 门面场景字号放大:光标尺寸随 em 等比缩放 */
+.brand__wordmark {
+  font-size: var(--ph-text-display-sm);
 }
 .brand__subtitle {
-  margin: 4px 0 0;
-  font-size: 13px;
+  margin: 0;
+  font-size: var(--ph-text-sm);
   color: var(--ph-text-secondary);
 }
 
@@ -303,14 +281,14 @@ const handleLogin = async () => {
 }
 .login__submit {
   width: 100%;
-  margin-top: 4px;
+  margin-top: var(--ph-space-1);
   font-weight: 600;
   letter-spacing: 2px;
   border-radius: var(--ph-radius);
 }
 
 .login__footer {
-  margin: 24px 0 0;
+  margin: var(--ph-space-5) 0 0;
   text-align: center;
   font-size: 12px;
   color: var(--ph-text-secondary);
