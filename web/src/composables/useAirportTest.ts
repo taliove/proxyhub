@@ -14,26 +14,37 @@ export interface CheckingProgress {
   total: number
 }
 
-export interface ScoreBreakdown {
-  availability_rate: number
-  availability_score: number
-  latency_mean_ms: number
-  latency_p95_ms: number
-  latency_score: number
-  fetch_health_score: number
-  region_coverage_count: number
-  region_coverage_score: number
+/**
+ * 抽样节点检活明细(随 completed run 的 dimensions_json 持久化)。
+ * 旧 run 无此字段,报告段降级为只显示汇总。
+ */
+export interface SampledNodeResult {
+  name: string
+  region: string
+  available: boolean
+  latency_ms: number
+  error?: string
 }
 
-export interface CompletedResult extends DiagnosticResult {
-  checked: number
-  total: number
-  availability_rate: number
-  latency_mean_ms: number
-  latency_p95_ms: number
-  fetch_duration_ms: number
-  region_coverage_count: number
-  score_breakdown: ScoreBreakdown
+/**
+ * completed run 的 dimensions_json 形状(与后端 airporttest.ScoreDimensions 对齐)。
+ * 维度得分已是加权后分值(各维度满分 = 权重;URL 不可达时拉取健康 N/A、权重重归一)。
+ */
+export interface CompletedResult {
+  availability_score: number
+  latency_score: number
+  fetch_health_score: number
+  region_score: number
+  available_nodes: number
+  total_nodes: number
+  mean_latency_ms: number
+  p95_latency_ms: number
+  region_count: number
+  region_distribution: Record<string, number>
+  http_status: number
+  parse_success_rate: number
+  url_reachable: boolean
+  sampled_nodes?: SampledNodeResult[]
 }
 
 // TestRunStatus 测试 run 行状态;cancelled 为任务化(issue 0025)后被显式取消的
@@ -46,6 +57,7 @@ export interface TestRun {
   airport_id: number
   created_at: string
   status: TestRunStatus
+  is_full: boolean
   overall_score?: number
   dimensions_json: string
   error_message?: string
@@ -162,17 +174,52 @@ export function parseAirportTestCursor(cursor: string | undefined): AirportTestC
 /**
  * Parse completed result from dimensions_json (completed phase).
  * Pure function for easy testing.
+ *
+ * completed run 的 dimensions_json 是扁平的 ScoreDimensions(含 availability_score/
+ * total_nodes);诊断中/失败 run 只有诊断字段,返回 null。
  */
 export function parseCompletedResult(dimensionsJson: string): CompletedResult | null {
   try {
     const data = JSON.parse(dimensionsJson)
-    if (data.score_breakdown) {
+    if (typeof data.availability_score === 'number' && typeof data.total_nodes === 'number') {
       return data as CompletedResult
     }
     return null
   } catch {
     return null
   }
+}
+
+/**
+ * 维度权重构成(百分比)。URL 不可达时拉取健康 N/A(fetchHealth=null),
+ * 其权重按 5:3:1 重归一到其余三维度(见 CONTEXT.md「机场测试」)。
+ * Pure function for easy testing.
+ */
+export interface DimensionWeights {
+  availability: number
+  latency: number
+  fetchHealth: number | null
+  region: number
+}
+
+export function dimensionWeights(urlReachable: boolean): DimensionWeights {
+  if (urlReachable) {
+    return { availability: 50, latency: 30, fetchHealth: 10, region: 10 }
+  }
+  return {
+    availability: (5 / 9) * 100,
+    latency: (3 / 9) * 100,
+    fetchHealth: null,
+    region: (1 / 9) * 100
+  }
+}
+
+/**
+ * 权重文案:整数直接百分比,重归一的循环小数保留 1 位小数。
+ * Pure function for easy testing.
+ */
+export function weightLabel(weight: number): string {
+  return Number.isInteger(weight) ? `${weight}%` : `${weight.toFixed(1)}%`
 }
 
 /**

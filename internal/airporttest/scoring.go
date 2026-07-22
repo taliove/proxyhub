@@ -7,6 +7,17 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
+// SampledNodeResult 抽样节点的单次检活明细,随 dimensions_json 持久化,
+// 供详情抽屉「最近测试」报告段展示每节点可用性/延迟(ticket 0037)。
+// 旧 run 的 dimensions_json 无此字段,前端降级为只显示汇总。
+type SampledNodeResult struct {
+	Name      string `json:"name"`                 // 展示名(DisplayName 优先,回退机场原名)
+	Region    string `json:"region"`               // 地区代码(HK/SG/US 等,可为空)
+	Available bool   `json:"available"`            // 本次检活是否可用
+	LatencyMs int    `json:"latency_ms"`           // 本次检活延迟(ms),失败为 0
+	Error     string `json:"error,omitempty"`      // 失败原因(成功时省略)
+}
+
 // ScoreDimensions 评分维度明细
 type ScoreDimensions struct {
 	AvailabilityScore float64            `json:"availability_score"` // 可用率得分(0-50)
@@ -22,6 +33,7 @@ type ScoreDimensions struct {
 	HTTPStatus        int                `json:"http_status"`         // 拉取HTTP状态
 	ParseSuccessRate  float64            `json:"parse_success_rate"`  // 解析成功率
 	URLReachable      bool               `json:"url_reachable"`       // 订阅URL是否可达(HTTP 2xx)
+	SampledNodes      []SampledNodeResult `json:"sampled_nodes,omitempty"` // 抽样节点检活明细(仅 completed run)
 }
 
 // CalculateScore 计算综合评分(0-100)及维度明细。

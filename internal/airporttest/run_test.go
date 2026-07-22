@@ -2,6 +2,7 @@ package airporttest
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -125,9 +126,9 @@ func TestRunTest_EmptyPool(t *testing.T) {
 	store.Runs[1] = run
 
 	diagResult := &DiagnosticResult{
-		HTTPStatus:     200,
-		ParseFailures:  0,
-		NodeCount:      0,
+		HTTPStatus:    200,
+		ParseFailures: 0,
+		NodeCount:     0,
 	}
 
 	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", []*subscription.Node{}, diagResult, nil)
@@ -228,6 +229,67 @@ func TestRunTest_FullMode(t *testing.T) {
 	}
 	if updatedRun.Status != StatusCompleted {
 		t.Errorf("status got %s, want completed", updatedRun.Status)
+	}
+}
+
+func TestRunTest_PersistsSampledNodeDetails(t *testing.T) {
+	store := NewFakeStore(t)
+	checker := &FakeHealthChecker{}
+	writer := &FakePoolWriter{}
+	orch := NewOrchestrator(store, checker, writer)
+
+	nodes := []*subscription.Node{
+		{Name: "XX 香港 01", DisplayName: "🇭🇰 香港 TA-01", Server: "1.1.1.1", Port: 443, Region: "HK"},
+		{Name: "XX 新加坡 01", Server: "2.2.2.2", Port: 443, Region: "SG"},
+	}
+
+	run := &TestRun{
+		ID:        1,
+		AirportID: 1,
+		CreatedAt: time.Now(),
+		Status:    StatusDiagnosing,
+	}
+	store.Runs[1] = run
+
+	diagResult := &DiagnosticResult{
+		HTTPStatus:    200,
+		ParseFailures: 0,
+		NodeCount:     2,
+	}
+
+	updatedRun, err := orch.RunTest(context.Background(), run, "TestAirport", nodes, diagResult, nil)
+	if err != nil {
+		t.Fatalf("RunTest failed: %v", err)
+	}
+	if updatedRun.Status != StatusCompleted {
+		t.Fatalf("status got %s, want %s", updatedRun.Status, StatusCompleted)
+	}
+
+	// dimensions_json 应持久化抽样节点明细,供详情抽屉报告段展示
+	var dims ScoreDimensions
+	if err := json.Unmarshal([]byte(updatedRun.DimensionsJSON), &dims); err != nil {
+		t.Fatalf("unmarshal dimensions_json: %v", err)
+	}
+	if len(dims.SampledNodes) != 2 {
+		t.Fatalf("sampled_nodes count got %d, want 2", len(dims.SampledNodes))
+	}
+	// 抽样明细顺序随分层抽样随机,断言按地区索引而非位置
+	byRegion := make(map[string]SampledNodeResult, len(dims.SampledNodes))
+	for _, sn := range dims.SampledNodes {
+		byRegion[sn.Region] = sn
+		if !sn.Available {
+			t.Errorf("sampled_nodes region %s Available got false, want true (fake checker)", sn.Region)
+		}
+		if sn.LatencyMs != 100 {
+			t.Errorf("sampled_nodes region %s LatencyMs got %d, want 100 (fake checker)", sn.Region, sn.LatencyMs)
+		}
+	}
+	// 展示名优先 DisplayName,回退机场原名
+	if got := byRegion["HK"].Name; got != "🇭🇰 香港 TA-01" {
+		t.Errorf("sampled name got %q, want display name", got)
+	}
+	if got := byRegion["SG"].Name; got != "XX 新加坡 01" {
+		t.Errorf("sampled name got %q, want original name fallback", got)
 	}
 }
 

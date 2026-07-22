@@ -22,7 +22,8 @@
             <span class="test-cell">
               <StatusDot :tone="testTone(row)" :label="testToneLabel(row)" />
               <template v-if="row.last_test_score !== null && row.last_test_score !== undefined">
-                <span class="num score-text clickable" @click="openTestDialog(row)">
+                <!-- 点分数 = 查看报告:打开详情抽屉并定位「最近测试」段,不重跑(ticket 0037) -->
+                <span class="num score-text clickable" @click="openTestReport(row)">
                   {{ formatScore(row.last_test_score) }}
                 </span>
                 <span class="test-time">{{ formatTestTime(row.last_test_at) }}</span>
@@ -94,6 +95,7 @@
       hint="扫码导入该机场原始订阅(未经过 ProxyHub 聚合)"
     />
     <AirportDetailDrawer
+      ref="detailDrawer"
       v-model="detailVisible"
       :airport="detailAirport"
       :refreshing="detailAirport ? refreshingIds.includes(detailAirport.id) : false"
@@ -101,15 +103,17 @@
       @toggle="toggleAirport"
       @delete="deleteAirport"
       @refresh="refreshAirport"
-      @test="openTestDialog"
+      @test="startTestRun"
       @qrcode="showQRCode"
+      @run-test="onDrawerRunTest"
     />
-    <AirportTestDialog v-model="testDialogVisible" :airport="testingAirport" />
+    <!-- 运行模式测试对话框:只在显式动作时经 start() 发起运行;完成后刷新列表与抽屉报告 -->
+    <AirportTestDialog ref="testDialog" @finished="onTestFinished" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
@@ -138,16 +142,38 @@ const form = ref({ name: '', url: '', abbr: '' })
 const qrDialogVisible = ref(false)
 const qrDialog = ref<InstanceType<typeof QRCodeDialog> | null>(null)
 
-// Test dialog state
-const testDialogVisible = ref(false)
-const testingAirport = ref<Airport | null>(null)
+// 测试对话框(运行模式):经暴露的 start() 显式发起,不再随打开自动重跑
+const testDialog = ref<InstanceType<typeof AirportTestDialog> | null>(null)
 
 // 详情抽屉状态:行内「详情」打开;抽屉内动作复用本页既有处理函数(事件上抛)。
 const detailVisible = ref(false)
 const detailAirport = ref<Airport | null>(null)
+const detailDrawer = ref<InstanceType<typeof AirportDetailDrawer> | null>(null)
 const openDetail = (row: Airport) => {
   detailAirport.value = row
   detailVisible.value = true
+}
+
+// 列表点最近测试分数 = 查看报告:打开抽屉并定位「最近测试」段,不发起新 run
+const openTestReport = (row: Airport) => {
+  openDetail(row)
+  nextTick(() => detailDrawer.value?.focusReport?.())
+}
+
+// 抽屉概况段「测试」按钮:抽样重跑(显式动作)
+const startTestRun = (airport: Airport) => {
+  testDialog.value?.start(airport, false)
+}
+
+// 报告段「重新测试」(抽样)/「测全部」(全量)
+const onDrawerRunTest = ({ airport, full }: { airport: Airport; full: boolean }) => {
+  testDialog.value?.start(airport, full)
+}
+
+// 测试完成:刷新列表分数与抽屉报告段
+const onTestFinished = () => {
+  loadAirports()
+  detailDrawer.value?.reloadReport?.()
 }
 
 // Debounced auto-suggestion: name input -> abbr suggestion
@@ -191,11 +217,6 @@ const openAddDialog = () => {
   form.value = { name: '', url: '', abbr: '' }
   resetAbbrSuggest()
   dialogVisible.value = true
-}
-
-const openTestDialog = (airport: Airport) => {
-  testingAirport.value = airport
-  testDialogVisible.value = true
 }
 
 const openEditDialog = (row: Airport) => {

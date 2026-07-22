@@ -7,7 +7,9 @@ import {
   getScoreColor,
   formatDuration,
   isHttpSuccess,
-  getDiagnosticState
+  getDiagnosticState,
+  dimensionWeights,
+  weightLabel
 } from './useAirportTest'
 
 describe('useAirportTest', () => {
@@ -118,32 +120,55 @@ describe('useAirportTest', () => {
   })
 
   describe('parseCompletedResult', () => {
+    // 与后端 airporttest.ScoreDimensions 对齐的扁平结构
+    const completedDims = {
+      availability_score: 45,
+      latency_score: 28,
+      fetch_health_score: 10,
+      region_score: 7.5,
+      available_nodes: 9,
+      total_nodes: 10,
+      mean_latency_ms: 120,
+      p95_latency_ms: 200,
+      region_count: 3,
+      region_distribution: { HK: 4, SG: 3, US: 3 },
+      http_status: 200,
+      parse_success_rate: 1,
+      url_reachable: true
+    }
+
     it('should parse valid completed result', () => {
+      const result = parseCompletedResult(JSON.stringify(completedDims))
+
+      expect(result).not.toBeNull()
+      expect(result?.availability_score).toBe(45)
+      expect(result?.latency_score).toBe(28)
+      expect(result?.available_nodes).toBe(9)
+      expect(result?.total_nodes).toBe(10)
+      expect(result?.url_reachable).toBe(true)
+    })
+
+    it('should parse sampled node details when present', () => {
       const json = JSON.stringify({
-        http_status: 200,
-        node_count: 10,
-        checked: 10,
-        total: 10,
-        availability_rate: 0.9,
-        latency_mean_ms: 120,
-        latency_p95_ms: 200,
-        score_breakdown: {
-          availability_rate: 0.9,
-          availability_score: 45,
-          latency_mean_ms: 120,
-          latency_p95_ms: 200,
-          latency_score: 28,
-          fetch_health_score: 10,
-          region_coverage_count: 3,
-          region_coverage_score: 7.5
-        }
+        ...completedDims,
+        sampled_nodes: [
+          { name: '🇭🇰 香港 TA-01', region: 'HK', available: true, latency_ms: 120 },
+          { name: 'XX 新加坡 01', region: 'SG', available: false, latency_ms: 0, error: 'timeout' }
+        ]
       })
 
       const result = parseCompletedResult(json)
 
+      expect(result?.sampled_nodes).toHaveLength(2)
+      expect(result?.sampled_nodes?.[0].name).toBe('🇭🇰 香港 TA-01')
+      expect(result?.sampled_nodes?.[1].available).toBe(false)
+    })
+
+    it('should leave sampled_nodes undefined for old runs without details', () => {
+      const result = parseCompletedResult(JSON.stringify(completedDims))
+
       expect(result).not.toBeNull()
-      expect(result?.score_breakdown.availability_score).toBe(45)
-      expect(result?.score_breakdown.latency_score).toBe(28)
+      expect(result?.sampled_nodes).toBeUndefined()
     })
 
     it('should return null for diagnostic-only result', () => {
@@ -161,6 +186,40 @@ describe('useAirportTest', () => {
       const result = parseCompletedResult('invalid')
 
       expect(result).toBeNull()
+    })
+  })
+
+  describe('dimensionWeights', () => {
+    it('should return normal weights when URL reachable (50/30/10/10)', () => {
+      expect(dimensionWeights(true)).toEqual({
+        availability: 50,
+        latency: 30,
+        fetchHealth: 10,
+        region: 10
+      })
+    })
+
+    it('should renormalize to 5:3:1 with fetch health N/A when URL unreachable', () => {
+      const w = dimensionWeights(false)
+
+      expect(w.fetchHealth).toBeNull()
+      expect(w.availability).toBeCloseTo((5 / 9) * 100, 5)
+      expect(w.latency).toBeCloseTo((3 / 9) * 100, 5)
+      expect(w.region).toBeCloseTo((1 / 9) * 100, 5)
+      // 重归一后总权重仍为 100%
+      expect(w.availability + w.latency + w.region).toBeCloseTo(100, 5)
+    })
+  })
+
+  describe('weightLabel', () => {
+    it('should render integer weights as whole percents', () => {
+      expect(weightLabel(50)).toBe('50%')
+      expect(weightLabel(10)).toBe('10%')
+    })
+
+    it('should render renormalized weights with one decimal', () => {
+      expect(weightLabel((5 / 9) * 100)).toBe('55.6%')
+      expect(weightLabel((1 / 9) * 100)).toBe('11.1%')
     })
   })
 

@@ -5,13 +5,9 @@
       本次任务未产生报告(可能已被中断)
     </div>
     <template v-else-if="run">
-      <AirportTestScoreReport
-        v-if="run.status === 'completed'"
-        :overall-score="run.overall_score || 0"
-        :diagnostic="diagnostic"
-        :completed-result="completed"
-        :show-run-full="false"
-      />
+      <!-- completed:复用详情抽屉同款报告组件(只读,无重跑入口),
+           报告职责自 ScoreReport 收敛到 AirportTestReport 后此处同步切换 -->
+      <AirportTestReport v-if="run.status === 'completed'" :runs="[run]" readonly />
       <template v-else>
         <el-alert
           v-if="run.status === 'cancelled'"
@@ -46,18 +42,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { getJobResult, type JobResult } from '@/api/jobs'
-import {
-  emptyDiagnostic,
-  parseDiagnosticResult,
-  parseCompletedResult,
-  type TestRun
-} from '@/composables/useAirportTest'
-import AirportTestScoreReport from '@/components/AirportTestScoreReport.vue'
+import { emptyDiagnostic, parseDiagnosticResult, type TestRun } from '@/composables/useAirportTest'
+import AirportTestReport from '@/components/AirportTestReport.vue'
 import AirportTestDiagnostic from '@/components/AirportTestDiagnostic.vue'
 
 // 任务详情的机场测试报告区(ticket 0026):消费 GET /api/jobs/{id}/result 的
 // airport_test_run 分支(与 0023 exam 结果区同款机制)。completed 复用
-// AirportTestScoreReport(只读,无"跑全量"入口);cancelled 保留诊断数据;
+// AirportTestReport(只读,无重跑入口);cancelled 保留诊断数据;
 // failed 显示 run 行 error_message。
 const props = defineProps<{
   jobId: number
@@ -69,9 +60,6 @@ const loading = ref(false)
 const run = computed<TestRun | null>(() => result.value?.airport_test_run ?? null)
 const diagnostic = computed(() =>
   run.value ? parseDiagnosticResult(run.value.dimensions_json) : emptyDiagnostic()
-)
-const completed = computed(() =>
-  run.value ? parseCompletedResult(run.value.dimensions_json) : null
 )
 const hasDiagnostic = computed(
   () => diagnostic.value.http_status > 0 || diagnostic.value.node_count > 0

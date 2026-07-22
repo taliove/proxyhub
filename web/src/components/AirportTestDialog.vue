@@ -53,16 +53,18 @@
       </div>
     </div>
 
-    <!-- Completed phase (full report) -->
+    <!-- Completed phase: 纯运行形态只给结论与去向,报告主体在详情抽屉「最近测试」段 -->
     <div v-else-if="phase === 'completed'" class="test-phase">
-      <AirportTestScoreReport
-        :overall-score="overallScore"
-        :diagnostic="diagnosticResult"
-        :completed-result="completedResult"
-        @run-full="runFullTest"
-      />
-
-      <AirportTestTrend :runs="historyRuns" />
+      <div class="completed-summary">
+        <div class="completed-score">
+          <StatusDot :tone="scoreToneOf(overallScore)" :label="scoreToneLabelOf(overallScore)" />
+          <span>测试完成,综合得分</span>
+          <el-tag :type="getScoreColor(overallScore)" size="large" class="score-value num">
+            {{ overallScore.toFixed(1) }}
+          </el-tag>
+        </div>
+        <div class="muted">报告已更新,可在机场详情抽屉「最近测试」查看完整报告。</div>
+      </div>
     </div>
 
     <!-- Cancelled state (已写回的检活结果保留,诊断数据可见) -->
@@ -102,39 +104,38 @@ import type { Airport } from '@/types'
 import { getJob, getJobResult, cancelJob, JOB_KIND_AIRPORT_TEST, type JobStatus } from '@/api/jobs'
 import {
   runAirportTest,
-  listTestRuns,
   emptyDiagnostic,
   parseDiagnosticResult,
   parseCompletedResult,
   parseAirportTestCursor,
   getDiagnosticState,
+  getScoreColor,
   type DiagnosticResult,
   type CheckingProgress,
-  type CompletedResult,
   type TestRun,
   type TestRunStatus,
   type DiagnosticState
 } from '@/composables/useAirportTest'
-import AirportTestScoreReport from './AirportTestScoreReport.vue'
+import {
+  scoreTone as scoreToneOf,
+  scoreToneLabel as scoreToneLabelOf
+} from '@/views/airport-test-utils'
+import StatusDot from '@/components/StatusDot.vue'
 import AirportTestDiagnostic from './AirportTestDiagnostic.vue'
-import AirportTestTrend from './AirportTestTrend.vue'
 
-interface Props {
-  modelValue: boolean
-  airport: Airport | null
-}
-
+// 运行模式对话框(ticket 0037):只在父级显式调 start() 时才发起测试,
+// 不再 watch 打开即跑;报告展示归详情抽屉「最近测试」段。
+// 数据源(ADR 0027):POST 返回任务句柄;进度轮询 /jobs/{id} cursor,
+// 终态由 jobs status 驱动,诊断/报告走 /jobs/{id}/result。
 interface Emits {
-  (e: 'update:modelValue', value: boolean): void
+  // run 到达 completed 终态,父级刷新列表与抽屉报告
+  (e: 'finished'): void
 }
 
-const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
-// 数据源(issue 0026,ADR 0027):POST /airports/{id}/test 返回任务句柄 {jobId,kind,key};
-// 进度主源 = 轮询 /api/jobs/{jobId} 的 cursor({"phase","checked","total"});
-// 终态由 jobs status 驱动;诊断与报告走 /api/jobs/{jobId}/result 的 airport_test_run。
 const visible = ref(false)
+const airport = ref<Airport | null>(null)
 const phase = ref<TestRunStatus>('diagnosing')
 const diagnosticState = ref<DiagnosticState>('success')
 const diagnosticReady = ref(false)
@@ -143,35 +144,31 @@ const currentJobKey = ref('')
 const cancelling = ref(false)
 const diagnosticResult = ref<DiagnosticResult>(emptyDiagnostic())
 const checkingProgress = ref<CheckingProgress | null>(null)
-const completedResult = ref<CompletedResult | null>(null)
 const overallScore = ref<number>(0)
 const errorMessage = ref('')
-const historyRuns = ref<TestRun[]>([])
 const pollingTimer = ref<number | null>(null)
 
 const isRunningPhase = computed(
   () => phase.value === 'diagnosing' || phase.value === 'checking' || phase.value === 'scoring'
 )
 
-watch(
-  () => props.modelValue,
-  (val) => {
-    visible.value = val
-    if (val && props.airport) {
-      startTest()
-    }
-  }
-)
-
 watch(visible, (val) => {
-  emit('update:modelValue', val)
   if (!val) {
     stopPolling()
   }
 })
 
+// 显式运行入口:父级(机场管理页/详情抽屉)在用户点「测试」/「重新测试」/「测全部」时调用。
+const start = (target: Airport, full = false) => {
+  airport.value = target
+  visible.value = true
+  startTest(full)
+}
+
+defineExpose({ start })
+
 const startTest = async (full = false) => {
-  if (!props.airport) return
+  if (!airport.value) return
 
   phase.value = 'diagnosing'
   errorMessage.value = ''
@@ -179,11 +176,10 @@ const startTest = async (full = false) => {
   stopPolling()
 
   try {
-    const handle = await runAirportTest(props.airport.id, full)
+    const handle = await runAirportTest(airport.value.id, full)
     currentJobId.value = handle.jobId
     currentJobKey.value = handle.key
     startPolling()
-    loadHistory()
   } catch (error) {
     const err = error as { response?: { status?: number; data?: unknown }; message?: string }
     phase.value = 'failed'
@@ -196,10 +192,6 @@ const startTest = async (full = false) => {
           : err.message || '请求失败'
     ElMessage.error('测试发起失败')
   }
-}
-
-const runFullTest = () => {
-  startTest(true)
 }
 
 const startPolling = () => {
@@ -286,7 +278,6 @@ const applyTerminal = async (status: JobStatus) => {
     case 'done':
       if (run) {
         handleCompletedRun(run)
-        loadHistory()
       } else {
         phase.value = 'failed'
         errorMessage.value = '未找到本次测试报告'
@@ -305,8 +296,7 @@ const applyTerminal = async (status: JobStatus) => {
   }
 }
 
-// onCancel 取消进行中任务(jobs 通用取消端点,kind=airport_test);
-// 取消后由轮询观察到 cancelled 终态收口。
+// onCancel 取消进行中任务(jobs 通用取消端点);取消后由轮询观察到 cancelled 终态收口。
 const onCancel = async () => {
   if (!currentJobKey.value) return
   cancelling.value = true
@@ -329,22 +319,12 @@ const stopPolling = () => {
 
 const handleCompletedRun = (run: TestRun) => {
   phase.value = 'completed'
-  const result = parseCompletedResult(run.dimensions_json)
-  if (result) {
-    completedResult.value = result
-    overallScore.value = run.overall_score || 0
+  overallScore.value = run.overall_score ?? 0
+  if (!parseCompletedResult(run.dimensions_json)) {
+    // 兜底:completed 但维度缺失(不应发生),仍按分数呈现结论
+    console.warn('completed run missing score dimensions', run.id)
   }
-}
-
-const loadHistory = async () => {
-  if (!props.airport) return
-
-  try {
-    const runs = await listTestRuns(props.airport.id)
-    historyRuns.value = runs
-  } catch (error) {
-    console.error('Failed to load history:', error)
-  }
+  emit('finished')
 }
 
 const handleClose = () => {
@@ -352,14 +332,13 @@ const handleClose = () => {
   phase.value = 'diagnosing'
   currentJobId.value = null
   currentJobKey.value = ''
+  airport.value = null
   cancelling.value = false
   diagnosticReady.value = false
   diagnosticResult.value = emptyDiagnostic()
   checkingProgress.value = null
-  completedResult.value = null
   overallScore.value = 0
   errorMessage.value = ''
-  historyRuns.value = []
 }
 
 onUnmounted(() => {
@@ -370,6 +349,10 @@ onUnmounted(() => {
 <style scoped>
 .test-phase {
   min-height: 200px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
 .phase-loading {
@@ -388,5 +371,30 @@ onUnmounted(() => {
 
 .diagnostic-alert {
   margin-bottom: var(--ph-space-5);
+}
+
+.completed-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ph-space-3);
+  padding: var(--ph-space-5) 0;
+}
+
+.completed-score {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-3);
+  font-size: var(--ph-text-md);
+}
+
+.score-value {
+  font-size: var(--ph-text-xl);
+  font-weight: bold;
+}
+
+.muted {
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-sm);
 }
 </style>

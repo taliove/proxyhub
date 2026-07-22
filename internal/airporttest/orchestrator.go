@@ -93,6 +93,32 @@ func (o *Orchestrator) RunDiagnostic(ctx context.Context, airportID int64, airpo
 	return run, nil
 }
 
+// sampledNodeResults 把抽样检活结果转成可持久化的每节点明细(随 dimensions_json 落库,
+// 供详情抽屉报告段展示;见 ticket 0037)。未实际检活的 outcome(无 checker/writer)跳过。
+func sampledNodeResults(outcomes []*ProbeOutcome) []SampledNodeResult {
+	results := make([]SampledNodeResult, 0, len(outcomes))
+	for _, o := range outcomes {
+		if o == nil || o.Node == nil || !o.Checked {
+			continue
+		}
+		name := o.Node.DisplayName
+		if name == "" {
+			name = o.Node.Name
+		}
+		r := SampledNodeResult{
+			Name:      name,
+			Region:    o.Node.Region,
+			Available: o.Available,
+			LatencyMs: o.Latency,
+		}
+		if o.Error != nil {
+			r.Error = o.Error.Error()
+		}
+		results = append(results, r)
+	}
+	return results
+}
+
 func (o *Orchestrator) persistFailedRun(ctx context.Context, run *TestRun, start time.Time, err error) (*TestRun, error) {
 	run.Status = StatusFailed
 	run.ErrorMessage = err.Error()
@@ -203,7 +229,7 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 
 	core := NewProbeCore(o.healthChecker, o.poolWriter)
 	sampledTotal := 0
-	_, err := core.Probe(ctx, nodesToTest, run.IsFull, ProbeHooks{
+	outcomes, err := core.Probe(ctx, nodesToTest, run.IsFull, ProbeHooks{
 		OnSampled: func(sampled int) error {
 			sampledTotal = sampled
 			sampleParams["sampled"] = sampled
@@ -257,6 +283,7 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 	// 使用全部测试节点评分(不仅是样本,反映整体质量)
 	// CalculateScore 内部按 httpStatus 自动重归一权重
 	score, dims := CalculateScore(nodesToTest, diagResult.HTTPStatus, diagResult.ParseFailures, diagResult.NodeCount+diagResult.ParseFailures)
+	dims.SampledNodes = sampledNodeResults(outcomes)
 	dimsJSON, _ := json.Marshal(dims)
 	scoreVal := score
 	run.Status = StatusCompleted

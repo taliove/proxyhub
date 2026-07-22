@@ -34,6 +34,25 @@ vi.mock('@/components/NodeExamDialog.vue', () => ({
   })
 }))
 
+// Mock 报告段:抽屉测试只验证数据接线与事件上抛,报告呈现归 AirportTestReport.test.ts
+vi.mock('@/components/AirportTestReport.vue', () => ({
+  default: defineComponent({
+    name: 'AirportTestReport',
+    props: {
+      runs: { type: Array, default: () => [] },
+      loading: { type: Boolean, default: false }
+    },
+    emits: ['run-test'],
+    setup(props, { emit }) {
+      return () =>
+        h('div', { class: 'test-report-stub', 'data-run-count': String(props.runs.length) }, [
+          h('button', { class: 'retest-btn', onClick: () => emit('run-test', false) }, '重新测试'),
+          h('button', { class: 'full-btn', onClick: () => emit('run-test', true) }, '测全部')
+        ])
+    }
+  })
+}))
+
 vi.mock('element-plus', () => ({
   ElMessage: { success: vi.fn(), error: vi.fn() }
 }))
@@ -138,7 +157,11 @@ const poolNode: Node = {
 }
 
 const mountDrawer = (modelValue: boolean, nodeList: Node[] = [poolNode]) => {
-  vi.mocked(client.get).mockResolvedValue({ nodes: nodeList } as never)
+  vi.mocked(client.get).mockImplementation(async (url: unknown) => {
+    if (url === '/nodes') return { nodes: nodeList } as never
+    if (url === '/airports/7/test/runs') return [] as never
+    return {} as never
+  })
   return mount(AirportDetailDrawer, {
     props: { modelValue, airport },
     global: {
@@ -161,22 +184,18 @@ describe('AirportDetailDrawer', () => {
     vi.clearAllMocks()
   })
 
-  it('打开抽屉只按机场名拉取池快照,不触发任何测试/检活请求', async () => {
+  it('打开抽屉只拉取池快照与测试记录(纯读取),不触发任何测试/检活写请求', async () => {
     mountDrawer(true)
     await flushPromises()
 
-    const getCalls = vi.mocked(client.get).mock.calls
-    expect(getCalls).toHaveLength(1)
-    expect(getCalls[0][0]).toBe('/nodes')
-    expect(getCalls[0][1]).toMatchObject({
-      params: { source: '极速机场' }
-    })
-    // 无任何 POST(测试/检活/体检都是 POST/SSE)
+    const getCalls = vi.mocked(client.get).mock.calls.map(([url]) => String(url))
+    expect(getCalls).toHaveLength(2)
+    expect(getCalls).toContain('/nodes')
+    expect(getCalls).toContain('/airports/7/test/runs')
+    // 无任何 POST/PUT/DELETE(测试/检活/体检都是写请求;查看报告不产生新 run)
     expect(vi.mocked(client.post)).not.toHaveBeenCalled()
-    // 没有任何指向测试/检测类端点的 GET
-    for (const [url] of getCalls) {
-      expect(String(url)).not.toMatch(/test|detect|exam|check/i)
-    }
+    expect(vi.mocked(client.put)).not.toHaveBeenCalled()
+    expect(vi.mocked(client.delete)).not.toHaveBeenCalled()
   })
 
   it('关闭状态不拉取任何数据', async () => {
@@ -270,5 +289,38 @@ describe('AirportDetailDrawer', () => {
     const wrapper = mountDrawer(true, [])
     await flushPromises()
     expect(wrapper.text()).toContain('该机场当前在池内无节点')
+  })
+
+  it('最近测试段:拉取 runs 传给报告组件;重跑意图上抛 {airport, full}', async () => {
+    const wrapper = mountDrawer(true)
+    await flushPromises()
+
+    // runs 已传给报告段(本用例 mock 为空数组)
+    const report = wrapper.findComponent({ name: 'AirportTestReport' })
+    expect(report.exists()).toBe(true)
+    expect(report.props('runs')).toEqual([])
+
+    await wrapper.find('.retest-btn').trigger('click')
+    await wrapper.find('.full-btn').trigger('click')
+    expect(wrapper.emitted('run-test')).toEqual([
+      [{ airport, full: false }],
+      [{ airport, full: true }]
+    ])
+    // 重跑只是上抛意图,抽屉自身不发 POST
+    expect(vi.mocked(client.post)).not.toHaveBeenCalled()
+  })
+
+  it('reloadReport 暴露给父级:重跑完成后重新拉取测试记录', async () => {
+    const wrapper = mountDrawer(true)
+    await flushPromises()
+    expect(
+      vi.mocked(client.get).mock.calls.filter(([u]) => u === '/airports/7/test/runs')
+    ).toHaveLength(1)
+
+    await (wrapper.vm as unknown as { reloadReport: () => Promise<void> }).reloadReport()
+    await flushPromises()
+    expect(
+      vi.mocked(client.get).mock.calls.filter(([u]) => u === '/airports/7/test/runs')
+    ).toHaveLength(2)
   })
 })

@@ -87,6 +87,11 @@
           </template>
         </el-table>
       </div>
+      <!-- 最近测试报告段:展示最近一次 completed run 的报告(查看不产生新 run);
+           「重新测试」「测全部」为显式动作,意图上抛由管理页打开运行模式对话框。 -->
+      <div ref="reportSectionEl" class="drawer-block">
+        <AirportTestReport :runs="testRuns" :loading="runsLoading" @run-test="onRunTest" />
+      </div>
     </template>
 
     <!-- 节点体检:复用节点管理页同一对话框;打开/进行中不影响抽屉本体。 -->
@@ -95,12 +100,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Airport, Node, NodePage } from '@/types'
 import client from '@/api/client'
 import StatusDot from '@/components/StatusDot.vue'
 import NodeExamDialog from '@/components/NodeExamDialog.vue'
+import AirportTestReport from '@/components/AirportTestReport.vue'
+import { listTestRuns, type TestRun } from '@/composables/useAirportTest'
 import { canGenerateShareLink, copyNodeLink } from '@/composables/useNodeShare'
 import { healthLabel, healthTone, latencyText, regionDisplay } from '@/views/nodes/nodecells'
 import { parseTimeMs, relativeTimeZh } from '@/components/exam/examhistory'
@@ -123,6 +130,8 @@ const emit = defineEmits<{
   (e: 'refresh', airport: Airport): void
   (e: 'test', airport: Airport): void
   (e: 'qrcode', airport: Airport): void
+  // 报告段显式重跑:full=false 抽样,full=true 测全部
+  (e: 'run-test', payload: { airport: Airport; full: boolean }): void
 }>()
 
 const drawerTitle = computed(() =>
@@ -149,15 +158,57 @@ const loadNodes = async (source: string) => {
   }
 }
 
-// 打开抽屉 / 切换机场时拉取池快照;关闭时清空,避免下次闪现旧机场数据。
+// 最近测试报告:打开抽屉时拉取一次;重跑完成后由父级调 reloadReport 刷新。
+const testRuns = ref<TestRun[]>([])
+const runsLoading = ref(false)
+
+const loadRuns = async () => {
+  if (!props.airport) return
+  runsLoading.value = true
+  try {
+    testRuns.value = await listTestRuns(props.airport.id)
+  } catch {
+    testRuns.value = []
+  } finally {
+    runsLoading.value = false
+  }
+}
+
+// 打开抽屉 / 切换机场时拉取池快照与测试记录;关闭时清空,避免下次闪现旧机场数据。
+// 测试记录是纯读取(GET /test/runs),不产生新 run。
 watch(
   () => [visible.value, props.airport?.name] as const,
   ([open, name]) => {
-    if (open && name) loadNodes(name)
-    else if (!open) nodes.value = []
+    if (open && name) {
+      loadNodes(name)
+      loadRuns()
+    } else if (!open) {
+      nodes.value = []
+      testRuns.value = []
+    }
   },
   { immediate: true }
 )
+
+// 报告段重跑意图上抛(抽样/全量由按钮区分);抽屉不持有运行逻辑。
+const onRunTest = (full: boolean) => {
+  if (!props.airport) return
+  emit('run-test', { airport: props.airport, full })
+}
+
+// 报告段锚点:列表点分数打开抽屉后由父级调 focusReport 定位到「最近测试」。
+const reportSectionEl = ref<HTMLElement | null>(null)
+
+defineExpose({
+  // 重跑完成后刷新报告段数据
+  reloadReport: loadRuns,
+  // 滚动定位到「最近测试」段(jsdom 无 scrollIntoView,故可选调用)
+  focusReport: () => {
+    nextTick(() => {
+      reportSectionEl.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+    })
+  }
+})
 
 // 最近实测时间:表格内用相对时间(与机场列表「最近测试」列同一呈现手法)。
 const lastCheckText = (iso: string): string => relativeTimeZh(parseTimeMs(iso))
