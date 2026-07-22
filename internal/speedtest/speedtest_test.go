@@ -150,4 +150,3 @@ func TestCountUpload_Empty(t *testing.T) {
 		t.Errorf("CountUpload empty = %d, want 0", n)
 	}
 }
-

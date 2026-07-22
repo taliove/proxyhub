@@ -377,7 +377,8 @@ func (m *Manager) Attach(kind, key string) (*Subscription, error) {
 // RunningKeys 返回内存中进行中的指定 kind 任务的 key 列表。
 // 持久化是尽力而为(Insert 失败退化为纯内存任务),做跨 key 互斥判断时
 // 必须以内存态为准(DB 为辅),否则纯内存任务对互斥检查完全隐身。
-func (m *Manager) RunningKeys(kind string) []string {	m.mu.Lock()
+func (m *Manager) RunningKeys(kind string) []string {
+	m.mu.Lock()
 	defer m.mu.Unlock()
 	var keys []string
 	for id, j := range m.jobs {

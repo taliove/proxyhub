@@ -190,4 +190,3 @@ func TestSpeedtestResults_MigrationIdempotent(t *testing.T) {
 		t.Errorf("after re-Open list = %+v, want the saved entry", list)
 	}
 }
-
