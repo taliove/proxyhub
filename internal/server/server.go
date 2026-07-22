@@ -69,6 +69,7 @@ type Server struct {
 	batchExamJobs      *detection.BatchExamJobManager
 	stabilityExamJobs  *detection.ExamJobManager
 	batchStabilityJobs *detection.BatchStabilityJobManager
+	speedtestJobs      *detection.BatchSpeedtestJobManager
 	testOrchestrator   *airporttest.Orchestrator
 	// self-node region resolution seams: real by default, overridable in tests
 	// to drive the suggest/save paths without touching DNS or the embedded DB.
@@ -138,6 +139,17 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 				logger.Warn("batch stability job persistence", "error", err)
 			}),
 		)
+
+		// 批量快速测速任务管理器:仅基准下行(与体检基准行同口径),游标续跑,
+		// 每节点完成回调写回节点视图带宽字段(node_health + 内存池,上行保留)。
+		s.speedtestJobs = detection.NewBatchSpeedtestJobManager(
+			detectionService.TestBaselineDown,
+			s.onSpeedtestComplete,
+			detection.WithBatchSpeedtestJobStore(st.Jobs()),
+			detection.WithBatchSpeedtestErrorHandler(func(err error) {
+				logger.Warn("batch speedtest job persistence", "error", err)
+			}),
+		)
 	}
 
 	// 初始化机场测试编排器
@@ -167,6 +179,32 @@ func (s *Server) onExamComplete(nodeKey string, report detection.ExamReport) {
 		s.logger.Warn("recompute node tags after exam failed", "error", err)
 	}
 	s.writebackRegionIfNeeded(nodeKey, report)
+}
+
+// onSpeedtestComplete 批量快速测速每节点完成的写回:基准下行写回节点视图带宽字段
+// (node_health target_name=bandwidth + 内存池),与 handleTestNode 既有写回路径同轨。
+// 批量只测下行:上行沿用池内现值写回,避免 up=0 覆盖既有测量(best-effort,失败只记日志)。
+func (s *Server) onSpeedtestComplete(node *subscription.Node, result detection.TestResult) {
+	res := result // 局部副本:补上行保留值,不改调用方结果(不可变语义)
+	res.UpMbps = s.currentBandwidthUp(node.NodeKey())
+	if err := s.st.SaveTestResult(node.NodeKey(), node.Name, node.Source, res); err != nil {
+		s.logger.Warn("save speedtest result failed", "node_key", node.NodeKey(), "error", err)
+	}
+	s.nodes.UpdateNodeTestResult(node.NodeKey(), "bandwidth", res.Available, res.Latency, res.DownMbps, res.UpMbps, "", "")
+}
+
+// currentBandwidthUp 读池内节点当前上行带宽(无此节点或池为空返回 0)。
+// 从池实时查而非用任务启动时的旁路指针:池写回是不可变替换,旁路指针可能已腐化。
+func (s *Server) currentBandwidthUp(nodeKey string) float64 {
+	if s.nodes == nil {
+		return 0
+	}
+	for _, n := range s.nodes.Nodes() {
+		if n.NodeKey() == nodeKey {
+			return n.BandwidthUpMbps
+		}
+	}
+	return 0
 }
 
 // writebackRegionIfNeeded writes back node region from exam egress data.
@@ -259,7 +297,7 @@ func (s *Server) syncSelfHostedNodeIdentity(nodeKey, name, regionCode string) {
 }
 
 // RecoverJobs 重启恢复:把上次进程遗留的 running 任务恢复或标记中断。
-// 单发任务(exam)标记 interrupted,批量任务(batch_exam)从游标续跑。
+// 单发任务(exam)标记 interrupted,批量任务(batch_exam/batch_speedtest)从游标续跑。
 // best-effort:失败只记日志。由 main 在对外服务前调用。
 func (s *Server) RecoverJobs() {
 	if s.examJobs != nil {
@@ -280,6 +318,11 @@ func (s *Server) RecoverJobs() {
 	if s.batchStabilityJobs != nil {
 		if err := s.batchStabilityJobs.RecoverInterrupted(); err != nil {
 			s.logger.Warn("recover interrupted batch stability jobs failed", "error", err)
+		}
+	}
+	if s.speedtestJobs != nil {
+		if err := s.speedtestJobs.RecoverInterrupted(); err != nil {
+			s.logger.Warn("recover interrupted batch speedtest jobs failed", "error", err)
 		}
 	}
 	if s.detectionJobs != nil {
@@ -413,6 +456,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/nodes/stability/batch/stream", s.requireAuth(s.handleBatchStabilityStream))
 	mux.HandleFunc("POST /api/nodes/stability/batch/cancel", s.requireAuth(s.handleBatchStabilityCancel))
 
+	// 快速测速(动作3):批量形态(任务化,仅基准下行)
+	mux.HandleFunc("POST /api/nodes/speedtest/batch", s.requireAuth(s.handleBatchSpeedtest))
+	mux.HandleFunc("GET /api/nodes/speedtest/batch/stream", s.requireAuth(s.handleBatchSpeedtestStream))
+	mux.HandleFunc("POST /api/nodes/speedtest/batch/cancel", s.requireAuth(s.handleBatchSpeedtestCancel))
 	// 节点管理（覆盖层 + 清理）
 	mux.HandleFunc("PUT /api/nodes/override", s.requireAuth(s.handleSetNodeOverride))
 	mux.HandleFunc("DELETE /api/nodes/override", s.requireAuth(s.handleClearNodeOverride))

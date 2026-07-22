@@ -96,6 +96,15 @@ func (s *sampleReader) TotalBytes() int64 { return s.totalBytes }
 // 返回最终聚合 TestResult(与 testBandwidth 判定逻辑一致)。
 // 各方向独立 DirTimeoutSec 超时;方向超时但已下够数据时用已采样字节算平均速率视为完成。
 func (d *Detector) TestBandwidthStream(ctx context.Context, node *subscription.Node, onSample func(Sample)) TestResult {
+	cfg := d.resolveBandwidthConfig()
+	// 下行:配置的 URL 优先,后接内置回退点(节点出口被 Cloudflare 风控时自动换点)
+	downURLs := append([]string{cfg.DownURL}, downloadFallbackURLs...)
+	return d.streamBandwidthTest(ctx, node, downURLs, cfg.UpURL, onSample)
+}
+
+// streamBandwidthTest 流式测速共用实现:端点可参数化(legacy 档传配置 URL 优先,
+// 快速测速档传基准端点),采样/判定/聚合逻辑只有一份。
+func (d *Detector) streamBandwidthTest(ctx context.Context, node *subscription.Node, downURLs []string, upURL string, onSample func(Sample)) TestResult {
 	if !d.tcpQuickCheck(ctx, node) {
 		return TestResult{Available: false, Mode: "bandwidth", Error: "TCP connection failed"}
 	}
@@ -120,8 +129,6 @@ func (d *Detector) TestBandwidthStream(ctx context.Context, node *subscription.N
 	start := time.Now()
 	elapsedMs := func() int { return int(time.Since(start).Milliseconds()) }
 
-	// 下行:配置的 URL 优先,后接内置回退点(节点出口被 Cloudflare 风控时自动换点)
-	downURLs := append([]string{cfg.DownURL}, downloadFallbackURLs...)
 	downMbps, err := d.streamDownload(ctx, adapter, downURLs, testDur, dirTimeout, onSample)
 	if err != nil {
 		return TestResult{
@@ -131,7 +138,7 @@ func (d *Detector) TestBandwidthStream(ctx context.Context, node *subscription.N
 	}
 
 	// 上行
-	upMbps, err := d.streamUpload(ctx, adapter, cfg.UpURL, cfg.UpBytes, testDur, dirTimeout, onSample)
+	upMbps, err := d.streamUpload(ctx, adapter, upURL, cfg.UpBytes, testDur, dirTimeout, onSample)
 	if err != nil {
 		return TestResult{
 			Available: false, Mode: "bandwidth", Error: fmt.Sprintf("上行测试失败: %v", err),

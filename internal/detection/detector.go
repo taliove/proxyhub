@@ -49,6 +49,11 @@ type Detector struct {
 	// egressProbeFactory 为一次体检构造出网信息探测器(默认经 mihomo 会话探 IPv4/IPv6/DNS 出口)。
 	// 与解锁段同构:每场体检独立会话,测试可注入假探测器绕过真实网络。
 	egressProbeFactory func(*subscription.Node) (EgressProbe, error)
+
+	// baselineDownProbeFactory 为一次快速测速构造基准下行探针(默认经 mihomo 会话打
+	// Cloudflare 就近 POP,仅下行)。与 regionSpeedProbeFactory 同构:每次测速独立会话,
+	// 测试可注入假探针绕过真实网络。
+	baselineDownProbeFactory func(*subscription.Node) (BaselineDownProbe, error)
 }
 
 // BandwidthConfig 带宽测试配置(可由 settings 覆盖)
@@ -91,6 +96,7 @@ func NewDetector(nodeConcurrency int, tcpTimeout, requestTimeout time.Duration) 
 	d.regionSpeedProbeFactory = d.defaultRegionSpeedProbe
 	d.unlockProbeFactory = d.defaultUnlockProbe
 	d.egressProbeFactory = d.defaultEgressProbe
+	d.baselineDownProbeFactory = d.defaultBaselineDownProbe
 	return d
 }
 
@@ -362,11 +368,13 @@ var connectivityTarget = Target{
 
 // TestNode 对单个节点做即时测试,供聚合检查/手动测试共用。
 // mode="quick":仅 TCP 快筛 + 测延迟;mode="real":构 mihomo adapter 经代理请求 connectivity 目标;
-// mode="bandwidth":测下行+上行带宽。
+// mode="bandwidth":测下行+上行带宽;mode="speedtest":快速测速(基准下行 + 保留上行,见 speedtest.go)。
 func (d *Detector) TestNode(ctx context.Context, node *subscription.Node, mode string) TestResult {
 	switch mode {
 	case "bandwidth":
 		return d.testBandwidth(ctx, node)
+	case "speedtest":
+		return d.TestSpeedtest(ctx, node)
 	case "real":
 		return d.testReal(ctx, node)
 	default:
