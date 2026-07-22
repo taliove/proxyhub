@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
-	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -185,66 +183,55 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 		return run, nil
 	}
 
-	// 阶段1:抽样
+	// 阶段1+2:抽样 + 检活写回,委托给无持久化的抽样检活核心(ADR 0027 决策 3)。
+	// run 持久化由 hooks 驱动,保持原有的状态流转与进度落库时序。
 	run.Status = StatusChecking
 	if err := o.store.UpdateTestRun(pctx, run); err != nil {
 		return nil, fmt.Errorf("update to checking: %w", err)
 	}
 
-	sampled := SampleNodes(nodesToTest, run.IsFull)
 	sampleParams := map[string]interface{}{
-		"full":         run.IsFull,
-		"total":        len(nodesToTest),
-		"sampled":      len(sampled),
-		"checked":      0,
-		"total_sample": len(sampled),
+		"full":    run.IsFull,
+		"total":   len(nodesToTest),
+		"checked": 0,
 	}
-	paramsJSON, _ := json.Marshal(sampleParams)
-	run.SampleParams = string(paramsJSON)
-	if err := o.store.UpdateTestRun(pctx, run); err != nil {
-		return nil, fmt.Errorf("update sample params: %w", err)
+	persistParams := func() error {
+		paramsJSON, _ := json.Marshal(sampleParams)
+		run.SampleParams = string(paramsJSON)
+		return o.store.UpdateTestRun(pctx, run)
 	}
 
-	// 阶段2:检活写回(复用全局健康检查路径)
-	if o.healthChecker != nil && o.poolWriter != nil {
-		results := o.healthChecker.CheckAll(ctx, sampled)
-		cancelled := ctx.Err() != nil
-		checked := 0
-		for _, r := range results {
-			// 取消诱导的失败(ctx.Canceled)不是真实测量:不回写池、不计进度,
-			// 避免把"被取消"误诊为节点不可用污染池状态(issue 0025)。
-			if cancelled && errors.Is(r.Error, context.Canceled) {
-				continue
+	core := NewProbeCore(o.healthChecker, o.poolWriter)
+	sampledTotal := 0
+	_, err := core.Probe(ctx, nodesToTest, run.IsFull, ProbeHooks{
+		OnSampled: func(sampled int) error {
+			sampledTotal = sampled
+			sampleParams["sampled"] = sampled
+			sampleParams["total_sample"] = sampled
+			if err := persistParams(); err != nil {
+				return fmt.Errorf("update sample params: %w", err)
 			}
-			// 写回节点池(复用 aggregator.UpdateNodeTestResult);失败时分类记录原因(ticket 0017)
-			failReason, failDetail := "", ""
-			if !r.Available && r.Error != nil {
-				failReason = detection.ClassifyFailure(r.Error)
-				failDetail = r.Error.Error()
-			}
-			o.poolWriter.UpdateNodeTestResult(r.Node.NodeKey(), "quick", r.Available, r.Latency, 0, 0, failReason, failDetail)
-			// 同时更新内存中的节点状态,供评分使用
-			r.Node.Available = r.Available
-			r.Node.Latency = r.Latency
-			// 更新进度
-			checked++
+			return nil
+		},
+		OnProgress: func(checked int) {
 			sampleParams["checked"] = checked
-			paramsJSON, _ = json.Marshal(sampleParams)
-			run.SampleParams = string(paramsJSON)
-			o.store.UpdateTestRun(pctx, run)
+			persistParams() // best-effort progress, errors ignored (as before)
 			if progress != nil {
-				progress(string(StatusChecking), checked, len(sampled))
+				progress(string(StatusChecking), checked, sampledTotal)
 			}
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	// 取消:已写回结果不回滚,run 标 cancelled 并保留已产出诊断数据,不再评分
+	if ctx.Err() != nil {
+		run.Status = StatusCancelled
+		run.ErrorMessage = "cancelled"
+		if err := o.store.UpdateTestRun(pctx, run); err != nil {
+			return nil, fmt.Errorf("update cancelled run: %w", err)
 		}
-		// 取消:已写回结果不回滚,run 标 cancelled 并保留已产出诊断数据,不再评分
-		if cancelled {
-			run.Status = StatusCancelled
-			run.ErrorMessage = "cancelled"
-			if err := o.store.UpdateTestRun(pctx, run); err != nil {
-				return nil, fmt.Errorf("update cancelled run: %w", err)
-			}
-			return run, ctx.Err()
-		}
+		return run, ctx.Err()
 	}
 
 	// 阶段3:评分
