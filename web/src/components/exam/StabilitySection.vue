@@ -135,8 +135,9 @@ const effectiveScore = computed(() => (props.metrics ? props.metrics.score : sam
 const cssVar = (name: string) =>
   getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 
+// fallback 值为亮主题令牌字面量(success-base / teal-600),仅防御令牌读取失败。
 const scoreColor = computed(() => cssVar(scoreColorVar(effectiveScore.value)) || '#059669')
-const sparkColor = computed(() => cssVar('--ph-color-primary') || '#4f46e5')
+const sparkColor = computed(() => cssVar('--ph-color-primary') || '#0c8078')
 const scoreText = computed(() => scoreLabel(effectiveScore.value))
 
 const lossText = computed(() => formatLossPct(props.metrics?.loss_rate))
@@ -213,6 +214,7 @@ const xAxisTicks = computed(() =>
 .exam-score-value {
   font-size: var(--ph-text-display);
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 .exam-score-label {
@@ -237,6 +239,7 @@ const xAxisTicks = computed(() =>
 .exam-metric-value {
   font-size: var(--ph-text-md);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .exam-sparkline-container {
   margin-top: var(--ph-space-4);
@@ -251,7 +254,8 @@ const xAxisTicks = computed(() =>
 }
 .axis-label {
   font-size: 9px;
-  fill: var(--ph-text-tertiary);
+  fill: var(--ph-text-placeholder);
+  font-variant-numeric: tabular-nums;
   font-family:
     system-ui,
     -apple-system,

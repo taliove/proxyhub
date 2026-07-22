@@ -50,8 +50,11 @@
       <el-table-column prop="region" label="地区" width="80" sortable="custom">
         <template #default="{ row }">{{ row.region || '—' }}</template>
       </el-table-column>
-      <el-table-column prop="latency" label="延迟" width="90" sortable="custom">
-        <template #default="{ row }">{{ latencyText(row) }}</template>
+      <el-table-column prop="latency" label="延迟" width="100" sortable="custom">
+        <template #default="{ row }">
+          <StatusDot :tone="healthTone(row)" :label="healthLabel(row)" class="latency-dot" />
+          <span class="num">{{ latencyText(row) }}</span>
+        </template>
       </el-table-column>
       <!-- 稳定性:最近一次体检的稳定性分 + 语义色;无历史不占位 -->
       <el-table-column label="稳定性" width="96">
@@ -61,6 +64,7 @@
             size="small"
             :type="badgeTagType(badgeFor(row)!.level)"
             :title="badgeFor(row)!.text"
+            class="num"
           >
             {{ badgeFor(row)!.score }}
           </el-tag>
@@ -101,7 +105,7 @@
                   </span>
                 </div>
                 <div class="unlock-info">
-                  <span v-if="item.result.available" class="muted"
+                  <span v-if="item.result.available" class="muted num"
                     >{{ item.result.latency }}ms</span
                   >
                   <span v-else-if="item.display.variant === 'error'" class="muted">
@@ -143,13 +147,10 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <!-- 体检时间:最近一次体检相对时间 -->
+      <!-- 体检时间:最近一次体检相对时间(无历史走占位) -->
       <el-table-column label="体检时间" width="110">
         <template #default="{ row }">
-          <span v-if="badgeFor(row) || summaryFor(row)" class="muted">
-            {{ summaryFor(row)?.relative || '—' }}
-          </span>
-          <span v-else class="muted">—</span>
+          <span class="muted num">{{ summaryFor(row)?.relative || '—' }}</span>
         </template>
       </el-table-column>
       <!-- 操作:自建走 编辑/刷新名称/启停/删除;机场走 编辑/刷新名称/屏蔽;点击行打开详情抽屉 -->
@@ -236,9 +237,18 @@
 
 <script setup lang="ts">
 import { ArrowDown, WarningFilled, DocumentCopy, Grid } from '@element-plus/icons-vue'
+import StatusDot from '@/components/StatusDot.vue'
 import { isSelfHosted } from '../utils'
 import { isGenericVariant, unlockDisplayRows, unlockSummary } from '../unlock'
-import { latencyText, nameCell, stateTags, tagsDisplay, type NodeExamSummary } from '../nodecells'
+import {
+  latencyText,
+  nameCell,
+  stateTags,
+  healthTone,
+  healthLabel,
+  tagsDisplay,
+  type NodeExamSummary
+} from '../nodecells'
 import { badgeTagType, canShare } from './node-table-utils'
 import type { UnifiedNode } from '../selfmerge'
 
@@ -287,10 +297,7 @@ const emit = defineEmits<{
   (e: 'show-qr', row: UnifiedNode): void
 }>()
 
-// Self-hosted nodes are now selectable for batch operations.
-// Block/unblock operations semantically only apply to airport nodes (self-hosted nodes
-// don't participate in blocking); other batch operations (detect, exam, refresh-names)
-// apply to all node types uniformly. The batch operation handlers filter by source when needed.
+// 自建节点也参与批量操作;屏蔽语义仅适用机场节点,处理器内按来源过滤。
 const isSelectable = () => true
 
 // stale / 禁用节点行置灰
@@ -316,13 +323,19 @@ const onRowClick = (row: UnifiedNode, column: { type?: string } | null) => {
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-sm);
 }
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.latency-dot {
+  margin-right: var(--ph-space-1);
+}
 .error-text {
   color: var(--ph-danger);
 }
 .name-cell {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ph-space-1);
 }
 .name-primary {
   font-weight: 500;
@@ -331,25 +344,26 @@ const onRowClick = (row: UnifiedNode, column: { type?: string } | null) => {
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
 }
-.state-tags {
-  display: inline-flex;
-  gap: var(--ph-space-1);
-  flex-wrap: wrap;
-  margin-top: 2px;
-}
+.state-tags,
 .tag-cell {
   display: inline-flex;
   gap: var(--ph-space-1);
   flex-wrap: wrap;
 }
-.egress-cell {
+.state-tags {
+  margin-top: var(--ph-space-1);
+}
+.egress-cell,
+.unlock-badges,
+.row-ops {
   display: inline-flex;
   align-items: center;
   gap: var(--ph-space-1);
 }
-.egress-code {
+.egress-code,
+.region-badge {
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.04em;
 }
 .egress-warn {
   color: var(--ph-warning);
@@ -377,22 +391,8 @@ const onRowClick = (row: UnifiedNode, column: { type?: string } | null) => {
   gap: var(--ph-space-2);
   margin-bottom: var(--ph-space-1);
 }
-.unlock-badges {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ph-space-1);
-}
-.region-badge {
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.5px;
-}
 .unlock-info {
   font-size: var(--ph-text-xs);
-}
-.row-ops {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ph-space-1);
 }
 :deep(.stale-row) {
   opacity: 0.55;

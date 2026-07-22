@@ -5,14 +5,18 @@
         <el-descriptions-item label="原始名称">{{ node.name }}</el-descriptions-item>
         <el-descriptions-item label="标准名称">{{ node.display_name || '—' }}</el-descriptions-item>
         <el-descriptions-item label="服务器">{{ node.server }}</el-descriptions-item>
-        <el-descriptions-item label="端口">{{ node.port }}</el-descriptions-item>
+        <el-descriptions-item label="端口">
+          <span class="num">{{ node.port }}</span>
+        </el-descriptions-item>
         <el-descriptions-item label="协议">{{ node.type }}</el-descriptions-item>
         <el-descriptions-item label="传输">{{ node.network || 'tcp' }}</el-descriptions-item>
         <el-descriptions-item label="TLS">{{ node.tls ? '是' : '否' }}</el-descriptions-item>
         <el-descriptions-item label="SNI">{{ node.sni || '—' }}</el-descriptions-item>
         <el-descriptions-item label="地区">{{ node.region || '—' }}</el-descriptions-item>
         <el-descriptions-item label="来源">{{ node.source }}</el-descriptions-item>
-        <el-descriptions-item label="延迟">{{ node.latency }}ms</el-descriptions-item>
+        <el-descriptions-item label="延迟">
+          <span class="num">{{ latencyText(node) }}</span>
+        </el-descriptions-item>
       </el-descriptions>
 
       <div class="drawer-block">
@@ -45,7 +49,7 @@
           </el-table-column>
           <el-table-column label="延迟" width="90">
             <template #default="{ row: r }">
-              <span v-if="r.result.available">{{ r.result.latency }}ms</span>
+              <span v-if="r.result.available" class="num">{{ r.result.latency }}ms</span>
               <span v-else class="muted">—</span>
             </template>
           </el-table-column>
@@ -64,10 +68,10 @@
 
       <div v-if="node.bandwidth_down_mbps || node.bandwidth_up_mbps" class="drawer-block bw-detail">
         <span class="bw-label">带宽测试:</span>
-        <el-tag size="small" type="success">
+        <el-tag size="small" type="success" class="num">
           下行 {{ (node.bandwidth_down_mbps || 0).toFixed(1) }} Mbps
         </el-tag>
-        <el-tag size="small" type="success">
+        <el-tag size="small" type="success" class="num">
           上行 {{ (node.bandwidth_up_mbps || 0).toFixed(1) }} Mbps
         </el-tag>
       </div>
@@ -114,6 +118,7 @@
 import { computed, ref, watch } from 'vue'
 import type { ExamHistoryEntry, Node } from '@/types'
 import { isGenericVariant, unlockDisplayRows } from '../unlock'
+import { latencyText } from '../nodecells'
 import { fetchExamHistory } from '@/api/exam'
 import ExamHistoryTimeline from '@/components/exam/ExamHistoryTimeline.vue'
 import { generateQRCode } from '@/composables/useQRCode'
@@ -201,6 +206,9 @@ const showNodeQR = async (node: Node) => {
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-sm);
 }
+.num {
+  font-variant-numeric: tabular-nums;
+}
 .error-text {
   color: var(--ph-danger);
 }
@@ -211,7 +219,7 @@ const showNodeQR = async (node: Node) => {
 }
 .region-badge {
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.04em;
 }
 .bw-detail {
   display: flex;
@@ -230,7 +238,7 @@ const showNodeQR = async (node: Node) => {
 }
 .qr-image {
   max-width: 100%;
-  border: 1px solid var(--el-border-color);
+  border: 1px solid var(--ph-border);
   border-radius: var(--ph-radius-lg);
 }
 .qr-hint {

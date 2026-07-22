@@ -1,6 +1,6 @@
 <template>
   <div class="batch-bar">
-    <span class="muted">已选 {{ count }} 项</span>
+    <span class="muted num">已选 {{ count }} 项</span>
     <el-button type="warning" size="small" :disabled="blockableCount === 0" @click="emit('block')">
       屏蔽选中
     </el-button>
@@ -14,7 +14,7 @@
       批量体检
     </el-button>
     <el-button size="small" @click="emit('refresh-names')">刷新名称</el-button>
-    <span v-if="examining" class="muted exam-progress">
+    <span v-if="examining" class="muted num exam-progress">
       体检中 {{ examCompleted }}/{{ examTotal }}
       <el-button link type="warning" size="small" @click="emit('cancel-exam')">取消</el-button>
     </span>
@@ -59,6 +59,9 @@ const emit = defineEmits<{
 .muted {
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-sm);
+}
+.num {
+  font-variant-numeric: tabular-nums;
 }
 .exam-progress {
   display: inline-flex;

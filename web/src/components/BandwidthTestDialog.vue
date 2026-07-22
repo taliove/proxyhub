@@ -107,13 +107,14 @@ let finished = false // 防 onerror 误报
 
 const fmt = (v?: number) => (v ?? 0).toFixed(1)
 
-// 图表配色取自设计令牌(随亮/暗主题变化):下行=主色靛蓝,上行=成功绿。
+// 图表配色取自设计令牌(随亮/暗主题变化):下行=主色电波青,上行=成功绿。
 // visible 进入依赖:每次打开对话框重算,确保切主题后重开取到新令牌值。
+// fallback 值为亮主题令牌字面量(teal-600 / success-base),仅防御令牌读取失败。
 const chartColors = computed(() => {
   void visible.value
   const rootStyle = getComputedStyle(document.documentElement)
   return {
-    down: rootStyle.getPropertyValue('--ph-color-primary').trim() || '#4f46e5',
+    down: rootStyle.getPropertyValue('--ph-color-primary').trim() || '#0c8078',
     up: rootStyle.getPropertyValue('--ph-success').trim() || '#059669'
   }
 })
@@ -293,6 +294,7 @@ defineExpose({ open })
 .bw-live-value {
   font-size: var(--ph-text-display-sm);
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--ph-color-primary);
   display: inline-block;
   min-width: 60px;
@@ -332,6 +334,7 @@ defineExpose({ open })
 .bw-card-value {
   font-size: var(--ph-text-display);
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
   color: var(--ph-color-primary);
 }
@@ -353,6 +356,7 @@ defineExpose({ open })
 }
 .bw-elapsed {
   font-size: var(--ph-text-sm);
+  font-variant-numeric: tabular-nums;
   color: var(--ph-text-secondary);
 }
 </style>

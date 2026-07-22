@@ -3,6 +3,8 @@ import type { ExamHistoryEntry, ExamReport, Node } from '@/types'
 import {
   nameCell,
   stateTags,
+  healthTone,
+  healthLabel,
   latencyText,
   tagsDisplay,
   examEgressCell,
@@ -56,13 +58,32 @@ describe('stateTags', () => {
     const tags = stateTags(unode({ blocked: true, stale: true }))
     expect(tags.map((t) => t.label)).toEqual(['已屏蔽', '已下架'])
   })
-  it('禁用自建显示禁用而非不可用', () => {
+  it('禁用自建显示禁用', () => {
     expect(stateTags(unode({ enabled: false, available: false })).map((t) => t.label)).toEqual([
       '禁用'
     ])
   })
-  it('启用但不可用显示不可用', () => {
-    expect(stateTags(unode({ available: false })).map((t) => t.label)).toEqual(['不可用'])
+  it('不可用不出标签(由延迟列状态色点表达)', () => {
+    expect(stateTags(unode({ available: false }))).toEqual([])
+  })
+})
+
+describe('healthTone / healthLabel', () => {
+  it('可用且有延迟为绿点', () => {
+    expect(healthTone(unode({ available: true, latency: 88 }))).toBe('success')
+    expect(healthLabel(unode({ available: true, latency: 88 }))).toBe('可用')
+  })
+  it('可用但无延迟为灰点(未检测)', () => {
+    expect(healthTone(unode({ available: true, latency: 0 }))).toBe('muted')
+    expect(healthLabel(unode({ available: true, latency: 0 }))).toBe('未检测')
+  })
+  it('不可用为红点(优先于延迟)', () => {
+    expect(healthTone(unode({ available: false, latency: 88 }))).toBe('danger')
+    expect(healthLabel(unode({ available: false, latency: 88 }))).toBe('不可用')
+  })
+  it('禁用为灰点(优先于可用性)', () => {
+    expect(healthTone(unode({ enabled: false, available: false }))).toBe('muted')
+    expect(healthLabel(unode({ enabled: false, available: false }))).toBe('已禁用')
   })
 })
 

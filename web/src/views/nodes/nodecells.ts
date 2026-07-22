@@ -23,6 +23,7 @@ export const nameCell = (n: Node): NameCell => {
 }
 
 // 列收敛后去掉独立"状态"列:状态降为名称旁的小标签。
+// "不可用"不再出标签,由延迟列的状态色点(healthTone)表达,避免同一状态两处重复呈现。
 export type StateTone = 'info' | 'warning' | 'danger'
 export interface StateTag {
   label: string
@@ -33,8 +34,20 @@ export const stateTags = (n: UnifiedNode): StateTag[] => {
   if (n.blocked) tags.push({ label: '已屏蔽', tone: 'warning' })
   if (n.stale) tags.push({ label: '已下架', tone: 'info' })
   if (n.enabled === false) tags.push({ label: '禁用', tone: 'info' })
-  else if (!n.available) tags.push({ label: '不可用', tone: 'danger' })
   return tags
+}
+
+// 健康状态色点(延迟列):禁用/未测为灰点,不可用为红点,可用且有延迟为绿点。
+export type HealthTone = 'success' | 'danger' | 'muted'
+export const healthTone = (n: UnifiedNode): HealthTone => {
+  if (n.enabled === false) return 'muted'
+  if (!n.available) return 'danger'
+  return n.latency > 0 ? 'success' : 'muted'
+}
+export const healthLabel = (n: UnifiedNode): string => {
+  if (n.enabled === false) return '已禁用'
+  if (!n.available) return '不可用'
+  return n.latency > 0 ? '可用' : '未检测'
 }
 
 // 延迟文案:无有效延迟(禁用/未测)显示占位符。
