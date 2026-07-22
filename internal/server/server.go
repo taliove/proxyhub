@@ -187,6 +187,12 @@ func (s *Server) onExamComplete(nodeKey string, report detection.ExamReport) {
 func (s *Server) onSpeedtestComplete(node *subscription.Node, result detection.TestResult) {
 	res := result // 局部副本:补上行保留值,不改调用方结果(不可变语义)
 	res.UpMbps = s.currentBandwidthUp(node.NodeKey())
+	// 可用判定与单节点 bandwidth 档同轨(down+up 双阈值):池内有上行测量(或上行阈值为 0)
+	// 时按双阈值重算,仅下行合格不得翻转既有双阈值判定;池内无上行测量时保留批量档
+	// 自身的下行判定,不以"缺数据"推翻节点。
+	if res.UpMbps > 0 || res.MinUpMbps == 0 {
+		res.Available = res.DownMbps >= res.MinDownMbps && res.UpMbps >= res.MinUpMbps
+	}
 	if err := s.st.SaveTestResult(node.NodeKey(), node.Name, node.Source, res); err != nil {
 		s.logger.Warn("save speedtest result failed", "node_key", node.NodeKey(), "error", err)
 	}

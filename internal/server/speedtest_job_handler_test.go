@@ -236,3 +236,49 @@ func TestHandleTestNodeStream_SpeedtestMode(t *testing.T) {
 		t.Errorf("SSE done frame available != false: %q", body)
 	}
 }
+
+// TestOnSpeedtestComplete_DualThresholdCaliber 批量快速测速写回的可用判定与单节点
+// bandwidth 档同轨(down+up 双阈值):池内有上行测量时按双阈值重算,仅下行合格
+// 不得翻转既有双阈值判定;池内无上行测量时保留批量档自身判定,不以缺数据推翻节点。
+func TestOnSpeedtestComplete_DualThresholdCaliber(t *testing.T) {
+	cases := []struct {
+		name      string
+		poolUp    float64
+		result    detection.TestResult
+		wantAvail bool
+	}{
+		{"up below min: dual threshold marks unavailable", 0.5,
+			detection.TestResult{Available: true, Mode: "bandwidth", DownMbps: 50, MinDownMbps: 10, MinUpMbps: 1}, false},
+		{"up above min: dual threshold keeps available", 5,
+			detection.TestResult{Available: true, Mode: "bandwidth", DownMbps: 50, MinDownMbps: 10, MinUpMbps: 1}, true},
+		{"no up measurement: keep batch down-only verdict", 0,
+			detection.TestResult{Available: true, Mode: "bandwidth", DownMbps: 50, MinDownMbps: 10, MinUpMbps: 1}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			node := speedtestNode()
+			node.BandwidthUpMbps = tc.poolUp
+			srv, st := newTestServer(t, []*subscription.Node{node})
+
+			srv.onSpeedtestComplete(node, tc.result)
+
+			views, err := st.GetLatestDetectionResults([]string{node.NodeKey()})
+			if err != nil {
+				t.Fatalf("GetLatestDetectionResults: %v", err)
+			}
+			var got *bool
+			for _, v := range views[node.NodeKey()] {
+				if v.TargetName == "bandwidth" {
+					a := v.Available
+					got = &a
+				}
+			}
+			if got == nil {
+				t.Fatal("no bandwidth row written to node_health")
+			}
+			if *got != tc.wantAvail {
+				t.Errorf("Available = %v, want %v", *got, tc.wantAvail)
+			}
+		})
+	}
+}
