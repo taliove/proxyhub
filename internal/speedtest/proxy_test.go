@@ -3,298 +3,240 @@ package speedtest
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"net/http/httptest"
+	"testing"
 	"time"
 )
 
-// ProxyTestRequest 后端代理测速请求
-type ProxyTestRequest struct {
-	NodeKey            string `json:"node_key"`             // 节点 key（server:port）
-	SelfNodeID         *int   `json:"self_node_id"`         // 或自建节点 ID
-	Mode               string `json:"mode"`                 // "latency" | "download" | "upload" | "full"
-	DownloadDurationMs int    `json:"download_duration_ms"` // 下行测速时长（毫秒）
-	UploadDurationMs   int    `json:"upload_duration_ms"`   // 上行测速时长（毫秒）
-}
-
-// ProxyTestResult 后端代理测速结果
-type ProxyTestResult struct {
-	DownMbps        float64 `json:"down_mbps"`
-	UpMbps          float64 `json:"up_mbps"`
-	IdleLatencyMs   float64 `json:"idle_latency_ms"`
-	JitterMs        float64 `json:"jitter_ms"`
-	ElapsedMs       int     `json:"elapsed_ms"`
-}
-
-// LatencyMetrics 延迟统计指标
-type LatencyMetrics struct {
-	IdleLatencyMs float64 // 最小 RTT（空闲延迟）
-	JitterMs      float64 // 抖动（相邻 RTT 差值平均）
-}
-
-// 测速端点 URL（Cloudflare speed test）
-const (
-	defaultLatencyURL  = "https://speed.cloudflare.com/__down?bytes=1000"
-	defaultDownloadURL = "https://speed.cloudflare.com/__down?bytes=100000000" // 100MB
-	defaultUploadURL   = "https://speed.cloudflare.com/__up"
-)
-
-// 默认参数
-const (
-	defaultSamples             = 8
-	defaultDownloadDurationMs  = 10000
-	defaultUploadDurationMs    = 10000
-	defaultUploadChunkSize     = 256 * 1024 // 256KB
-)
-
-// computeLatencyMetrics 从 RTT 样本计算延迟统计
-func computeLatencyMetrics(rtts []float64) LatencyMetrics {
-	if len(rtts) == 0 {
-		return LatencyMetrics{}
+// TestComputeLatencyMetrics 测试延迟统计计算
+func TestComputeLatencyMetrics(t *testing.T) {
+	tests := []struct {
+		name     string
+		rtts     []float64
+		wantIdle float64 // 最小值
+		wantMax  float64 // 抖动应 < 最大值 - 最小值
+	}{
+		{
+			name:     "stable connection",
+			rtts:     []float64{10, 11, 10, 12, 11, 10, 11, 10},
+			wantIdle: 10,
+			wantMax:  2.5, // 抖动应小于此值
+		},
+		{
+			name:     "variable connection",
+			rtts:     []float64{10, 20, 15, 25, 12, 18, 14, 22},
+			wantIdle: 10,
+			wantMax:  10, // 抖动应小于此值
+		},
 	}
 
-	// 最小 RTT = 空闲延迟
-	sorted := make([]float64, len(rtts))
-	copy(sorted, rtts)
-	sort.Float64s(sorted)
-	idleLatency := sorted[0]
-
-	// 抖动 = 相邻 RTT 差值的平均
-	var jitterSum float64
-	for i := 1; i < len(rtts); i++ {
-		diff := rtts[i] - rtts[i-1]
-		if diff < 0 {
-			diff = -diff
-		}
-		jitterSum += diff
-	}
-	jitter := jitterSum / float64(len(rtts)-1)
-
-	return LatencyMetrics{
-		IdleLatencyMs: idleLatency,
-		JitterMs:      jitter,
-	}
-}
-
-// measureLatencyViaProxy 通过代理测量延迟（发送 samples 次小请求）
-func measureLatencyViaProxy(ctx context.Context, client *http.Client, url string, samples int) (*LatencyMetrics, error) {
-	rtts := make([]float64, 0, samples)
-
-	for i := 0; i < samples; i++ {
-		start := time.Now()
-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-		if err != nil {
-			return nil, fmt.Errorf("create latency request: %w", err)
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("latency probe %d: %w", i, err)
-		}
-
-		// 读取完整响应体
-		_, err = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("latency probe %d: HTTP %d", i, resp.StatusCode)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read latency response %d: %w", i, err)
-		}
-
-		rtt := float64(time.Since(start).Milliseconds())
-		rtts = append(rtts, rtt)
-	}
-
-	metrics := computeLatencyMetrics(rtts)
-	return &metrics, nil
-}
-
-// measureDownloadViaProxy 通过代理测量下行带宽
-func measureDownloadViaProxy(ctx context.Context, client *http.Client, url string, durationMs int) (float64, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return 0, fmt.Errorf("create download request: %w", err)
-	}
-
-	start := time.Now()
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("download request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
-	}
-
-	// 流式读取，计时计字节
-	var totalBytes int64
-	buf := make([]byte, 32*1024)
-	deadline := start.Add(time.Duration(durationMs) * time.Millisecond)
-
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		default:
-		}
-
-		n, err := resp.Body.Read(buf)
-		totalBytes += int64(n)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return 0, fmt.Errorf("read download response: %w", err)
-		}
-	}
-
-	elapsed := time.Since(start).Seconds()
-	if elapsed == 0 {
-		return 0, fmt.Errorf("elapsed time is zero")
-	}
-
-	// 转换为 Mbps
-	mbps := float64(totalBytes) * 8 / 1_000_000 / elapsed
-	return mbps, nil
-}
-
-// measureUploadViaProxy 通过代理测量上行带宽
-func measureUploadViaProxy(ctx context.Context, client *http.Client, url string, durationMs int) (float64, error) {
-	// 创建随机数据流
-	pr, pw := io.Pipe()
-	var sentBytes int64
-
-	go func() {
-		defer pw.Close()
-		chunk := make([]byte, defaultUploadChunkSize)
-		deadline := time.Now().Add(time.Duration(durationMs) * time.Millisecond)
-
-		for time.Now().Before(deadline) {
-			select {
-			case <-ctx.Done():
-				return
-			default:
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := computeLatencyMetrics(tt.rtts)
+			if result.IdleLatencyMs != tt.wantIdle {
+				t.Errorf("IdleLatencyMs = %v, want %v", result.IdleLatencyMs, tt.wantIdle)
 			}
-
-			// 生成随机数据
-			if _, err := rand.Read(chunk); err != nil {
-				return
+			if result.JitterMs >= tt.wantMax {
+				t.Errorf("JitterMs = %v, want < %v", result.JitterMs, tt.wantMax)
 			}
-			n, err := pw.Write(chunk)
-			sentBytes += int64(n)
+		})
+	}
+}
+
+// TestMeasureLatencyViaProxy 测试延迟测量
+func TestMeasureLatencyViaProxy(t *testing.T) {
+	// Mock 测速端点
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 模拟小延迟
+		time.Sleep(5 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		w.Write(make([]byte, 1000)) // 1KB
+	}))
+	defer ts.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	ctx := context.Background()
+
+	result, err := measureLatencyViaProxy(ctx, client, ts.URL, 8)
+	if err != nil {
+		t.Fatalf("measureLatencyViaProxy failed: %v", err)
+	}
+
+	// 验证结果合理性
+	if result.IdleLatencyMs <= 0 {
+		t.Errorf("IdleLatencyMs should be positive, got %v", result.IdleLatencyMs)
+	}
+	if result.IdleLatencyMs > 1000 {
+		t.Errorf("IdleLatencyMs too high: %v", result.IdleLatencyMs)
+	}
+	if result.JitterMs < 0 {
+		t.Errorf("JitterMs should be non-negative, got %v", result.JitterMs)
+	}
+}
+
+// TestMeasureDownloadViaProxy 测试下行测速
+func TestMeasureDownloadViaProxy(t *testing.T) {
+	// Mock 测速端点：发送 10MB 数据
+	const dataSize = 10 * 1024 * 1024
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		// 发送固定大小的数据
+		data := make([]byte, dataSize)
+		rand.Read(data)
+		w.Write(data)
+	}))
+	defer ts.Close()
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	ctx := context.Background()
+
+	// 测速 1 秒
+	mbps, err := measureDownloadViaProxy(ctx, client, ts.URL, 1000)
+	if err != nil {
+		t.Fatalf("measureDownloadViaProxy failed: %v", err)
+	}
+
+	// 验证速度 > 0
+	if mbps <= 0 {
+		t.Errorf("Download speed should be positive, got %v Mbps", mbps)
+	}
+
+	t.Logf("Download speed: %.2f Mbps", mbps)
+}
+
+// TestMeasureUploadViaProxy 测试上行测速
+func TestMeasureUploadViaProxy(t *testing.T) {
+	// Mock 测速端点：接收数据并返回字节数
+	var receivedBytes int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		// 读取并计数
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := r.Body.Read(buf)
+			receivedBytes += int64(n)
 			if err != nil {
-				return
+				break
 			}
 		}
-	}()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"bytes":` + string(rune(receivedBytes)) + `}`))
+	}))
+	defer ts.Close()
 
-	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
+	client := &http.Client{Timeout: 10 * time.Second}
+	ctx := context.Background()
+
+	// 测速 1 秒
+	mbps, err := measureUploadViaProxy(ctx, client, ts.URL, 1000)
 	if err != nil {
-		return 0, fmt.Errorf("create upload request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/octet-stream")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("upload request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("upload failed: HTTP %d", resp.StatusCode)
+		t.Fatalf("measureUploadViaProxy failed: %v", err)
 	}
 
-	// 读取服务端返回的实际接收字节数
-	var result struct {
-		Bytes int64 `json:"bytes"`
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("read upload response: %w", err)
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		// 如果解析失败，使用发送字节数
-		result.Bytes = sentBytes
+	// 验证速度 > 0
+	if mbps <= 0 {
+		t.Errorf("Upload speed should be positive, got %v Mbps", mbps)
 	}
 
-	elapsed := time.Since(start).Seconds()
-	if elapsed == 0 {
-		return 0, fmt.Errorf("elapsed time is zero")
-	}
-
-	// 以服务端实收字节为准
-	actualBytes := result.Bytes
-	if actualBytes == 0 {
-		actualBytes = sentBytes
-	}
-
-	// 转换为 Mbps
-	mbps := float64(actualBytes) * 8 / 1_000_000 / elapsed
-	return mbps, nil
+	t.Logf("Upload speed: %.2f Mbps, received: %d bytes", mbps, receivedBytes)
 }
 
-// RunProxyTest 通过节点代理执行测速（直连模式）
-func RunProxyTest(ctx context.Context, req ProxyTestRequest) (*ProxyTestResult, error) {
-	return runProxyTestWithEndpoints(ctx, req, nil, defaultLatencyURL, defaultDownloadURL, defaultUploadURL)
+// TestRunProxyTest_Direct 测试直连模式完整流程
+func TestRunProxyTest_Direct(t *testing.T) {
+	// Mock 测速端点
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ping":
+			time.Sleep(5 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+			w.Write(make([]byte, 1000))
+		case "/download":
+			w.WriteHeader(http.StatusOK)
+			data := make([]byte, 1024*1024) // 1MB
+			rand.Read(data)
+			w.Write(data)
+		case "/upload":
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			// 读取并计数
+			n, _ := io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"bytes":%d}`, n)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	req := ProxyTestRequest{
+		Mode:               "full",
+		DownloadDurationMs: 500,
+		UploadDurationMs:   500,
+	}
+
+	ctx := context.Background()
+	result, err := runProxyTestWithEndpoints(ctx, req, nil, ts.URL+"/ping", ts.URL+"/download", ts.URL+"/upload")
+	if err != nil {
+		t.Fatalf("runProxyTest failed: %v", err)
+	}
+
+	// 验证所有指标都有值
+	if result.IdleLatencyMs <= 0 {
+		t.Errorf("IdleLatencyMs should be positive, got %v", result.IdleLatencyMs)
+	}
+	if result.JitterMs < 0 {
+		t.Errorf("JitterMs should be non-negative, got %v", result.JitterMs)
+	}
+	if result.DownMbps <= 0 {
+		t.Errorf("DownMbps should be positive, got %v", result.DownMbps)
+	}
+	if result.UpMbps <= 0 {
+		t.Errorf("UpMbps should be positive, got %v", result.UpMbps)
+	}
+	if result.ElapsedMs <= 0 {
+		t.Errorf("ElapsedMs should be positive, got %v", result.ElapsedMs)
+	}
+
+	t.Logf("Test result: down=%.2f Mbps, up=%.2f Mbps, latency=%.2f ms, jitter=%.2f ms, elapsed=%d ms",
+		result.DownMbps, result.UpMbps, result.IdleLatencyMs, result.JitterMs, result.ElapsedMs)
 }
 
-// runProxyTestWithEndpoints 内部测试辅助函数，允许自定义端点 URL
-func runProxyTestWithEndpoints(ctx context.Context, req ProxyTestRequest, client *http.Client, latencyURL, downloadURL, uploadURL string) (*ProxyTestResult, error) {
-	start := time.Now()
+// TestRunProxyTest_ModeLatencyOnly 测试只测延迟模式
+func TestRunProxyTest_ModeLatencyOnly(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(5 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		w.Write(make([]byte, 1000))
+	}))
+	defer ts.Close()
 
-	// 默认值
-	if req.Mode == "" {
-		req.Mode = "full"
-	}
-	if req.DownloadDurationMs == 0 {
-		req.DownloadDurationMs = defaultDownloadDurationMs
-	}
-	if req.UploadDurationMs == 0 {
-		req.UploadDurationMs = defaultUploadDurationMs
+	req := ProxyTestRequest{
+		Mode: "latency",
 	}
 
-	// 使用标准 HTTP client（直连模式）
-	if client == nil {
-		client = &http.Client{
-			Timeout: 30 * time.Second,
-		}
-	}
-
-	result := &ProxyTestResult{}
-
-	// 1. 测延迟（所有模式都需要）
-	latency, err := measureLatencyViaProxy(ctx, client, latencyURL, defaultSamples)
+	ctx := context.Background()
+	result, err := runProxyTestWithEndpoints(ctx, req, nil, ts.URL, ts.URL, ts.URL)
 	if err != nil {
-		return nil, fmt.Errorf("measure latency: %w", err)
-	}
-	result.IdleLatencyMs = latency.IdleLatencyMs
-	result.JitterMs = latency.JitterMs
-
-	// 2. 测下行（mode = download 或 full）
-	if req.Mode == "download" || req.Mode == "full" {
-		downMbps, err := measureDownloadViaProxy(ctx, client, downloadURL, req.DownloadDurationMs)
-		if err != nil {
-			return nil, fmt.Errorf("measure download: %w", err)
-		}
-		result.DownMbps = downMbps
+		t.Fatalf("runProxyTest failed: %v", err)
 	}
 
-	// 3. 测上行（mode = upload 或 full）
-	if req.Mode == "upload" || req.Mode == "full" {
-		upMbps, err := measureUploadViaProxy(ctx, client, uploadURL, req.UploadDurationMs)
-		if err != nil {
-			return nil, fmt.Errorf("measure upload: %w", err)
-		}
-		result.UpMbps = upMbps
+	// 只有延迟数据
+	if result.IdleLatencyMs <= 0 {
+		t.Errorf("IdleLatencyMs should be positive, got %v", result.IdleLatencyMs)
 	}
-
-	result.ElapsedMs = int(time.Since(start).Milliseconds())
-	return result, nil
+	// 下行/上行应为 0
+	if result.DownMbps != 0 {
+		t.Errorf("DownMbps should be 0 in latency mode, got %v", result.DownMbps)
+	}
+	if result.UpMbps != 0 {
+		t.Errorf("UpMbps should be 0 in latency mode, got %v", result.UpMbps)
+	}
 }
