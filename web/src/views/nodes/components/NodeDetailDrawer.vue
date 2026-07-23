@@ -147,11 +147,12 @@
         />
       </div>
 
-      <!-- 抽屉内只允许轻量操作:针对当前节点跑一次解锁检测 -->
+      <!-- 抽屉内只允许轻量操作:针对当前节点跑一次解锁检测 / 跳本机实测(预填标注) -->
       <div class="drawer-actions">
         <el-button type="primary" size="small" :disabled="detecting" @click="emit('detect', node)">
           检测此节点
         </el-button>
+        <el-button size="small" @click="emit('speedtest', node)">本机实测</el-button>
         <el-button v-if="canShowNodeQR(node)" size="small" @click="showNodeQR(node)">
           节点二维码
         </el-button>
@@ -196,6 +197,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'detect', node: Node): void
   (e: 'exam', node: Node): void
+  // 跳本机实测页并预填该节点标注(ticket 0034)
+  (e: 'speedtest', node: Node): void
 }>()
 
 const rows = computed(() => (props.node ? unlockDisplayRows(props.node) : []))

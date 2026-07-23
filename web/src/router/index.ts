@@ -25,6 +25,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '仪表盘', icon: 'Monitor', group: 'overview' }
       },
       {
+        path: 'speedtest',
+        name: 'Speedtest',
+        component: () => import('@/views/speedtest/index.vue'),
+        meta: { title: '本机实测', icon: 'Odometer', group: 'overview' }
+      },
+      {
         path: 'airports',
         name: 'Airports',
         component: () => import('@/views/Airports.vue'),

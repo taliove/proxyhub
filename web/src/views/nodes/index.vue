@@ -75,6 +75,7 @@
         :detecting="detecting"
         @detect="detectOne"
         @exam="openExam"
+        @speedtest="goSpeedtest"
       />
       <NodeOverrideDialog ref="overrideDialog" :regions="regions" @saved="reload" />
       <SourceBlockDialog ref="sourceBlockDialog" :sources="airportSources" @done="reload" />
@@ -116,7 +117,8 @@ import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import NodeFilterBar from './components/NodeFilterBar.vue'
 import NodeGlobalActions from './components/NodeGlobalActions.vue'
 import NodeBatchBar from './components/NodeBatchBar.vue'
-import NodeTable, { type TestCommand } from './components/NodeTable.vue'
+import NodeTable from './components/NodeTable.vue'
+import type { TestCommand } from './components/node-table-utils'
 import NodeDetailDrawer from './components/NodeDetailDrawer.vue'
 import NodeOverrideDialog from './components/NodeOverrideDialog.vue'
 import SourceBlockDialog from './components/SourceBlockDialog.vue'
@@ -261,9 +263,14 @@ const qrDialogVisible = ref(false)
 
 const testTarget = (row: UnifiedNode) =>
   row.self_node_id != null ? { self_node_id: row.self_node_id } : { node_key: row.node_key }
+// 本机实测入口(行内测试下拉 + 详情抽屉):带 node_key query 跳独立页预填标注
+const goSpeedtest = (row: UnifiedNode) =>
+  router.push({ path: '/speedtest', query: { node_key: row.node_key } })
 const openExam = (node: UnifiedNode) =>
   examDialog.value?.open(testTarget(node), node.display_name || node.name, node.server)
 const runTest = async (row: UnifiedNode, mode: TestCommand) => {
+  // 本机实测 = 跳独立页预填标注(非服务端检测)
+  if (mode === 'speedtest') return goSpeedtest(row)
   const label = row.display_name || row.name
   const target = testTarget(row)
   if (mode === 'bandwidth') {

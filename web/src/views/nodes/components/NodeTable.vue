@@ -176,47 +176,17 @@
           </span>
         </template>
       </el-table-column>
-      <!-- 测试+分享列合并(所有节点均可测试,支持协议的可分享) -->
+      <!-- 测试+分享列合并(所有节点均可测试,支持协议的可分享);单元格抽 NodeTestCell(400 行门禁) -->
       <el-table-column label="测试/分享" width="190" fixed="right">
         <template #default="{ row }">
-          <span class="row-ops" @click.stop>
-            <el-dropdown
-              size="small"
-              trigger="click"
-              @command="(mode: TestCommand) => emit('test', row, mode)"
-            >
-              <el-button link type="primary" :disabled="testing">
-                测试
-                <el-icon><ArrowDown /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="quick">快测</el-dropdown-item>
-                  <el-dropdown-item command="real">真实检测</el-dropdown-item>
-                  <el-dropdown-item command="bandwidth">带宽测试</el-dropdown-item>
-                  <el-dropdown-item command="exam" divided>
-                    {{ props.runningExamKeys.has(row.node_key) ? '查看进度' : '深度体检' }}
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-            <el-button
-              link
-              type="primary"
-              :icon="DocumentCopy"
-              title="复制链接"
-              :disabled="!canShare(row)"
-              @click="emit('copy-link', row)"
-            />
-            <el-button
-              link
-              type="primary"
-              :icon="Grid"
-              title="二维码"
-              :disabled="!canShare(row)"
-              @click="emit('show-qr', row)"
-            />
-          </span>
+          <NodeTestCell
+            :row="row"
+            :testing="testing"
+            :running-exam-keys="runningExamKeys"
+            @test="(r: UnifiedNode, mode: TestCommand) => emit('test', r, mode)"
+            @copy-link="(r: UnifiedNode) => emit('copy-link', r)"
+            @show-qr="(r: UnifiedNode) => emit('show-qr', r)"
+          />
         </template>
       </el-table-column>
     </el-table>
@@ -236,8 +206,9 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, WarningFilled, DocumentCopy, Grid } from '@element-plus/icons-vue'
+import { WarningFilled } from '@element-plus/icons-vue'
 import StatusDot from '@/components/StatusDot.vue'
+import NodeTestCell from './NodeTestCell.vue'
 import { isSelfHosted } from '../utils'
 import { isGenericVariant, unlockDisplayRows, unlockSummary } from '../unlock'
 import {
@@ -249,10 +220,8 @@ import {
   tagsDisplay,
   type NodeExamSummary
 } from '../nodecells'
-import { badgeTagType, canShare } from './node-table-utils'
+import { badgeTagType, type TestCommand } from './node-table-utils'
 import type { UnifiedNode } from '../selfmerge'
-
-export type TestCommand = 'quick' | 'real' | 'bandwidth' | 'exam'
 export interface SortChange {
   prop: string
   order: string | null

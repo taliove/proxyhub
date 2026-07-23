@@ -45,6 +45,7 @@ import {
   IconShieldCheck,
   IconListCheck,
   IconSettings,
+  IconGauge,
   IconMenu2
 } from '@tabler/icons-vue'
 import BrandMark from '@/components/BrandMark.vue'
@@ -60,7 +61,8 @@ const NAV_ICONS: Record<string, unknown> = {
   Document: IconTemplate,
   Warning: IconShieldCheck,
   List: IconListCheck,
-  Setting: IconSettings
+  Setting: IconSettings,
+  Odometer: IconGauge
 }
 const navIcon = (name: string): unknown => NAV_ICONS[name] ?? IconMenu2
 
