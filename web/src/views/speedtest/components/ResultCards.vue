@@ -20,14 +20,12 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { round2 } from '../utils'
 import type { SpeedtestOutcome, SpeedtestPhase } from '../runner'
 
-// 大数字结果区:完成后展示本次实测;测速中当前阶段的卡实时刷新 liveMbps。
+// 大数字结果区:完成后展示本次实测;测速中只标阶段(后端一次性返回,无实时速率)。
 const props = defineProps<{
   running: boolean
   phase: SpeedtestPhase | null
-  liveMbps: number
   result: SpeedtestOutcome | null
 }>()
 
@@ -44,19 +42,18 @@ const phaseText = computed(() => (props.phase ? PHASE_TEXT[props.phase] : ''))
 const fmt = (v: number | undefined, digits: number): string =>
   v === undefined ? '—' : v.toFixed(digits)
 
-// 测速中:当前阶段卡显示实时值;已完成:显示最终值。延迟阶段无实时速率,显示已采样本的过渡态。
+// 测速中:当前阶段卡显示占位(后端一次性返回,无实时速率);已完成:显示最终值。
 const cards = computed(() => {
   const r = props.result
-  const live = props.running ? round2(props.liveMbps) : undefined
   return [
     {
       label: '下行 Mbps',
-      value: props.running && props.phase === 'download' ? fmt(live, 1) : fmt(r?.downMbps, 1),
+      value: props.running && props.phase === 'download' ? '…' : fmt(r?.downMbps, 1),
       active: props.running && props.phase === 'download'
     },
     {
       label: '上行 Mbps',
-      value: props.running && props.phase === 'upload' ? fmt(live, 1) : fmt(r?.upMbps, 1),
+      value: props.running && props.phase === 'upload' ? '…' : fmt(r?.upMbps, 1),
       active: props.running && props.phase === 'upload'
     },
     {

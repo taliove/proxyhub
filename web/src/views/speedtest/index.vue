@@ -31,7 +31,7 @@
       </el-alert>
     </el-card>
 
-    <ResultCards :running="running" :phase="phase" :live-mbps="liveMbps" :result="result" />
+    <ResultCards :running="running" :phase="phase" :result="result" />
 
     <HistoryTable
       :rows="rows"
@@ -73,14 +73,14 @@ const {
   load: loadHistory,
   remove
 } = useSpeedtestHistory(poolKeys)
-const { phase, running, liveMbps, result, error: runError, start, cancel } = useSpeedtestRun()
+const { phase, running, result, error: runError, start, cancel } = useSpeedtestRun()
 
 // CLIENT_INFO_MAX 与后端 maxSpeedtestClientInfoLen(512)对齐,留余量截断。
 const CLIENT_INFO_MAX = 500
 
 // 一键实测:跑完自动落库(node_key = 当前标注,'' = 直连)并刷新历史。
 const onStart = async () => {
-  const outcome = await start()
+  const outcome = await start(selectedKey.value)
   if (!outcome) return
   try {
     await saveSpeedtestResult({

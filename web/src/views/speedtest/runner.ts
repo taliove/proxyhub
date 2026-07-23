@@ -1,29 +1,28 @@
-// 本机实测的测量原语:全部走原生 fetch(下行 ReadableStream 流式读、上行流式写),
-// 不经 axios(client.ts 30s timeout 且不可流式读)。axios 只用于结果落库/历史查询。
-// 时长口径装进全局 30s 读写超时(main.go):下行默认 10s(服务端上限 25s),
-// 上行由客户端到点停流,单次请求必在 30s 内结束。
-import { computeLatencyMetrics, mbpsFromBytes, type LatencyMetrics } from './utils'
+// 本机实测的测量原语:全部走后端代理测速 API(POST /api/speedtest/proxy-test),
+// 后端经选中节点(或直连)访问 Cloudflare 测速端点,测全链路带宽。
+//
+// 历史实现(浏览器直接 fetch /api/speedtest/download 等)测的是本机回环,
+// 数值虚高且与节点无关,已废弃(issue 0047)。保留下方常量供历史引用与默认时长。
+//
+// 时长口径装进全局 30s 读写超时(main.go):下行默认 10s,上行默认 10s,
+// 加延迟探测 ~1s,单次总耗时约 21-25s。
 
-// PING_SAMPLES 延迟探测样本数:小请求串行打,算最小 RTT(空闲延迟)与相邻差(抖动)。
-export const PING_SAMPLES = 8
-// DOWNLOAD_DURATION_MS 下行时长(服务端 parseDownloadDuration 钳制到 [1s, 25s])。
+// DOWNLOAD_DURATION_MS 下行测速时长(后端钳制)。
 export const DOWNLOAD_DURATION_MS = 10_000
-// UPLOAD_DURATION_MS 上行时长:客户端到点停止发送即 EOF,服务端只计数。
+// UPLOAD_DURATION_MS 上行测速时长(后端钳制)。
 export const UPLOAD_DURATION_MS = 10_000
-// UPLOAD_CHUNK_SIZE 上行单次入队块(256KB,与下行发流块同尺寸)。
-const UPLOAD_CHUNK_SIZE = 256 * 1024
-// UPLOAD_FALLBACK_BYTES 不支持流式上传的浏览器(Firefox)的兜底:定时发一块定量数据。
-const UPLOAD_FALLBACK_BYTES = 8 * 1024 * 1024
 
 export type SpeedtestPhase = 'latency' | 'download' | 'upload'
 
-// RunCallbacks 测速过程回调:阶段切换与实时速率(大数字实时刷新用)。
+// RunCallbacks 测速过程回调:阶段切换(前端模拟,后端一次性返回)。
+// onSample 不再使用(后端无实时速率推送),保留接口兼容调用方。
 export interface RunCallbacks {
   onPhase?: (phase: SpeedtestPhase) => void
   onSample?: (phase: SpeedtestPhase, mbps: number) => void
 }
 
 // SpeedtestOutcome 一次完整实测的产出(落库前的原始浮点,精度收敛在调用侧 round2)。
+// 与后端 ProxyTestResult 字段一致,但用驼峰命名对齐历史调用方。
 export interface SpeedtestOutcome {
   downMbps: number
   upMbps: number
@@ -31,133 +30,77 @@ export interface SpeedtestOutcome {
   jitterMs: number
 }
 
-const pingUrl = (seq: number) => `/api/speedtest/ping?seq=${seq}`
-const downloadUrl = (durationMs: number) => `/api/speedtest/download?duration_ms=${durationMs}`
-
-// measureLatency 串行打 samples 次小请求,量 RTT 算空闲延迟/抖动。
-export async function measureLatency(
-  signal?: AbortSignal,
-  samples = PING_SAMPLES
-): Promise<LatencyMetrics> {
-  const rtts: number[] = []
-  for (let i = 0; i < samples; i++) {
-    const t0 = performance.now()
-    const res = await fetch(pingUrl(i), { cache: 'no-store', signal })
-    await res.arrayBuffer()
-    if (!res.ok) throw new Error(`ping failed: HTTP ${res.status}`)
-    rtts.push(performance.now() - t0)
-  }
-  return computeLatencyMetrics(rtts)
-}
-
-// measureDownload 下行:fetch + ReadableStream 按到达节奏累计字节,到服务端停流(EOF)结束。
-// onSample 每块回调一次实时速率;返回全程平均下行 Mbps。
-export async function measureDownload(
-  durationMs = DOWNLOAD_DURATION_MS,
-  onSample?: (mbps: number) => void,
-  signal?: AbortSignal
-): Promise<number> {
-  const res = await fetch(downloadUrl(durationMs), { cache: 'no-store', signal })
-  if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status}`)
-  const reader = res.body.getReader()
-  const start = performance.now()
-  let bytes = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    bytes += value.byteLength
-    onSample?.(mbpsFromBytes(bytes, performance.now() - start))
-  }
-  return mbpsFromBytes(bytes, performance.now() - start)
-}
-
-// randomChunk 生成不可压缩随机块(crypto RNG;可压缩负载经中间层 gzip 会虚高)。
-// 显式 ArrayBuffer 类型参数:TS 5.7+ 的 Uint8Array 泛型在 BlobPart 处要求非 Shared。
-// 浏览器 crypto.getRandomValues 单次上限 65536 字节,大块分批填充。
-function randomChunk(size: number): Uint8Array<ArrayBuffer> {
-  const chunk = new Uint8Array(new ArrayBuffer(size))
-  const maxBatch = 65536
-  for (let offset = 0; offset < size; offset += maxBatch) {
-    const batchSize = Math.min(maxBatch, size - offset)
-    crypto.getRandomValues(chunk.subarray(offset, offset + batchSize))
-  }
-  return chunk
-}
-
-// measureUpload 上行:流式 POST 随机块到点停流(duplex: 'half');服务端回 {bytes} 计数。
-// 浏览器不支持请求流(Firefox)时退化定量 Blob 上传计时。
-export async function measureUpload(
-  durationMs = UPLOAD_DURATION_MS,
-  onSample?: (mbps: number) => void,
-  signal?: AbortSignal
-): Promise<number> {
-  const chunk = randomChunk(UPLOAD_CHUNK_SIZE)
-  const start = performance.now()
-  let sent = 0
-  const body = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      if (performance.now() - start >= durationMs) {
-        controller.close()
-        return
-      }
-      controller.enqueue(chunk)
-      sent += chunk.byteLength
-      onSample?.(mbpsFromBytes(sent, performance.now() - start))
-    }
-  })
-  try {
-    // duplex 不在 TS dom 类型的 RequestInit 里,按 Chromium 扩展显式断言
-    const init = { method: 'POST', body, duplex: 'half', cache: 'no-store', signal } as RequestInit
-    const res = await fetch('/api/speedtest/upload', init)
-    if (!res.ok) throw new Error(`upload failed: HTTP ${res.status}`)
-    const data = (await res.json()) as { bytes?: number }
-    const elapsed = performance.now() - start
-    // 以服务端实收字节为准(客户端停流后服务端兜底截断口径一致)
-    return mbpsFromBytes(typeof data.bytes === 'number' ? data.bytes : sent, elapsed)
-  } catch (err) {
-    if (signal?.aborted) throw err
-    return measureUploadFallback(onSample, signal)
-  }
-}
-
-// measureUploadFallback 无请求流支持的兜底:POST 定量随机 Blob,按耗时算上行速率。
-async function measureUploadFallback(
-  onSample?: (mbps: number) => void,
-  signal?: AbortSignal
-): Promise<number> {
-  const blob = new Blob([randomChunk(UPLOAD_FALLBACK_BYTES)])
-  const start = performance.now()
-  const res = await fetch('/api/speedtest/upload', {
-    method: 'POST',
-    body: blob,
-    cache: 'no-store',
-    signal
-  })
-  if (!res.ok) throw new Error(`upload failed: HTTP ${res.status}`)
-  await res.json()
-  const mbps = mbpsFromBytes(UPLOAD_FALLBACK_BYTES, performance.now() - start)
-  onSample?.(mbps)
-  return mbps
-}
-
-// runSpeedtest 一键实测:延迟/抖动 → 下行 → 上行,阶段与实时速率经 callbacks 透出。
+// runSpeedtest 一键实测:调用后端代理测速 API。
+// nodeKey 空串 = 直连基线;非空 = 经该节点代理测速。
+// 阶段切换经 callbacks 透出(前端模拟 latency→download→upload,因后端一次性返回)。
 export async function runSpeedtest(
+  nodeKey: string,
   callbacks: RunCallbacks = {},
   signal?: AbortSignal
 ): Promise<SpeedtestOutcome> {
+  // 前端模拟阶段切换(后端无流式进度,一次性返回结果)
   callbacks.onPhase?.('latency')
-  const latency = await measureLatency(signal)
   callbacks.onPhase?.('download')
-  const downMbps = await measureDownload(
-    DOWNLOAD_DURATION_MS,
-    (mbps) => callbacks.onSample?.('download', mbps),
-    signal
-  )
   callbacks.onPhase?.('upload')
-  const upMbps = await measureUpload(
-    UPLOAD_DURATION_MS,
-    (mbps) => callbacks.onSample?.('upload', mbps),
+
+  const result = await runProxyTestApi(
+    {
+      node_key: nodeKey || undefined,
+      mode: 'full',
+      download_duration_ms: DOWNLOAD_DURATION_MS,
+      upload_duration_ms: UPLOAD_DURATION_MS
+    },
     signal
   )
-  return { downMbps, upMbps, idleLatencyMs: latency.idleLatencyMs, jitterMs: latency.jitterMs }
+
+  return {
+    downMbps: result.down_mbps,
+    upMbps: result.up_mbps,
+    idleLatencyMs: result.idle_latency_ms,
+    jitterMs: result.jitter_ms
+  }
+}
+
+// runProxyTestApi 延迟导入避免循环依赖:runner 被 useSpeedtestRun 引用,
+// useSpeedtestRun 不应间接引用 api/speedtest 的 axios client。
+// 直接 inline fetch 逻辑,与 api/speedtest.ts 的 runProxyTest 等价。
+async function runProxyTestApi(
+  payload: {
+    node_key?: string
+    self_node_id?: number
+    mode?: string
+    download_duration_ms?: number
+    upload_duration_ms?: number
+  },
+  signal?: AbortSignal
+): Promise<{
+  down_mbps: number
+  up_mbps: number
+  idle_latency_ms: number
+  jitter_ms: number
+  elapsed_ms: number
+}> {
+  const res = await fetch('/api/speedtest/proxy-test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal
+  })
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`
+    try {
+      const err = (await res.json()) as { error?: string }
+      if (err.error) msg = err.error
+    } catch {
+      // 响应体非 JSON
+    }
+    throw new Error(msg)
+  }
+  return (await res.json()) as {
+    down_mbps: number
+    up_mbps: number
+    idle_latency_ms: number
+    jitter_ms: number
+    elapsed_ms: number
+  }
 }

@@ -1,33 +1,124 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { runSpeedtest, type SpeedtestOutcome } from './runner'
 
-// randomChunk 的测试:验证大块随机数据生成不会触发 crypto.getRandomValues 的 65536 字节限制
-describe('randomChunk', () => {
-  it('should generate 256KB random data without throwing', () => {
-    // 直接测试会涉及私有函数,这里通过间接方式验证:
-    // 如果 randomChunk 实现有问题,measureUpload 的初始化就会抛错
-    const UPLOAD_CHUNK_SIZE = 256 * 1024
-    const chunk = new Uint8Array(new ArrayBuffer(UPLOAD_CHUNK_SIZE))
+// runSpeedtest 现在调用后端代理测速 API(POST /api/speedtest/proxy-test),
+// 不再直接 fetch /api/speedtest/download 等。测试用 fetch mock 验证:
+// 1. 正确构造请求体(node_key、mode=full)
+// 2. 正确解析后端返回的 snake_case 字段为 camelCase
+// 3. HTTP 错误时抛出带后端 error 信息的 Error
+// 4. AbortSignal 取消时透传
 
-    // 模拟修复后的分批填充逻辑
-    const maxBatch = 65536
-    expect(() => {
-      for (let offset = 0; offset < UPLOAD_CHUNK_SIZE; offset += maxBatch) {
-        const batchSize = Math.min(maxBatch, UPLOAD_CHUNK_SIZE - offset)
-        crypto.getRandomValues(chunk.subarray(offset, offset + batchSize))
-      }
-    }).not.toThrow()
+describe('runSpeedtest', () => {
+  const mockResult = {
+    down_mbps: 245.8,
+    up_mbps: 89.3,
+    idle_latency_ms: 28.5,
+    jitter_ms: 3.2,
+    elapsed_ms: 12500
+  }
 
-    // 验证整个块都被填充了(不全是 0)
-    const hasNonZero = Array.from(chunk).some((b) => b !== 0)
-    expect(hasNonZero).toBe(true)
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
   })
 
-  it('should respect 65536 byte limit per crypto.getRandomValues call', () => {
-    const maxBatch = 65536
-    const validChunk = new Uint8Array(maxBatch)
-    expect(() => crypto.getRandomValues(validChunk)).not.toThrow()
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
 
-    const oversizedChunk = new Uint8Array(maxBatch + 1)
-    expect(() => crypto.getRandomValues(oversizedChunk)).toThrow()
+  it('should call backend proxy-test API with node_key and mode=full', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(mockResult), { status: 200 })
+    )
+
+    const callbacks = {
+      onPhase: vi.fn(),
+      onSample: vi.fn()
+    }
+
+    await runSpeedtest('1.2.3.4:443', callbacks)
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/speedtest/proxy-test')
+    expect(init?.method).toBe('POST')
+    const body = JSON.parse(init?.body as string)
+    expect(body.node_key).toBe('1.2.3.4:443')
+    expect(body.mode).toBe('full')
+  })
+
+  it('should omit node_key when empty (direct mode)', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(mockResult), { status: 200 })
+    )
+
+    await runSpeedtest('')
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string)
+    expect(body.node_key).toBeUndefined()
+  })
+
+  it('should convert snake_case response to camelCase outcome', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(mockResult), { status: 200 })
+    )
+
+    const outcome: SpeedtestOutcome = await runSpeedtest('node-key')
+
+    expect(outcome.downMbps).toBe(245.8)
+    expect(outcome.upMbps).toBe(89.3)
+    expect(outcome.idleLatencyMs).toBe(28.5)
+    expect(outcome.jitterMs).toBe(3.2)
+  })
+
+  it('should simulate phase transitions via callbacks', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(mockResult), { status: 200 })
+    )
+
+    const onPhase = vi.fn()
+    await runSpeedtest('node-key', { onPhase })
+
+    expect(onPhase).toHaveBeenCalledWith('latency')
+    expect(onPhase).toHaveBeenCalledWith('download')
+    expect(onPhase).toHaveBeenCalledWith('upload')
+  })
+
+  it('should throw Error with backend error message on HTTP error', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'node connection failed: timeout' }), {
+        status: 500
+      })
+    )
+
+    await expect(runSpeedtest('bad-node')).rejects.toThrow(
+      'node connection failed: timeout'
+    )
+  })
+
+  it('should fall back to HTTP status when error field missing', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce(
+      new Response('not json', { status: 502 })
+    )
+
+    await expect(runSpeedtest('node-key')).rejects.toThrow('HTTP 502')
+  })
+
+  it('should pass AbortSignal to fetch', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(mockResult), { status: 200 })
+    )
+
+    const controller = new AbortController()
+    await runSpeedtest('node-key', {}, controller.signal)
+
+    expect(fetchMock.mock.calls[0][1]?.signal).toBe(controller.signal)
   })
 })

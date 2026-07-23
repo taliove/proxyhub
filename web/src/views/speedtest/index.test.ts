@@ -168,13 +168,15 @@ beforeEach(() => {
   })
   mockPost.mockResolvedValue({ id: 4 })
   mockRun.mockImplementation(
-    async (callbacks: {
-      onPhase?: (p: string) => void
-      onSample?: (p: string, m: number) => void
-    }) => {
+    async (
+      _nodeKey: string,
+      callbacks: {
+        onPhase?: (p: string) => void
+        onSample?: (p: string, m: number) => void
+      }
+    ) => {
       callbacks.onPhase?.('latency')
       callbacks.onPhase?.('download')
-      callbacks.onSample?.('download', 150)
       callbacks.onPhase?.('upload')
       return { downMbps: 150, upMbps: 80, idleLatencyMs: 50, jitterMs: 6 }
     }
