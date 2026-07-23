@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"github.com/taliove/proxyhub/internal/detection"
+	"github.com/taliove/proxyhub/internal/subscription"
 )
 
 // ProxyTestRequest 后端代理测速请求
@@ -240,9 +243,39 @@ func measureUploadViaProxy(ctx context.Context, client *http.Client, url string,
 	return mbps, nil
 }
 
-// RunProxyTest 通过节点代理执行测速（直连模式）
-func RunProxyTest(ctx context.Context, req ProxyTestRequest) (*ProxyTestResult, error) {
-	return runProxyTestWithEndpoints(ctx, req, nil, defaultLatencyURL, defaultDownloadURL, defaultUploadURL)
+// RunProxyTest 通过节点代理执行测速。
+//
+// node 非 nil 时,经 detection.NewProxyAdapter(node) 构造代理拨号器,
+// 所有测速请求经该节点出口访问 Cloudflare 测速端点;node 为 nil 时直连
+// (不经节点),作为对比基线。节点连接失败(拨号超时/refused)原样上抛,
+// 由调用方转成 HTTP 错误响应。
+func RunProxyTest(ctx context.Context, req ProxyTestRequest, node *subscription.Node) (*ProxyTestResult, error) {
+	client, err := buildHTTPClient(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	return runProxyTestWithEndpoints(ctx, req, client, defaultLatencyURL, defaultDownloadURL, defaultUploadURL)
+}
+
+// buildHTTPClient 按是否指定节点构造 HTTP client。
+// node 为 nil = 直连模式,使用标准 transport;非 nil = 经节点代理,
+// 复用 detection.NewProxyAdapter 构造 mihomo adapter,其 DialContext 注入
+// 自定义 Transport,覆盖到节点服务器的全部 outbound 连接。
+func buildHTTPClient(ctx context.Context, node *subscription.Node) (*http.Client, error) {
+	if node == nil {
+		return &http.Client{Timeout: 30 * time.Second}, nil
+	}
+	adapter, err := detection.NewProxyAdapter(node)
+	if err != nil {
+		return nil, fmt.Errorf("create proxy adapter: %w", err)
+	}
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext:       adapter.DialContext,
+			DisableKeepAlives:  true,
+		},
+		Timeout: 30 * time.Second,
+	}, nil
 }
 
 // runProxyTestWithEndpoints 内部测试辅助函数，允许自定义端点 URL
