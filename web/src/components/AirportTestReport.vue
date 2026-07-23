@@ -57,8 +57,15 @@
           基于池内已同步节点评分;拉取健康维度 N/A,权重按 5:3:1 重归一到其余维度。
         </el-alert>
 
-        <!-- 事实汇总 -->
-        <el-descriptions :column="2" border size="small" class="report-block num">
+        <!-- 事实汇总(ticket 0045:label 列定宽 nowrap,地区覆盖格 span=2,
+             61+ 地区串只在内容格内换行,不再把 label 列压成竖排单字) -->
+        <el-descriptions
+          :column="2"
+          border
+          size="small"
+          label-width="90px"
+          class="report-block facts-block num"
+        >
           <el-descriptions-item label="可用节点">
             {{ completedResult.available_nodes }} / {{ completedResult.total_nodes }}
           </el-descriptions-item>
@@ -66,7 +73,7 @@
             {{ completedResult.mean_latency_ms.toFixed(0) }} ms(P95
             {{ completedResult.p95_latency_ms.toFixed(0) }} ms)
           </el-descriptions-item>
-          <el-descriptions-item label="地区覆盖">
+          <el-descriptions-item label="地区覆盖" :span="2">
             {{ completedResult.region_count }} 个地区
             <span v-if="regionList" class="muted">({{ regionList }})</span>
           </el-descriptions-item>
@@ -103,13 +110,15 @@
           </el-descriptions-item>
         </el-descriptions>
 
-        <!-- 抽样节点明细:每节点可用性/延迟;旧 run 未持久化明细则降级为汇总 -->
+        <!-- 抽样节点明细:每节点可用性/延迟;旧 run 未持久化明细则降级为汇总。
+             max-height 定高滚动(ticket 0045,对齐端点抽屉下发节点表),表头固定 -->
         <div class="report-subtitle">抽样节点明细</div>
         <el-table
           v-if="sampledNodes.length > 0"
           :data="sampledNodes"
           size="small"
           border
+          max-height="300"
           class="report-block"
         >
           <el-table-column label="名称" min-width="150" show-overflow-tooltip>
@@ -270,6 +279,10 @@ const relativeTime = (iso: string): string => testTimeRelative(iso)
 }
 .sample-dot {
   margin-right: var(--ph-space-1);
+}
+/* ticket 0045:label 列定宽不折行(配合 label-width),超长地区串只在内容格内换行 */
+.facts-block :deep(.el-descriptions__label) {
+  white-space: nowrap;
 }
 .num {
   font-variant-numeric: tabular-nums;

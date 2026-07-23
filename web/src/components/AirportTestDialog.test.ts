@@ -43,6 +43,23 @@ const ElAlertStub = defineComponent({
   }
 })
 
+// el-progress 桩:渲染 format 输出(ticket 0044 绝对计数断言)
+const ElProgressStub = defineComponent({
+  name: 'ElProgress',
+  props: {
+    percentage: { type: Number, default: 0 },
+    format: { type: Function, default: null }
+  },
+  setup(props) {
+    return () =>
+      h(
+        'div',
+        { class: 'ElProgress-stub' },
+        props.format ? String((props.format as () => string)()) : `${props.percentage}%`
+      )
+  }
+})
+
 const airport: Airport = {
   id: 7,
   name: '极速机场',
@@ -142,7 +159,7 @@ const mountDialog = () =>
         'el-tag': SimpleSlotStub('ElTag'),
         'el-alert': ElAlertStub,
         'el-icon': SimpleSlotStub('ElIcon'),
-        'el-progress': SimpleSlotStub('ElProgress'),
+        'el-progress': ElProgressStub,
         'el-divider': SimpleSlotStub('ElDivider'),
         StatusDot: SimpleSlotStub('StatusDot'),
         AirportTestDiagnostic: SimpleSlotStub('AirportTestDiagnostic')
@@ -190,10 +207,23 @@ describe('AirportTestDialog(运行模式)', () => {
     await advancePoll()
 
     expect(wrapper.emitted('finished')).toBeTruthy()
-    // 完成态只给结论与去向,不展示完整报告(报告归抽屉)
-    expect(wrapper.text()).toContain('测试完成')
+    // 完成态为 success alert,title 带口径(ticket 0044);报告归抽屉
+    // (completedRun 无 sampled_nodes,抽样兜底取 total_nodes=10)
+    expect(wrapper.text()).toContain('实测完成(抽样,共检活 10 个节点)')
     expect(wrapper.text()).toContain('90.5')
     expect(wrapper.text()).toContain('详情抽屉「最近测试」')
+  })
+
+  it('全量运行完成:alert title 为全量口径(共检活 M 个节点)', async () => {
+    vi.mocked(client.post).mockResolvedValue(jobHandle as never)
+    mockGet('done', { ...completedRun, is_full: true })
+    const wrapper = mountDialog()
+
+    ;(wrapper.vm as unknown as { start: (a: Airport, full?: boolean) => void }).start(airport, true)
+    await flushPromises()
+    await advancePoll()
+
+    expect(wrapper.text()).toContain('实测完成(全量,共检活 10 个节点)')
   })
 
   it('显式 start(测全部)以 full=true 发起', async () => {
@@ -227,6 +257,8 @@ describe('AirportTestDialog(运行模式)', () => {
     expect(wrapper.text()).toContain('抽样测试')
     expect(wrapper.text()).toContain('本次抽测 12 个节点')
     expect(wrapper.text()).not.toContain('全量测试')
+    // 进度条带绝对计数 format(ticket 0044):checked / total
+    expect(wrapper.text()).toContain('3 / 12')
   })
 
   it('全量模式:副标题显示「全量测试」,检活后显示「共 M 个节点」', async () => {
@@ -269,6 +301,8 @@ describe('AirportTestDialog(运行模式)', () => {
 
     expect(wrapper.text()).toContain('抽样测试')
     expect(wrapper.text()).toContain('本次抽测 3 个节点')
+    // 完成 alert title 同步用兜底计数(ticket 0044)
+    expect(wrapper.text()).toContain('实测完成(抽样,共检活 3 个节点)')
   })
 
   it('任务 failed 终态展示失败原因且不 emit finished', async () => {
@@ -291,6 +325,45 @@ describe('AirportTestDialog(运行模式)', () => {
 
     expect(wrapper.text()).toContain('测试失败')
     expect(wrapper.text()).toContain('subscription URL unreachable')
+    expect(wrapper.emitted('finished')).toBeFalsy()
+  })
+
+  // ticket 0044:失败/取消态 title 同带模式口径(spec「口径一致」)
+  it('failed 终态 title 带模式口径(抽样)', async () => {
+    vi.mocked(client.post).mockResolvedValue(jobHandle as never)
+    mockGet('failed', {
+      ...completedRun,
+      status: 'failed',
+      overall_score: undefined,
+      dimensions_json: '{}',
+      error_message: 'subscription URL unreachable'
+    })
+    const wrapper = mountDialog()
+
+    ;(wrapper.vm as unknown as { start: (a: Airport, full?: boolean) => void }).start(
+      airport,
+      false
+    )
+    await flushPromises()
+    await advancePoll()
+
+    expect(wrapper.text()).toContain('测试失败(抽样)')
+  })
+
+  it('cancelled 终态 title 带模式口径(全量)', async () => {
+    vi.mocked(client.post).mockResolvedValue(jobHandle as never)
+    mockGet('cancelled', {
+      ...completedRun,
+      status: 'cancelled',
+      dimensions_json: '{}'
+    })
+    const wrapper = mountDialog()
+
+    ;(wrapper.vm as unknown as { start: (a: Airport, full?: boolean) => void }).start(airport, true)
+    await flushPromises()
+    await advancePoll()
+
+    expect(wrapper.text()).toContain('测试已取消(全量)')
     expect(wrapper.emitted('finished')).toBeFalsy()
   })
 })

@@ -17,7 +17,10 @@ vi.mock('@/api/client', () => ({
 
 const ElTableStub = defineComponent({
   name: 'ElTable',
-  props: { data: { type: Array, default: () => [] } },
+  props: {
+    data: { type: Array, default: () => [] },
+    maxHeight: { type: [String, Number], default: '' }
+  },
   setup(props, { slots }) {
     provide('rows', toRef(props, 'data'))
     return () => h('div', { class: 'el-table-stub' }, slots.default?.())
@@ -46,13 +49,17 @@ const ElButtonStub = defineComponent({
 })
 const ElDescriptionsStub = defineComponent({
   name: 'ElDescriptions',
+  props: { labelWidth: { type: String, default: '' } },
   setup(_, { slots }) {
     return () => h('div', { class: 'el-descriptions-stub' }, slots.default?.())
   }
 })
 const ElDescriptionsItemStub = defineComponent({
   name: 'ElDescriptionsItem',
-  props: { label: { type: String, default: '' } },
+  props: {
+    label: { type: String, default: '' },
+    span: { type: Number, default: 1 }
+  },
   setup(props, { slots }) {
     return () =>
       h('div', { class: 'desc-item' }, [
@@ -189,6 +196,32 @@ describe('AirportTestReport', () => {
     expect(text).toContain('7.5 分')
     // 抽样口径标识(ticket 0043):抽测 N/M(N=sampled_nodes 数,M=total_nodes)
     expect(text).toContain('抽测 2/10')
+  })
+
+  it('事实汇总布局(ticket 0045):label 定宽 + 地区覆盖格 span=2', async () => {
+    const wrapper = mountReport([completedRun])
+    await flushPromises()
+
+    const facts = wrapper
+      .findAllComponents({ name: 'ElDescriptions' })
+      .find((d) => d.findAllComponents({ name: 'ElDescriptionsItem' }).length === 4)
+    expect(facts).toBeDefined()
+    expect(facts!.props('labelWidth')).toBe('90px')
+
+    const regionItem = facts!
+      .findAllComponents({ name: 'ElDescriptionsItem' })
+      .find((i) => i.props('label') === '地区覆盖')
+    expect(regionItem).toBeDefined()
+    expect(regionItem!.props('span')).toBe(2)
+  })
+
+  it('抽样明细表定高滚动(ticket 0045):max-height=300', async () => {
+    const wrapper = mountReport([completedRun])
+    await flushPromises()
+
+    const table = wrapper.findComponent({ name: 'ElTable' })
+    expect(table.exists()).toBe(true)
+    expect(String(table.props('maxHeight'))).toBe('300')
   })
 
   it('全量 run:标注「全量 M/M」', async () => {

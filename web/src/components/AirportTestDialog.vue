@@ -50,6 +50,7 @@
         <el-icon class="is-loading"><Loading /></el-icon>
         <span>正在检活节点...</span>
       </div>
+      <!-- 进度带绝对计数 format(ticket 0044,对齐端点实测):checked / total -->
       <el-progress
         v-if="checkingProgress"
         :percentage="Math.round((checkingProgress.checked / checkingProgress.total) * 100)"
@@ -65,24 +66,25 @@
       </div>
     </div>
 
-    <!-- Completed phase: 纯运行形态只给结论与去向,报告主体在详情抽屉「最近测试」段 -->
+    <!-- Completed phase: 三态 alert 收口(ticket 0044,对齐端点实测);
+         成功 title 带模式口径与检活节点数,报告主体仍在详情抽屉「最近测试」段 -->
     <div v-else-if="phase === 'completed'" class="test-phase">
-      <div class="completed-summary">
-        <div class="completed-score">
-          <StatusDot :tone="scoreToneOf(overallScore)" :label="scoreToneLabelOf(overallScore)" />
-          <span>测试完成,综合得分</span>
+      <el-alert type="success" :closable="false" show-icon class="diagnostic-alert">
+        <template #title>{{ completedTitle }}</template>
+        <div class="completed-body">
+          <span>综合得分</span>
           <el-tag :type="getScoreColor(overallScore)" size="large" class="score-value num">
             {{ overallScore.toFixed(1) }}
           </el-tag>
         </div>
-        <div class="muted">报告已更新,可在机场详情抽屉「最近测试」查看完整报告。</div>
-      </div>
+        报告已更新,可在机场详情抽屉「最近测试」查看完整报告。
+      </el-alert>
     </div>
 
     <!-- Cancelled state (已写回的检活结果保留,诊断数据可见) -->
     <div v-else-if="phase === 'cancelled'" class="test-phase">
       <el-alert type="info" :closable="false" show-icon class="diagnostic-alert">
-        <template #title>测试已取消</template>
+        <template #title>{{ cancelledTitle }}</template>
         已写回的节点检活结果保留,未产生评分报告。
       </el-alert>
       <template v-if="diagnosticReady">
@@ -94,7 +96,7 @@
     <!-- Error state -->
     <div v-else-if="phase === 'failed'" class="test-phase">
       <el-alert type="error" :closable="false" show-icon>
-        <template #title>测试失败</template>
+        <template #title>{{ failedTitle }}</template>
         {{ errorMessage }}
       </el-alert>
     </div>
@@ -109,16 +111,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 import type { Airport } from '@/types'
 import { useAirportTestRun } from '@/composables/useAirportTestRun'
 import { getScoreColor } from '@/composables/useAirportTest'
-import {
-  scoreTone as scoreToneOf,
-  scoreToneLabel as scoreToneLabelOf
-} from '@/views/airport-test-utils'
-import StatusDot from '@/components/StatusDot.vue'
 import AirportTestDiagnostic from './AirportTestDiagnostic.vue'
 
 // 运行模式对话框(ticket 0037):只在父级显式调 start() 时才发起测试,
@@ -156,6 +153,26 @@ watch(visible, (val) => {
   if (!val) {
     stopPolling()
   }
+})
+
+// 成功 alert title 带口径(ticket 0044):实测完成(抽样,共检活 N 个节点)/全量同理;
+// N 取 involvedCount(检活 cursor total,秒级运行由 run 维度兜底),极端缺失时只标模式。
+// 失败/取消态同带模式口径(spec「口径一致」),与端点测试 alert 形态对齐。
+const completedTitle = computed(() => {
+  const mode = testFull.value ? '全量' : '抽样'
+  return involvedCount.value !== null
+    ? `实测完成(${mode},共检活 ${involvedCount.value} 个节点)`
+    : `实测完成(${mode})`
+})
+
+const cancelledTitle = computed(() => {
+  const mode = testFull.value ? '全量' : '抽样'
+  return `测试已取消(${mode})`
+})
+
+const failedTitle = computed(() => {
+  const mode = testFull.value ? '全量' : '抽样'
+  return `测试失败(${mode})`
 })
 
 // 显式运行入口:父级(机场管理页/详情抽屉)在用户点「测试」/「重新测试」/「测全部」时调用。
@@ -209,19 +226,11 @@ const handleClose = () => {
   margin-bottom: var(--ph-space-5);
 }
 
-.completed-summary {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--ph-space-3);
-  padding: var(--ph-space-5) 0;
-}
-
-.completed-score {
+.completed-body {
   display: flex;
   align-items: center;
   gap: var(--ph-space-3);
-  font-size: var(--ph-text-md);
+  margin-bottom: var(--ph-space-1);
 }
 
 .score-value {
