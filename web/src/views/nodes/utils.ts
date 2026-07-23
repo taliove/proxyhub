@@ -55,7 +55,7 @@ export const subscriptionHint = (n: Node): string => {
   }
   if (!n.available) {
     if (n.availability_source === 'never') {
-      return '该节点未进入订阅的原因:尚未跑过任何检测,可用状态为默认值;可点「检测此节点」或等下轮全量刷新(含健康检查)翻牌。'
+      return '该节点未进入订阅的原因:尚未跑过任何检测,可用状态为默认值;可点「出网快速检测」或等下轮全量刷新(含健康检查)翻牌。'
     }
     return `该节点未进入订阅的原因:当前判定不可用(判定来源:${availabilitySourceText(n)}),订阅生成时被剔除。`
   }

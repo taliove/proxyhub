@@ -4,7 +4,6 @@
       <span v-if="lastUpdate" class="muted">最后更新:{{ formatTime(lastUpdate) }}</span>
       <el-button @click="openImport">一键导入</el-button>
       <el-button type="primary" @click="openAddSelf">添加自建节点</el-button>
-      <NodeGlobalActions :detecting="detecting" @command="onGlobalCommand" />
     </PageHeader>
 
     <el-card>
@@ -31,22 +30,19 @@
         v-if="selection.length > 0"
         :count="selection.length"
         :blockable-count="selectableSelection.length"
-        :detecting="detecting"
-        :examining="examining"
-        :exam-completed="examCompleted"
-        :exam-total="examTotal"
+        :actions="batchActions"
         @block="blockSelected"
         @unblock="unblockSelected"
-        @detect="detectSelected"
-        @exam="examSelected"
-        @cancel-exam="cancelExam"
         @refresh-names="refreshNamesSelected"
+        @start="onBatchStart"
+        @cancel="onBatchCancel"
+        @more-command="onMoreCommand"
       />
 
       <NodeTable
         :nodes="pagedNodes"
         :loading="loading"
-        :testing="testing"
+        :detecting="detecting"
         :page="pagination.page"
         :page-size="pagination.pageSize"
         :total="total"
@@ -73,9 +69,8 @@
         v-model="detailVisible"
         :node="detailNode"
         :detecting="detecting"
-        @detect="detectOne"
-        @exam="openExam"
-        @speedtest="goSpeedtest"
+        :running-exam-keys="runningExamKeys"
+        @action="onNodeAction"
       />
       <NodeOverrideDialog ref="overrideDialog" :regions="regions" @saved="reload" />
       <SourceBlockDialog ref="sourceBlockDialog" :sources="airportSources" @done="reload" />
@@ -95,6 +90,7 @@
       />
       <SelfNodeImportDialog v-model="importDialogVisible" @imported="onImported" />
       <BandwidthTestDialog ref="bwDialog" />
+      <NodeStabilityDialog ref="stabilityDialog" />
       <NodeExamDialog ref="examDialog" />
       <QRCodeDialog
         ref="qrDialog"
@@ -107,15 +103,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useNodeTest } from '@/composables/useNodeTest'
 import BandwidthTestDialog from '@/components/BandwidthTestDialog.vue'
+import NodeStabilityDialog from '@/components/NodeStabilityDialog.vue'
 import NodeExamDialog from '@/components/NodeExamDialog.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import NodeFilterBar from './components/NodeFilterBar.vue'
-import NodeGlobalActions from './components/NodeGlobalActions.vue'
 import NodeBatchBar from './components/NodeBatchBar.vue'
 import NodeTable from './components/NodeTable.vue'
 import type { TestCommand } from './components/node-table-utils'
@@ -128,9 +123,9 @@ import SelfNodeFormDialog from './components/SelfNodeFormDialog.vue'
 import SelfNodeImportDialog from './components/SelfNodeImportDialog.vue'
 import { useNodePool } from './composables/useNodePool'
 import { useNodeQuery } from './composables/useNodeQuery'
-import { useNodeDetection, type DetectionScope } from './composables/useNodeDetection'
+import { useNodeUrlState } from './composables/useNodeUrlState'
 import { useNodeBatch } from './composables/useNodeBatch'
-import { useBatchExam } from './composables/useBatchExam'
+import { useNodeBatchActions } from './composables/useNodeBatchActions'
 import { useSelfNodes } from './composables/useSelfNodes'
 import { useExamSummaries } from './composables/useExamSummaries'
 import { useRunningExams } from './composables/useRunningExams'
@@ -177,21 +172,12 @@ const tagOptions = computed(() => tagsOf(unifiedRows.value))
 const unlockTargets = computed(() => unlockTargetsOf(unifiedRows.value))
 
 // 客户端筛选/排序/分页(谓词见 predicates.ts)。
-const {
-  criteria,
-  pagination,
-  total,
-  pagedNodes,
-  filteredKeys,
-  onSortChange,
-  setPage,
-  setPageSize
-} = useNodeQuery(unifiedRows)
+const { criteria, pagination, total, pagedNodes, onSortChange, setPage, setPageSize } =
+  useNodeQuery(unifiedRows)
 
 // 可见页节点的体检派生摘要(稳定性/出网/体检时间)。
 const { summaries: examSummaries, reload: reloadExam } = useExamSummaries(pagedNodes)
 
-const { running: detecting, trigger, cancel } = useNodeDetection()
 const {
   selection,
   selectableSelection,
@@ -203,44 +189,29 @@ const {
   refreshNamesSelected,
   refreshNameOne
 } = useNodeBatch(reload)
-const { testing, testNode } = useNodeTest()
 
-// 解锁检测:全部 / 筛选结果 / 选中 / 单节点。检测完成后刷新数据与体检摘要。
-const detect = (scope: DetectionScope) =>
-  trigger(scope, async () => {
-    await reload()
-    reloadExam()
-  })
-// 检测/体检作用于全部选中(含自建,后端按 node_key 在池中匹配);屏蔽仍限机场节点。
-const detectSelected = () =>
-  detect({ type: 'selected', node_keys: selection.value.map((n) => n.node_key) })
-const detectOne = (node: UnifiedNode) => detect({ type: 'selected', node_keys: [node.node_key] })
-const cancelDetection = () => cancel(reload)
-// 批量体检:对选中集启动,完成后刷新体检摘要(复用 jobs 轮询,不接 SSE)。
+// 4 个检查动作(出网快速检测 / 出网+稳定性 / 快速测速 / 深度体检)的统一编排:
+// 单节点(detectOne)与批量(onBatchStart/onBatchCancel/batchActions)共用同一套启动器。
 const {
-  running: examining,
-  completed: examCompleted,
-  total: examTotal,
-  start: startBatchExam,
-  cancel: cancelExam
-} = useBatchExam(reloadExam)
-const examSelected = () => startBatchExam(selection.value.map((n) => n.node_key))
+  detecting,
+  detectOne,
+  cancelDetection,
+  triggerCleanupDetection,
+  batchActions,
+  onBatchStart,
+  onBatchCancel
+} = useNodeBatchActions(selection, reload, reloadExam)
 
 // 进行中的 exam 任务:轮询任务中心,提取 kind=exam + status=running 的 key 集合。
 // 用于在节点行显示"查看进度"而非"深度体检"按钮。
 const { runningExamKeys } = useRunningExams()
 
-const triggerCleanupDetection = (onComplete: () => void) =>
-  trigger({ type: 'all' }, onComplete, '检测已启动,完成后自动刷新失败列表')
-
-// 全局操作
+// 页面级非检查命令(批量栏「更多」菜单):按机场屏蔽 / 清空机场节点 / 清理失败节点。
 const sourceBlockDialog = ref<InstanceType<typeof SourceBlockDialog> | null>(null)
 const cleanupDialog = ref<InstanceType<typeof CleanupDialog> | null>(null)
 const purgeDialog = ref<InstanceType<typeof PurgeAirportDialog> | null>(null)
-const onGlobalCommand = (cmd: string) => {
-  if (cmd === 'detect-all') detect({ type: 'all' })
-  else if (cmd === 'detect-filtered') detect({ type: 'selected', node_keys: filteredKeys.value })
-  else if (cmd === 'block-source') sourceBlockDialog.value?.open()
+const onMoreCommand = (cmd: string) => {
+  if (cmd === 'block-source') sourceBlockDialog.value?.open()
   else if (cmd === 'purge-airport') purgeDialog.value?.open()
   else if (cmd === 'cleanup') cleanupDialog.value?.open()
 }
@@ -248,42 +219,60 @@ const onGlobalCommand = (cmd: string) => {
 // 详情抽屉 / 覆盖编辑
 const detailVisible = ref(false)
 const detailNode = ref<UnifiedNode | null>(null)
+const detailNodeKey = ref<string | null>(null)
 const openDetail = (row: UnifiedNode) => {
   detailNode.value = row
+  detailNodeKey.value = row.node_key
   detailVisible.value = true
 }
+// 详情抽屉关闭时清空 key(触发 URL 同步)
+watch(detailVisible, (visible) => {
+  if (!visible) detailNodeKey.value = null
+})
 const overrideDialog = ref<InstanceType<typeof NodeOverrideDialog> | null>(null)
 const openOverride = (row: UnifiedNode) => overrideDialog.value?.open(row)
 
-// 单节点测试:自建按 self_node_id、机场按 node_key(与后端 handleTestNode 一致)。
+// 单节点检查:自建按 self_node_id、机场按 node_key(与后端 handleTestNode/resolveTestNode 一致)。
 const bwDialog = ref<InstanceType<typeof BandwidthTestDialog> | null>(null)
+const stabilityDialog = ref<InstanceType<typeof NodeStabilityDialog> | null>(null)
 const examDialog = ref<InstanceType<typeof NodeExamDialog> | null>(null)
 const qrDialog = ref<InstanceType<typeof QRCodeDialog> | null>(null)
 const qrDialogVisible = ref(false)
 
 const testTarget = (row: UnifiedNode) =>
   row.self_node_id != null ? { self_node_id: row.self_node_id } : { node_key: row.node_key }
-// 本机实测入口(行内测试下拉 + 详情抽屉):带 node_key query 跳独立页预填标注
+// 本机实测入口:带 node_key query 跳独立页预填标注(浏览器端验收测量,非服务端检测)
 const goSpeedtest = (row: UnifiedNode) =>
   router.push({ path: '/speedtest', query: { node_key: row.node_key } })
-const openExam = (node: UnifiedNode) =>
-  examDialog.value?.open(testTarget(node), node.display_name || node.name, node.server)
-const runTest = async (row: UnifiedNode, mode: TestCommand) => {
-  // 本机实测 = 跳独立页预填标注(非服务端检测)
-  if (mode === 'speedtest') return goSpeedtest(row)
+
+// 行内/抽屉单节点检查:4 动作与批量面同名同义(见 CONTEXT「检查动作」)。
+//   detect    → 全语义任务口径:与批量同走 batch_detection(含解锁落库 + 重算标签),
+//               进行中复用全局 detecting 态(行内按钮标注/禁用)。
+//   stability → 出网+稳定性 SSE 弹框。
+//   speedtest → 快速测速 SSE 弹框(必须带 mode=speedtest 走基准口径,见 issue 0031 实现注)。
+//   exam      → 深度体检 SSE 弹框(进行中自动附加,回放+续传)。
+// client-speedtest → 本机实测(跳独立页)。
+const runNodeAction = (row: UnifiedNode, cmd: TestCommand) => {
   const label = row.display_name || row.name
   const target = testTarget(row)
-  if (mode === 'bandwidth') {
-    bwDialog.value?.open(target, label)
-    return
+  switch (cmd) {
+    case 'detect':
+      // 全语义任务口径:与批量共用 batch_detection(单节点即 node_keys 只含本节点)。
+      return detectOne(row)
+    case 'stability':
+      return stabilityDialog.value?.open(target, label)
+    case 'speedtest':
+      // 快速测速:基准下行 + 上行,弹框沿用带宽流式 UX,mode=speedtest 切基准口径。
+      return bwDialog.value?.open(target, label, { mode: 'speedtest' })
+    case 'exam':
+      return examDialog.value?.open(target, label, row.server)
+    case 'client-speedtest':
+      return goSpeedtest(row)
   }
-  if (mode === 'exam') {
-    examDialog.value?.open(target, label)
-    return
-  }
-  const res = await testNode(target, mode)
-  if (res) await loadPool()
 }
+// 表格行 @test 与抽屉 @action 共用同一分发。
+const runTest = runNodeAction
+const onNodeAction = runNodeAction
 
 // 自建节点管理:添加 / 导入 / 编辑 / 启停 / 删除。
 const selfDialogVisible = ref(false)
@@ -377,16 +366,24 @@ const showNodeQR = async (node: UnifiedNode) => {
   }
 }
 
-// 深链:?source=<来源> 预选来源筛选;兼容旧的 ?tab=self -> 自建。
+// URL 状态同步:筛选条件与详情抽屉双向绑定到 query。
+const { restoreFromUrl } = useNodeUrlState(criteria, detailVisible, detailNodeKey)
+
+// 深链:从 URL 恢复筛选条件(替代旧的手动处理);兼容旧的 ?tab=self -> 自建。
 onMounted(async () => {
-  const src = route.query.source
-  if (typeof src === 'string' && src) criteria.source = src
-  else if (route.query.tab === 'self') criteria.source = SELF_HOSTED
+  restoreFromUrl()
+  if (route.query.tab === 'self') criteria.source = SELF_HOSTED
   if (route.query.tab) router.replace({ query: { ...route.query, tab: undefined } })
 
   loadRegions()
   loadAirportSources()
   await reload()
+
+  // URL 带 detail 参数时,数据加载后自动打开对应节点详情
+  if (detailNodeKey.value) {
+    const targetNode = unifiedRows.value.find((n) => n.node_key === detailNodeKey.value)
+    if (targetNode) openDetail(targetNode)
+  }
 })
 </script>
 

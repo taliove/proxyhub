@@ -73,9 +73,14 @@ export async function measureDownload(
 
 // randomChunk 生成不可压缩随机块(crypto RNG;可压缩负载经中间层 gzip 会虚高)。
 // 显式 ArrayBuffer 类型参数:TS 5.7+ 的 Uint8Array 泛型在 BlobPart 处要求非 Shared。
+// 浏览器 crypto.getRandomValues 单次上限 65536 字节,大块分批填充。
 function randomChunk(size: number): Uint8Array<ArrayBuffer> {
   const chunk = new Uint8Array(new ArrayBuffer(size))
-  crypto.getRandomValues(chunk)
+  const maxBatch = 65536
+  for (let offset = 0; offset < size; offset += maxBatch) {
+    const batchSize = Math.min(maxBatch, size - offset)
+    crypto.getRandomValues(chunk.subarray(offset, offset + batchSize))
+  }
   return chunk
 }
 

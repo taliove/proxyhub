@@ -4,6 +4,19 @@
 
 深度体检对**单个节点**做一次纵向深挖,产出一份四段报告:出网信息、稳定性、多地域测速、流媒体/AI 解锁。为什么解锁归批量而稳定性/多地域归单节点,见 [ADR 0015](adr/0015-node-exam-capability-boundary.md);为什么各段串行、稳定性独占,见 [ADR 0017](adr/0017-exam-orchestration-serial-stability-exclusive.md);为什么出网前置为第一段、全失败短路,见 [ADR 0020](adr/0020-exam-egress-first-and-shortcircuit.md);解锁判定的 kind 注册表与保守判定,见 [ADR 0016](adr/0016-unlock-detection-kind-registry.md);四项加权总分与渐进/归一双模式,见 [ADR 0022](adr/0022-exam-weighted-score-dual-mode.md)。本文描述"是什么",随代码演进。
 
+## 检查动作分层
+
+节点页把面向用户的检查能力收敛为**四个同名同义的手动动作**,批量(作用于勾选集)与单节点(行内下拉 / 详情抽屉)共用同一套词汇与启动器(单节点即 `node_keys` 只含本节点),深度体检是其中最重的一档。四个动作按"由轻到重"分层,复用体检报告模型的不同子集:
+
+| 动作 | 覆盖段 | 落库来源(`ExamReport.Source`) | 运行时 | 前端入口 |
+| --- | --- | --- | --- | --- |
+| 1 出网快速检测 | 出网连通性 + 延迟 + 真实请求 + 配置的解锁目标 | 走 `batch_detection`(非体检),写解锁结果 + 重算标签 | 全局单例(`detecting`),不落 `exam_history` | 批量栏 / 行内下拉 / 抽屉按钮 |
+| 2 出网+稳定性 | 出网 + 稳定性(两段) | `stability_check`,落 `exam_history`(不抢"最近体检"单一事实源) | `batch_stability` kind / 单节点 SSE 流 | 批量栏 + `NodeStabilityDialog` |
+| 3 快速测速 | 基准下行 + 上行(基准行口径) | 不落体检(带宽字段随节点快照) | `test/stream?mode=speedtest` / `batch_speedtest` | 批量栏 + `BandwidthTestDialog`(mode=speedtest) |
+| 4 深度体检 | 完整四段(出网→稳定性→多地域→解锁) | 空 Source = 完整体检口径,落 `exam_history` | `batch_exam` kind / 单节点 SSE 流 | 批量栏 + `NodeExamDialog` |
+
+要点:动作 2 只是深度体检的前两段用独立入口暴露(`stability_check` 来源标记区分),动作 4 才是完整流水线。动作 1 走的是可用性检测链路(`batch_detection`)而非体检编排,故不产 `ExamReport`、不落 `exam_history`。另有**本机实测**(浏览器端验收测量,见 [design-client-speedtest](design-client-speedtest.md))作为独立页入口,与上述四个服务端检测动作正交,不属于体检分层。
+
 ## 报告模型
 
 一次体检产出一个 `ExamReport`(`internal/detection/exam.go`),四段各一个可空指针(某段失败/缺失则为空):
@@ -82,7 +95,7 @@ egress(逐类) -> section_done(egress)
 
 ### 批量体检
 
-批量体检(`batch_exam` kind,可续跑)对一组节点逐个跑**精简体检**(出网 + 稳定性 + 基准下行,跳过 8 区与解锁),串行/低并发,游标续跑,每节点完成即落历史 + 触发标签重算。同样长在 [ADR 0019](adr/0019-generic-async-jobs-runtime.md) 的运行时上。
+批量体检(`batch_exam` kind,可续跑)对一组节点逐个跑体检,串行/低并发,游标续跑,每节点完成即落历史 + 触发标签重算。同样长在 [ADR 0019](adr/0019-generic-async-jobs-runtime.md) 的运行时上。启动请求带 `mode` 参数:`simplified`(默认,兼容老客户端;出网 + 稳定性 + 基准下行,跳过 8 区与解锁)或 `full`(完整四段)。空值按 `simplified`,未知值 400 拒绝、不静默降级。节点页「深度体检」批量动作固定发 `mode=full`(收敛后批量入口只暴露完整口径),精简档保留给内部/兼容调用。
 
 ### 历史存储与查询
 

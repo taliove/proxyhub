@@ -176,14 +176,14 @@
           </span>
         </template>
       </el-table-column>
-      <!-- 测试+分享列合并(所有节点均可测试,支持协议的可分享);单元格抽 NodeTestCell(400 行门禁) -->
-      <el-table-column label="测试/分享" width="190" fixed="right">
+      <!-- 检查+分享列合并(所有节点均可检查,支持协议的可分享);单元格抽 NodeTestCell(400 行门禁) -->
+      <el-table-column label="检查/分享" width="190" fixed="right">
         <template #default="{ row }">
           <NodeTestCell
             :row="row"
-            :testing="testing"
+            :detecting="detecting"
             :running-exam-keys="runningExamKeys"
-            @test="(r: UnifiedNode, mode: TestCommand) => emit('test', r, mode)"
+            @test="(r: UnifiedNode, cmd: TestCommand) => emit('test', r, cmd)"
             @copy-link="(r: UnifiedNode) => emit('copy-link', r)"
             @show-qr="(r: UnifiedNode) => emit('show-qr', r)"
           />
@@ -231,7 +231,8 @@ const props = withDefaults(
   defineProps<{
     nodes: UnifiedNode[]
     loading: boolean
-    testing: boolean
+    // detecting:全页共享的解锁检测运行态,行内「出网快速检测」进行中标注/禁用
+    detecting: boolean
     page: number
     pageSize: number
     total: number

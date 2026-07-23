@@ -4,10 +4,16 @@ import type { JobStatus } from '@/api/jobs'
 import { parseAirportTestCursor } from '@/composables/useAirportTest'
 
 // KIND_LABELS 任务 kind -> 中文名。未知 kind 回落到原始值(见 kindLabel)。
+// 检查动作词汇统一(见 CONTEXT「检查动作」):batch_detection = 出网快速检测,
+// batch_stability = 出网+稳定性,batch_speedtest = 快速测速,batch_exam = 深度体检;
+// 单节点对应 exam(深度体检)/ exam_stability(出网+稳定性)。
 const KIND_LABELS: Record<string, string> = {
-  exam: '单节点体检',
-  batch_exam: '批量体检',
-  batch_detection: '批量解锁检测',
+  exam: '深度体检',
+  exam_stability: '出网+稳定性',
+  batch_exam: '深度体检',
+  batch_detection: '出网快速检测',
+  batch_stability: '出网+稳定性',
+  batch_speedtest: '快速测速',
   retag_all: '晚间标签重算',
   refresh: '刷新',
   airport_test: '机场测试'
@@ -52,7 +58,8 @@ const AIRPORT_TEST_PHASE_LABELS: Record<string, string> = {
 }
 
 // parseProgress 解析游标进度。
-// 可续跑任务(batch_exam/batch_detection/retag_all)的 cursor 是已完成数的字符串。
+// 可续跑任务(batch_exam/batch_detection/batch_stability/batch_speedtest/retag_all)的
+// cursor 是已完成数的字符串。
 // 总量不在 jobs 表中,故只能给出已完成计数;total 已知时(前端启动批量体检时缓存)拼成 "x/N"。
 // airport_test 的 cursor 是 JSON {"phase","checked","total"}(ADR 0027 主进度源):
 // 检活阶段显示 "检活 x/N",其余阶段显示阶段名。
@@ -102,6 +109,8 @@ export function parseJobParams(params: string | undefined): JobParams | null {
 export function scopeLabel(job: { kind: string; key: string; params?: string }): string {
   switch (job.kind) {
     case 'batch_detection':
+    case 'batch_stability':
+    case 'batch_speedtest':
     case 'batch_exam': {
       const p = parseJobParams(job.params)
       const n = p?.node_keys?.length ?? 0

@@ -115,7 +115,7 @@ describe('AlertPanel', () => {
     expect(text).toContain('机场「机场A」最近测试得分 45 分')
     expect(text).toContain('刷新')
     expect(text).toContain('失败')
-    expect(text).toContain('批量体检')
+    expect(text).toContain('深度体检')
     expect(text).toContain('已中断')
     expect(text).toContain('IP 1.2.3.4 已被封禁')
     expect(text).toContain('24h 内登录失败 2 次')

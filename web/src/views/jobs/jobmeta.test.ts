@@ -11,9 +11,12 @@ import {
 
 describe('kindLabel', () => {
   it('已知 kind 映射中文名', () => {
-    expect(kindLabel('exam')).toBe('单节点体检')
-    expect(kindLabel('batch_exam')).toBe('批量体检')
-    expect(kindLabel('batch_detection')).toBe('批量解锁检测')
+    expect(kindLabel('exam')).toBe('深度体检')
+    expect(kindLabel('exam_stability')).toBe('出网+稳定性')
+    expect(kindLabel('batch_exam')).toBe('深度体检')
+    expect(kindLabel('batch_detection')).toBe('出网快速检测')
+    expect(kindLabel('batch_stability')).toBe('出网+稳定性')
+    expect(kindLabel('batch_speedtest')).toBe('快速测速')
     expect(kindLabel('retag_all')).toBe('晚间标签重算')
     expect(kindLabel('airport_test')).toBe('机场测试')
   })

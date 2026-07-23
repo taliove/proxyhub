@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     v-model="visible"
-    :title="`带宽测试 · ${nodeName}`"
+    :title="`${dialogTitle} · ${nodeName}`"
     width="540px"
     :close-on-click-modal="!running"
     :close-on-press-escape="!running"
@@ -92,6 +92,10 @@ const running = ref(false)
 const result = ref<NodeTestResult | null>(null)
 const nodeName = ref('')
 const phaseText = ref('正在测下行…')
+// 档位:speedtest = 快速测速(基准下行+上行,__down/__up 基准口径,检查动作 3);
+// 缺省 legacy 带宽口径。仅影响流 URL 的 mode 参数与标题文案(采样帧契约不变)。
+const testMode = ref<'speedtest' | 'legacy'>('legacy')
+const dialogTitle = computed(() => (testMode.value === 'speedtest' ? '快速测速' : '带宽测试'))
 
 // 实时跳动数字
 const liveDown = ref(0)
@@ -165,9 +169,14 @@ const chartOption = computed(() => ({
   ]
 }))
 
-const open = (payload: { self_node_id?: number; node_key?: string }, name: string) => {
+const open = (
+  payload: { self_node_id?: number; node_key?: string },
+  name: string,
+  opts: { mode?: 'speedtest' | 'legacy' } = {}
+) => {
   currentPayload = payload
   nodeName.value = name
+  testMode.value = opts.mode ?? 'legacy'
   result.value = null
   liveDown.value = 0
   liveUp.value = 0
@@ -186,6 +195,8 @@ const runTest = () => {
   const params = new URLSearchParams()
   if (currentPayload.self_node_id) params.set('self_node_id', String(currentPayload.self_node_id))
   if (currentPayload.node_key) params.set('node_key', currentPayload.node_key)
+  // 快速测速档:显式带 mode=speedtest 切基准口径(__down/__up);缺省仍走 legacy 端点。
+  if (testMode.value === 'speedtest') params.set('mode', 'speedtest')
 
   es = new EventSource(`/api/nodes/test/stream?${params}`, { withCredentials: true })
 

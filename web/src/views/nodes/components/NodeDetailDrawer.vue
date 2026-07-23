@@ -124,7 +124,7 @@
             </template>
           </el-table-column>
         </el-table>
-        <div v-else class="muted">该节点暂无检测记录,可点下方「检测此节点」运行检测。</div>
+        <div v-else class="muted">该节点暂无检测记录,可点下方「出网快速检测」运行检测。</div>
       </div>
 
       <div v-if="node.bandwidth_down_mbps || node.bandwidth_up_mbps" class="drawer-block bw-detail">
@@ -143,16 +143,28 @@
           :entries="examEntries"
           :loading="examLoading"
           :node-name="node.display_name || node.name"
-          @exam="emit('exam', node)"
+          @exam="emit('action', node, 'exam')"
         />
       </div>
 
-      <!-- 抽屉内只允许轻量操作:针对当前节点跑一次解锁检测 / 跳本机实测(预填标注) -->
+      <!-- 抽屉内检查动作:与行内/批量面同名同义的 4 动作(见 CONTEXT「检查动作」),外加本机实测/二维码。 -->
       <div class="drawer-actions">
-        <el-button type="primary" size="small" :disabled="detecting" @click="emit('detect', node)">
-          检测此节点
+        <el-button
+          type="primary"
+          size="small"
+          :disabled="detecting"
+          @click="emit('action', node, 'detect')"
+        >
+          {{ detecting ? '出网快速检测(进行中)' : '出网快速检测' }}
         </el-button>
-        <el-button size="small" @click="emit('speedtest', node)">本机实测</el-button>
+        <el-button size="small" @click="emit('action', node, 'stability')">出网+稳定性</el-button>
+        <el-button size="small" @click="emit('action', node, 'speedtest')">快速测速</el-button>
+        <el-button size="small" @click="emit('action', node, 'exam')">
+          {{ runningExamKeys.has(node.node_key) ? '深度体检(查看进度)' : '深度体检' }}
+        </el-button>
+        <el-button size="small" @click="emit('action', node, 'client-speedtest')"
+          >本机实测</el-button
+        >
         <el-button v-if="canShowNodeQR(node)" size="small" @click="showNodeQR(node)">
           节点二维码
         </el-button>
@@ -186,19 +198,24 @@ import { fetchExamHistory } from '@/api/exam'
 import ExamHistoryTimeline from '@/components/exam/ExamHistoryTimeline.vue'
 import { generateQRCode } from '@/composables/useQRCode'
 import { canGenerateShareLink, getNodeShareLink } from '@/composables/useNodeShare'
+import type { TestCommand } from './node-table-utils'
 
 const visible = defineModel<boolean>({ required: true })
 
-const props = defineProps<{
-  node: Node | null
-  detecting: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    node: Node | null
+    // detecting:全页共享的解锁检测运行态,「出网快速检测」进行中标注/禁用
+    detecting: boolean
+    // 进行中的深度体检任务 key 集合,用于「深度体检」按钮显示"查看进度"
+    runningExamKeys?: Set<string>
+  }>(),
+  { runningExamKeys: () => new Set() }
+)
 
 const emit = defineEmits<{
-  (e: 'detect', node: Node): void
-  (e: 'exam', node: Node): void
-  // 跳本机实测页并预填该节点标注(ticket 0034)
-  (e: 'speedtest', node: Node): void
+  // 统一 4 动作分发(cmd 与行内下拉同义):detect/stability/speedtest/exam/client-speedtest。
+  (e: 'action', node: Node, cmd: TestCommand): void
 }>()
 
 const rows = computed(() => (props.node ? unlockDisplayRows(props.node) : []))

@@ -1,80 +1,28 @@
-import { onUnmounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import client from '@/api/client'
-import { listJobs } from '@/api/jobs'
-import { parseCursor, isRunning } from '@/views/jobs/jobmeta'
+import { useBatchJob } from './useBatchJob'
 
-// 批量体检:POST 启动后复用 jobs 轮询做轻量进度展示(完成 x/N,可取消)。
-// 不接 SSE(详细采样在单节点体检弹窗,批量只需计数),与 useNodeDetection 同构。
+// 批量深度体检(检查动作 4):完整四段体检(出网+稳定性+多地域+解锁)的任务化派发,
+// 仅选中节点。后端 batch_exam kind 参数化 full 模式(mode=full,见 issue 0027),
+// 与精简批量体检共用端点、不同 runner。进度复用 jobs 轮询(完成 x/N,可取消)。
 export function useBatchExam(onDone?: () => void) {
-  const running = ref(false)
-  const completed = ref(0)
-  const total = ref(0)
-  let pollTimer: number | null = null
+  const job = useBatchJob(
+    {
+      kind: 'batch_exam',
+      key: 'batch_exam',
+      startUrl: '/nodes/exam/batch',
+      cancelUrl: '/nodes/exam/batch/cancel',
+      actionLabel: '深度体检'
+    },
+    onDone
+  )
 
-  const BATCH_EXAM_KIND = 'batch_exam'
-  const BATCH_EXAM_KEY = 'batch_exam'
-  const POLL_INTERVAL_MS = 3000
+  // start 固定带 mode=full:批量深度体检 = 完整四段口径(收敛后批量入口只暴露 full)。
+  const start = (nodeKeys: string[]) => job.start(nodeKeys, { mode: 'full' })
 
-  const stopPolling = () => {
-    if (pollTimer !== null) {
-      clearInterval(pollTimer)
-      pollTimer = null
-    }
+  return {
+    running: job.running,
+    completed: job.completed,
+    total: job.total,
+    start,
+    cancel: job.cancel
   }
-
-  const finish = () => {
-    running.value = false
-    stopPolling()
-  }
-
-  const poll = async () => {
-    try {
-      const jobs = await listJobs()
-      const job = jobs.find((j) => j.kind === BATCH_EXAM_KIND && j.key === BATCH_EXAM_KEY)
-      if (!job) return
-      const done = parseCursor(job.cursor)
-      if (done !== null) completed.value = done
-      if (!isRunning(job.status)) {
-        finish()
-        completed.value = total.value
-        ElMessage.success('批量体检完成')
-        onDone?.()
-      }
-    } catch {
-      finish()
-    }
-  }
-
-  // start 启动批量体检。nodeKeys 为空 = 全节点(后端约定)。total 供进度展示。
-  const start = async (nodeKeys: string[]) => {
-    if (running.value) return
-    try {
-      await client.post('/nodes/exam/batch', { node_keys: nodeKeys })
-      running.value = true
-      completed.value = 0
-      total.value = nodeKeys.length
-      ElMessage.info(`批量体检已启动(${nodeKeys.length} 个节点)`)
-      stopPolling()
-      pollTimer = window.setInterval(poll, POLL_INTERVAL_MS)
-    } catch (e) {
-      running.value = false
-      ElMessage.error(e instanceof Error ? e.message : '启动批量体检失败')
-    }
-  }
-
-  const cancel = async () => {
-    try {
-      await client.post('/nodes/exam/batch/cancel', {})
-      finish()
-      ElMessage.info('已取消批量体检')
-      onDone?.()
-    } catch {
-      finish()
-    }
-  }
-
-  onUnmounted(stopPolling)
-
-  return { running, completed, total, start, cancel }
 }
