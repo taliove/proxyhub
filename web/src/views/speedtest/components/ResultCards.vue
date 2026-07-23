@@ -22,10 +22,14 @@
 import { computed } from 'vue'
 import type { SpeedtestOutcome, SpeedtestPhase } from '../runner'
 
-// 大数字结果区:完成后展示本次实测;测速中只标阶段(后端一次性返回,无实时速率)。
+// 大数字结果区:测速中当前阶段的下行/上行卡实时刷新 liveMbps(fast.com 式跳动);
+// 延迟/抖动在 latency 帧到达后即有值(经 idleLatencyMs/jitterMs prop)。完成后定格最终值。
 const props = defineProps<{
   running: boolean
   phase: SpeedtestPhase | null
+  liveMbps: number
+  idleLatencyMs: number
+  jitterMs: number
   result: SpeedtestOutcome | null
 }>()
 
@@ -42,28 +46,32 @@ const phaseText = computed(() => (props.phase ? PHASE_TEXT[props.phase] : ''))
 const fmt = (v: number | undefined, digits: number): string =>
   v === undefined ? '—' : v.toFixed(digits)
 
-// 测速中:当前阶段卡显示占位(后端一次性返回,无实时速率);已完成:显示最终值。
+// 测速中:下行/上行卡显示 liveMbps 实时跳动;延迟/抖动显示已测值(0 显示占位);
+// 已完成:显示最终值。
 const cards = computed(() => {
   const r = props.result
+  const lat = r ? r.idleLatencyMs : props.idleLatencyMs
+  const jit = r ? r.jitterMs : props.jitterMs
   return [
     {
       label: '下行 Mbps',
-      value: props.running && props.phase === 'download' ? '…' : fmt(r?.downMbps, 1),
+      value:
+        props.running && props.phase === 'download' ? fmt(props.liveMbps, 1) : fmt(r?.downMbps, 1),
       active: props.running && props.phase === 'download'
     },
     {
       label: '上行 Mbps',
-      value: props.running && props.phase === 'upload' ? '…' : fmt(r?.upMbps, 1),
+      value: props.running && props.phase === 'upload' ? fmt(props.liveMbps, 1) : fmt(r?.upMbps, 1),
       active: props.running && props.phase === 'upload'
     },
     {
       label: '空闲延迟 ms',
-      value: fmt(r?.idleLatencyMs, 0),
+      value: lat > 0 ? fmt(lat, 0) : props.running ? '…' : '—',
       active: props.running && props.phase === 'latency'
     },
     {
       label: '抖动 ms',
-      value: fmt(r?.jitterMs, 1),
+      value: jit > 0 ? fmt(jit, 1) : props.running ? '…' : '—',
       active: false
     }
   ]

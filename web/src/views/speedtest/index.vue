@@ -31,7 +31,14 @@
       </el-alert>
     </el-card>
 
-    <ResultCards :running="running" :phase="phase" :result="result" />
+    <ResultCards
+      :running="running"
+      :phase="phase"
+      :live-mbps="liveMbps"
+      :idle-latency-ms="idleLatencyMs"
+      :jitter-ms="jitterMs"
+      :result="result"
+    />
 
     <HistoryTable
       :rows="rows"
@@ -73,7 +80,17 @@ const {
   load: loadHistory,
   remove
 } = useSpeedtestHistory(poolKeys)
-const { phase, running, result, error: runError, start, cancel } = useSpeedtestRun()
+const {
+  phase,
+  running,
+  liveMbps,
+  idleLatencyMs,
+  jitterMs,
+  result,
+  error: runError,
+  start,
+  cancel
+} = useSpeedtestRun()
 
 // CLIENT_INFO_MAX 与后端 maxSpeedtestClientInfoLen(512)对齐,留余量截断。
 const CLIENT_INFO_MAX = 500

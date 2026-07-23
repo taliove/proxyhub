@@ -171,13 +171,16 @@ beforeEach(() => {
     async (
       _nodeKey: string,
       callbacks: {
+        onLatency?: (lat: number, jit: number) => void
         onPhase?: (p: string) => void
         onSample?: (p: string, m: number) => void
       }
     ) => {
-      callbacks.onPhase?.('latency')
+      callbacks.onLatency?.(50, 6)
       callbacks.onPhase?.('download')
+      callbacks.onSample?.('download', 150)
       callbacks.onPhase?.('upload')
+      callbacks.onSample?.('upload', 80)
       return { downMbps: 150, upMbps: 80, idleLatencyMs: 50, jitterMs: 6 }
     }
   )

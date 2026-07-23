@@ -1,28 +1,19 @@
-// 本机实测的测量原语:全部走后端代理测速 API(POST /api/speedtest/proxy-test),
-// 后端经选中节点(或直连)访问 Cloudflare 测速端点,测全链路带宽。
+// 本机实测的测量原语:走后端 SSE 流式端点(GET /api/speedtest/proxy-test/stream),
+// 后端经选中节点(或直连)访问测速端点,推送 latency/sample/done/error 帧。
+// 浏览器用 EventSource 订阅,实时跳动数字(fast.com 式),对齐 BandwidthTestDialog 范式。
 //
-// 历史实现(浏览器直接 fetch /api/speedtest/download 等)测的是本机回环,
-// 数值虚高且与节点无关,已废弃(issue 0047)。保留下方常量供历史引用与默认时长。
-//
-// 时长口径装进全局 30s 读写超时(main.go):下行默认 10s,上行默认 10s,
-// 加延迟探测 ~1s,单次总耗时约 21-25s。
-
-// DOWNLOAD_DURATION_MS 下行测速时长(后端钳制)。
-export const DOWNLOAD_DURATION_MS = 10_000
-// UPLOAD_DURATION_MS 上行测速时长(后端钳制)。
-export const UPLOAD_DURATION_MS = 10_000
+// 历史实现(浏览器直接 fetch /api/speedtest/download,测本机回环)已废弃(issue 0047)。
 
 export type SpeedtestPhase = 'latency' | 'download' | 'upload'
 
-// RunCallbacks 测速过程回调:阶段切换(前端模拟,后端一次性返回)。
-// onSample 不再使用(后端无实时速率推送),保留接口兼容调用方。
+// RunCallbacks 测速过程回调:onLatency(延迟抖动测完)、onSample(实时速率,每~300ms)、onPhase(阶段切换)。
 export interface RunCallbacks {
+  onLatency?: (idleLatencyMs: number, jitterMs: number) => void
   onPhase?: (phase: SpeedtestPhase) => void
   onSample?: (phase: SpeedtestPhase, mbps: number) => void
 }
 
 // SpeedtestOutcome 一次完整实测的产出(落库前的原始浮点,精度收敛在调用侧 round2)。
-// 与后端 ProxyTestResult 字段一致,但用驼峰命名对齐历史调用方。
 export interface SpeedtestOutcome {
   downMbps: number
   upMbps: number
@@ -30,77 +21,97 @@ export interface SpeedtestOutcome {
   jitterMs: number
 }
 
-// runSpeedtest 一键实测:调用后端代理测速 API。
-// nodeKey 空串 = 直连基线;非空 = 经该节点代理测速。
-// 阶段切换经 callbacks 透出(前端模拟 latency→download→upload,因后端一次性返回)。
-export async function runSpeedtest(
-  nodeKey: string,
-  callbacks: RunCallbacks = {},
-  signal?: AbortSignal
-): Promise<SpeedtestOutcome> {
-  // 前端模拟阶段切换(后端无流式进度,一次性返回结果)
-  callbacks.onPhase?.('latency')
-  callbacks.onPhase?.('download')
-  callbacks.onPhase?.('upload')
-
-  const result = await runProxyTestApi(
-    {
-      node_key: nodeKey || undefined,
-      mode: 'full',
-      download_duration_ms: DOWNLOAD_DURATION_MS,
-      upload_duration_ms: UPLOAD_DURATION_MS
-    },
-    signal
-  )
-
-  return {
-    downMbps: result.down_mbps,
-    upMbps: result.up_mbps,
-    idleLatencyMs: result.idle_latency_ms,
-    jitterMs: result.jitter_ms
-  }
+// SSE 帧类型(与后端 handlers_speedtest_proxy.go 对齐)
+interface LatencyFrame {
+  phase: 'latency'
+  idle_latency_ms: number
+  jitter_ms: number
 }
-
-// runProxyTestApi 延迟导入避免循环依赖:runner 被 useSpeedtestRun 引用,
-// useSpeedtestRun 不应间接引用 api/speedtest 的 axios client。
-// 直接 inline fetch 逻辑,与 api/speedtest.ts 的 runProxyTest 等价。
-async function runProxyTestApi(
-  payload: {
-    node_key?: string
-    self_node_id?: number
-    mode?: string
-    download_duration_ms?: number
-    upload_duration_ms?: number
-  },
-  signal?: AbortSignal
-): Promise<{
+interface SampleFrame {
+  phase: 'download' | 'upload'
+  mbps: number
+  elapsed_ms: number
+}
+interface DoneFrame {
+  phase: 'done'
   down_mbps: number
   up_mbps: number
   idle_latency_ms: number
   jitter_ms: number
   elapsed_ms: number
-}> {
-  const res = await fetch('/api/speedtest/proxy-test', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal
-  })
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`
-    try {
-      const err = (await res.json()) as { error?: string }
-      if (err.error) msg = err.error
-    } catch {
-      // 响应体非 JSON
+}
+interface ErrorFrame {
+  phase: 'error'
+  error: string
+}
+
+// runSpeedtest 一键实测:订阅后端 SSE 流,nodeKey 空串 = 直连基线。
+// 实时帧经 callbacks 透出(onLatency/onSample/onPhase),done 帧作为最终结果 resolve。
+// signal 觅 abort 时关闭 EventSource 并 reject。
+export function runSpeedtest(
+  nodeKey: string,
+  callbacks: RunCallbacks = {},
+  signal?: AbortSignal
+): Promise<SpeedtestOutcome> {
+  return new Promise<SpeedtestOutcome>((resolve, reject) => {
+    const params = new URLSearchParams({ mode: 'full' })
+    if (nodeKey) params.set('node_key', nodeKey)
+    const url = `/api/speedtest/proxy-test/stream?${params.toString()}`
+    const es = new EventSource(url, { withCredentials: true })
+
+    let samplePhase: SpeedtestPhase | null = null
+
+    const cleanup = () => {
+      es.onmessage = null
+      es.onerror = null
+      es.close()
     }
-    throw new Error(msg)
-  }
-  return (await res.json()) as {
-    down_mbps: number
-    up_mbps: number
-    idle_latency_ms: number
-    jitter_ms: number
-    elapsed_ms: number
-  }
+
+    signal?.addEventListener('abort', () => {
+      cleanup()
+      reject(new Error('aborted'))
+    })
+
+    es.onmessage = (e) => {
+      let frame: LatencyFrame | SampleFrame | DoneFrame | ErrorFrame
+      try {
+        frame = JSON.parse(e.data)
+      } catch {
+        return // 忽略非 JSON 帧
+      }
+      switch (frame.phase) {
+        case 'latency':
+          callbacks.onLatency?.(frame.idle_latency_ms, frame.jitter_ms)
+          break
+        case 'download':
+        case 'upload':
+          // 收到第一个 sample 帧即切换阶段(下行先,后上行)
+          if (samplePhase !== frame.phase) {
+            samplePhase = frame.phase
+            callbacks.onPhase?.(frame.phase)
+          }
+          callbacks.onSample?.(frame.phase, frame.mbps)
+          break
+        case 'done':
+          cleanup()
+          resolve({
+            downMbps: frame.down_mbps,
+            upMbps: frame.up_mbps,
+            idleLatencyMs: frame.idle_latency_ms,
+            jitterMs: frame.jitter_ms
+          })
+          break
+        case 'error':
+          cleanup()
+          reject(new Error(frame.error))
+          break
+      }
+    }
+
+    es.onerror = () => {
+      // 连接错误(后端关闭/网络中断):若未 done,视为失败
+      cleanup()
+      reject(new Error('stream closed unexpectedly'))
+    }
+  })
 }
