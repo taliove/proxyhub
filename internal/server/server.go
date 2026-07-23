@@ -611,6 +611,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/speedtest/ping", s.requireAuth(s.handleSpeedtestPing))
 	mux.HandleFunc("GET /api/speedtest/download", s.requireAuth(s.handleSpeedtestDownload))
 	mux.HandleFunc("POST /api/speedtest/upload", s.requireAuth(s.handleSpeedtestUpload))
+	// 后端代理测速(issue 0047):浏览器发起,后端经节点访问 Cloudflare 端点。
+	// 与上面的浏览器直连端点不同:本端点测的是经节点的真实带宽,非本机回环。
+	mux.HandleFunc("POST /api/speedtest/proxy-test", s.requireAuth(s.handleSpeedtestProxyTest))
 	mux.HandleFunc("POST /api/speedtest/results", s.requireAuth(s.handleSaveSpeedtestResult))
 	mux.HandleFunc("GET /api/speedtest/results", s.requireAuth(s.handleListSpeedtestResults))
 	mux.HandleFunc("DELETE /api/speedtest/results/{id}", s.requireAuth(s.handleDeleteSpeedtestResult))
