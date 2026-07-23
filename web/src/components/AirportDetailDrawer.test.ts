@@ -128,6 +128,41 @@ const ElTagStub = defineComponent({
     return () => h('span', { class: 'el-tag-stub' }, slots.default?.())
   }
 })
+// el-input 测试桩:原生 input 透传 v-model
+const ElInputStub = defineComponent({
+  name: 'ElInput',
+  props: { modelValue: { type: String, default: '' } },
+  emits: ['update:modelValue', 'clear'],
+  setup(props, { emit }) {
+    return () =>
+      h('input', {
+        class: 'el-input-stub',
+        value: props.modelValue,
+        onInput: (e: Event) => emit('update:modelValue', (e.target as HTMLInputElement).value)
+      })
+  }
+})
+// el-pagination 测试桩:渲染 total,暴露 next 按钮触发 current-change
+const ElPaginationStub = defineComponent({
+  name: 'ElPagination',
+  props: {
+    currentPage: { type: Number, default: 1 },
+    pageSize: { type: Number, default: 10 },
+    total: { type: Number, default: 0 }
+  },
+  emits: ['current-change'],
+  setup(props, { emit }) {
+    return () =>
+      h('div', { class: 'el-pagination-stub' }, [
+        h('span', { class: 'pg-total' }, String(props.total)),
+        h(
+          'button',
+          { class: 'pg-next', onClick: () => emit('current-change', props.currentPage + 1) },
+          'next'
+        )
+      ])
+  }
+})
 
 const airport: Airport = {
   id: 7,
@@ -156,9 +191,17 @@ const poolNode: Node = {
   detection_last_check: '2026-07-22T08:00:00Z'
 }
 
-const mountDrawer = (modelValue: boolean, nodeList: Node[] = [poolNode]) => {
+const mountDrawer = (modelValue: boolean, nodeList: Node[] = [poolNode], nodeTotal?: number) => {
   vi.mocked(client.get).mockImplementation(async (url: unknown) => {
-    if (url === '/nodes') return { nodes: nodeList } as never
+    if (url === '/nodes')
+      return {
+        nodes: nodeList,
+        total: nodeTotal ?? nodeList.length,
+        page: 1,
+        page_size: 10,
+        total_pages: 1,
+        last_update: ''
+      } as never
     if (url === '/airports/7/test/runs') return [] as never
     return {} as never
   })
@@ -173,11 +216,19 @@ const mountDrawer = (modelValue: boolean, nodeList: Node[] = [poolNode]) => {
         'el-table': ElTableStub,
         'el-table-column': ElTableColumnStub,
         'el-button': ElButtonStub,
-        'el-tag': ElTagStub
+        'el-tag': ElTagStub,
+        'el-input': ElInputStub,
+        'el-pagination': ElPaginationStub
       }
     }
   })
 }
+
+// /nodes 请求调用史(url + config)
+const nodesCalls = () =>
+  vi.mocked(client.get).mock.calls.filter(([u]) => u === '/nodes') as Array<
+    [unknown, { params: Record<string, unknown> }]
+  >
 
 describe('AirportDetailDrawer', () => {
   beforeEach(() => {
@@ -287,6 +338,125 @@ describe('AirportDetailDrawer', () => {
 
   it('池内无节点时展示引导空态', async () => {
     const wrapper = mountDrawer(true, [])
+    await flushPromises()
+    expect(wrapper.text()).toContain('该机场当前在池内无节点')
+  })
+
+  it('明细分段走服务端分页:默认 page=1&page_size=10,total 渲染自接口响应', async () => {
+    const wrapper = mountDrawer(true, [poolNode], 42)
+    await flushPromises()
+
+    expect(nodesCalls()).toHaveLength(1)
+    expect(nodesCalls()[0][1]).toEqual({
+      params: { page: 1, page_size: 10, source: '极速机场' }
+    })
+    expect(wrapper.find('.pg-total').text()).toBe('42')
+  })
+
+  it('翻页触发对应页码的服务端请求', async () => {
+    const wrapper = mountDrawer(true, [poolNode], 42)
+    await flushPromises()
+
+    await wrapper.find('.pg-next').trigger('click')
+    await flushPromises()
+    expect(nodesCalls()).toHaveLength(2)
+    expect(nodesCalls()[1][1]).toEqual({
+      params: { page: 2, page_size: 10, source: '极速机场' }
+    })
+  })
+
+  it('搜索输入(防抖)携带 keyword 并重置到第 1 页', async () => {
+    const wrapper = mountDrawer(true, [poolNode], 42)
+    await flushPromises()
+
+    // 先翻到第 2 页,验证搜索会把页码重置回 1
+    await wrapper.find('.pg-next').trigger('click')
+    await flushPromises()
+    expect(nodesCalls().at(-1)![1]).toEqual({
+      params: { page: 2, page_size: 10, source: '极速机场' }
+    })
+
+    await wrapper.find('input.el-input-stub').setValue('日本')
+    // 等待防抖窗口(300ms)结束
+    await new Promise((r) => setTimeout(r, 400))
+    await flushPromises()
+    expect(nodesCalls().at(-1)![1]).toEqual({
+      params: { page: 1, page_size: 10, source: '极速机场', keyword: '日本' }
+    })
+  })
+
+  it('防抖窗口内连续输入只发一次搜索请求', async () => {
+    const wrapper = mountDrawer(true)
+    await flushPromises()
+    const before = nodesCalls().length
+
+    const input = wrapper.find('input.el-input-stub')
+    await input.setValue('日')
+    await new Promise((r) => setTimeout(r, 100))
+    await input.setValue('日本')
+    await new Promise((r) => setTimeout(r, 400))
+    await flushPromises()
+
+    const after = nodesCalls()
+    expect(after.length).toBe(before + 1)
+    expect(after.at(-1)![1]).toEqual({
+      params: { page: 1, page_size: 10, source: '极速机场', keyword: '日本' }
+    })
+  })
+
+  it('清空搜索词后请求不再携带 keyword', async () => {
+    const wrapper = mountDrawer(true)
+    await flushPromises()
+
+    const input = wrapper.find('input.el-input-stub')
+    await input.setValue('JP')
+    await new Promise((r) => setTimeout(r, 400))
+    await flushPromises()
+    expect(nodesCalls().at(-1)![1]).toEqual({
+      params: { page: 1, page_size: 10, source: '极速机场', keyword: 'JP' }
+    })
+
+    await input.setValue('')
+    await new Promise((r) => setTimeout(r, 400))
+    await flushPromises()
+    expect(nodesCalls().at(-1)![1]).toEqual({
+      params: { page: 1, page_size: 10, source: '极速机场' }
+    })
+  })
+
+  it('搜索无结果时展示匹配空态(不白屏)', async () => {
+    const wrapper = mountDrawer(true, [])
+    await flushPromises()
+
+    await wrapper.find('input.el-input-stub').setValue('不存在')
+    await new Promise((r) => setTimeout(r, 400))
+    await flushPromises()
+    expect(wrapper.text()).toContain('未找到匹配「不存在」的节点')
+  })
+
+  it('节点请求失败时降级为空态,不白屏', async () => {
+    vi.mocked(client.get).mockImplementation(async (url: unknown) => {
+      if (url === '/nodes') throw new Error('network down')
+      if (url === '/airports/7/test/runs') return [] as never
+      return {} as never
+    })
+    const wrapper = mount(AirportDetailDrawer, {
+      props: { modelValue: true, airport },
+      global: {
+        directives: { loading: {} },
+        stubs: {
+          'el-drawer': ElDrawerStub,
+          'el-descriptions': ElDescriptionsStub,
+          'el-descriptions-item': ElDescriptionsItemStub,
+          'el-table': ElTableStub,
+          'el-table-column': ElTableColumnStub,
+          'el-button': ElButtonStub,
+          'el-tag': ElTagStub,
+          'el-input': ElInputStub,
+          'el-pagination': ElPaginationStub
+        }
+      }
+    })
     await flushPromises()
     expect(wrapper.text()).toContain('该机场当前在池内无节点')
   })

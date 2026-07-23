@@ -94,6 +94,14 @@ export interface NodePage {
   last_update: string
 }
 
+// /api/nodes 查询参数(见 ADR 0013;keyword 名称/地区搜索见 ticket 0041)
+export interface NodeListParams {
+  page?: number
+  page_size?: number
+  source?: string // 机场名,子串模糊匹配
+  keyword?: string // 名称片段或地区(地区码/地区中文名)
+}
+
 export interface RegionOption {
   code: string
   name: string

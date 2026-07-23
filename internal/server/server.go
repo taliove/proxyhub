@@ -1215,6 +1215,7 @@ func parseNodeQuery(r *http.Request) NodeQuery {
 		Blocked:   parseBoolPtr("blocked"),
 		Stale:     parseBoolPtr("stale"),
 		Source:    q.Get("source"),
+		Keyword:   q.Get("keyword"),
 		SortBy:    q.Get("sort_by"),
 		SortOrder: q.Get("sort_order"),
 		Page:      parseInt("page", 1),

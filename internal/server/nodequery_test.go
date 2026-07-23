@@ -1,6 +1,9 @@
 package server
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/taliove/proxyhub/internal/subscription"
@@ -113,6 +116,99 @@ func TestQueryNodes_PageOutOfRange(t *testing.T) {
 	}
 	if res.Total != 5 {
 		t.Errorf("Total = %d, want 5", res.Total)
+	}
+}
+
+// searchPoolNodes 返回一组用于 keyword 搜索测试的节点:
+// 名称大小写混合、覆盖 JP/US/HK 地区,便于验证名称片段/地区码/地区中文名三种命中路径。
+func searchPoolNodes() []*subscription.Node {
+	return []*subscription.Node{
+		mkNode("JP-TYO-01 Premium", "vmess", "JP", "极速", 50, true),
+		mkNode("us-west relay", "vless", "US", "极速", 120, true),
+		mkNode("HK-BGP-03", "trojan", "HK", "花云", 80, true),
+		mkNode("Singapore Edge", "vmess", "SG", "花云", 60, true),
+	}
+}
+
+// TestListNodes_FilterKeyword covers the HTTP wiring the unit tests above cannot:
+// query param parsing (parseNodeQuery) -> QueryNodes -> JSON response.
+func TestListNodes_FilterKeyword(t *testing.T) {
+	srv, _ := newTestServer(t, searchPoolNodes())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+
+	req := httptest.NewRequest("GET", "/api/nodes?keyword=%E6%97%A5%E6%9C%AC&page=1&page_size=10", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var resp struct {
+		Nodes []nodeViewJSON `json:"nodes"`
+		Total int            `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// keyword=日本 matches only the JP node via region Chinese name mapping
+	if resp.Total != 1 || len(resp.Nodes) != 1 || resp.Nodes[0].Name != "JP-TYO-01 Premium" {
+		t.Fatalf("want only JP node, got total=%d nodes=%+v", resp.Total, resp.Nodes)
+	}
+}
+
+func TestQueryNodes_FilterKeywordNameFragment(t *testing.T) {
+	// 名称片段,大小写不敏感
+	res := QueryNodes(searchPoolNodes(), nil, NodeQuery{Keyword: "premium", Page: 1, PageSize: 10})
+	if res.Total != 1 || res.Nodes[0].Name != "JP-TYO-01 Premium" {
+		t.Fatalf("want only JP-TYO-01 Premium, got total=%d %+v", res.Total, res.Nodes)
+	}
+}
+
+func TestQueryNodes_FilterKeywordRegionCode(t *testing.T) {
+	// 地区码精确匹配(不区分大小写);"jp" 不是任何节点名称片段,命中只能来自地区
+	res := QueryNodes(searchPoolNodes(), nil, NodeQuery{Keyword: "jp", Page: 1, PageSize: 10})
+	if res.Total != 1 || res.Nodes[0].Region != "JP" {
+		t.Fatalf("want only JP node, got total=%d %+v", res.Total, res.Nodes)
+	}
+}
+
+func TestQueryNodes_FilterKeywordRegionChineseName(t *testing.T) {
+	// 地区中文名命中:节点名称不含"日本",命中只能来自 Region=JP 的中文名映射
+	res := QueryNodes(searchPoolNodes(), nil, NodeQuery{Keyword: "日本", Page: 1, PageSize: 10})
+	if res.Total != 1 || res.Nodes[0].Region != "JP" {
+		t.Fatalf("want only JP node via Chinese name, got total=%d %+v", res.Total, res.Nodes)
+	}
+}
+
+func TestQueryNodes_FilterKeywordDisplayName(t *testing.T) {
+	// 仅 DisplayName 命中:名称与地区都不含关键词,匹配只能来自标准化展示名
+	n := mkNode("relay-x9", "vmess", "US", "极速", 50, true)
+	n.DisplayName = "专属通道-01"
+	res := QueryNodes([]*subscription.Node{n}, nil, NodeQuery{Keyword: "专属", Page: 1, PageSize: 10})
+	if res.Total != 1 {
+		t.Fatalf("want hit via DisplayName only, got total=%d %+v", res.Total, res.Nodes)
+	}
+}
+
+func TestQueryNodes_FilterKeywordNoMatch(t *testing.T) {
+	// 既非名称片段也不像地区:空结果合法
+	res := QueryNodes(searchPoolNodes(), nil, NodeQuery{Keyword: "不存在的东西zzz", Page: 1, PageSize: 10})
+	if res.Total != 0 || len(res.Nodes) != 0 {
+		t.Fatalf("want empty result, got total=%d %+v", res.Total, res.Nodes)
+	}
+}
+
+func TestQueryNodes_FilterKeywordCombinedWithSource(t *testing.T) {
+	// keyword 与 source 组合:US 节点属"极速",但 keyword=us 按名称也能命中其他机场节点时仍被 source 收敛
+	res := QueryNodes(searchPoolNodes(), nil, NodeQuery{Keyword: "us", Source: "花云", Page: 1, PageSize: 10})
+	if res.Total != 0 {
+		t.Fatalf("want no US node under 花云, got total=%d %+v", res.Total, res.Nodes)
+	}
+	res2 := QueryNodes(searchPoolNodes(), nil, NodeQuery{Keyword: "HK", Source: "花云", Page: 1, PageSize: 10})
+	if res2.Total != 1 || res2.Nodes[0].Name != "HK-BGP-03" {
+		t.Fatalf("want only HK-BGP-03, got total=%d %+v", res2.Total, res2.Nodes)
 	}
 }
 

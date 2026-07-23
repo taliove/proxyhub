@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/taliove/proxyhub/internal/geoip"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -19,6 +20,7 @@ type NodeQuery struct {
 	Blocked   *bool  // nil=不筛选
 	Stale     *bool  // nil=不筛选(true=仅已下架,false=仅在架)
 	Source    string // 机场名,子串模糊匹配
+	Keyword   string // 关键词:名称子串(大小写不敏感)或地区(码精确/中文名,见 matchesKeyword)
 
 	// 排序
 	SortBy    string // latency / name / region / source,默认 latency
@@ -68,6 +70,9 @@ func filterNodes(nodes []*subscription.Node, blocked map[string]bool, q NodeQuer
 		if q.Source != "" && !strings.Contains(n.Source, q.Source) {
 			continue
 		}
+		if q.Keyword != "" && !matchesKeyword(n, q.Keyword) {
+			continue
+		}
 		if q.Blocked != nil {
 			isBlocked := blocked[n.NodeKey()]
 			if isBlocked != *q.Blocked {
@@ -77,6 +82,39 @@ func filterNodes(nodes []*subscription.Node, blocked map[string]bool, q NodeQuer
 		out = append(out, n)
 	}
 	return out
+}
+
+// matchesKeyword 关键词匹配(见 ticket 0041),任一命中即保留:
+//  1. 名称/标准化展示名包含关键词(大小写不敏感子串);
+//  2. 地区码与关键词精确相等(不区分大小写,如 "jp" 命中 Region=JP);
+//  3. 地区码经 geoip.CountryName 映射的中文名包含关键词(如 "日本" 命中 Region=JP)。
+//
+// 三者皆不命中则过滤掉;关键词既不像名称片段也不像地区时结果为空,属合法。
+// 注意:web/src/views/nodes/predicates.ts 另有一套客户端 matchesKeyword
+// (名称/标准名/服务器,服务节点管理页),字段集有意不同——本套多地区两路、少服务器,
+// 改任一处的字段集时对照另一处确认语义分叉是否合理。
+func matchesKeyword(n *subscription.Node, keyword string) bool {
+	kw := strings.TrimSpace(keyword)
+	if kw == "" {
+		return true
+	}
+	lower := strings.ToLower(kw)
+	if strings.Contains(strings.ToLower(n.Name), lower) {
+		return true
+	}
+	if n.DisplayName != "" && strings.Contains(strings.ToLower(n.DisplayName), lower) {
+		return true
+	}
+	if n.Region == "" {
+		return false
+	}
+	if strings.EqualFold(n.Region, kw) {
+		return true
+	}
+	if cn := geoip.CountryName(n.Region); cn != "" && strings.Contains(cn, kw) {
+		return true
+	}
+	return false
 }
 
 // sortNodes 原地排序。默认 latency asc。使用稳定排序,NodeKey 作次级键保证确定性。

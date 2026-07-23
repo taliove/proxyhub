@@ -40,10 +40,16 @@
       </div>
 
       <!-- 池内节点明细段:该机场在池内节点的可用性/延迟/最近实测时间(纯读取池快照,
-           打开抽屉不触发任何测试/检活)。行轻动作限复制分享链接与触发体检;
-           屏蔽等状态变更归节点管理页。 -->
+           打开抽屉不触发任何测试/检活)。服务端分页 + keyword 搜索(名称/地区),
+           不再一次取全。行轻动作限复制分享链接与触发体检;屏蔽等状态变更归节点管理页。 -->
       <div class="drawer-block">
         <div class="drawer-section-title">池内节点明细</div>
+        <el-input
+          v-model="nodeKeyword"
+          placeholder="搜索节点名称 / 地区(码或中文名)"
+          clearable
+          class="pool-search"
+        />
         <el-table v-loading="nodesLoading" :data="nodes" size="small" border>
           <el-table-column label="名称" min-width="150" show-overflow-tooltip>
             <template #default="{ row }">{{ row.display_name || row.name }}</template>
@@ -83,9 +89,18 @@
             </template>
           </el-table-column>
           <template #empty>
-            <span class="muted">该机场当前在池内无节点,可点上方「刷新」拉取入池。</span>
+            <span class="muted">{{ poolEmptyText }}</span>
           </template>
         </el-table>
+        <div class="pool-pager">
+          <el-pagination
+            :current-page="nodePage"
+            :page-size="NODE_PAGE_SIZE"
+            :total="nodeTotal"
+            layout="total, prev, pager, next"
+            @current-change="onNodePageChange"
+          />
+        </div>
       </div>
       <!-- 最近测试报告段:展示最近一次 completed run 的报告(查看不产生新 run);
            「重新测试」「测全部」为显式动作,意图上抛由管理页打开运行模式对话框。 -->
@@ -102,7 +117,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import type { Airport, Node, NodePage } from '@/types'
+import type { Airport, Node, NodeListParams, NodePage } from '@/types'
 import client from '@/api/client'
 import StatusDot from '@/components/StatusDot.vue'
 import NodeExamDialog from '@/components/NodeExamDialog.vue'
@@ -138,25 +153,54 @@ const drawerTitle = computed(() =>
   props.airport ? `机场详情 - ${props.airport.name}` : '机场详情'
 )
 
-// 池内节点:打开抽屉时按机场名过滤拉取一次(与节点管理页同源,/api/nodes?source=)。
-// 池规模有界,一次取全;失败降级为空态,不阻塞抽屉。
-const POOL_PAGE_SIZE = 100000
+// 池内节点:服务端分页 + keyword 搜索(与节点管理页同源,/api/nodes?source=)。
+// 搜索词变化重置到第 1 页;请求失败/空结果降级为空态,不阻塞抽屉。
+const NODE_PAGE_SIZE = 10
 const nodes = ref<Node[]>([])
 const nodesLoading = ref(false)
+const nodeKeyword = ref('')
+const nodePage = ref(1)
+const nodeTotal = ref(0)
 
-const loadNodes = async (source: string) => {
+const loadNodes = async () => {
+  const source = props.airport?.name
+  if (!visible.value || !source) return
   nodesLoading.value = true
   try {
-    const data = await client.get<unknown, NodePage>('/nodes', {
-      params: { page: 1, page_size: POOL_PAGE_SIZE, source }
-    })
+    const params: NodeListParams = { page: nodePage.value, page_size: NODE_PAGE_SIZE, source }
+    const kw = nodeKeyword.value.trim()
+    if (kw) params.keyword = kw
+    const data = await client.get<unknown, NodePage>('/nodes', { params })
     nodes.value = data.nodes || []
+    nodeTotal.value = data.total || 0
   } catch {
     nodes.value = []
+    nodeTotal.value = 0
   } finally {
     nodesLoading.value = false
   }
 }
+
+// keyword 防抖搜索(~300ms):停顿后重置到第 1 页重新查询;防抖窗口内连续输入只发一次。
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+watch(nodeKeyword, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    nodePage.value = 1
+    loadNodes()
+  }, 300)
+})
+
+const onNodePageChange = (p: number) => {
+  nodePage.value = p
+  loadNodes()
+}
+
+// 空态文案:有搜索词时为"无匹配"降级,否则为引导刷新文案
+const poolEmptyText = computed(() => {
+  const kw = nodeKeyword.value.trim()
+  return kw ? `未找到匹配「${kw}」的节点` : '该机场当前在池内无节点,可点上方「刷新」拉取入池。'
+})
 
 // 最近测试报告:打开抽屉时拉取一次;重跑完成后由父级调 reloadReport 刷新。
 const testRuns = ref<TestRun[]>([])
@@ -174,16 +218,22 @@ const loadRuns = async () => {
   }
 }
 
-// 打开抽屉 / 切换机场时拉取池快照与测试记录;关闭时清空,避免下次闪现旧机场数据。
+// 打开抽屉 / 切换机场时拉取池快照与测试记录;关闭时清空并重置分页/搜索,避免下次闪现旧机场数据。
 // 测试记录是纯读取(GET /test/runs),不产生新 run。
 watch(
   () => [visible.value, props.airport?.name] as const,
   ([open, name]) => {
     if (open && name) {
-      loadNodes(name)
+      nodeKeyword.value = ''
+      nodePage.value = 1
+      loadNodes()
       loadRuns()
     } else if (!open) {
+      if (searchTimer) clearTimeout(searchTimer)
       nodes.value = []
+      nodeKeyword.value = ''
+      nodePage.value = 1
+      nodeTotal.value = 0
       testRuns.value = []
     }
   },
@@ -237,6 +287,14 @@ const openExam = (node: Node) => {
 .drawer-section-title {
   font-weight: 600;
   margin-bottom: var(--ph-space-2);
+}
+.pool-search {
+  margin-bottom: var(--ph-space-2);
+}
+.pool-pager {
+  margin-top: var(--ph-space-2);
+  display: flex;
+  justify-content: flex-end;
 }
 .drawer-actions {
   margin-top: var(--ph-space-3);
