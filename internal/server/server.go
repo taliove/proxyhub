@@ -705,14 +705,10 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodes := s.nodes.Nodes()
-	if len(nodes) == 0 {
-		http.Error(w, "no available nodes yet, try again later", http.StatusServiceUnavailable)
-		return
-	}
-
-	// 订阅时过滤链：白名单 → 黑名单 → 机场屏蔽，自建节点全程豁免（见 ADR 0005/0009）
-	nodes = s.filteredNodes(nodes)
+	// 订阅时过滤链：白名单 → 黑名单 → 机场屏蔽，自建节点全程豁免（见 ADR 0005/0009）。
+	// 注意：不在此处对空池提前 503——filteredNodes 内含 serve-time 合并自建节点,
+	// 全新装机仅配置自建节点时也必须能拉到订阅(与订阅测试口径一致,见 ADR 0028 决策 1)。
+	nodes := s.filteredNodes(s.nodes.Nodes())
 	// 该订阅地址的节点范围条件(动态查询,见 internal/subfilter);空条件=全量(零回归)
 	nodes = s.applyConditions(nodes, ep)
 	if len(nodes) == 0 {

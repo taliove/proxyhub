@@ -563,3 +563,60 @@ func TestSubscription_EmptyAfterKeywordFilterReturns503(t *testing.T) {
 		t.Errorf("status = %d, want 503 when keyword filter empties the pool (body: %s)", w.Code, w.Body.String())
 	}
 }
+
+// 池空但存在启用的自建节点时,/sub 不应在 serve-time 合并前提前 503。
+// 全新装机只有自建节点的场景必须与订阅测试接口口径一致(ADR 0028 决策 1:所见即所得)。
+// 修复前:handleSubscription 在 mergeSelfHosted 之前就对空池返回 503,订阅测试却报 valid。
+func TestSubscription_OnlySelfHostedWhenPoolEmpty(t *testing.T) {
+	// 聚合池完全为空(全新装机、尚未跑过刷新)
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+
+	// 直接落库一条启用的自建节点(全零 UUID + example.com,不触真实凭证)
+	if err := st.CreateSelfHostedNode(&store.SelfHostedNode{
+		Name:     "自建-VLESS",
+		Protocol: "vless",
+		Server:   "selfhosted.example.com",
+		Port:     443,
+		UUID:     "00000000-0000-0000-0000-000000000000",
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("CreateSelfHostedNode: %v", err)
+	}
+
+	ep, err := st.CreateEndpoint("dev")
+	if err != nil {
+		t.Fatalf("CreateEndpoint: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token+"&format=clash", nil)
+	req.RemoteAddr = "1.2.3.4:5678"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 when only self-hosted nodes exist (body: %s)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, "自建-VLESS") {
+		t.Errorf("subscription should contain self-hosted node name, got: %s", body)
+	}
+}
+
+// 池空且无任何自建节点时,仍应由过滤链末尾的二次 503 兜底(语义不变)。
+func TestSubscription_EmptyPoolAndNoSelfHostedReturns503(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	ep, err := st.CreateEndpoint("dev")
+	if err != nil {
+		t.Fatalf("CreateEndpoint: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token+"&format=clash", nil)
+	req.RemoteAddr = "1.2.3.4:5678"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 when pool is empty and no self-hosted nodes (body: %s)", w.Code, w.Body.String())
+	}
+}
