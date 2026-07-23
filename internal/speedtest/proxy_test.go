@@ -120,7 +120,7 @@ func TestMeasureDownloadViaProxy(t *testing.T) {
 	ctx := context.Background()
 
 	// 测速 1 秒
-	mbps, err := measureDownloadViaProxy(ctx, client, ts.URL, 1000)
+	mbps, err := measureDownloadViaProxy(ctx, client, []string{ts.URL}, 1000)
 	if err != nil {
 		t.Fatalf("measureDownloadViaProxy failed: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestRunProxyTest_Direct(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	result, err := runProxyTestWithEndpoints(ctx, req, nil, ts.URL+"/ping", ts.URL+"/download", ts.URL+"/upload")
+	result, err := runProxyTestWithEndpoints(ctx, req, nil, ts.URL+"/ping", []string{ts.URL + "/download"}, ts.URL+"/upload")
 	if err != nil {
 		t.Fatalf("runProxyTest failed: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestRunProxyTest_ModeLatencyOnly(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	result, err := runProxyTestWithEndpoints(ctx, req, nil, ts.URL, ts.URL, ts.URL)
+	result, err := runProxyTestWithEndpoints(ctx, req, nil, ts.URL, []string{ts.URL}, ts.URL)
 	if err != nil {
 		t.Fatalf("runProxyTest failed: %v", err)
 	}

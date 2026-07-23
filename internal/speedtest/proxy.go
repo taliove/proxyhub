@@ -38,11 +38,17 @@ type LatencyMetrics struct {
 	JitterMs      float64 // 抖动（相邻 RTT 差值平均）
 }
 
-// 测速端点 URL（Cloudflare speed test）
+// 测速端点:主用 Cloudflare speed test(detection 同口径,经多数节点可达);
+// 50MB 下行规避直连 100MB 的 403。Linode 作 fallback(部分节点对 Cloudflare
+// reset 时兜底)。UA 必须设浏览器值,否则 Cloudflare 对默认 Go-http-client 返 403
+// (与 detection.bandwidthUserAgent 同口径)。
 const (
+	browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 	defaultLatencyURL  = "https://speed.cloudflare.com/__down?bytes=1000"
-	defaultDownloadURL = "https://speed.cloudflare.com/__down?bytes=100000000" // 100MB
+	defaultDownloadURL = "https://speed.cloudflare.com/__down?bytes=52428800" // 50MB(直连 100MB 返 403)
 	defaultUploadURL   = "https://speed.cloudflare.com/__up"
+	// defaultDownloadFallbackURL 下行 fallback:主端点被节点 reset/风控时兜底。
+	defaultDownloadFallbackURL = "https://speedtest.tokyo2.linode.com/100MB-tokyo2.bin"
 )
 
 // 默认参数
@@ -87,7 +93,10 @@ func computeLatencyMetrics(rtts []float64) LatencyMetrics {
 	}
 }
 
-// measureLatencyViaProxy 通过代理测量延迟（发送 samples 次小请求）
+// measureLatencyViaProxy 通过代理测量延迟（发送 samples 次小请求）。
+// 用 Cloudflare 1KB 小请求测 RTT(不设 Range:经部分节点 Range 请求会触发 reset,
+// 对齐 detection.openDownload 的普通 GET)。设浏览器 UA 规避 Cloudflare 对默认
+// Go UA 的 403(与 detection 同口径)。
 func measureLatencyViaProxy(ctx context.Context, client *http.Client, url string, samples int) (*LatencyMetrics, error) {
 	rtts := make([]float64, 0, samples)
 
@@ -97,21 +106,19 @@ func measureLatencyViaProxy(ctx context.Context, client *http.Client, url string
 		if err != nil {
 			return nil, fmt.Errorf("create latency request: %w", err)
 		}
+		req.Header.Set("User-Agent", browserUserAgent)
 
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("latency probe %d: %w", i, err)
 		}
 
-		// 读取完整响应体
-		_, err = io.Copy(io.Discard, resp.Body)
+		// 读取完整响应体(1KB),丢弃。
+		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("latency probe %d: HTTP %d", i, resp.StatusCode)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read latency response %d: %w", i, err)
 		}
 
 		rtt := float64(time.Since(start).Milliseconds())
@@ -122,12 +129,49 @@ func measureLatencyViaProxy(ctx context.Context, client *http.Client, url string
 	return &metrics, nil
 }
 
-// measureDownloadViaProxy 通过代理测量下行带宽
-func measureDownloadViaProxy(ctx context.Context, client *http.Client, url string, durationMs int) (float64, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+// measureDownloadViaProxy 通过代理测量下行带宽。
+// urls 为主端点 + fallback:依次尝试,第一个返回 200/206 且能读出数据的用于测速。
+// 每端点单独探测超时(probeTimeout),避免某端点对节点 IP 挂起吃满整个测速时长
+// 导致后续 fallback 点无机会(如 Cloudflare 对部分机场 IP 段 reset 不立即失败)。
+// 测速阶段流式读取至 deadline 或 EOF;EOF(固定文件读完)即结束,速率=字节/耗时。
+func measureDownloadViaProxy(ctx context.Context, client *http.Client, urls []string, durationMs int) (float64, error) {
+	const probeTimeout = 8 * time.Second
+	const minValidBytes = 512 * 1024 // 512KB:低于此值判为死链/占位
+
+	// 探测:找到第一个可用端点
+	var goodURL string
+	var lastErr error
+	for _, u := range urls {
+		if u == "" {
+			continue
+		}
+		pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+		ok, err := probeDownloadEndpoint(pctx, client, u)
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if !ok {
+			lastErr = fmt.Errorf("endpoint %s: dead link", u)
+			continue
+		}
+		goodURL = u
+		break
+	}
+	if goodURL == "" {
+		if lastErr == nil {
+			lastErr = fmt.Errorf("no usable download endpoint")
+		}
+		return 0, fmt.Errorf("probe download endpoints: %w", lastErr)
+	}
+
+	// 测速:流式读取选中端点
+	req, err := http.NewRequestWithContext(ctx, "GET", goodURL, nil)
 	if err != nil {
 		return 0, fmt.Errorf("create download request: %w", err)
 	}
+	req.Header.Set("User-Agent", browserUserAgent)
 
 	start := time.Now()
 	resp, err := client.Do(req)
@@ -136,11 +180,10 @@ func measureDownloadViaProxy(ctx context.Context, client *http.Client, url strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return 0, fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
 	}
 
-	// 流式读取，计时计字节
 	var totalBytes int64
 	buf := make([]byte, 32*1024)
 	deadline := start.Add(time.Duration(durationMs) * time.Millisecond)
@@ -167,9 +210,32 @@ func measureDownloadViaProxy(ctx context.Context, client *http.Client, url strin
 		return 0, fmt.Errorf("elapsed time is zero")
 	}
 
-	// 转换为 Mbps
 	mbps := float64(totalBytes) * 8 / 1_000_000 / elapsed
 	return mbps, nil
+}
+
+// probeDownloadEndpoint 探测单端点是否可用:返回 200/206 且首读 ≥ minValidBytes。
+// 用于 fallback 阶段快速剔除死链/风控端点(不消费整个测速时长)。
+func probeDownloadEndpoint(ctx context.Context, client *http.Client, url string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("User-Agent", browserUserAgent)
+	req.Header.Set("Range", "bytes=0-65535") // 只取首 64KB 探测,省流量
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return false, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	// 读一小段确认非死链占位
+	buf := make([]byte, 4096)
+	n, _ := io.ReadFull(resp.Body, buf)
+	return n >= 1024, nil // 至少 1KB 真实数据
 }
 
 // measureUploadViaProxy 通过代理测量上行带宽
@@ -219,6 +285,7 @@ func measureUploadViaProxy(ctx context.Context, client *http.Client, url string,
 		return 0, fmt.Errorf("create upload request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("User-Agent", browserUserAgent)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -274,13 +341,18 @@ func RunProxyTest(ctx context.Context, req ProxyTestRequest, node *subscription.
 	if err != nil {
 		return nil, err
 	}
-	return runProxyTestWithEndpoints(ctx, req, client, defaultLatencyURL, defaultDownloadURL, defaultUploadURL)
+	return runProxyTestWithEndpoints(ctx, req, client,
+		defaultLatencyURL,
+		[]string{defaultDownloadURL, defaultDownloadFallbackURL},
+		defaultUploadURL)
 }
 
 // buildHTTPClient 按是否指定节点构造 HTTP client。
-// node 为 nil = 直连模式,使用标准 transport;非 nil = 经节点代理,
+// node 为 nil = 直连模式,标准 transport + 30s 超时;非 nil = 经节点代理,
 // 复用 detection.NewProxyAdapter 构造 mihomo adapter,其 DialContext 注入
-// 自定义 Transport,覆盖到节点服务器的全部 outbound 连接。
+// 自定义 Transport。经节点分支对齐 detection.streamClient:不设 client.Timeout
+// (靠 handler 的 ctx deadline)、不设 DisableKeepAlives,避免与 detection
+// 经节点测速行为分叉。
 func buildHTTPClient(ctx context.Context, node *subscription.Node) (*http.Client, error) {
 	if node == nil {
 		return &http.Client{Timeout: 30 * time.Second}, nil
@@ -290,16 +362,12 @@ func buildHTTPClient(ctx context.Context, node *subscription.Node) (*http.Client
 		return nil, fmt.Errorf("create proxy adapter: %w", err)
 	}
 	return &http.Client{
-		Transport: &http.Transport{
-			DialContext:       adapter.DialContext,
-			DisableKeepAlives:  true,
-		},
-		Timeout: 30 * time.Second,
+		Transport: &http.Transport{DialContext: adapter.DialContext},
 	}, nil
 }
 
 // runProxyTestWithEndpoints 内部测试辅助函数，允许自定义端点 URL
-func runProxyTestWithEndpoints(ctx context.Context, req ProxyTestRequest, client *http.Client, latencyURL, downloadURL, uploadURL string) (*ProxyTestResult, error) {
+func runProxyTestWithEndpoints(ctx context.Context, req ProxyTestRequest, client *http.Client, latencyURL string, downloadURLs []string, uploadURL string) (*ProxyTestResult, error) {
 	start := time.Now()
 
 	// 默认值
@@ -332,7 +400,7 @@ func runProxyTestWithEndpoints(ctx context.Context, req ProxyTestRequest, client
 
 	// 2. 测下行（mode = download 或 full）
 	if req.Mode == "download" || req.Mode == "full" {
-		downMbps, err := measureDownloadViaProxy(ctx, client, downloadURL, req.DownloadDurationMs)
+		downMbps, err := measureDownloadViaProxy(ctx, client, downloadURLs, req.DownloadDurationMs)
 		if err != nil {
 			return nil, fmt.Errorf("measure download: %w", err)
 		}

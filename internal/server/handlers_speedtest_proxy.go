@@ -10,9 +10,13 @@ import (
 )
 
 // handleSpeedtestProxyTest 后端代理测速:浏览器发起,后端经选中节点(或直连)
-// 访问 Cloudflare 测速端点,测全链路带宽(用户 <-> ProxyHub <-> 节点 <-> 端点)。
+// 访问测速端点,测全链路带宽(用户 <-> ProxyHub <-> 节点 <-> 端点)。
 // 与 handleSpeedtestDownload 的差异:后者是浏览器直连 ProxyHub 自建发流端点,
 // 测的是本机回环(虚高);本端点真正经节点出口,反映用户通过节点的实际体验。
+//
+// 经节点路径复用 detection.TestSpeedtestStream:它注入直连出口 dialer(TUN 环境下
+// 让节点连真实 IP 而非 fake-ip)、带浏览器 UA + 端点 fallback,是体检/快速测速
+// 同款成熟逻辑。直连模式(无节点)走 speedtest.RunProxyTest 的标准 client 路径。
 //
 // 请求体:{"node_key":"...","self_node_id":123,"mode":"full","download_duration_ms":10000,"upload_duration_ms":10000}
 // node_key 与 self_node_id 二选一;都不传 = 直连基线。mode: latency|download|upload|full(默认 full)。
@@ -47,18 +51,39 @@ func (s *Server) handleSpeedtestProxyTest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// 总超时 30s:延迟 + 下行 + 上行各阶段经同一 client,client.Timeout 已设 30s。
-	// 这里再套一层 context deadline,确保前端取消时立即终止测速。
+	// 总超时 30s:经节点下行/上行各 10s + 探测;直连更短。ctx deadline 确保前端取消即终止。
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	result, err := speedtest.RunProxyTest(ctx, req, node)
-	if err != nil {
-		s.logger.Warn("proxy speedtest failed",
-			"node_key", req.NodeKey, "self_node_id", nodeKeyInt64, "error", err)
-		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{
-			"error": err.Error(),
+	// 经节点:复用 detection 的带宽测速(直连出口 + UA + fallback,与体检同款)。
+	if node != nil {
+		if s.detectionService == nil {
+			writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "detection service not initialized"})
+			return
+		}
+		tr := s.detectionService.TestSpeedtestStream(ctx, node, nil)
+		// down/up 都 0 = 真实失败(连接超时/端点不可达),报错;阈值不达标(有值)不报错,返回实测值。
+		if tr.DownMbps == 0 && tr.UpMbps == 0 && tr.Error != "" {
+			s.logger.Warn("proxy speedtest failed",
+				"node_key", req.NodeKey, "self_node_id", nodeKeyInt64, "error", tr.Error)
+			writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": tr.Error})
+			return
+		}
+		writeJSON(w, speedtest.ProxyTestResult{
+			DownMbps:      tr.DownMbps,
+			UpMbps:        tr.UpMbps,
+			IdleLatencyMs: float64(tr.Latency), // detection 不测 HTTP RTT,latency 0
+			JitterMs:      0,
+			ElapsedMs:     tr.ElapsedMs,
 		})
+		return
+	}
+
+	// 直连:标准 client 走 speedtest 自实现(得 latency/jitter + down/up)。
+	result, err := speedtest.RunProxyTest(ctx, req, nil)
+	if err != nil {
+		s.logger.Warn("direct speedtest failed", "error", err)
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	writeJSON(w, result)
