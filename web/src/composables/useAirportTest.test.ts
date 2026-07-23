@@ -9,10 +9,28 @@ import {
   isHttpSuccess,
   getDiagnosticState,
   dimensionWeights,
+  dimensionWeightsOf,
   weightLabel
 } from './useAirportTest'
 
 describe('useAirportTest', () => {
+  // 与后端 airporttest.ScoreDimensions 对齐的扁平结构(completed run 的 dimensions_json)
+  const completedDims = {
+    availability_score: 45,
+    latency_score: 28,
+    fetch_health_score: 10,
+    region_score: 7.5,
+    available_nodes: 9,
+    total_nodes: 10,
+    mean_latency_ms: 120,
+    p95_latency_ms: 200,
+    region_count: 3,
+    region_distribution: { HK: 4, SG: 3, US: 3 },
+    http_status: 200,
+    parse_success_rate: 1,
+    url_reachable: true
+  }
+
   describe('parseDiagnosticResult', () => {
     it('should parse valid JSON', () => {
       const json = JSON.stringify({
@@ -120,23 +138,6 @@ describe('useAirportTest', () => {
   })
 
   describe('parseCompletedResult', () => {
-    // 与后端 airporttest.ScoreDimensions 对齐的扁平结构
-    const completedDims = {
-      availability_score: 45,
-      latency_score: 28,
-      fetch_health_score: 10,
-      region_score: 7.5,
-      available_nodes: 9,
-      total_nodes: 10,
-      mean_latency_ms: 120,
-      p95_latency_ms: 200,
-      region_count: 3,
-      region_distribution: { HK: 4, SG: 3, US: 3 },
-      http_status: 200,
-      parse_success_rate: 1,
-      url_reachable: true
-    }
-
     it('should parse valid completed result', () => {
       const result = parseCompletedResult(JSON.stringify(completedDims))
 
@@ -208,6 +209,46 @@ describe('useAirportTest', () => {
       expect(w.region).toBeCloseTo((1 / 9) * 100, 5)
       // 重归一后总权重仍为 100%
       expect(w.availability + w.latency + w.region).toBeCloseTo(100, 5)
+    })
+  })
+
+  describe('dimensionWeightsOf', () => {
+    it('should prefer weights persisted on the run', () => {
+      const w = dimensionWeightsOf({
+        ...completedDims,
+        availability_weight: 50,
+        latency_weight: 30,
+        fetch_health_weight: 10,
+        region_weight: 10
+      })
+
+      expect(w).toEqual({ availability: 50, latency: 30, fetchHealth: 10, region: 10 })
+    })
+
+    it('should map null fetch_health_weight to N/A', () => {
+      const w = dimensionWeightsOf({
+        ...completedDims,
+        url_reachable: false,
+        availability_weight: (5 / 9) * 100,
+        latency_weight: (3 / 9) * 100,
+        fetch_health_weight: null,
+        region_weight: (1 / 9) * 100
+      })
+
+      expect(w.fetchHealth).toBeNull()
+      expect(w.availability).toBeCloseTo((5 / 9) * 100, 5)
+    })
+
+    it('should fall back to hardcoded weights for old runs without weight fields', () => {
+      expect(dimensionWeightsOf(completedDims)).toEqual({
+        availability: 50,
+        latency: 30,
+        fetchHealth: 10,
+        region: 10
+      })
+      expect(dimensionWeightsOf({ ...completedDims, url_reachable: false }).fetchHealth).toBeNull()
+      expect(dimensionWeightsOf(null)).toEqual(dimensionWeights(true))
+      expect(dimensionWeightsOf(undefined)).toEqual(dimensionWeights(true))
     })
   })
 

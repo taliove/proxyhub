@@ -150,7 +150,7 @@ import { computed } from 'vue'
 import {
   getScoreColor,
   parseCompletedResult,
-  dimensionWeights,
+  dimensionWeightsOf,
   weightLabel,
   type TestRun
 } from '@/composables/useAirportTest'
@@ -190,7 +190,8 @@ const completedResult = computed(() =>
 
 const overallScore = computed(() => completedRun.value?.overall_score ?? 0)
 
-const weights = computed(() => dimensionWeights(completedResult.value?.url_reachable ?? true))
+// 权重优先读 run 自带(评分同源落库),旧 run 回退硬编码
+const weights = computed(() => dimensionWeightsOf(completedResult.value))
 
 const regionList = computed(() => {
   const dist = completedResult.value?.region_distribution

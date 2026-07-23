@@ -11,29 +11,36 @@ import (
 // 供详情抽屉「最近测试」报告段展示每节点可用性/延迟(ticket 0037)。
 // 旧 run 的 dimensions_json 无此字段,前端降级为只显示汇总。
 type SampledNodeResult struct {
-	Name      string `json:"name"`                 // 展示名(DisplayName 优先,回退机场原名)
-	Region    string `json:"region"`               // 地区代码(HK/SG/US 等,可为空)
-	Available bool   `json:"available"`            // 本次检活是否可用
-	LatencyMs int    `json:"latency_ms"`           // 本次检活延迟(ms),失败为 0
-	Error     string `json:"error,omitempty"`      // 失败原因(成功时省略)
+	Name      string `json:"name"`            // 展示名(DisplayName 优先,回退机场原名)
+	Region    string `json:"region"`          // 地区代码(HK/SG/US 等,可为空)
+	Available bool   `json:"available"`       // 本次检活是否可用
+	LatencyMs int    `json:"latency_ms"`      // 本次检活延迟(ms),失败为 0
+	Error     string `json:"error,omitempty"` // 失败原因(成功时省略)
 }
 
 // ScoreDimensions 评分维度明细
 type ScoreDimensions struct {
-	AvailabilityScore float64            `json:"availability_score"` // 可用率得分(0-50)
-	LatencyScore      float64            `json:"latency_score"`      // 延迟得分(0-30)
-	FetchHealthScore  float64            `json:"fetch_health_score"` // 拉取健康得分(0-10)
-	RegionScore       float64            `json:"region_score"`       // 地区覆盖得分(0-10)
-	AvailableNodes    int                `json:"available_nodes"`    // 可用节点数
-	TotalNodes        int                `json:"total_nodes"`        // 总节点数
-	MeanLatency       float64            `json:"mean_latency_ms"`    // 平均延迟(ms)
-	P95Latency        float64            `json:"p95_latency_ms"`     // P95延迟(ms)
-	RegionCount       int                `json:"region_count"`       // 覆盖地区数
-	RegionDistribution map[string]int     `json:"region_distribution"` // 地区分布
-	HTTPStatus        int                `json:"http_status"`         // 拉取HTTP状态
-	ParseSuccessRate  float64            `json:"parse_success_rate"`  // 解析成功率
-	URLReachable      bool               `json:"url_reachable"`       // 订阅URL是否可达(HTTP 2xx)
-	SampledNodes      []SampledNodeResult `json:"sampled_nodes,omitempty"` // 抽样节点检活明细(仅 completed run)
+	AvailabilityScore  float64        `json:"availability_score"`  // 可用率得分(0-50)
+	LatencyScore       float64        `json:"latency_score"`       // 延迟得分(0-30)
+	FetchHealthScore   float64        `json:"fetch_health_score"`  // 拉取健康得分(0-10)
+	RegionScore        float64        `json:"region_score"`        // 地区覆盖得分(0-10)
+	AvailableNodes     int            `json:"available_nodes"`     // 可用节点数
+	TotalNodes         int            `json:"total_nodes"`         // 总节点数
+	MeanLatency        float64        `json:"mean_latency_ms"`     // 平均延迟(ms)
+	P95Latency         float64        `json:"p95_latency_ms"`      // P95延迟(ms)
+	RegionCount        int            `json:"region_count"`        // 覆盖地区数
+	RegionDistribution map[string]int `json:"region_distribution"` // 地区分布
+	HTTPStatus         int            `json:"http_status"`         // 拉取HTTP状态
+	ParseSuccessRate   float64        `json:"parse_success_rate"`  // 解析成功率
+	URLReachable       bool           `json:"url_reachable"`       // 订阅URL是否可达(HTTP 2xx)
+	// 各维度权重(%,与得分同源输出):URL 可达 50/30/10/10;
+	// 不可达按 5:3:1 重归一,拉取健康为 null(N/A)。
+	// 旧 run 无此组字段,前端回退硬编码权重(见 useAirportTest.dimensionWeightsOf)。
+	AvailabilityWeight float64             `json:"availability_weight"`
+	LatencyWeight      float64             `json:"latency_weight"`
+	FetchHealthWeight  *float64            `json:"fetch_health_weight"`
+	RegionWeight       float64             `json:"region_weight"`
+	SampledNodes       []SampledNodeResult `json:"sampled_nodes,omitempty"` // 抽样节点检活明细(仅 completed run)
 }
 
 // CalculateScore 计算综合评分(0-100)及维度明细。
@@ -48,12 +55,6 @@ func CalculateScore(nodes []*subscription.Node, httpStatus, parseFailures, total
 		TotalNodes:         len(nodes),
 		HTTPStatus:         httpStatus,
 		RegionDistribution: make(map[string]int),
-	}
-
-	// 节点为空:各维度零分
-	if len(nodes) == 0 {
-		dims.URLReachable = httpStatus >= 200 && httpStatus < 300
-		return 0, dims
 	}
 
 	// 判断是否需要重归一(URL不可达)
@@ -74,6 +75,19 @@ func CalculateScore(nodes []*subscription.Node, httpStatus, parseFailures, total
 		latencyWeight = 3.0 / 9.0 * 100
 		regionWeight = 1.0 / 9.0 * 100
 		fetchHealthWeight = 0
+	}
+
+	// 权重与得分同源落库(前端报告直接读;旧 run 无此字段,前端回退硬编码)
+	dims.AvailabilityWeight = availabilityWeight
+	dims.LatencyWeight = latencyWeight
+	dims.RegionWeight = regionWeight
+	if fetchHealthAvailable {
+		dims.FetchHealthWeight = &fetchHealthWeight
+	}
+
+	// 节点为空:各维度零分(权重字段照常落库)
+	if len(nodes) == 0 {
+		return 0, dims
 	}
 
 	// 可用率维度:可用节点数/总节点数 * weight

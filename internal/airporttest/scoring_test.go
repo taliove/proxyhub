@@ -65,11 +65,11 @@ func TestCalculateScore_LatencyMapping(t *testing.T) {
 		latency     int
 		expectScore float64 // mean+p95各15分,total 30
 	}{
-		{100, 30},   // ≤100ms满分
-		{550, 15},   // 中位线性映射
-		{1000, 0},   // ≥1000ms零分
-		{50, 30},    // <100ms满分
-		{1500, 0},   // >1000ms零分
+		{100, 30}, // ≤100ms满分
+		{550, 15}, // 中位线性映射
+		{1000, 0}, // ≥1000ms零分
+		{50, 30},  // <100ms满分
+		{1500, 0}, // >1000ms零分
 	}
 	for _, tt := range tests {
 		nodes := []*subscription.Node{
@@ -134,4 +134,45 @@ func TestCalculateScore_RegionCoverage(t *testing.T) {
 	if dims.RegionScore != 10 {
 		t.Errorf("region score should cap at 10, got %.2f", dims.RegionScore)
 	}
+}
+
+// 权重随 dimensions_json 同源落库(ticket 0037 审查遗留):URL 可达 50/30/10/10;
+// 不可达按 5:3:1 重归一且拉取健康为 nil(N/A)。前端报告直接读,旧 run 回退硬编码。
+func TestCalculateScore_PersistsDimensionWeights(t *testing.T) {
+	nodes := []*subscription.Node{
+		{Available: true, Latency: 100, Region: "HK"},
+	}
+
+	t.Run("URL reachable: 50/30/10/10", func(t *testing.T) {
+		_, dims := CalculateScore(nodes, 200, 0, 10)
+		if dims.AvailabilityWeight != 50 || dims.LatencyWeight != 30 || dims.RegionWeight != 10 {
+			t.Errorf("weights got %.2f/%.2f/%.2f, want 50/30/10",
+				dims.AvailabilityWeight, dims.LatencyWeight, dims.RegionWeight)
+		}
+		if dims.FetchHealthWeight == nil || *dims.FetchHealthWeight != 10 {
+			t.Errorf("fetch health weight got %v, want 10", dims.FetchHealthWeight)
+		}
+	})
+
+	t.Run("URL unreachable: renormalized 5:3:1, fetch health nil", func(t *testing.T) {
+		_, dims := CalculateScore(nodes, 0, 0, 0)
+		const ninth = 100.0 / 9.0
+		if math.Abs(dims.AvailabilityWeight-5*ninth) > 1e-9 ||
+			math.Abs(dims.LatencyWeight-3*ninth) > 1e-9 ||
+			math.Abs(dims.RegionWeight-1*ninth) > 1e-9 {
+			t.Errorf("weights got %.4f/%.4f/%.4f, want 55.5556/33.3333/11.1111",
+				dims.AvailabilityWeight, dims.LatencyWeight, dims.RegionWeight)
+		}
+		if dims.FetchHealthWeight != nil {
+			t.Errorf("fetch health weight got %v, want nil (N/A)", *dims.FetchHealthWeight)
+		}
+	})
+
+	t.Run("empty nodes still persist weights", func(t *testing.T) {
+		_, dims := CalculateScore([]*subscription.Node{}, 200, 0, 0)
+		if dims.AvailabilityWeight != 50 || dims.FetchHealthWeight == nil {
+			t.Errorf("empty nodes weights got %.2f/%v, want 50/10",
+				dims.AvailabilityWeight, dims.FetchHealthWeight)
+		}
+	})
 }

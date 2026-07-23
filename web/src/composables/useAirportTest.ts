@@ -45,6 +45,11 @@ export interface CompletedResult {
   parse_success_rate: number
   url_reachable: boolean
   sampled_nodes?: SampledNodeResult[]
+  // 各维度权重(%,评分同源输出);旧 run 无此组字段,dimensionWeightsOf 回退硬编码
+  availability_weight?: number
+  latency_weight?: number
+  fetch_health_weight?: number | null
+  region_weight?: number
 }
 
 // TestRunStatus 测试 run 行状态;cancelled 为任务化(issue 0025)后被显式取消的
@@ -212,6 +217,24 @@ export function dimensionWeights(urlReachable: boolean): DimensionWeights {
     fetchHealth: null,
     region: (1 / 9) * 100
   }
+}
+
+/**
+ * 报告用维度权重:优先读 run 自带权重(评分同源输出,随 dimensions_json 落库),
+ * 旧 run 无权重字段时回退硬编码(dimensionWeights)。
+ * Pure function for easy testing.
+ */
+export function dimensionWeightsOf(result: CompletedResult | null | undefined): DimensionWeights {
+  if (result && typeof result.availability_weight === 'number') {
+    return {
+      availability: result.availability_weight,
+      latency: result.latency_weight ?? 0,
+      fetchHealth:
+        typeof result.fetch_health_weight === 'number' ? result.fetch_health_weight : null,
+      region: result.region_weight ?? 0
+    }
+  }
+  return dimensionWeights(result?.url_reachable ?? true)
 }
 
 /**
