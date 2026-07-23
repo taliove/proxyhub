@@ -28,9 +28,7 @@ describe('runSpeedtest', () => {
 
   it('should call backend proxy-test API with node_key and mode=full', async () => {
     const fetchMock = vi.mocked(fetch)
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify(mockResult), { status: 200 })
-    )
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(mockResult), { status: 200 }))
 
     const callbacks = {
       onPhase: vi.fn(),
@@ -50,9 +48,7 @@ describe('runSpeedtest', () => {
 
   it('should omit node_key when empty (direct mode)', async () => {
     const fetchMock = vi.mocked(fetch)
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify(mockResult), { status: 200 })
-    )
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(mockResult), { status: 200 }))
 
     await runSpeedtest('')
 
@@ -62,9 +58,7 @@ describe('runSpeedtest', () => {
 
   it('should convert snake_case response to camelCase outcome', async () => {
     const fetchMock = vi.mocked(fetch)
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify(mockResult), { status: 200 })
-    )
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(mockResult), { status: 200 }))
 
     const outcome: SpeedtestOutcome = await runSpeedtest('node-key')
 
@@ -76,9 +70,7 @@ describe('runSpeedtest', () => {
 
   it('should simulate phase transitions via callbacks', async () => {
     const fetchMock = vi.mocked(fetch)
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify(mockResult), { status: 200 })
-    )
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(mockResult), { status: 200 }))
 
     const onPhase = vi.fn()
     await runSpeedtest('node-key', { onPhase })
@@ -96,25 +88,19 @@ describe('runSpeedtest', () => {
       })
     )
 
-    await expect(runSpeedtest('bad-node')).rejects.toThrow(
-      'node connection failed: timeout'
-    )
+    await expect(runSpeedtest('bad-node')).rejects.toThrow('node connection failed: timeout')
   })
 
   it('should fall back to HTTP status when error field missing', async () => {
     const fetchMock = vi.mocked(fetch)
-    fetchMock.mockResolvedValueOnce(
-      new Response('not json', { status: 502 })
-    )
+    fetchMock.mockResolvedValueOnce(new Response('not json', { status: 502 }))
 
     await expect(runSpeedtest('node-key')).rejects.toThrow('HTTP 502')
   })
 
   it('should pass AbortSignal to fetch', async () => {
     const fetchMock = vi.mocked(fetch)
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify(mockResult), { status: 200 })
-    )
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(mockResult), { status: 200 }))
 
     const controller = new AbortController()
     await runSpeedtest('node-key', {}, controller.signal)
