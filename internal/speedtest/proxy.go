@@ -57,6 +57,9 @@ const (
 	defaultDownloadDurationMs  = 10000
 	defaultUploadDurationMs    = 10000
 	defaultUploadChunkSize     = 256 * 1024 // 256KB
+	// sampleInterval 采样最小间隔:每累计 ≥ 此时长回调一次瞬时速率(对齐
+	// detection.sampleReader 语义),供 SSE 实时数字滚动。
+	sampleInterval = 300 * time.Millisecond
 )
 
 // computeLatencyMetrics 从 RTT 样本计算延迟统计
@@ -134,7 +137,8 @@ func measureLatencyViaProxy(ctx context.Context, client *http.Client, url string
 // 每端点单独探测超时(probeTimeout),避免某端点对节点 IP 挂起吃满整个测速时长
 // 导致后续 fallback 点无机会(如 Cloudflare 对部分机场 IP 段 reset 不立即失败)。
 // 测速阶段流式读取至 deadline 或 EOF;EOF(固定文件读完)即结束,速率=字节/耗时。
-func measureDownloadViaProxy(ctx context.Context, client *http.Client, urls []string, durationMs int) (float64, error) {
+// onSample 非 nil 时,每累计 ≥ sampleInterval 回调一次瞬时速率(供 SSE 实时数字)。
+func measureDownloadViaProxy(ctx context.Context, client *http.Client, urls []string, durationMs int, onSample func(detection.Sample)) (float64, error) {
 	const probeTimeout = 8 * time.Second
 	const minValidBytes = 512 * 1024 // 512KB:低于此值判为死链/占位
 
@@ -187,6 +191,8 @@ func measureDownloadViaProxy(ctx context.Context, client *http.Client, urls []st
 	var totalBytes int64
 	buf := make([]byte, 32*1024)
 	deadline := start.Add(time.Duration(durationMs) * time.Millisecond)
+	// 采样窗口(对齐 detection.sampleReader:累计字节 + 窗口时长,到点回调瞬时速率)
+	winStart, winBytes := start, int64(0)
 
 	for time.Now().Before(deadline) {
 		select {
@@ -197,6 +203,15 @@ func measureDownloadViaProxy(ctx context.Context, client *http.Client, urls []st
 
 		n, err := resp.Body.Read(buf)
 		totalBytes += int64(n)
+		winBytes += int64(n)
+		if onSample != nil && n > 0 {
+			winElapsed := time.Since(winStart)
+			if winElapsed >= sampleInterval {
+				mbps := float64(winBytes*8) / winElapsed.Seconds() / 1e6
+				onSample(detection.Sample{Phase: "download", Mbps: mbps, ElapsedMs: int(time.Since(start).Milliseconds())})
+				winStart, winBytes = time.Now(), 0
+			}
+		}
 		if err == io.EOF {
 			break
 		}
@@ -238,49 +253,16 @@ func probeDownloadEndpoint(ctx context.Context, client *http.Client, url string)
 	return n >= 1024, nil // 至少 1KB 真实数据
 }
 
-// measureUploadViaProxy 通过代理测量上行带宽
-func measureUploadViaProxy(ctx context.Context, client *http.Client, url string, durationMs int) (float64, error) {
-	// 创建随机数据流。pr 由本函数负责 Close:无论 client.Do 成功还是失败,
-	// 关闭 reader 都能让 pipe writer 立即解除阻塞(ErrClosedPipe),避免
-	// 上游早返/拨号失败时 writer goroutine 永久卡在 pw.Write 而泄漏。
-	pr, pw := io.Pipe()
-	defer pr.Close()
-
-	// sentBytes 经 channel 从 writer goroutine 回传,避免与主 goroutine 的
-	// 读取构成数据竞争(writer 可能在 client.Do 返回后仍在写)。
-	sentCh := make(chan int64, 1)
-
-	go func() {
-		defer pw.Close()
-		var sent int64
-		chunk := make([]byte, defaultUploadChunkSize)
-		deadline := time.Now().Add(time.Duration(durationMs) * time.Millisecond)
-
-		for time.Now().Before(deadline) {
-			select {
-			case <-ctx.Done():
-				sentCh <- sent
-				return
-			default:
-			}
-
-			// 生成随机数据
-			if _, err := rand.Read(chunk); err != nil {
-				sentCh <- sent
-				return
-			}
-			n, err := pw.Write(chunk)
-			sent += int64(n)
-			if err != nil {
-				sentCh <- sent
-				return
-			}
-		}
-		sentCh <- sent
-	}()
-
+// measureUploadViaProxy 通过代理测量上行带宽。
+// 用 uploadReader 作为 POST body:transport 发 body 时调 Read,Read 内生成随机
+// 数据 + 累计 + 采样回调(对齐 detection.sampleReader 语义)。到 deadline 返回
+// EOF 停流。无后台 goroutine,天然无泄漏/竞争(go-reviewer 之前的 pipe+channel
+// 逻辑已废弃)。
+func measureUploadViaProxy(ctx context.Context, client *http.Client, url string, durationMs int, onSample func(detection.Sample)) (float64, error) {
 	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
+	r := newUploadReader(ctx, start, time.Duration(durationMs)*time.Millisecond, onSample)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, r)
 	if err != nil {
 		return 0, fmt.Errorf("create upload request: %w", err)
 	}
@@ -305,29 +287,81 @@ func measureUploadViaProxy(ctx context.Context, client *http.Client, url string,
 	if err != nil {
 		return 0, fmt.Errorf("read upload response: %w", err)
 	}
-	// 服务端实收字节为准(客户端停流后服务端兜底截断口径一致)。
-	// 解析失败时回退到客户端发送字节数。
 	serverBytes := int64(0)
 	if err := json.Unmarshal(body, &result); err == nil {
 		serverBytes = result.Bytes
 	}
-
-	// pr.Close()(defer)已让 writer goroutine 解除阻塞并经 channel 回传 sentBytes。
-	sentBytes := <-sentCh
 
 	elapsed := time.Since(start).Seconds()
 	if elapsed == 0 {
 		return 0, fmt.Errorf("elapsed time is zero")
 	}
 
+	// 以服务端实收为准,缺失回退客户端发送字节
 	actualBytes := serverBytes
 	if actualBytes == 0 {
-		actualBytes = sentBytes
+		actualBytes = r.sent
 	}
 
-	// 转换为 Mbps
 	mbps := float64(actualBytes) * 8 / 1_000_000 / elapsed
 	return mbps, nil
+}
+
+// uploadReader 上行测速的 POST body:Read 时填随机数据,到 deadline 返回 EOF;
+// 每累计 ≥ sampleInterval 回调一次瞬时速率。无 goroutine,数据竞争安全。
+type uploadReader struct {
+	ctx      context.Context
+	deadline time.Time
+	chunk    []byte // 预生成随机块(循环复用,块远大于 gzip 滑窗不可压缩)
+	sent     int64
+	start    time.Time
+	winStart time.Time
+	winBytes int64
+	onSample func(detection.Sample)
+}
+
+func newUploadReader(ctx context.Context, start time.Time, dur time.Duration, onSample func(detection.Sample)) *uploadReader {
+	chunk := make([]byte, defaultUploadChunkSize)
+	if _, err := rand.Read(chunk); err != nil {
+		// 极少失败;回退全零块(仍可测速,只是可压缩,速率可能虚高,但仅 RNG 失败时)
+		chunk = make([]byte, defaultUploadChunkSize)
+	}
+	return &uploadReader{
+		ctx:      ctx,
+		deadline: start.Add(dur),
+		chunk:    chunk,
+		start:    start,
+		winStart: start,
+		onSample: onSample,
+	}
+}
+
+func (r *uploadReader) Read(p []byte) (int, error) {
+	if time.Now().After(r.deadline) || r.ctx.Err() != nil {
+		return 0, io.EOF
+	}
+	// 用预生成 chunk 循环填 p(块远大于 32KB 滑窗,循环复用不产生可匹配前缀)
+	n := copy(p, r.chunk)
+	if n < len(p) {
+		// p 大于 chunk:重复填(实测 p 通常 ≤ 32KB,chunk 256KB,一般一次填够)
+		for off := n; off < len(p); {
+			n2 := copy(p[off:], r.chunk)
+			off += n2
+		}
+		n = len(p)
+	}
+	r.sent += int64(n)
+	r.winBytes += int64(n)
+	if r.onSample != nil {
+		winElapsed := time.Since(r.winStart)
+		if winElapsed >= sampleInterval {
+			mbps := float64(r.winBytes*8) / winElapsed.Seconds() / 1e6
+			r.onSample(detection.Sample{Phase: "upload", Mbps: mbps, ElapsedMs: int(time.Since(r.start).Milliseconds())})
+			r.winStart = time.Now()
+			r.winBytes = 0
+		}
+	}
+	return n, nil
 }
 
 // RunProxyTest 通过节点代理执行测速。
@@ -336,7 +370,7 @@ func measureUploadViaProxy(ctx context.Context, client *http.Client, url string,
 // 所有测速请求经该节点出口访问 Cloudflare 测速端点;node 为 nil 时直连
 // (不经节点),作为对比基线。节点连接失败(拨号超时/refused)原样上抛,
 // 由调用方转成 HTTP 错误响应。
-func RunProxyTest(ctx context.Context, req ProxyTestRequest, node *subscription.Node) (*ProxyTestResult, error) {
+func RunProxyTest(ctx context.Context, req ProxyTestRequest, node *subscription.Node, onLatency func(latencyMs, jitterMs float64), onSample func(detection.Sample)) (*ProxyTestResult, error) {
 	client, err := buildHTTPClient(ctx, node)
 	if err != nil {
 		return nil, err
@@ -344,7 +378,8 @@ func RunProxyTest(ctx context.Context, req ProxyTestRequest, node *subscription.
 	return runProxyTestWithEndpoints(ctx, req, client,
 		defaultLatencyURL,
 		[]string{defaultDownloadURL, defaultDownloadFallbackURL},
-		defaultUploadURL)
+		defaultUploadURL,
+		onLatency, onSample)
 }
 
 // buildHTTPClient 按是否指定节点构造 HTTP client。
@@ -367,7 +402,7 @@ func buildHTTPClient(ctx context.Context, node *subscription.Node) (*http.Client
 }
 
 // runProxyTestWithEndpoints 内部测试辅助函数，允许自定义端点 URL
-func runProxyTestWithEndpoints(ctx context.Context, req ProxyTestRequest, client *http.Client, latencyURL string, downloadURLs []string, uploadURL string) (*ProxyTestResult, error) {
+func runProxyTestWithEndpoints(ctx context.Context, req ProxyTestRequest, client *http.Client, latencyURL string, downloadURLs []string, uploadURL string, onLatency func(latencyMs, jitterMs float64), onSample func(detection.Sample)) (*ProxyTestResult, error) {
 	start := time.Now()
 
 	// 默认值
@@ -397,10 +432,13 @@ func runProxyTestWithEndpoints(ctx context.Context, req ProxyTestRequest, client
 	}
 	result.IdleLatencyMs = latency.IdleLatencyMs
 	result.JitterMs = latency.JitterMs
+	if onLatency != nil {
+		onLatency(latency.IdleLatencyMs, latency.JitterMs)
+	}
 
 	// 2. 测下行（mode = download 或 full）
 	if req.Mode == "download" || req.Mode == "full" {
-		downMbps, err := measureDownloadViaProxy(ctx, client, downloadURLs, req.DownloadDurationMs)
+		downMbps, err := measureDownloadViaProxy(ctx, client, downloadURLs, req.DownloadDurationMs, onSample)
 		if err != nil {
 			return nil, fmt.Errorf("measure download: %w", err)
 		}
@@ -409,7 +447,7 @@ func runProxyTestWithEndpoints(ctx context.Context, req ProxyTestRequest, client
 
 	// 3. 测上行（mode = upload 或 full）
 	if req.Mode == "upload" || req.Mode == "full" {
-		upMbps, err := measureUploadViaProxy(ctx, client, uploadURL, req.UploadDurationMs)
+		upMbps, err := measureUploadViaProxy(ctx, client, uploadURL, req.UploadDurationMs, onSample)
 		if err != nil {
 			return nil, fmt.Errorf("measure upload: %w", err)
 		}

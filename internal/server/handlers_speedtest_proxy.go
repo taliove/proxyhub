@@ -3,88 +3,134 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/speedtest"
 )
 
-// handleSpeedtestProxyTest 后端代理测速:浏览器发起,后端经选中节点(或直连)
-// 访问测速端点,测全链路带宽(用户 <-> ProxyHub <-> 节点 <-> 端点)。
-// 与 handleSpeedtestDownload 的差异:后者是浏览器直连 ProxyHub 自建发流端点,
-// 测的是本机回环(虚高);本端点真正经节点出口,反映用户通过节点的实际体验。
+// handleSpeedtestProxyTest 后端代理测速 SSE 流式端点(fast.com 式实时数字)。
+// 浏览器用 EventSource 订阅,后端依次推送 latency/sample/done/error 帧:
+//   latency {phase:"latency", idle_latency_ms, jitter_ms}
+//   sample {phase:"download"|"upload", mbps, elapsed_ms}  (每 ~300ms 一帧,实时跳动)
+//   done   {phase:"done", down_mbps, up_mbps, idle_latency_ms, jitter_ms, elapsed_ms}
+//   error  {phase:"error", error}
 //
-// 经节点路径复用 detection.TestSpeedtestStream:它注入直连出口 dialer(TUN 环境下
-// 让节点连真实 IP 而非 fake-ip)、带浏览器 UA + 端点 fallback,是体检/快速测速
-// 同款成熟逻辑。直连模式(无节点)走 speedtest.RunProxyTest 的标准 client 路径。
+// 经节点路径复用 detection(TestNodeLatency + TestSpeedtestStream,注入直连出口 +
+// 浏览器 UA + 端点 fallback,与体检同款);直连路径走 speedtest.RunProxyTest(标准
+// client + UA + Linode fallback,得 latency/jitter + down/up)。
 //
-// 请求体:{"node_key":"...","self_node_id":123,"mode":"full","download_duration_ms":10000,"upload_duration_ms":10000}
-// node_key 与 self_node_id 二选一;都不传 = 直连基线。mode: latency|download|upload|full(默认 full)。
+// query: node_key / self_node_id(二选一,都空=直连基线) / mode(latency|download|upload|full,默认 full)。
 func (s *Server) handleSpeedtestProxyTest(w http.ResponseWriter, r *http.Request) {
-	var req speedtest.ProxyTestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
-		return
+	q := r.URL.Query()
+	var nodeKey string
+	var selfNodeID int64
+	if v := q.Get("self_node_id"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid self_node_id"})
+			return
+		}
+		selfNodeID = id
 	}
-
-	// 解析节点:复用单节点测试的公共解析逻辑(自建查库 ToNode,机场查内存池)。
-	// nodeKey 与 SelfNodeID 都空 = 直连模式(node = nil),不报 400。
-	var nodeKeyInt64 int64
-	if req.SelfNodeID != nil {
-		nodeKeyInt64 = int64(*req.SelfNodeID)
+	nodeKey = q.Get("node_key")
+	mode := q.Get("mode")
+	if mode == "" {
+		mode = "full"
 	}
-	node := s.resolveTestNode(nodeKeyInt64, req.NodeKey)
-	// 给了目标但解析不到 = 资源不存在(404);都没给 = 直连,放行
-	if (nodeKeyInt64 > 0 || req.NodeKey != "") && node == nil {
-		writeJSONStatus(w, http.StatusNotFound, map[string]string{"error": "node not found"})
-		return
-	}
-
-	// 默认值
-	if req.Mode == "" {
-		req.Mode = "full"
-	}
-	switch req.Mode {
+	switch mode {
 	case "latency", "download", "upload", "full":
 	default:
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid mode"})
 		return
 	}
 
-	// 总超时 30s:经节点下行/上行各 10s + 探测;直连更短。ctx deadline 确保前端取消即终止。
+	node := s.resolveTestNode(selfNodeID, nodeKey)
+	if (selfNodeID > 0 || nodeKey != "") && node == nil {
+		writeJSONStatus(w, http.StatusNotFound, map[string]string{"error": "node not found"})
+		return
+	}
+
+	// SSE 头(抄 handleTestNodeStream:X-Accel-Buffering:no 禁 nginx 缓冲,每帧 Flush)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "streaming not supported"})
+		return
+	}
+	emit := func(data any) {
+		b, _ := json.Marshal(data)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+	emitErr := func(errMsg string) {
+		emit(map[string]string{"phase": "error", "error": errMsg})
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	// 经节点:复用 detection 的带宽测速(直连出口 + UA + fallback,与体检同款)。
+	// 经节点:latency(detection.TestNodeLatency)+ bandwidth(detection.TestSpeedtestStream)
 	if node != nil {
 		if s.detectionService == nil {
-			writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "detection service not initialized"})
+			emitErr("detection service not initialized")
 			return
 		}
-		tr := s.detectionService.TestSpeedtestStream(ctx, node, nil)
-		// down/up 都 0 = 真实失败(连接超时/端点不可达),报错;阈值不达标(有值)不报错,返回实测值。
+		latencyMs, jitterMs, err := s.detectionService.TestNodeLatency(ctx, node, 8)
+		if err != nil {
+			s.logger.Warn("proxy speedtest latency failed",
+				"node_key", nodeKey, "self_node_id", selfNodeID, "error", err)
+			emitErr(err.Error())
+			return
+		}
+		emit(map[string]any{"phase": "latency", "idle_latency_ms": latencyMs, "jitter_ms": jitterMs})
+
+		tr := s.detectionService.TestSpeedtestStream(ctx, node, func(sample detection.Sample) {
+			emit(sample)
+		})
 		if tr.DownMbps == 0 && tr.UpMbps == 0 && tr.Error != "" {
-			s.logger.Warn("proxy speedtest failed",
-				"node_key", req.NodeKey, "self_node_id", nodeKeyInt64, "error", tr.Error)
-			writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": tr.Error})
+			s.logger.Warn("proxy speedtest bandwidth failed",
+				"node_key", nodeKey, "self_node_id", selfNodeID, "error", tr.Error)
+			emitErr(tr.Error)
 			return
 		}
-		writeJSON(w, speedtest.ProxyTestResult{
-			DownMbps:      tr.DownMbps,
-			UpMbps:        tr.UpMbps,
-			IdleLatencyMs: float64(tr.Latency), // detection 不测 HTTP RTT,latency 0
-			JitterMs:      0,
-			ElapsedMs:     tr.ElapsedMs,
+		emit(map[string]any{
+			"phase":            "done",
+			"down_mbps":        tr.DownMbps,
+			"up_mbps":          tr.UpMbps,
+			"idle_latency_ms":  latencyMs,
+			"jitter_ms":        jitterMs,
+			"elapsed_ms":       tr.ElapsedMs,
 		})
 		return
 	}
 
-	// 直连:标准 client 走 speedtest 自实现(得 latency/jitter + down/up)。
-	result, err := speedtest.RunProxyTest(ctx, req, nil)
+	// 直连:latency + bandwidth(speedtest.RunProxyTest,onLatency/onSample 实时帧)
+	req := speedtest.ProxyTestRequest{Mode: mode}
+	result, err := speedtest.RunProxyTest(ctx, req, nil,
+		func(latMs, jitMs float64) {
+			emit(map[string]any{"phase": "latency", "idle_latency_ms": latMs, "jitter_ms": jitMs})
+		},
+		func(sample detection.Sample) {
+			emit(sample)
+		},
+	)
 	if err != nil {
 		s.logger.Warn("direct speedtest failed", "error", err)
-		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		emitErr(err.Error())
 		return
 	}
-	writeJSON(w, result)
+	emit(map[string]any{
+		"phase":           "done",
+		"down_mbps":       result.DownMbps,
+		"up_mbps":         result.UpMbps,
+		"idle_latency_ms": result.IdleLatencyMs,
+		"jitter_ms":       result.JitterMs,
+		"elapsed_ms":      result.ElapsedMs,
+	})
 }

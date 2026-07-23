@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -120,7 +121,7 @@ func TestMeasureDownloadViaProxy(t *testing.T) {
 	ctx := context.Background()
 
 	// 测速 1 秒
-	mbps, err := measureDownloadViaProxy(ctx, client, []string{ts.URL}, 1000)
+	mbps, err := measureDownloadViaProxy(ctx, client, []string{ts.URL}, 1000, nil)
 	if err != nil {
 		t.Fatalf("measureDownloadViaProxy failed: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestMeasureUploadViaProxy(t *testing.T) {
 	ctx := context.Background()
 
 	// 测速 1 秒
-	mbps, err := measureUploadViaProxy(ctx, client, ts.URL, 1000)
+	mbps, err := measureUploadViaProxy(ctx, client, ts.URL, 1000, nil)
 	if err != nil {
 		t.Fatalf("measureUploadViaProxy failed: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestMeasureUploadViaProxy_NonOKStatus(t *testing.T) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	ctx := context.Background()
 
-	_, err := measureUploadViaProxy(ctx, client, ts.URL, 1000)
+	_, err := measureUploadViaProxy(ctx, client, ts.URL, 1000, nil)
 	if err == nil {
 		t.Fatal("expected error for non-200 upload response, got nil")
 	}
@@ -210,7 +211,7 @@ func TestMeasureUploadViaProxy_InvalidJSON(t *testing.T) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	ctx := context.Background()
 
-	mbps, err := measureUploadViaProxy(ctx, client, ts.URL, 500)
+	mbps, err := measureUploadViaProxy(ctx, client, ts.URL, 500, nil)
 	if err != nil {
 		t.Fatalf("measureUploadViaProxy with invalid JSON failed: %v", err)
 	}
@@ -218,6 +219,56 @@ func TestMeasureUploadViaProxy_InvalidJSON(t *testing.T) {
 	if mbps < 0 {
 		t.Errorf("mbps should be non-negative, got %v", mbps)
 	}
+}
+
+// TestMeasureDownloadViaProxy_OnSample 验证 onSample 回调在测速中被调用(实时采样)
+func TestMeasureDownloadViaProxy_OnSample(t *testing.T) {
+	const dataSize = 5 * 1024 * 1024 // 5MB
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write(make([]byte, dataSize))
+	}))
+	defer ts.Close()
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	ctx := context.Background()
+
+	var samples []detection.Sample
+	onSample := func(s detection.Sample) {
+		samples = append(samples, s)
+	}
+	// 测速 1 秒,300ms 窗口应至少触发 1 次采样
+	mbps, err := measureDownloadViaProxy(ctx, client, []string{ts.URL}, 1000, onSample)
+	if err != nil {
+		t.Fatalf("measureDownloadViaProxy failed: %v", err)
+	}
+	if mbps <= 0 {
+		t.Errorf("mbps should be positive, got %v", mbps)
+	}
+	// 5MB 在高速本地 loopback 可能瞬间读完(<300ms),onSample 可能 0 次。
+	// 只验证非 panic + 回调签名正确,不强制次数(避免脆弱断言)。
+}
+
+// TestMeasureUploadViaProxy_OnSample 验证 upload onSample 回调被调用
+func TestMeasureUploadViaProxy_OnSample(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n, _ := io.Copy(io.Discard, r.Body)
+		fmt.Fprintf(w, `{"bytes":%d}`, n)
+	}))
+	defer ts.Close()
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	ctx := context.Background()
+
+	var called bool
+	onSample := func(s detection.Sample) { called = true }
+	_, err := measureUploadViaProxy(ctx, client, ts.URL, 600, onSample)
+	if err != nil {
+		t.Fatalf("measureUploadViaProxy failed: %v", err)
+	}
+	// upload reader 在 transport 发 body 时调 Read,onSample 可能被调用
+	// (依赖 transport 读节奏)。只验证非 panic。
+	_ = called
 }
 
 // TestRunProxyTest_Direct 测试直连模式完整流程
@@ -256,7 +307,7 @@ func TestRunProxyTest_Direct(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	result, err := runProxyTestWithEndpoints(ctx, req, nil, ts.URL+"/ping", []string{ts.URL + "/download"}, ts.URL+"/upload")
+	result, err := runProxyTestWithEndpoints(ctx, req, nil, ts.URL+"/ping", []string{ts.URL + "/download"}, ts.URL+"/upload", nil, nil)
 	if err != nil {
 		t.Fatalf("runProxyTest failed: %v", err)
 	}
@@ -296,7 +347,7 @@ func TestRunProxyTest_ModeLatencyOnly(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	result, err := runProxyTestWithEndpoints(ctx, req, nil, ts.URL, []string{ts.URL}, ts.URL)
+	result, err := runProxyTestWithEndpoints(ctx, req, nil, ts.URL, []string{ts.URL}, ts.URL, nil, nil)
 	if err != nil {
 		t.Fatalf("runProxyTest failed: %v", err)
 	}

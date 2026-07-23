@@ -179,6 +179,11 @@ func (ds *DetectionService) TestSpeedtestStream(ctx context.Context, node *subsc
 	return ds.detector.TestSpeedtestStream(ctx, node, onSample)
 }
 
+// TestNodeLatency 经节点测延迟/抖动透传(本机实测 SSE latency 帧用)。
+func (ds *DetectionService) TestNodeLatency(ctx context.Context, node *subscription.Node, samples int) (int, float64, error) {
+	return ds.detector.TestNodeLatency(ctx, node, samples)
+}
+
 // ExamStream 单节点深度体检流式版本:各段串行执行,实时推送事件。
 func (ds *DetectionService) ExamStream(ctx context.Context, node *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
 	return ds.detector.ExamStream(ctx, node, emit)
