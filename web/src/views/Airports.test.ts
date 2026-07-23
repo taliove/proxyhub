@@ -91,6 +91,28 @@ const SimpleSlotStub = (name: string) =>
       return () => h('div', { class: `${name}-stub` }, slots.default?.())
     }
   })
+// el-dropdown 桩:trigger 与 dropdown 两插槽都渲染;item 点击经 provide 上抛 command
+const ElDropdownStub = defineComponent({
+  name: 'ElDropdown',
+  emits: ['command'],
+  setup(_, { slots, emit }) {
+    provide('dropdown-command', (cmd: unknown) => emit('command', cmd))
+    return () => h('div', { class: 'el-dropdown-stub' }, [slots.default?.(), slots.dropdown?.()])
+  }
+})
+const ElDropdownItemStub = defineComponent({
+  name: 'ElDropdownItem',
+  props: { command: { type: [Boolean, String, Number], default: '' } },
+  setup(props, { slots }) {
+    const send = inject<(cmd: unknown) => void>('dropdown-command')!
+    return () =>
+      h(
+        'button',
+        { class: 'el-dropdown-item-stub', onClick: () => send(props.command) },
+        slots.default?.()
+      )
+  }
+})
 // 对话框/抽屉类:关闭态不渲染内容(modelValue=false 时)
 const ModelStub = (name: string) =>
   defineComponent({
@@ -126,9 +148,9 @@ describe('Airports 行内操作收敛', () => {
     created_at: '2026-01-01T00:00:00Z'
   }
 
-  const mountView = () => {
+  const mountView = (rows: Airport[] = [airport]) => {
     vi.mocked(client.get).mockImplementation(async (url: unknown) => {
-      if (url === '/airports') return [airport]
+      if (url === '/airports') return rows
       return {}
     })
     return mount(Airports, {
@@ -143,6 +165,9 @@ describe('Airports 行内操作收敛', () => {
           'el-table': ElTableStub,
           'el-table-column': ElTableColumnStub,
           'el-button': ElButtonStub,
+          'el-dropdown': ElDropdownStub,
+          'el-dropdown-menu': SimpleSlotStub('ElDropdownMenu'),
+          'el-dropdown-item': ElDropdownItemStub,
           'el-tag': SimpleSlotStub('ElTag'),
           'el-icon': SimpleSlotStub('ElIcon'),
           'el-card': SimpleSlotStub('ElCard'),
@@ -159,14 +184,43 @@ describe('Airports 行内操作收敛', () => {
     vi.clearAllMocks()
   })
 
-  it('行内只留「详情」「刷新」两个按钮', async () => {
+  it('行内操作列:详情/刷新 + 「测试」下拉(抽样测试/测全部两项)', async () => {
     const wrapper = mountView()
     await flushPromises()
 
     const opsColumn = wrapper.find('.el-column-stub[data-label="操作"]')
     expect(opsColumn.exists()).toBe(true)
     const buttons = opsColumn.findAll('button').map((b) => b.text())
-    expect(buttons).toEqual(['详情', '刷新'])
+    expect(buttons).toEqual(['详情', '刷新', '测试', '抽样测试', '测全部'])
+  })
+
+  it('行内「测试」下拉:抽样测试以 full=false 发起,测全部以 full=true 发起', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const opsColumn = wrapper.find('.el-column-stub[data-label="操作"]')
+    const items = opsColumn.findAll('.el-dropdown-item-stub')
+    expect(items).toHaveLength(2)
+
+    await items[0].trigger('click')
+    expect(testDialogStart).toHaveBeenNthCalledWith(1, airport, false)
+
+    await items[1].trigger('click')
+    expect(testDialogStart).toHaveBeenNthCalledWith(2, airport, true)
+  })
+
+  it('禁用机场行内也可测(对齐 0037 已放开的语义)', async () => {
+    const disabledAirport: Airport = { ...airport, enabled: false }
+    const wrapper = mountView([disabledAirport])
+    await flushPromises()
+
+    const opsColumn = wrapper.find('.el-column-stub[data-label="操作"]')
+    const sampleItem = opsColumn
+      .findAll('.el-dropdown-item-stub')
+      .find((b) => b.text() === '抽样测试')
+    await sampleItem!.trigger('click')
+
+    expect(testDialogStart).toHaveBeenCalledWith(disabledAirport, false)
   })
 
   it('点「详情」打开机场详情抽屉并传入当前机场', async () => {
@@ -205,6 +259,9 @@ describe('Airports 行内操作收敛', () => {
           'el-table': ElTableStub,
           'el-table-column': ElTableColumnStub,
           'el-button': ElButtonStub,
+          'el-dropdown': ElDropdownStub,
+          'el-dropdown-menu': SimpleSlotStub('ElDropdownMenu'),
+          'el-dropdown-item': ElDropdownItemStub,
           'el-tag': SimpleSlotStub('ElTag'),
           'el-icon': SimpleSlotStub('ElIcon'),
           'el-card': SimpleSlotStub('ElCard'),

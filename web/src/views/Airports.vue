@@ -46,8 +46,9 @@
             <span>{{ row.enabled ? '启用' : '禁用' }}</span>
           </template>
         </el-table-column>
-        <!-- 行内极简:只留「详情」(打开详情抽屉)+「刷新」;编辑/启停/删除/测试/二维码收敛进抽屉概况段 -->
-        <el-table-column label="操作" width="140">
+        <!-- 行内:详情/刷新 + 「测试」下拉(ticket 0042:抽样/测全部,不开抽屉即可测;
+             编辑/启停/删除/二维码仍收敛进抽屉概况段) -->
+        <el-table-column label="操作" width="200">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
             <el-button
@@ -57,6 +58,7 @@
               @click="refreshAirport(row)"
               >刷新</el-button
             >
+            <AirportRowTestMenu @test="(full: boolean) => testDialog?.start(row, full)" />
           </template>
         </el-table-column>
       </el-table>
@@ -126,6 +128,7 @@ import StatusDot from '@/components/StatusDot.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { getAirportQRContent } from './airport-utils'
 import AirportTestDialog from '@/components/AirportTestDialog.vue'
+import AirportRowTestMenu from '@/components/AirportRowTestMenu.vue'
 import AirportDetailDrawer from '@/components/AirportDetailDrawer.vue'
 import { testTimeRelative, scoreDisplay, scoreTone, scoreToneLabel } from './airport-test-utils'
 

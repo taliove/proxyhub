@@ -53,6 +53,9 @@ export const matchesType = (n: Node, type: string): boolean => !type || n.type =
 export const matchesFlag = (value: boolean, want: boolean | null): boolean =>
   want === null || value === want
 
+// 注意:internal/server/nodequery.go 另有一套服务端 matchesKeyword
+// (名称/标准名/地区码/地区中文名,服务机场详情抽屉池内搜索,ticket 0041),
+// 字段集有意不同——本套多服务器、少地区两路,改任一处时对照另一处确认语义分叉是否合理。
 export const matchesKeyword = (n: Node, keyword: string): boolean => {
   const q = keyword.trim().toLowerCase()
   if (!q) return true

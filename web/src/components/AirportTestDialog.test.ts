@@ -104,6 +104,32 @@ const mockGet = (terminal: string, run: unknown = completedRun) => {
   }) as never)
 }
 
+// mockRunningChecking 任务进行中且处于检活阶段:cursor total = 本次实际检活节点数
+const mockRunningChecking = (total: number, checked = 0) => {
+  vi.mocked(client.get).mockImplementation(((url: string) => {
+    if (url === '/jobs/42') {
+      return Promise.resolve({
+        id: 42,
+        kind: 'airport_test',
+        key: 'airport-7',
+        status: 'running',
+        cursor: JSON.stringify({ phase: 'checking', checked, total }),
+        created_at: '2026-07-22T08:00:00Z',
+        updated_at: '2026-07-22T08:01:00Z'
+      })
+    }
+    if (url === '/jobs/42/result') {
+      return Promise.resolve({
+        kind: 'airport_test',
+        job_id: 42,
+        reports: [],
+        airport_test_run: null
+      })
+    }
+    return Promise.reject(new Error(`unexpected GET ${url}`))
+  }) as never)
+}
+
 const mountDialog = () =>
   mount(AirportTestDialog, {
     global: {
@@ -179,6 +205,70 @@ describe('AirportTestDialog(运行模式)', () => {
     await flushPromises()
 
     expect(vi.mocked(client.post)).toHaveBeenCalledWith('/airports/7/test', { full: true })
+  })
+
+  it('抽样模式:副标题显示「抽样测试」,检活后显示「本次抽测 N 个节点」', async () => {
+    vi.mocked(client.post).mockResolvedValue(jobHandle as never)
+    mockRunningChecking(12, 3)
+    const wrapper = mountDialog()
+
+    ;(wrapper.vm as unknown as { start: (a: Airport, full?: boolean) => void }).start(
+      airport,
+      false
+    )
+    await flushPromises()
+
+    // 诊断阶段(cursor 未产出):只显示模式,不显示节点数
+    expect(wrapper.text()).toContain('抽样测试')
+    expect(wrapper.text()).not.toContain('本次抽测')
+
+    await advancePoll()
+
+    expect(wrapper.text()).toContain('抽样测试')
+    expect(wrapper.text()).toContain('本次抽测 12 个节点')
+    expect(wrapper.text()).not.toContain('全量测试')
+  })
+
+  it('全量模式:副标题显示「全量测试」,检活后显示「共 M 个节点」', async () => {
+    vi.mocked(client.post).mockResolvedValue(jobHandle as never)
+    mockRunningChecking(57, 10)
+    const wrapper = mountDialog()
+
+    ;(wrapper.vm as unknown as { start: (a: Airport, full?: boolean) => void }).start(airport, true)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('全量测试')
+    expect(wrapper.text()).not.toContain('共 57 个节点')
+
+    await advancePoll()
+
+    expect(wrapper.text()).toContain('全量测试')
+    expect(wrapper.text()).toContain('共 57 个节点')
+    expect(wrapper.text()).not.toContain('本次抽测')
+  })
+
+  // 秒级完成是抽样浅测主场景:首次轮询即见 done,checkingProgress 从未赋值,
+  // 涉及节点数必须从 run 维度兜底,否则「本次抽测 N 个节点」整次不显示
+  it('秒级完成(轮询直接看到 done)从 run 兜底显示涉及节点数', async () => {
+    vi.mocked(client.post).mockResolvedValue(jobHandle as never)
+    mockGet('done', {
+      ...completedRun,
+      dimensions_json: JSON.stringify({
+        ...JSON.parse(completedRun.dimensions_json),
+        sampled_nodes: [{}, {}, {}]
+      })
+    })
+    const wrapper = mountDialog()
+
+    ;(wrapper.vm as unknown as { start: (a: Airport, full?: boolean) => void }).start(
+      airport,
+      false
+    )
+    await flushPromises()
+    await advancePoll()
+
+    expect(wrapper.text()).toContain('抽样测试')
+    expect(wrapper.text()).toContain('本次抽测 3 个节点')
   })
 
   it('任务 failed 终态展示失败原因且不 emit finished', async () => {

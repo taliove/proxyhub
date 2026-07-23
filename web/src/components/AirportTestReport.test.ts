@@ -187,8 +187,27 @@ describe('AirportTestReport', () => {
     expect(text).toContain('45.0 分')
     expect(text).toContain('28.0 分')
     expect(text).toContain('7.5 分')
-    // 抽样口径标识
-    expect(text).toContain('抽样')
+    // 抽样口径标识(ticket 0043):抽测 N/M(N=sampled_nodes 数,M=total_nodes)
+    expect(text).toContain('抽测 2/10')
+  })
+
+  it('全量 run:标注「全量 M/M」', async () => {
+    const fullRun: TestRun = {
+      ...completedRun,
+      id: 13,
+      is_full: true,
+      dimensions_json: JSON.stringify({
+        ...completedDims,
+        total_nodes: 2,
+        available_nodes: 1
+      })
+    }
+    const wrapper = mountReport([fullRun])
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('全量 2/2')
+    expect(text).not.toContain('抽测')
   })
 
   it('URL 不可达:拉取健康 N/A,权重按 5:3:1 重归一呈现', async () => {
@@ -241,5 +260,8 @@ describe('AirportTestReport', () => {
     expect(text).toContain('未保存抽样节点明细')
     // 汇总仍在
     expect(text).toContain('9 / 10')
+    // 抽样标注降级(ticket 0043):无 sampled_nodes 字段时只显示模式,不显示 N/M
+    expect(text).toContain('抽样')
+    expect(text).not.toContain('抽测')
   })
 })

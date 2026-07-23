@@ -39,7 +39,7 @@
               {{ overallScore.toFixed(1) }}
             </el-tag>
             <el-tag size="small" type="info" class="mode-tag">
-              {{ completedRun.is_full ? '全量' : '抽样' }}
+              {{ modeLabel }}
             </el-tag>
           </div>
           <span class="muted">{{ relativeTime(completedRun.created_at) }}</span>
@@ -200,6 +200,17 @@ const regionList = computed(() => {
 })
 
 const sampledNodes = computed(() => completedResult.value?.sampled_nodes ?? [])
+
+// 抽样语义标注(ticket 0043):抽测 N/M(全量 run 为 全量 M/M);
+// N=sampled_nodes 数、M=total_nodes;旧 run 无 sampled_nodes 字段时降级为仅模式标识
+const modeLabel = computed(() => {
+  if (!completedRun.value) return ''
+  const full = completedRun.value.is_full
+  const n = completedResult.value?.sampled_nodes?.length ?? null
+  const m = completedResult.value?.total_nodes ?? null
+  if (n === null || m === null) return full ? '全量' : '抽样'
+  return full ? `全量 ${n}/${m}` : `抽测 ${n}/${m}`
+})
 
 const relativeTime = (iso: string): string => testTimeRelative(iso)
 </script>
