@@ -65,6 +65,11 @@ func computeLatencyMetrics(rtts []float64) LatencyMetrics {
 	sort.Float64s(sorted)
 	idleLatency := sorted[0]
 
+	// 单样本无相邻差值,抖动为 0(避免 len-1=0 除零产出 NaN 污染 JSON 序列化)
+	if len(rtts) == 1 {
+		return LatencyMetrics{IdleLatencyMs: idleLatency, JitterMs: 0}
+	}
+
 	// 抖动 = 相邻 RTT 差值的平均
 	var jitterSum float64
 	for i := 1; i < len(rtts); i++ {
@@ -169,32 +174,43 @@ func measureDownloadViaProxy(ctx context.Context, client *http.Client, url strin
 
 // measureUploadViaProxy 通过代理测量上行带宽
 func measureUploadViaProxy(ctx context.Context, client *http.Client, url string, durationMs int) (float64, error) {
-	// 创建随机数据流
+	// 创建随机数据流。pr 由本函数负责 Close:无论 client.Do 成功还是失败,
+	// 关闭 reader 都能让 pipe writer 立即解除阻塞(ErrClosedPipe),避免
+	// 上游早返/拨号失败时 writer goroutine 永久卡在 pw.Write 而泄漏。
 	pr, pw := io.Pipe()
-	var sentBytes int64
+	defer pr.Close()
+
+	// sentBytes 经 channel 从 writer goroutine 回传,避免与主 goroutine 的
+	// 读取构成数据竞争(writer 可能在 client.Do 返回后仍在写)。
+	sentCh := make(chan int64, 1)
 
 	go func() {
 		defer pw.Close()
+		var sent int64
 		chunk := make([]byte, defaultUploadChunkSize)
 		deadline := time.Now().Add(time.Duration(durationMs) * time.Millisecond)
 
 		for time.Now().Before(deadline) {
 			select {
 			case <-ctx.Done():
+				sentCh <- sent
 				return
 			default:
 			}
 
 			// 生成随机数据
 			if _, err := rand.Read(chunk); err != nil {
+				sentCh <- sent
 				return
 			}
 			n, err := pw.Write(chunk)
-			sentBytes += int64(n)
+			sent += int64(n)
 			if err != nil {
+				sentCh <- sent
 				return
 			}
 		}
+		sentCh <- sent
 	}()
 
 	start := time.Now()
@@ -222,18 +238,22 @@ func measureUploadViaProxy(ctx context.Context, client *http.Client, url string,
 	if err != nil {
 		return 0, fmt.Errorf("read upload response: %w", err)
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		// 如果解析失败，使用发送字节数
-		result.Bytes = sentBytes
+	// 服务端实收字节为准(客户端停流后服务端兜底截断口径一致)。
+	// 解析失败时回退到客户端发送字节数。
+	serverBytes := int64(0)
+	if err := json.Unmarshal(body, &result); err == nil {
+		serverBytes = result.Bytes
 	}
+
+	// pr.Close()(defer)已让 writer goroutine 解除阻塞并经 channel 回传 sentBytes。
+	sentBytes := <-sentCh
 
 	elapsed := time.Since(start).Seconds()
 	if elapsed == 0 {
 		return 0, fmt.Errorf("elapsed time is zero")
 	}
 
-	// 以服务端实收字节为准
-	actualBytes := result.Bytes
+	actualBytes := serverBytes
 	if actualBytes == 0 {
 		actualBytes = sentBytes
 	}

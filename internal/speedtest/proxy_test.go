@@ -48,6 +48,30 @@ func TestComputeLatencyMetrics(t *testing.T) {
 	}
 }
 
+// TestComputeLatencyMetrics_SingleSample 单样本不应产生 NaN 抖动(回归:
+// len==1 时 jitterSum/0 会得 NaN,污染 JSON 序列化)。
+func TestComputeLatencyMetrics_SingleSample(t *testing.T) {
+	result := computeLatencyMetrics([]float64{42})
+	if result.IdleLatencyMs != 42 {
+		t.Errorf("IdleLatencyMs = %v, want 42", result.IdleLatencyMs)
+	}
+	if result.JitterMs != 0 {
+		t.Errorf("JitterMs = %v, want 0 (no NaN)", result.JitterMs)
+	}
+	// 显式断言非 NaN
+	if result.JitterMs != result.JitterMs { // NaN != NaN
+		t.Errorf("JitterMs is NaN")
+	}
+}
+
+// TestComputeLatencyMetrics_Empty 空样本返回全 0
+func TestComputeLatencyMetrics_Empty(t *testing.T) {
+	result := computeLatencyMetrics([]float64{})
+	if result != (LatencyMetrics{}) {
+		t.Errorf("empty = %v, want zero value", result)
+	}
+}
+
 // TestMeasureLatencyViaProxy 测试延迟测量
 func TestMeasureLatencyViaProxy(t *testing.T) {
 	// Mock 测速端点
@@ -111,7 +135,7 @@ func TestMeasureDownloadViaProxy(t *testing.T) {
 
 // TestMeasureUploadViaProxy 测试上行测速
 func TestMeasureUploadViaProxy(t *testing.T) {
-	// Mock 测速端点：接收数据并返回字节数
+	// Mock 测速端点:接收数据并返回实收字节数(正确 JSON,验证服务端实收口径主路径)
 	var receivedBytes int64
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -128,7 +152,7 @@ func TestMeasureUploadViaProxy(t *testing.T) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"bytes":` + string(rune(receivedBytes)) + `}`))
+		fmt.Fprintf(w, `{"bytes":%d}`, receivedBytes)
 	}))
 	defer ts.Close()
 
@@ -145,8 +169,55 @@ func TestMeasureUploadViaProxy(t *testing.T) {
 	if mbps <= 0 {
 		t.Errorf("Upload speed should be positive, got %v Mbps", mbps)
 	}
+	// 验证服务端实收了字节(主路径未被 fallback 掩盖)
+	if receivedBytes == 0 {
+		t.Errorf("server should have received bytes, got 0")
+	}
 
 	t.Logf("Upload speed: %.2f Mbps, received: %d bytes", mbps, receivedBytes)
+}
+
+// TestMeasureUploadViaProxy_NonOKStatus 上游返回非 200 时应返回错误,
+// 且不泄漏 writer goroutine(错误路径关闭 pr 解除 pw.Write 阻塞)。
+func TestMeasureUploadViaProxy_NonOKStatus(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 不消费 body 直接返回 413,触发错误路径(此时 writer 仍在 pw.Write 阻塞)
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+	}))
+	defer ts.Close()
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	ctx := context.Background()
+
+	_, err := measureUploadViaProxy(ctx, client, ts.URL, 1000)
+	if err == nil {
+		t.Fatal("expected error for non-200 upload response, got nil")
+	}
+	// 不检查具体错误文本,只验证是错误(主验证点:goroutine 不泄漏,
+	// 运行时若泄漏会在 -race/长跑下暴露;此处保证错误传播正确)
+}
+
+// TestMeasureUploadViaProxy_InvalidJSON 上游返回非法 JSON 时回退到客户端发送字节数
+func TestMeasureUploadViaProxy_InvalidJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 消费 body 再返回非 JSON,触发 fallback 路径
+		io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`not-json`))
+	}))
+	defer ts.Close()
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	ctx := context.Background()
+
+	mbps, err := measureUploadViaProxy(ctx, client, ts.URL, 500)
+	if err != nil {
+		t.Fatalf("measureUploadViaProxy with invalid JSON failed: %v", err)
+	}
+	// fallback 路径用客户端发送字节数,应仍有正值
+	if mbps < 0 {
+		t.Errorf("mbps should be non-negative, got %v", mbps)
+	}
 }
 
 // TestRunProxyTest_Direct 测试直连模式完整流程
@@ -260,24 +331,22 @@ func TestBuildHTTPClient_Direct(t *testing.T) {
 	// 不强制检查 Transport == nil,因为标准 client 也可能注入
 }
 
-// TestBuildHTTPClient_NodeAdapterError 测试无效节点构造 adapter 失败
-// 用一个协议字段非法的节点,触发 mihomo adapter 解析错误
+// TestBuildHTTPClient_NodeAdapterError 无效协议类型构造 adapter 必然失败
+// (generator.ClashProxy 对 unsupported type 返回 error),确定性断言而非 t.Skip。
 func TestBuildHTTPClient_NodeAdapterError(t *testing.T) {
-	// 构造一个非法协议的节点,NewProxyAdapter 应失败
 	node := &subscription.Node{
-		Name:     "invalid",
-		Type:     "nonexistent-protocol",
-		Server:   "127.0.0.1",
-		Port:     1, // 1 号端口几乎必然不可达
+		Name:   "invalid",
+		Type:   "nonexistent-protocol", // ClashProxy 对此返回 unsupported type 错误
+		Server: "127.0.0.1",
+		Port:   443,
 	}
 	ctx := context.Background()
 	client, err := buildHTTPClient(ctx, node)
-	// adapter 构造失败应返回 err 且 client 为 nil
 	if err == nil {
-		t.Skip("adapter construction did not fail for invalid protocol; skipping (mihomo may be permissive)")
+		t.Fatalf("expected error for unsupported protocol, got nil (client=%v)", client)
 	}
 	if client != nil {
-		t.Error("client should be nil on error")
+		t.Error("client should be nil on adapter construction error")
 	}
 }
 
