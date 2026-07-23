@@ -67,3 +67,24 @@ logs/
 # Dev build binaries (accidental `go build` outputs)
 /server
 cmd/server/server
+# Added by code-review-graph
+.code-review-graph/
+
+# code-review-graph local tooling (machine-specific / duplicates of CLAUDE.md)
+AGENTS.md
+CODEBUDDY.md
+GEMINI.md
+QODER.md
+.cursorrules
+.windsurfrules
+opencode.jsonc
+.codebuddy/
+.gemini/
+.kiro/
+.qoder/
+.vscode/
+.github/code-review-graph.instruction.md
+.claude/skills/debug-issue/
+.claude/skills/explore-codebase/
+.claude/skills/refactor-safely/
+.claude/skills/review-changes/

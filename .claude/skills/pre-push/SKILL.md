@@ -1,6 +1,6 @@
 ---
 name: pre-push
-description: 推送到任何远端前的最终门禁(全量测试、全历史泄密扫描、仓库体检)
+description: 推送到任何远端前的最终门禁(全量测试、全历史泄密扫描、仓库体检、security-reviewer 语义安全审查)
 ---
 
 # 推送前检查(pre-push)
@@ -49,7 +49,15 @@ git ls-files
 对照 CLAUDE.md §1/§2 逐类过一遍:无过程文档、无死备份、无运行时产物、无依赖目录。
 文档只应有:术语表/ADR/设计/运维。
 
-## 5. 发布要件(首次推送 public 仓库时)
+## 5. 语义安全审查(security-reviewer)
+
+机械扫描抓不住的攻击面问题,由独立上下文的 `security-reviewer` agent 兜底。推送前必须 dispatch 它审查本次推送的增量:
+
+- 基线:`git merge-base origin/<目标分支> HEAD`;首次推送(无 upstream)退化为以空树为基线的全量审查
+- 视角:这段历史推出去后,公开世界里谁能利用什么——日志/错误泄节点凭证、无鉴权新端点、订阅地址可枚举、管理面绑非回环、TLS 红线、前端 token 外泄
+- 拿到 SHIP verdict,或修掉它报的 CRITICAL/HIGH 后再推;MEDIUM/LOW 不阻断但要逐条过目
+
+## 6. 发布要件(首次推送 public 仓库时)
 
 - [ ] LICENSE 文件存在且与项目匹配
 - [ ] README 与实际功能一致(语言、截图不含真实数据)
@@ -58,4 +66,4 @@ git ls-files
 
 ## 完成标准
 
-五项全过才允许 `git push`。任何一项存疑,停下来问,不许赌。
+六项全过才允许 `git push`。任何一项存疑,停下来问,不许赌。

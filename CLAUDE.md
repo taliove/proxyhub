@@ -115,15 +115,55 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 
 - 日常开发(编译/运行/测试/目录归属):`.claude/skills/dev-workflow`
 - 签入前:`.claude/skills/pre-commit`(Go 改动会 dispatch go-reviewer)
-- 推送前:`.claude/skills/pre-push`
+- 推送前:`.claude/skills/pre-push`(会 dispatch security-reviewer 审增量)
 - 发布(版本纪律/演练/tag/验证):`.claude/skills/release`
 - 写文档(决策树/放置命名/模板/spec 蒸馏/README 守卫):`.claude/skills/doc-writing`
 - 需求讨论(拷问/澄清):`.claude/skills/req-grill` —— 需求相关讨论一律用它,不用 superpowers 的 brainstorming/grilling
 - 批量 ticket 实施默认子代理并发调度;串行实施需先说明理由。并行会话隔离:用户声明某范围由另一会话处理时,严禁触碰该范围
 - Go 语义评审:`.claude/agents/go-reviewer`(独立上下文,专挑机械门禁抓不住的毛病;它只评审,不写码)
+- 安全/隐私语义评审:`.claude/agents/security-reviewer`(推送前对 `origin/<target>..HEAD` 增量做攻击面审查;只评审,不写码)
 
 Skills 是流程,不是建议——逐条执行,不允许跳项。
 
 ## 9. 发布
 
 GitHub Actions tag 触发自动发布(`.github/workflows/release.yml`):validate → test → package(矩阵 tarball + SHA256SUMS + attest)→ docker(GHCR)。版本唯一事实源是 `VERSION` 文件,tag 必须等于 `v$(cat VERSION)`。制品命名契约 `proxyhub_<version>_<os>_<arch>.tar.gz`(下划线)由 `scripts/release/package.sh` 生产、`install.sh` 与 `proxyhubctl update` 消费,**三处必须同步**。全流程见 release skill。
+
+<!-- code-review-graph MCP tools -->
+## MCP Tools: code-review-graph
+
+**IMPORTANT: This project has a knowledge graph. ALWAYS use the
+code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
+the codebase.** The graph is faster, cheaper (fewer tokens), and gives
+you structural context (callers, dependents, test coverage) that file
+scanning cannot.
+
+### When to use graph tools FIRST
+
+- **Exploring code**: `semantic_search_nodes_tool` or `query_graph_tool` instead of Grep
+- **Understanding impact**: `get_impact_radius_tool` instead of manually tracing imports
+- **Code review**: `detect_changes_tool` + `get_review_context_tool` instead of reading entire files
+- **Finding relationships**: `query_graph_tool` with callers_of/callees_of/imports_of/tests_for
+- **Architecture questions**: `get_architecture_overview_tool` + `list_communities_tool`
+
+Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+
+### Key Tools
+
+| Tool | Use when |
+| ------ | ---------- |
+| `detect_changes_tool` | Reviewing code changes — gives risk-scored analysis |
+| `get_review_context_tool` | Need source snippets for review — token-efficient |
+| `get_impact_radius_tool` | Understanding blast radius of a change |
+| `get_affected_flows_tool` | Finding which execution paths are impacted |
+| `query_graph_tool` | Tracing callers, callees, imports, tests, dependencies |
+| `semantic_search_nodes_tool` | Finding functions/classes by name or keyword |
+| `get_architecture_overview_tool` | Understanding high-level codebase structure |
+| `refactor_tool` | Planning renames, finding dead code |
+
+### Workflow
+
+1. The graph auto-updates on file changes (via hooks).
+2. Use `detect_changes_tool` for code review.
+3. Use `get_affected_flows_tool` to understand impact.
+4. Use `query_graph_tool` pattern="tests_for" to check coverage.
