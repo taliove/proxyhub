@@ -21,8 +21,9 @@ import (
 // 本端点经节点透传外部测速端点,测的是选定节点的真实链路。
 
 const (
-	// proxySpeedtestDownloadURL 透传下载的 Cloudflare 端点(64MB 大文件)。
-	proxySpeedtestDownloadURL = "https://speed.cloudflare.com/__down?bytes=64000000"
+	// proxySpeedtestDownloadURL 透传下载的 Cloudflare 端点(8MB/连接 × 8 并行 = 64MB,
+	// 接近 fast.com 单次测速总量;每连接独立 i 参数规避缓存/CDN 合并)。
+	proxySpeedtestDownloadURL = "https://speed.cloudflare.com/__down?bytes=8000000"
 	// proxySpeedtestLatencyURL 透传延迟的小请求端点(1KB)。
 	proxySpeedtestLatencyURL = "https://speed.cloudflare.com/__down?bytes=1000"
 	// proxySpeedtestUploadURL 透传上传的 Cloudflare 端点。
@@ -69,6 +70,10 @@ func (s *Server) handleSpeedtestProxyDownload(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		http.Error(w, "create download request", http.StatusInternalServerError)
 		return
+	}
+	// 每连接独立 i 参数规避 Cloudflare CDN 缓存合并(8 连接各拉独立 8MB 流)。
+	if i := q.Get("i"); i != "" {
+		req.URL.RawQuery += "&i=" + i
 	}
 	req.Header.Set("User-Agent", proxyBrowserUA)
 
