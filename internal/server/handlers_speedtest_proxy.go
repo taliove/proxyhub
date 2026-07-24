@@ -72,57 +72,90 @@ func (s *Server) handleSpeedtestProxyTest(w http.ResponseWriter, r *http.Request
 		emit(map[string]string{"phase": "error", "error": errMsg})
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	// ctx 120s:经节点各阶段最多重试 3 次(latency ~24s + bandwidth ~75s),直连更短。
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
-	// 经节点:latency(detection.TestNodeLatency)+ bandwidth(detection.TestSpeedtestStream)
+	// 经节点:latency 与 bandwidth 各自最多重试 3 次,直到成功;3 次失败则保留已测
+	// (latency 置 0 / 带宽 0)继续后续阶段,仅全部失败才报 error。避免"跑一半报错就什么都没了"。
 	if node != nil {
 		if s.detectionService == nil {
 			emitErr("detection service not initialized")
 			return
 		}
-		latencyMs, jitterMs, err := s.detectionService.TestNodeLatency(ctx, node, 8)
-		if err != nil {
-			s.logger.Warn("proxy speedtest latency failed",
-				"node_key", nodeKey, "self_node_id", selfNodeID, "error", err)
-			emitErr(err.Error())
-			return
+		// latency 重试 3 次
+		latencyMs, jitterMs := 0, 0.0
+		for attempt := 1; attempt <= 3; attempt++ {
+			if lat, jit, err := s.detectionService.TestNodeLatency(ctx, node, 8); err == nil {
+				latencyMs, jitterMs = lat, jit
+				break
+			} else if attempt == 3 {
+				s.logger.Warn("proxy speedtest latency failed after 3 attempts",
+					"node_key", nodeKey, "self_node_id", selfNodeID, "error", err)
+			}
 		}
 		emit(map[string]any{"phase": "latency", "idle_latency_ms": latencyMs, "jitter_ms": jitterMs})
 
-		tr := s.detectionService.TestSpeedtestStream(ctx, node, func(sample detection.Sample) {
-			emit(sample)
-		})
-		if tr.DownMbps == 0 && tr.UpMbps == 0 && tr.Error != "" {
-			s.logger.Warn("proxy speedtest bandwidth failed",
-				"node_key", nodeKey, "self_node_id", selfNodeID, "error", tr.Error)
+		// bandwidth 重试 3 次(全失败才重试;部分成功即停)。重试时 sample 帧重新滚动。
+		var tr detection.TestResult
+		for attempt := 1; attempt <= 3; attempt++ {
+			tr = s.detectionService.TestSpeedtestStream(ctx, node, func(sample detection.Sample) {
+				emit(sample)
+			})
+			// 成功或部分成功(任一方向有值)即停;全失败才重试
+			if tr.Error == "" || tr.DownMbps > 0 || tr.UpMbps > 0 {
+				break
+			}
+			if attempt < 3 {
+				s.logger.Warn("proxy speedtest bandwidth failed, retrying",
+					"node_key", nodeKey, "attempt", attempt, "error", tr.Error)
+			} else {
+				s.logger.Warn("proxy speedtest bandwidth failed after 3 attempts",
+					"node_key", nodeKey, "self_node_id", selfNodeID, "error", tr.Error)
+			}
+		}
+		// 全失败(latency+带宽都 0)才 error;否则 emit done 保留已测值
+		if tr.DownMbps == 0 && tr.UpMbps == 0 && tr.Error != "" && latencyMs == 0 && jitterMs == 0 {
 			emitErr(tr.Error)
 			return
 		}
 		emit(map[string]any{
-			"phase":            "done",
-			"down_mbps":        tr.DownMbps,
-			"up_mbps":          tr.UpMbps,
-			"idle_latency_ms":  latencyMs,
-			"jitter_ms":        jitterMs,
-			"elapsed_ms":       tr.ElapsedMs,
+			"phase":           "done",
+			"down_mbps":       tr.DownMbps,
+			"up_mbps":         tr.UpMbps,
+			"idle_latency_ms": latencyMs,
+			"jitter_ms":       jitterMs,
+			"elapsed_ms":      tr.ElapsedMs,
 		})
 		return
 	}
 
-	// 直连:latency + bandwidth(speedtest.RunProxyTest,onLatency/onSample 实时帧)
+	// 直连:latency + bandwidth(speedtest.RunProxyTest,onLatency/onSample 实时帧)。
+	// 整体重试 3 次:err 时重试(端点波动),成功即停;3 次失败报 error。
 	req := speedtest.ProxyTestRequest{Mode: mode}
-	result, err := speedtest.RunProxyTest(ctx, req, nil,
-		func(latMs, jitMs float64) {
-			emit(map[string]any{"phase": "latency", "idle_latency_ms": latMs, "jitter_ms": jitMs})
-		},
-		func(sample detection.Sample) {
-			emit(sample)
-		},
-	)
-	if err != nil {
-		s.logger.Warn("direct speedtest failed", "error", err)
-		emitErr(err.Error())
+	onLatency := func(latMs, jitMs float64) {
+		emit(map[string]any{"phase": "latency", "idle_latency_ms": latMs, "jitter_ms": jitMs})
+	}
+	onSample := func(sample detection.Sample) {
+		emit(sample)
+	}
+	var result *speedtest.ProxyTestResult
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		r, err := speedtest.RunProxyTest(ctx, req, nil, onLatency, onSample)
+		if err == nil {
+			result = r
+			break
+		}
+		lastErr = err
+		if attempt < 3 {
+			s.logger.Warn("direct speedtest failed, retrying", "attempt", attempt, "error", err)
+		} else {
+			s.logger.Warn("direct speedtest failed after 3 attempts", "error", err)
+		}
+	}
+	if result == nil {
+		emitErr(lastErr.Error())
 		return
 	}
 	emit(map[string]any{

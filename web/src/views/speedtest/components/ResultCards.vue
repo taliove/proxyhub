@@ -49,12 +49,15 @@ const phaseText = computed(() => (props.phase ? PHASE_TEXT[props.phase] : ''))
 const fmt = (v: number | undefined, digits: number): string =>
   v === undefined ? '—' : v.toFixed(digits)
 
-// 下行:测速中显示 liveMbps;下行已完进入上行阶段显示 downFinalMbps 定格;全部完成显示最终值。
-// 上行:测速中显示 liveMbps;全部完成显示最终值(上行是最后阶段,无"已完未全完"过渡态)。
+// 下行:测速中显示 liveMbps;下行已完进入上行阶段显示 downFinalMbps 定格;
+// 全部完成显示最终值;中途报错(result 空但已测定格)显示 downFinalMbps,避免"什么都没了"。
+// 上行:测速中显示 liveMbps;全部完成显示最终值;报错后显示 upFinalMbps。
 const cards = computed(() => {
   const r = props.result
   const lat = r ? r.idleLatencyMs : props.idleLatencyMs
   const jit = r ? r.jitterMs : props.jitterMs
+  const downVal = r ? r.downMbps : props.downFinalMbps
+  const upVal = r ? r.upMbps : props.upFinalMbps
   return [
     {
       label: '下行 Mbps',
@@ -63,12 +66,12 @@ const cards = computed(() => {
           ? fmt(props.liveMbps, 1)
           : props.running && props.phase === 'upload'
             ? fmt(props.downFinalMbps, 1)
-            : fmt(r?.downMbps, 1),
+            : fmt(downVal, 1),
       active: props.running && props.phase === 'download'
     },
     {
       label: '上行 Mbps',
-      value: props.running && props.phase === 'upload' ? fmt(props.liveMbps, 1) : fmt(r?.upMbps, 1),
+      value: props.running && props.phase === 'upload' ? fmt(props.liveMbps, 1) : fmt(upVal, 1),
       active: props.running && props.phase === 'upload'
     },
     {
