@@ -1,7 +1,7 @@
 <template>
   <div>
     <PageHeader
-      description="纯浏览器实测当前链路:标注节点(或直连)→ 一键测速 → 与直连基线做差值对比"
+      description="本机实测：选择节点（或直连），后端经节点测真实带宽与延迟，再与直连基线对比节点开销"
     />
 
     <el-card class="control-card">
@@ -23,8 +23,10 @@
         <el-button v-else type="danger" @click="cancel">取消</el-button>
       </div>
       <div class="control-hint">
-        标注的是"你此刻客户端里选的节点",ProxyHub 不感知客户端选择;经节点实测需用非 loopback
-        地址访问本页,否则流量不绕行节点。
+        选择本次链路对应的节点（或留空表示直连），点「开始实测」：后端会经选中节点访问公共测速端点，测出该链路的真实带宽、延迟与抖动。<br />
+        历史列表右侧的 Δ
+        列是各节点相对「直连」基线的开销。请先以留空状态测一次直连作为基线，之后各节点的 Δ
+        才会有值。
       </div>
       <el-alert v-if="runError" type="error" :closable="false" class="run-error">
         {{ runError }}
@@ -35,6 +37,8 @@
       :running="running"
       :phase="phase"
       :live-mbps="liveMbps"
+      :down-final-mbps="downFinalMbps"
+      :up-final-mbps="upFinalMbps"
       :idle-latency-ms="idleLatencyMs"
       :jitter-ms="jitterMs"
       :result="result"
@@ -84,6 +88,8 @@ const {
   phase,
   running,
   liveMbps,
+  downFinalMbps,
+  upFinalMbps,
   idleLatencyMs,
   jitterMs,
   result,
