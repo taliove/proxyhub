@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -186,6 +187,16 @@ func (s *Server) handleSpeedtestProxyUpload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// buffer 浏览器 body 后带显式 Content-Length 转发:Cloudflare __up 需已知长度,
+	// 且避免浏览器 duplex streaming(chrome HTTP/1.1 拒发)时 Go 客户端以 chunked 转发的坑。
+	const maxUploadPerConn = 32 << 20 // 32MB 兜底(8 连接 × 4MB ≈ 32MB 总量)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxUploadPerConn))
+	if err != nil {
+		s.logger.Warn("proxy upload: read browser body failed", "error", err)
+		http.Error(w, "read upload body failed", http.StatusBadRequest)
+		return
+	}
+
 	client, err := s.detectionService.ProxyHTTPClient(node, proxySpeedtestTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -194,13 +205,14 @@ func (s *Server) handleSpeedtestProxyUpload(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), proxySpeedtestMaxDuration)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", proxySpeedtestUploadURL, r.Body)
+	req, err := http.NewRequestWithContext(ctx, "POST", proxySpeedtestUploadURL, bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, "create upload request", http.StatusInternalServerError)
 		return
 	}
 	req.Header.Set("User-Agent", proxyBrowserUA)
 	req.Header.Set("Content-Type", "application/octet-stream")
+	req.ContentLength = int64(len(body))
 
 	resp, err := client.Do(req)
 	if err != nil {

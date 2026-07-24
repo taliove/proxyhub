@@ -130,37 +130,15 @@ function randomChunk(size: number): Uint8Array<ArrayBuffer> {
   return chunk
 }
 
-// measureUpload 8 并行连接同时 POST 随机数据流到透传上传端点(经节点),
-// duplex: 'half' streaming body;每连接累计字节,每 SAMPLE_INTERVAL_MS 聚合瞬时速率。
-// 到 deadline 停流(controller.close)。浏览器不支持 streaming body(Firefox)时 fallback 单连接定量 Blob。
+// measureUpload 8 并行连接同时 POST 定量 Blob 到透传上传端点(经节点),
+// 每连接循环发多个 1MB Blob 直到 deadline,累计字节算聚合瞬时速率。
+// Chrome HTTP/1.1 拒发 duplex: 'half' streaming body(请求根本到不了后端),
+// 故不用 streaming,改定量 Blob(浏览器自动带 Content-Length,后端 buffer 转发)。
 async function measureUpload(
   nodeKey: string,
   signal: AbortSignal,
   onSample?: (phase: SpeedtestPhase, mbps: number) => void
 ): Promise<number> {
-  // Firefox 等不支持 duplex streaming:退化单连接定量 Blob(对齐历史 fallback)
-  const supportsStreaming = (() => {
-    try {
-      const rs = new ReadableStream({
-        pull(c) {
-          c.close()
-        }
-      })
-      new Request(proxyUploadURL(nodeKey, 0), {
-        method: 'POST',
-        body: rs,
-        duplex: 'half'
-      } as RequestInit)
-      return true
-    } catch {
-      return false
-    }
-  })()
-
-  if (!supportsStreaming) {
-    return measureUploadFallback(nodeKey, signal, onSample)
-  }
-
   const start = performance.now()
   const deadline = start + UPLOAD_DURATION_MS
   let totalBytes = 0
@@ -178,61 +156,32 @@ async function measureUpload(
     }
   }
 
-  const chunk = randomChunk(UPLOAD_CHUNK_SIZE)
+  const chunk = randomChunk(UPLOAD_CHUNK_SIZE) // 256KB 不可压缩随机块
 
   const workers = Array.from({ length: PARALLEL_CONNECTIONS }, async (_, i) => {
-    const body = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        if (performance.now() >= deadline) {
-          controller.close()
-          return
-        }
-        controller.enqueue(chunk)
-        totalBytes += chunk.byteLength
-        winBytes += chunk.byteLength
-        sample()
-      }
-    })
-    const init = {
-      method: 'POST',
-      body,
-      duplex: 'half',
-      cache: 'no-store',
-      signal,
-      headers: { 'Content-Type': 'application/octet-stream' }
-    } as RequestInit
-    const res = await fetch(proxyUploadURL(nodeKey, i), init)
-    if (!res.ok) throw new Error(`upload conn ${i}: HTTP ${res.status}`)
-    // 服务端回 {bytes} 或空;以客户端发送字节为准(口径一致)
-    await res.arrayBuffer().catch(() => {})
+    // 循环 POST Blob 到 deadline(每次 POST 带 Content-Length,后端 buffer 转发)
+    for (;;) {
+      if (performance.now() >= deadline) break
+      const blob = new Blob([chunk])
+      const res = await fetch(proxyUploadURL(nodeKey, i), {
+        method: 'POST',
+        body: blob,
+        cache: 'no-store',
+        signal,
+        headers: { 'Content-Type': 'application/octet-stream' }
+      })
+      if (!res.ok) throw new Error(`upload conn ${i}: HTTP ${res.status}`)
+      await res.arrayBuffer().catch(() => {})
+      totalBytes += chunk.byteLength
+      winBytes += chunk.byteLength
+      sample()
+    }
   })
 
   await Promise.all(workers)
   const elapsed = performance.now() - start
   if (elapsed === 0) throw new Error('elapsed time is zero')
   return (totalBytes * 8) / (elapsed / 1000) / 1e6
-}
-
-// measureUploadFallback 无 streaming body 支持:单连接 POST 定量 Blob 计时。
-async function measureUploadFallback(
-  nodeKey: string,
-  signal: AbortSignal,
-  onSample?: (phase: SpeedtestPhase, mbps: number) => void
-): Promise<number> {
-  const bytes = 8 * 1024 * 1024 // 8MB
-  const blob = new Blob([randomChunk(bytes)])
-  const start = performance.now()
-  const res = await fetch(proxyUploadURL(nodeKey, 0), {
-    method: 'POST',
-    body: blob,
-    cache: 'no-store',
-    signal
-  })
-  if (!res.ok) throw new Error(`upload fallback: HTTP ${res.status}`)
-  await res.arrayBuffer().catch(() => {})
-  const mbps = (bytes * 8) / ((performance.now() - start) / 1000) / 1e6
-  onSample?.('upload', mbps)
-  return mbps
 }
 
 // runSpeedtest 一键实测:延迟/抖动 → 8 并行下行 → 8 并行上行。
