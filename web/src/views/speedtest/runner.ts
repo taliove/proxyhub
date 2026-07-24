@@ -23,12 +23,15 @@ export interface SpeedtestOutcome {
   jitterMs: number
 }
 
-// 测速端点(Cloudflare,浏览器直连 CORS 可行)
-const LATENCY_URL = 'https://speed.cloudflare.com/__down?bytes=1000'
-const DOWNLOAD_BYTES_PER_CONN = 8_000_000 // 每连接 8MB(8 连接共 64MB)
-const DOWNLOAD_URL = (i: number) =>
-  `https://speed.cloudflare.com/__down?bytes=${DOWNLOAD_BYTES_PER_CONN}&i=${i}`
-const UPLOAD_URL = 'https://speed.cloudflare.com/__up'
+// 测速端点(ProxyHub 透传:浏览器 ← ProxyHub ← 节点 ← Cloudflare)。
+// 浏览器 fetch 透传端点,后端经选中节点(node_key)访问 Cloudflare 并流式转发。
+// 流量经浏览器(Network 可见大 Size),且经用户下拉选定节点(不依赖客户端代理选择)。
+const proxyDownloadURL = (nodeKey: string, i: number) =>
+  `/api/speedtest/proxy-download/stream?${nodeKey ? `node_key=${encodeURIComponent(nodeKey)}&` : ''}i=${i}`
+const proxyLatencyURL = (nodeKey: string, seq: number) =>
+  `/api/speedtest/proxy-latency?${nodeKey ? `node_key=${encodeURIComponent(nodeKey)}&` : ''}seq=${seq}`
+const proxyUploadURL = (nodeKey: string, i: number) =>
+  `/api/speedtest/proxy-upload/stream?${nodeKey ? `node_key=${encodeURIComponent(nodeKey)}&` : ''}i=${i}`
 
 // 默认参数
 const PARALLEL_CONNECTIONS = 8
@@ -38,15 +41,16 @@ const LATENCY_SAMPLES = 8
 const SAMPLE_INTERVAL_MS = 300 // 聚合采样间隔(对齐后端 detection.sampleReader)
 const UPLOAD_CHUNK_SIZE = 256 * 1024 // 上行单次入队块(不可压缩随机数据)
 
-// measureLatency 串行打 samples 次小请求,量 RTT 算空闲延迟/抖动。
+// measureLatency 串行打 samples 次透传小请求(经节点),量 RTT 算空闲延迟/抖动。
 async function measureLatency(
+  nodeKey: string,
   signal: AbortSignal,
   onLatency?: (lat: number, jit: number) => void
 ): Promise<{ idleLatencyMs: number; jitterMs: number }> {
   const rtts: number[] = []
   for (let i = 0; i < LATENCY_SAMPLES; i++) {
     const t0 = performance.now()
-    const res = await fetch(`${LATENCY_URL}&seq=${i}`, { cache: 'no-store', signal })
+    const res = await fetch(proxyLatencyURL(nodeKey, i), { cache: 'no-store', signal })
     await res.arrayBuffer()
     if (!res.ok) throw new Error(`latency probe ${i}: HTTP ${res.status}`)
     rtts.push(performance.now() - t0)
@@ -68,10 +72,11 @@ function computeLatencyMetrics(rtts: number[]): { idleLatencyMs: number; jitterM
   return { idleLatencyMs, jitterMs: jitterSum / (rtts.length - 1) }
 }
 
-// measureDownload 8 并行连接同时下载,ReadableStream 累计字节,
+// measureDownload 8 并行连接同时 fetch 透传下载端点(经节点),ReadableStream 累计字节,
 // 每 SAMPLE_INTERVAL_MS 聚合 8 连接总字节算瞬时速率回调 onSample。
 // 到 deadline 或全 EOF 结束;聚合 Mbps = 总字节*8/耗时/1e6。
 async function measureDownload(
+  nodeKey: string,
   signal: AbortSignal,
   onSample?: (phase: SpeedtestPhase, mbps: number) => void
 ): Promise<number> {
@@ -80,7 +85,6 @@ async function measureDownload(
   let totalBytes = 0
   let winStart = start
   let winBytes = 0
-  let doneCount = 0
 
   const sample = () => {
     const now = performance.now()
@@ -94,20 +98,16 @@ async function measureDownload(
   }
 
   const workers = Array.from({ length: PARALLEL_CONNECTIONS }, async (_, i) => {
-    const res = await fetch(DOWNLOAD_URL(i), { cache: 'no-store', signal })
+    const res = await fetch(proxyDownloadURL(nodeKey, i), { cache: 'no-store', signal })
     if (!res.ok || !res.body) throw new Error(`download conn ${i}: HTTP ${res.status}`)
     const reader = res.body.getReader()
-    try {
-      for (;;) {
-        if (performance.now() >= deadline) break
-        const { done, value } = await reader.read()
-        if (done) break
-        totalBytes += value.byteLength
-        winBytes += value.byteLength
-        sample()
-      }
-    } finally {
-      doneCount++
+    for (;;) {
+      if (performance.now() >= deadline) break
+      const { done, value } = await reader.read()
+      if (done) break
+      totalBytes += value.byteLength
+      winBytes += value.byteLength
+      sample()
     }
   })
 
@@ -130,10 +130,11 @@ function randomChunk(size: number): Uint8Array<ArrayBuffer> {
   return chunk
 }
 
-// measureUpload 8 并行连接同时 POST 随机数据流(duplex: 'half'),每连接累计字节,
-// 每 SAMPLE_INTERVAL_MS 聚合瞬时速率。到 deadline 停流(controller.close)。
-// 浏览器不支持 request streaming body(Firefox)时 fallback 单连接定量 Blob。
+// measureUpload 8 并行连接同时 POST 随机数据流到透传上传端点(经节点),
+// duplex: 'half' streaming body;每连接累计字节,每 SAMPLE_INTERVAL_MS 聚合瞬时速率。
+// 到 deadline 停流(controller.close)。浏览器不支持 streaming body(Firefox)时 fallback 单连接定量 Blob。
 async function measureUpload(
+  nodeKey: string,
   signal: AbortSignal,
   onSample?: (phase: SpeedtestPhase, mbps: number) => void
 ): Promise<number> {
@@ -145,8 +146,11 @@ async function measureUpload(
           c.close()
         }
       })
-      // 探测:Request 构造不因 duplex body 报错即支持
-      new Request(UPLOAD_URL, { method: 'POST', body: rs, duplex: 'half' } as RequestInit)
+      new Request(proxyUploadURL(nodeKey, 0), {
+        method: 'POST',
+        body: rs,
+        duplex: 'half'
+      } as RequestInit)
       return true
     } catch {
       return false
@@ -154,7 +158,7 @@ async function measureUpload(
   })()
 
   if (!supportsStreaming) {
-    return measureUploadFallback(signal, onSample)
+    return measureUploadFallback(nodeKey, signal, onSample)
   }
 
   const start = performance.now()
@@ -177,7 +181,6 @@ async function measureUpload(
   const chunk = randomChunk(UPLOAD_CHUNK_SIZE)
 
   const workers = Array.from({ length: PARALLEL_CONNECTIONS }, async (_, i) => {
-    let connSent = 0
     const body = new ReadableStream<Uint8Array>({
       pull(controller) {
         if (performance.now() >= deadline) {
@@ -185,7 +188,6 @@ async function measureUpload(
           return
         }
         controller.enqueue(chunk)
-        connSent += chunk.byteLength
         totalBytes += chunk.byteLength
         winBytes += chunk.byteLength
         sample()
@@ -199,7 +201,7 @@ async function measureUpload(
       signal,
       headers: { 'Content-Type': 'application/octet-stream' }
     } as RequestInit
-    const res = await fetch(`${UPLOAD_URL}?i=${i}`, init)
+    const res = await fetch(proxyUploadURL(nodeKey, i), init)
     if (!res.ok) throw new Error(`upload conn ${i}: HTTP ${res.status}`)
     // 服务端回 {bytes} 或空;以客户端发送字节为准(口径一致)
     await res.arrayBuffer().catch(() => {})
@@ -213,13 +215,19 @@ async function measureUpload(
 
 // measureUploadFallback 无 streaming body 支持:单连接 POST 定量 Blob 计时。
 async function measureUploadFallback(
+  nodeKey: string,
   signal: AbortSignal,
   onSample?: (phase: SpeedtestPhase, mbps: number) => void
 ): Promise<number> {
   const bytes = 8 * 1024 * 1024 // 8MB
   const blob = new Blob([randomChunk(bytes)])
   const start = performance.now()
-  const res = await fetch(UPLOAD_URL, { method: 'POST', body: blob, cache: 'no-store', signal })
+  const res = await fetch(proxyUploadURL(nodeKey, 0), {
+    method: 'POST',
+    body: blob,
+    cache: 'no-store',
+    signal
+  })
   if (!res.ok) throw new Error(`upload fallback: HTTP ${res.status}`)
   await res.arrayBuffer().catch(() => {})
   const mbps = (bytes * 8) / ((performance.now() - start) / 1000) / 1e6
@@ -228,31 +236,31 @@ async function measureUploadFallback(
 }
 
 // runSpeedtest 一键实测:延迟/抖动 → 8 并行下行 → 8 并行上行。
-// nodeKey 仅作标注(记录"我测的是哪个节点"落库),不影响流量路径
-// (流量经用户客户端代理的节点)。回调同现接口(onLatency/onPhase/onSample)。
+// 透传模式:浏览器 fetch ProxyHub 透传端点,后端经选定节点(nodeKey)访问 Cloudflare
+// 并流式转发。流量经浏览器(Network 可见大 Size),且经用户下拉选定节点。
+// 回调同现接口(onLatency/onPhase/onSample)。
 export async function runSpeedtest(
-  nodeKey: string, // 标注用(页面侧 saveSpeedtestResult 带),不落库于此
+  nodeKey: string, // 选定节点 key('' = 直连基线,后端直连 Cloudflare)
   callbacks: RunCallbacks = {},
   signal?: AbortSignal
 ): Promise<SpeedtestOutcome> {
-  void nodeKey // 显式标记未用(标注语义在页面侧落库)
   const controller = new AbortController()
   if (signal) {
     signal.addEventListener('abort', () => controller.abort(), { once: true })
   }
   const sig = controller.signal
 
-  // 1. 延迟/抖动
+  // 1. 延迟/抖动(经节点)
   callbacks.onPhase?.('latency')
-  const { idleLatencyMs, jitterMs } = await measureLatency(sig, callbacks.onLatency)
+  const { idleLatencyMs, jitterMs } = await measureLatency(nodeKey, sig, callbacks.onLatency)
 
-  // 2. 8 并行下行
+  // 2. 8 并行下行(经节点透传)
   callbacks.onPhase?.('download')
-  const downMbps = await measureDownload(sig, callbacks.onSample)
+  const downMbps = await measureDownload(nodeKey, sig, callbacks.onSample)
 
-  // 3. 8 并行上行
+  // 3. 8 并行上行(经节点透传)
   callbacks.onPhase?.('upload')
-  const upMbps = await measureUpload(sig, callbacks.onSample)
+  const upMbps = await measureUpload(nodeKey, sig, callbacks.onSample)
 
   return { downMbps, upMbps, idleLatencyMs, jitterMs }
 }

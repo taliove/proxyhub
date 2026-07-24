@@ -143,6 +143,24 @@ func (d *Detector) newProxyAdapter(node *subscription.Node) (*ProxyAdapter, erro
 	return buildProxyAdapter(node, dialer)
 }
 
+// ProxyHTTPClient 返回经节点的 HTTP client(含直连出口),供 server 透传/测速。
+// 复用 newProxyAdapter 注入直连出口 dialer(TUN 环境下节点连真实 IP 而非 fake-ip)。
+// node 为 nil 时返回标准 client(直连,不经节点,供基线对比)。timeout 为单次请求超时;
+// 流式透传(下载大文件)调用方应传 0 并用 ctx 控制,避免 Timeout 截断流。
+func (d *Detector) ProxyHTTPClient(node *subscription.Node, timeout time.Duration) (*http.Client, error) {
+	if node == nil {
+		return &http.Client{Timeout: timeout}, nil
+	}
+	adapter, err := d.newProxyAdapter(node)
+	if err != nil {
+		return nil, fmt.Errorf("create proxy adapter: %w", err)
+	}
+	return &http.Client{
+		Transport: &http.Transport{DialContext: adapter.DialContext},
+		Timeout:   timeout,
+	}, nil
+}
+
 // SetStabilityProbeFactory 覆盖稳定性探测器工厂(测试用:注入假探测器绕过真实网络)。
 func (d *Detector) SetStabilityProbeFactory(factory func(*subscription.Node) (StabilityProbe, error)) {
 	d.stabilityProbeFactory = factory

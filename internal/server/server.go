@@ -611,6 +611,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/speedtest/ping", s.requireAuth(s.handleSpeedtestPing))
 	mux.HandleFunc("GET /api/speedtest/download", s.requireAuth(s.handleSpeedtestDownload))
 	mux.HandleFunc("POST /api/speedtest/upload", s.requireAuth(s.handleSpeedtestUpload))
+	// 本机实测透传(经选定节点访问 Cloudflare,流式转发给浏览器):流量经浏览器可见大 Size,
+	// 且经用户下拉选定节点(不依赖客户端代理选择)。8 并行 fetch 聚合带宽。
+	mux.HandleFunc("GET /api/speedtest/proxy-download/stream", s.requireAuth(s.handleSpeedtestProxyDownload))
+	mux.HandleFunc("GET /api/speedtest/proxy-latency", s.requireAuth(s.handleSpeedtestProxyLatency))
+	mux.HandleFunc("POST /api/speedtest/proxy-upload/stream", s.requireAuth(s.handleSpeedtestProxyUpload))
 	mux.HandleFunc("POST /api/speedtest/results", s.requireAuth(s.handleSaveSpeedtestResult))
 	mux.HandleFunc("GET /api/speedtest/results", s.requireAuth(s.handleListSpeedtestResults))
 	mux.HandleFunc("DELETE /api/speedtest/results/{id}", s.requireAuth(s.handleDeleteSpeedtestResult))

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/taliove/proxyhub/internal/detection"
@@ -177,6 +178,11 @@ func (ds *DetectionService) TestBaselineDown(ctx context.Context, node *subscrip
 // TestSpeedtestStream 单节点快速测速流式档透传:基准端点 + 既有采样流。
 func (ds *DetectionService) TestSpeedtestStream(ctx context.Context, node *subscription.Node, onSample func(detection.Sample)) detection.TestResult {
 	return ds.detector.TestSpeedtestStream(ctx, node, onSample)
+}
+
+// ProxyHTTPClient 经节点 HTTP client 透传(本机实测透传下载用,见 handlers_speedtest)。
+func (ds *DetectionService) ProxyHTTPClient(node *subscription.Node, timeout time.Duration) (*http.Client, error) {
+	return ds.detector.ProxyHTTPClient(node, timeout)
 }
 
 // ExamStream 单节点深度体检流式版本:各段串行执行,实时推送事件。
