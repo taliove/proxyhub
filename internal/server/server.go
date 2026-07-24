@@ -611,9 +611,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/speedtest/ping", s.requireAuth(s.handleSpeedtestPing))
 	mux.HandleFunc("GET /api/speedtest/download", s.requireAuth(s.handleSpeedtestDownload))
 	mux.HandleFunc("POST /api/speedtest/upload", s.requireAuth(s.handleSpeedtestUpload))
-	// 后端代理测速 SSE 流式(issue 0047):浏览器 EventSource 订阅,推送 latency/sample/done/error 帧。
-	// 与上面的浏览器直连端点不同:本端点经节点测真实带宽 + 实时数字滚动。
-	mux.HandleFunc("GET /api/speedtest/proxy-test/stream", s.requireAuth(s.handleSpeedtestProxyTest))
 	mux.HandleFunc("POST /api/speedtest/results", s.requireAuth(s.handleSaveSpeedtestResult))
 	mux.HandleFunc("GET /api/speedtest/results", s.requireAuth(s.handleListSpeedtestResults))
 	mux.HandleFunc("DELETE /api/speedtest/results/{id}", s.requireAuth(s.handleDeleteSpeedtestResult))
