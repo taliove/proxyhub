@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -176,8 +177,8 @@ func TestTemplateLibraryUniqueConstraint(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for duplicate name, got nil")
 	}
-	if !strings.Contains(strings.ToLower(err.Error()), "unique") {
-		t.Errorf("expected UNIQUE error, got: %v", err)
+	if !errors.Is(err, ErrDuplicateName) {
+		t.Errorf("expected ErrDuplicateName, got: %v", err)
 	}
 
 	// Same name for different user is allowed

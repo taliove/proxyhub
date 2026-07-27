@@ -17,8 +17,14 @@ func TestRenderSubscriptionTemplateFallback(t *testing.T) {
 		{Name: "test-node", Type: "ss", Server: "x.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p"},
 	}
 
+	// Unbound endpoint (template_name=""): resolution falls to levels 2-4.
+	ep, err := st.CreateEndpointForUser(userID, "test-ep")
+	if err != nil {
+		t.Fatalf("create endpoint: %v", err)
+	}
+
 	// Level 4: Embedded default (no user template, no global override)
-	data, _, err := srv.renderSubscription(nodes, "clash", userID)
+	data, _, err := srv.renderSubscriptionForEndpoint(nodes, "clash", ep)
 	if err != nil {
 		t.Fatalf("render with embedded default: %v", err)
 	}
@@ -36,7 +42,7 @@ proxy-groups:
 	if err := st.SetClashTemplate(globalTemplate); err != nil {
 		t.Fatalf("set global template: %v", err)
 	}
-	data, _, err = srv.renderSubscription(nodes, "clash", userID)
+	data, _, err = srv.renderSubscriptionForEndpoint(nodes, "clash", ep)
 	if err != nil {
 		t.Fatalf("render with global default: %v", err)
 	}
@@ -57,7 +63,7 @@ proxy-groups:
 	if err := st.SetDefaultTemplate(userID, "my-default"); err != nil {
 		t.Fatalf("set default template: %v", err)
 	}
-	data, _, err = srv.renderSubscription(nodes, "clash", userID)
+	data, _, err = srv.renderSubscriptionForEndpoint(nodes, "clash", ep)
 	if err != nil {
 		t.Fatalf("render with user default: %v", err)
 	}
@@ -74,10 +80,6 @@ proxy-groups:
       - '{{nodes}}'`)
 	if err != nil {
 		t.Fatalf("create mobile template: %v", err)
-	}
-	ep, err := st.CreateEndpointForUser(userID, "test-ep")
-	if err != nil {
-		t.Fatalf("create endpoint: %v", err)
 	}
 	if err := st.UpdateEndpointTemplate(userID, ep.ID, "mobile"); err != nil {
 		t.Fatalf("bind template: %v", err)

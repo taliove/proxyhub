@@ -4,8 +4,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
+
+// ErrQuotaExceeded is returned when a per-user resource quota is exceeded.
+var ErrQuotaExceeded = errors.New("quota exceeded")
+
+// ErrDuplicateName is returned when a template name already exists in the user's library.
+var ErrDuplicateName = errors.New("duplicate name")
 
 // Template represents a user's configuration template in the library.
 type Template struct {
@@ -109,7 +116,8 @@ func (s *Store) ListTemplatesForUser(userID int64) ([]*Template, error) {
 
 // CreateTemplate creates a new template in the user's library.
 // If the library is empty, the new template becomes default automatically.
-// Enforces max_templates quota if set.
+// Enforces max_templates quota if set (ErrQuotaExceeded when full,
+// ErrDuplicateName when (user_id, name) already exists).
 func (s *Store) CreateTemplate(userID int64, name, content string) (*Template, error) {
 	if name == "" {
 		return nil, fmt.Errorf("%w: template name is required", ErrInvalidInput)
@@ -136,7 +144,7 @@ func (s *Store) CreateTemplate(userID int64, name, content string) (*Template, e
 		return nil, fmt.Errorf("count templates: %w", err)
 	}
 	if count >= maxTemplates {
-		return nil, fmt.Errorf("%w: template quota exceeded (max %d)", ErrInvalidInput, maxTemplates)
+		return nil, fmt.Errorf("%w: template quota exceeded (max %d)", ErrQuotaExceeded, maxTemplates)
 	}
 
 	// Check if library is empty (auto-default for first template)
@@ -147,6 +155,9 @@ func (s *Store) CreateTemplate(userID int64, name, content string) (*Template, e
 		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
 	`, userID, name, content, boolToInt(isFirst))
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return nil, fmt.Errorf("template %q: %w", name, ErrDuplicateName)
+		}
 		return nil, fmt.Errorf("insert template: %w", err)
 	}
 

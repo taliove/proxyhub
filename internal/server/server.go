@@ -1784,26 +1784,6 @@ func filterStaleNodes(nodes []*subscription.Node) []*subscription.Node {
 // renderSubscription 按格式生成订阅内容，返回内容与对应的 Content-Type。
 // /sub 与后台预览共用这条链，确保预览所见即所得（见 ADR 0005）。
 //
-// Clash 格式基于用户可编辑的配置模板渲染（含 hosts/dns/proxy-groups/rules，
-// 节点通过 {{nodes}} 占位符动态注入）；V2Ray 格式仍是简单的 base64 链接列表，不走模板。
-// userID 为属主(多租户):Clash 模板按属主回退链读取(用户覆盖 ?? 全局默认 ?? 内嵌默认)。
-//
-// Deprecated: Use renderSubscriptionForEndpoint for endpoint-aware rendering with template_name support.
-func (s *Server) renderSubscription(nodes []*subscription.Node, format string, userID int64) (data []byte, contentType string, err error) {
-	switch format {
-	case "v2ray":
-		data, err = generator.GenerateV2Ray(nodes)
-		return data, "text/plain; charset=utf-8", err
-	default:
-		tmpl, tErr := s.st.GetClashTemplateForUser(userID)
-		if tErr != nil {
-			return nil, "", fmt.Errorf("load clash template: %w", tErr)
-		}
-		data, err = generator.RenderTemplate(tmpl, nodes)
-		return data, "text/yaml; charset=utf-8", err
-	}
-}
-
 // renderSubscriptionForEndpoint generates subscription content with endpoint-aware template resolution.
 // Four-level fallback chain for Clash templates (ticket endpoint-template-02):
 // 1. endpoint.template_name (if set and exists in user's library)
@@ -1832,34 +1812,17 @@ func (s *Server) renderSubscriptionForEndpoint(nodes []*subscription.Node, forma
 // resolveTemplateForEndpoint implements the 4-level fallback chain for template resolution.
 // Returns template content (never empty), never errors (falls back to embedded default).
 func (s *Server) resolveTemplateForEndpoint(ep *store.Endpoint) (string, error) {
-	userID := ep.UserID
-
-	// Level 1: endpoint.template_name (if set)
+	// Level 1: endpoint.template_name (soft reference; miss or empty falls through)
 	if ep.TemplateName != "" {
-		tmpl, err := s.st.GetTemplateByName(userID, ep.TemplateName)
+		tmpl, err := s.st.GetTemplateByName(ep.UserID, ep.TemplateName)
 		if err == nil && tmpl.Content != "" {
 			return tmpl.Content, nil
 		}
-		// Miss or empty: fall through (soft reference)
 	}
 
-	// Level 2: user default template
-	if userID > 0 {
-		def, err := s.st.GetDefaultTemplate(userID)
-		if err == nil && def != nil && def.Content != "" {
-			return def.Content, nil
-		}
-		// Miss or empty: fall through
-	}
-
-	// Level 3: global default (system_settings.clash_template)
-	globalTmpl, err := s.st.GetClashTemplate()
-	if err == nil && globalTmpl != "" {
-		return globalTmpl, nil
-	}
-
-	// Level 4: embedded default (always succeeds)
-	return generator.DefaultTemplate(), nil
+	// Levels 2-4: user default ?? global default ?? embedded default
+	// (same chain as the tenant-level template setting).
+	return s.st.GetClashTemplateForUser(ep.UserID)
 }
 
 // handleEndpointPreview 后台预览：对指定订阅地址在“当前那一刻”生成订阅内容与节点清单，

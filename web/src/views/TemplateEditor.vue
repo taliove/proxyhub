@@ -82,6 +82,7 @@ import {
   setDefaultTemplate,
   type Template
 } from '@/api/templates'
+import { extractErrorDetail } from '@/utils/errors'
 
 const layout = useLayoutStore()
 const { isDark } = storeToRefs(layout)
@@ -112,7 +113,7 @@ async function loadTemplates() {
       await selectTemplate(defaultTmpl)
     }
   } catch (e) {
-    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    const detail = extractErrorDetail(e)
     errorMsg.value = detail || '加载模板列表失败'
   } finally {
     loading.value = false
@@ -147,7 +148,7 @@ async function selectTemplate(tmpl: Template) {
     originalContent.value = fullTmpl.content || ''
     editor.value?.setValue(originalContent.value)
   } catch (e) {
-    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    const detail = extractErrorDetail(e)
     errorMsg.value = detail || '加载模板内容失败'
   } finally {
     loading.value = false
@@ -174,7 +175,7 @@ async function handleCreate() {
       await selectTemplate(newTmpl)
     }
   } catch (e) {
-    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    const detail = extractErrorDetail(e)
     if (detail?.includes('quota exceeded')) {
       ElMessage.error('模板数量已达配额上限，请删除不需要的模板后重试')
     } else if (detail?.includes('already exists')) {
@@ -203,7 +204,7 @@ async function handleSave() {
     originalContent.value = content
     ElMessage.success('模板已保存，订阅立即生效')
   } catch (e) {
-    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    const detail = extractErrorDetail(e)
     errorMsg.value = detail || '保存失败'
   } finally {
     saving.value = false
@@ -213,9 +214,14 @@ async function handleSave() {
 async function handleDelete() {
   if (!selectedTemplate.value) return
 
+  // 列表项自带引用数,删除确认前置展示"N 个订阅地址将改用默认模板"
+  const refCount =
+    templates.value.find((t) => t.name === selectedTemplate.value?.name)?.ref_count ?? 0
+  const refWarning = refCount > 0 ? `,${refCount} 个订阅地址将改用默认模板` : ''
+
   try {
     await ElMessageBox.confirm(
-      `确定删除模板「${selectedTemplate.value.name}」吗？此操作无法撤销。`,
+      `确定删除模板「${selectedTemplate.value.name}」吗${refWarning}?此操作无法撤销。`,
       '删除模板',
       {
         type: 'warning',
@@ -243,7 +249,7 @@ async function handleDelete() {
     editor.value?.setValue('')
     await loadTemplates()
   } catch (e) {
-    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    const detail = extractErrorDetail(e)
     errorMsg.value = detail || '删除失败'
   } finally {
     saving.value = false
@@ -264,7 +270,7 @@ async function handleSetDefault() {
       selectedTemplate.value = { ...selectedTemplate.value, is_default: true }
     }
   } catch (e) {
-    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    const detail = extractErrorDetail(e)
     errorMsg.value = detail || '设置默认失败'
   } finally {
     saving.value = false

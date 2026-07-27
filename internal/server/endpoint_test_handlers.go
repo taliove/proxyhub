@@ -74,21 +74,21 @@ func (s *Server) handleEndpointTest(w http.ResponseWriter, r *http.Request) {
 	nodes := s.endpointDeliverableNodes(ep)
 	writeJSON(w, endpointTestResponse{
 		Pull: map[string]formatCheckResult{
-			"clash": s.validateFormat(nodes, "clash", ep.UserID),
-			"v2ray": s.validateFormat(nodes, "v2ray", ep.UserID),
+			"clash": s.validateFormat(nodes, "clash", ep),
+			"v2ray": s.validateFormat(nodes, "v2ray", ep),
 		},
 		Snapshot: snapshotDeliverable(nodes),
 	})
 }
 
 // validateFormat 生成单格式订阅内容并校验合法性。空集合不生成(生成器对空集报错),
-// 直接判 invalid 并给出原因。userID 为端点属主(多租户:模板按属主回退链)。
-func (s *Server) validateFormat(nodes []*subscription.Node, format string, userID int64) formatCheckResult {
+// 直接判 invalid 并给出原因。按端点解析模板(四级回退,含端点绑定),与真实 /sub 同口径。
+func (s *Server) validateFormat(nodes []*subscription.Node, format string, ep *store.Endpoint) formatCheckResult {
 	if len(nodes) == 0 {
 		return formatCheckResult{Valid: false, Error: "no deliverable nodes"}
 	}
 	start := time.Now()
-	data, _, err := s.renderSubscription(nodes, format, userID)
+	data, _, err := s.renderSubscriptionForEndpoint(nodes, format, ep)
 	result := formatCheckResult{DurationMs: time.Since(start).Milliseconds()}
 	if err != nil {
 		result.Error = err.Error()

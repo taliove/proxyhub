@@ -2,8 +2,10 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
+	"github.com/taliove/proxyhub/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -40,7 +42,11 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]templateWithRefs, 0, len(templates))
 	for _, t := range templates {
-		count, _ := s.st.CountEndpointsUsingTemplate(userID, t.Name)
+		count, err := s.st.CountEndpointsUsingTemplate(userID, t.Name)
+		if err != nil {
+			// Degrade to zero rather than failing the whole list; log for diagnosis.
+			s.logger.Warn("count template references failed", "template", t.Name, "error", err)
+		}
 		result = append(result, templateWithRefs{
 			ID:        t.ID,
 			Name:      t.Name,
@@ -96,18 +102,21 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 	tmpl, err := s.st.CreateTemplate(userID, req.Name, req.Content)
 	if err != nil {
 		s.logger.Error("create template failed", "error", err, "user_id", userID)
-		// Check if quota exceeded
-		if err.Error() == "invalid input: template quota exceeded" ||
-		   err.Error() == "template quota exceeded" {
+		if errors.Is(err, store.ErrQuotaExceeded) {
 			writeJSONStatus(w, http.StatusForbidden, map[string]string{
 				"error": "template quota exceeded",
 			})
 			return
 		}
-		// Check if duplicate name
-		if err.Error() == "UNIQUE constraint failed: template.user_id, template.name" {
+		if errors.Is(err, store.ErrDuplicateName) {
 			writeJSONStatus(w, http.StatusConflict, map[string]string{
 				"error": "template name already exists",
+			})
+			return
+		}
+		if errors.Is(err, store.ErrInvalidInput) {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]string{
+				"error": err.Error(),
 			})
 			return
 		}
@@ -144,7 +153,7 @@ func (s *Server) handleGetTemplateByName(w http.ResponseWriter, r *http.Request)
 
 	tmpl, err := s.st.GetTemplateByName(userID, name)
 	if err != nil {
-		if err.Error() == "not found" {
+		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "template not found", http.StatusNotFound)
 			return
 		}
@@ -204,7 +213,7 @@ func (s *Server) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.st.UpdateTemplate(userID, name, req.Content); err != nil {
-		if err.Error() == "not found" {
+		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "template not found", http.StatusNotFound)
 			return
 		}
@@ -236,10 +245,14 @@ func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get reference count before deletion (for response)
-	refCount, _ := s.st.CountEndpointsUsingTemplate(userID, name)
+	refCount, err := s.st.CountEndpointsUsingTemplate(userID, name)
+	if err != nil {
+		// Degrade to zero rather than blocking deletion; log for diagnosis.
+		s.logger.Warn("count template references failed", "template", name, "error", err)
+	}
 
 	if err := s.st.DeleteTemplate(userID, name); err != nil {
-		if err.Error() == "not found" {
+		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "template not found", http.StatusNotFound)
 			return
 		}
@@ -274,7 +287,7 @@ func (s *Server) handleSetDefaultTemplate(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := s.st.SetDefaultTemplate(userID, name); err != nil {
-		if err.Error() == "not found" {
+		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "template not found", http.StatusNotFound)
 			return
 		}

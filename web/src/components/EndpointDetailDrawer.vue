@@ -148,15 +148,14 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Endpoint } from '@/types'
-import type { Template } from '@/api/templates'
 import client from '@/api/client'
-import { listTemplates } from '@/api/templates'
 import { updateEndpointTemplate } from '@/api/endpoints'
 import StatusDot from '@/components/StatusDot.vue'
 import IPStatsTable from '@/components/IPStatsTable.vue'
 import EndpointTestSection from '@/components/EndpointTestSection.vue'
 import { hasConditions } from '@/utils/conditions'
 import { nameModeLabel, nameModeTag } from '@/utils/namemode'
+import { useTemplateList } from '@/composables/useTemplateList'
 import { regionDisplay } from '@/views/nodes/nodecells'
 
 // 预览节点(与后端 toNodeViews 输出对齐,只取本段所需字段)
@@ -191,7 +190,6 @@ const drawerTitle = computed(() =>
 )
 
 // ---- 模板配置:显示当前模板,提供改绑入口 ----
-const templates = ref<Template[]>([])
 const templateDisplay = computed(() => {
   if (!props.endpoint) return ''
   return props.endpoint.template_name || '默认模板'
@@ -199,15 +197,7 @@ const templateDisplay = computed(() => {
 
 const templateConfigVisible = ref(false)
 const templateConfigForm = ref({ template_name: '' })
-
-const loadTemplates = async () => {
-  try {
-    const resp = await listTemplates()
-    templates.value = resp.templates || []
-  } catch {
-    templates.value = []
-  }
-}
+const { templates, loadTemplates } = useTemplateList()
 
 const openTemplateConfig = async () => {
   if (!props.endpoint) return

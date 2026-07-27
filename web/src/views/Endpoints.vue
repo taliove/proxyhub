@@ -147,21 +147,20 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Endpoint } from '@/types'
-import type { Template } from '@/api/templates'
 import client from '@/api/client'
-import { listTemplates } from '@/api/templates'
 import PageHeader from '@/components/PageHeader.vue'
 import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
 import EndpointDetailDrawer from '@/components/EndpointDetailDrawer.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { hasConditions } from '@/utils/conditions'
 import { nameModeLabel, nameModeTag } from '@/utils/namemode'
+import { useTemplateList } from '@/composables/useTemplateList'
 
 const endpoints = ref<Endpoint[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
 const form = ref({ alias: '', template_name: '' })
-const templates = ref<Template[]>([])
+const { templates, loadTemplates } = useTemplateList()
 
 // 详情抽屉状态:行内「详情」打开;抽屉内动作复用本页既有处理函数(事件上抛)。
 const detailVisible = ref(false)
@@ -201,15 +200,6 @@ const createEndpoint = async () => {
   dialogVisible.value = false
   form.value = { alias: '', template_name: '' }
   loadEndpoints()
-}
-
-const loadTemplates = async () => {
-  try {
-    const resp = await listTemplates()
-    templates.value = resp.templates || []
-  } catch {
-    templates.value = []
-  }
 }
 
 const toggleEndpoint = async (row: Endpoint) => {
