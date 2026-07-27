@@ -382,6 +382,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	if err := s.addColumnIfMissing("endpoints", "template_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// 模板版本表(ticket template-editor-upgrade-01):template_versions 表
+	// 用于自动保存版本历史,保留最近 20 个版本。
+	if err := s.migrateTemplateVersions(); err != nil {
+		return err
+	}
 	if err := s.addColumnIfMissing("user_quotas", "max_templates", "INTEGER NOT NULL DEFAULT 10"); err != nil {
 		return err
 	}

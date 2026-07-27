@@ -25,6 +25,46 @@ type Template struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// TemplateVersion represents a historical version of a template.
+type TemplateVersion struct {
+	ID         int64     `json:"id"`
+	TemplateID int64     `json:"template_id"`
+	Version    int       `json:"version"`
+	Content    string    `json:"content"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// migrateTemplateVersions creates the template_versions table if it doesn't exist.
+// Called by migrate() after template table is ready. Idempotent.
+func (s *Store) migrateTemplateVersions() error {
+	// Guard: check if template_versions table exists
+	if _, err := s.db.Exec(`SELECT version FROM template_versions LIMIT 0`); err == nil {
+		return nil
+	}
+
+	// Create table in single transaction (idempotent via IF NOT EXISTS)
+	_, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS template_versions (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			template_id INTEGER NOT NULL,
+			version     INTEGER NOT NULL,
+			content     TEXT NOT NULL,
+			created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(template_id, version)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("create template_versions: %w", err)
+	}
+
+	// Create index for efficient lookups
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_template_versions_template_id ON template_versions(template_id)`); err != nil {
+		return fmt.Errorf("create template_versions index: %w", err)
+	}
+
+	return nil
+}
+
 // migrateTemplateLibrary applies the template library schema upgrade (ticket 01).
 // Migrates existing template table to template_library with is_default column and
 // UNIQUE(user_id, name) constraint. Marks existing name='clash' rows as default.
@@ -118,6 +158,7 @@ func (s *Store) ListTemplatesForUser(userID int64) ([]*Template, error) {
 // If the library is empty, the new template becomes default automatically.
 // Enforces max_templates quota if set (ErrQuotaExceeded when full,
 // ErrDuplicateName when (user_id, name) already exists).
+// Appends version 1 and trims to 20 most recent versions in the same transaction.
 func (s *Store) CreateTemplate(userID int64, name, content string) (*Template, error) {
 	if name == "" {
 		return nil, fmt.Errorf("%w: template name is required", ErrInvalidInput)
@@ -150,7 +191,14 @@ func (s *Store) CreateTemplate(userID int64, name, content string) (*Template, e
 	// Check if library is empty (auto-default for first template)
 	isFirst := count == 0
 
-	res, err := s.db.Exec(`
+	// Begin transaction for atomic template creation + version append
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`
 		INSERT INTO template (user_id, name, content, is_default, updated_at)
 		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
 	`, userID, name, content, boolToInt(isFirst))
@@ -161,12 +209,21 @@ func (s *Store) CreateTemplate(userID int64, name, content string) (*Template, e
 		return nil, fmt.Errorf("insert template: %w", err)
 	}
 
-	id, err := res.LastInsertId()
+	templateID, err := res.LastInsertId()
 	if err != nil {
 		return nil, fmt.Errorf("get template id: %w", err)
 	}
 
-	return s.getTemplateByID(id)
+	// Append version 1
+	if err := s.appendVersionTx(tx, templateID, content); err != nil {
+		return nil, fmt.Errorf("append version: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit transaction: %w", err)
+	}
+
+	return s.getTemplateByID(templateID)
 }
 
 // GetTemplateByName returns a template by name for the user.
@@ -208,12 +265,31 @@ func (s *Store) getTemplateByID(id int64) (*Template, error) {
 }
 
 // UpdateTemplate updates the content of an existing template.
+// Appends a new version and trims to 20 most recent versions in the same transaction.
 func (s *Store) UpdateTemplate(userID int64, name, content string) error {
 	if content == "" {
 		return fmt.Errorf("%w: template content is required", ErrInvalidInput)
 	}
 
-	res, err := s.db.Exec(`
+	// Begin transaction for atomic update + version append
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Get template ID
+	var templateID int64
+	err = tx.QueryRow(`SELECT id FROM template WHERE user_id = ? AND name = ?`, userID, name).Scan(&templateID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("get template id: %w", err)
+	}
+
+	// Update template content
+	res, err := tx.Exec(`
 		UPDATE template
 		SET content = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE user_id = ? AND name = ?
@@ -221,17 +297,54 @@ func (s *Store) UpdateTemplate(userID int64, name, content string) error {
 	if err != nil {
 		return fmt.Errorf("update template: %w", err)
 	}
-	return checkAffected(res)
+	if err := checkAffected(res); err != nil {
+		return err
+	}
+
+	// Append version
+	if err := s.appendVersionTx(tx, templateID, content); err != nil {
+		return fmt.Errorf("append version: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 // DeleteTemplate deletes a template from the user's library.
 // Soft reference: allows deletion even if endpoints reference it.
+// Cascades deletion to all template versions in the same transaction.
 func (s *Store) DeleteTemplate(userID int64, name string) error {
-	res, err := s.db.Exec(`DELETE FROM template WHERE user_id = ? AND name = ?`, userID, name)
+	// Begin transaction for atomic template + versions deletion
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Get template ID
+	var templateID int64
+	err = tx.QueryRow(`SELECT id FROM template WHERE user_id = ? AND name = ?`, userID, name).Scan(&templateID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("get template id: %w", err)
+	}
+
+	// Delete all versions for this template
+	if _, err := tx.Exec(`DELETE FROM template_versions WHERE template_id = ?`, templateID); err != nil {
+		return fmt.Errorf("delete versions: %w", err)
+	}
+
+	// Delete template
+	res, err := tx.Exec(`DELETE FROM template WHERE user_id = ? AND name = ?`, userID, name)
 	if err != nil {
 		return fmt.Errorf("delete template: %w", err)
 	}
-	return checkAffected(res)
+	if err := checkAffected(res); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // SetDefaultTemplate marks a template as the user's default (clears other defaults).
@@ -312,3 +425,112 @@ func (s *Store) CountEndpointsUsingTemplate(userID int64, templateName string) (
 	}
 	return count, nil
 }
+
+// appendVersionTx appends a new version for a template and trims to 20 most recent.
+// Must be called within a transaction. Version number is auto-incremented.
+func (s *Store) appendVersionTx(tx *sql.Tx, templateID int64, content string) error {
+	// Get next version number
+	var maxVersion sql.NullInt64
+	err := tx.QueryRow(`SELECT MAX(version) FROM template_versions WHERE template_id = ?`, templateID).Scan(&maxVersion)
+	if err != nil {
+		return fmt.Errorf("get max version: %w", err)
+	}
+
+	nextVersion := 1
+	if maxVersion.Valid {
+		nextVersion = int(maxVersion.Int64) + 1
+	}
+
+	// Insert new version
+	_, err = tx.Exec(`
+		INSERT INTO template_versions (template_id, version, content)
+		VALUES (?, ?, ?)
+	`, templateID, nextVersion, content)
+	if err != nil {
+		return fmt.Errorf("insert version: %w", err)
+	}
+
+	// Trim to 20 most recent versions
+	_, err = tx.Exec(`
+		DELETE FROM template_versions
+		WHERE template_id = ?
+		AND version < (
+			SELECT version FROM template_versions
+			WHERE template_id = ?
+			ORDER BY version DESC
+			LIMIT 1 OFFSET 19
+		)
+	`, templateID, templateID)
+	if err != nil {
+		return fmt.Errorf("trim versions: %w", err)
+	}
+
+	return nil
+}
+
+// ListVersions returns version metadata (version number and created_at) for a template,
+// ordered by version descending (newest first). Returns ErrNotFound if template
+// doesn't exist or user doesn't own it.
+func (s *Store) ListVersions(userID int64, name string) ([]TemplateVersion, error) {
+	// Get template ID and verify ownership
+	var templateID int64
+	err := s.db.QueryRow(`SELECT id FROM template WHERE user_id = ? AND name = ?`, userID, name).Scan(&templateID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get template: %w", err)
+	}
+
+	rows, err := s.db.Query(`
+		SELECT id, template_id, version, created_at
+		FROM template_versions
+		WHERE template_id = ?
+		ORDER BY version DESC
+	`, templateID)
+	if err != nil {
+		return nil, fmt.Errorf("query versions: %w", err)
+	}
+	defer rows.Close()
+
+	var versions []TemplateVersion
+	for rows.Next() {
+		var v TemplateVersion
+		if err := rows.Scan(&v.ID, &v.TemplateID, &v.Version, &v.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan version: %w", err)
+		}
+		versions = append(versions, v)
+	}
+	return versions, rows.Err()
+}
+
+// GetVersionContent returns the full content of a specific version.
+// Returns ErrNotFound if template doesn't exist, user doesn't own it, or version doesn't exist.
+func (s *Store) GetVersionContent(userID int64, name string, version int) (*TemplateVersion, error) {
+	// Get template ID and verify ownership
+	var templateID int64
+	err := s.db.QueryRow(`SELECT id FROM template WHERE user_id = ? AND name = ?`, userID, name).Scan(&templateID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get template: %w", err)
+	}
+
+	// Get version content
+	var v TemplateVersion
+	err = s.db.QueryRow(`
+		SELECT id, template_id, version, content, created_at
+		FROM template_versions
+		WHERE template_id = ? AND version = ?
+	`, templateID, version).Scan(&v.ID, &v.TemplateID, &v.Version, &v.Content, &v.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get version: %w", err)
+	}
+
+	return &v, nil
+}
+

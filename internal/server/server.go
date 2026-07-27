@@ -666,6 +666,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/templates/{name}", guard(s.handleUpdateTemplate))
 	mux.HandleFunc("DELETE /api/templates/{name}", guard(s.handleDeleteTemplate))
 	mux.HandleFunc("PUT /api/templates/{name}/default", guard(s.handleSetDefaultTemplate))
+	// 模板版本历史(ticket template-editor-upgrade-01):每次落库自动追加版本,保留最近 20 个
+	mux.HandleFunc("GET /api/templates/{name}/versions", guard(s.handleListVersions))
+	mux.HandleFunc("GET /api/templates/{name}/versions/{version}", guard(s.handleGetVersionContent))
 
 	// 仪表盘统计 + 优质节点聚合
 	mux.HandleFunc("GET /api/dashboard/stats", guard(s.handleDashboardStats))
