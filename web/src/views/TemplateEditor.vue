@@ -73,6 +73,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import TemplateList from '@/components/TemplateList.vue'
 import { useLayoutStore } from '@/stores/layout'
+import client from '@/api/client'
 import {
   listTemplates,
   getTemplate,
@@ -164,8 +165,19 @@ async function handleCreate() {
 
   creating.value = true
   try {
-    const defaultContent = `# ${name}\nproxies:\n  - {{nodes}}\n`
-    await createTemplate({ name, content: defaultContent })
+    // 新模板以当前生效模板为底稿:库默认成员 ?? 回退链生效值(全局默认 ?? 内嵌)。
+    // 注意占位符必须是带引号的列表项(- '{{nodes}}'),裸 {{nodes}} 不是合法 YAML。
+    let scaffold = ''
+    const defaultMember = templates.value.find((t) => t.is_default) ?? templates.value[0]
+    if (defaultMember) {
+      scaffold = (await getTemplate(defaultMember.name)).content ?? ''
+    } else {
+      const resp = await client.get<unknown, { template: string }>('/settings/template', {
+        skipErrorToast: true
+      })
+      scaffold = resp.template
+    }
+    await createTemplate({ name, content: scaffold })
     ElMessage.success('模板创建成功')
     dialogVisible.value = false
     createForm.value.name = ''
