@@ -71,3 +71,10 @@ type cancelEventer interface {
 type starter interface {
 	OnStart(key string)
 }
+
+// ownerStarter 可选接口:与 starter 同语义,但附带任务属主 userID(多租户)。
+// 旁路数据按 (userID, key) 索引的 kind(如每用户体检任务)必须实现它——
+// 单 key 的 starter 无法区分不同属主的同 key 任务。两个接口都实现时只调本接口。
+type ownerStarter interface {
+	OnStartFor(userID int64, key string)
+}

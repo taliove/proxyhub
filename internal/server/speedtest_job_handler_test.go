@@ -27,7 +27,7 @@ func speedtestNode() *subscription.Node {
 }
 
 // injectFakeSpeedtestJobs 注入假 runner 的批量快速测速管理器(不触真实网络),
-// onComplete 用真实的 srv.onSpeedtestComplete(同时覆盖写回逻辑)。
+// onComplete 用真实的 srv.onSpeedtestComplete(0, 同时覆盖写回逻辑)。
 func injectFakeSpeedtestJobs(srv *Server, jobStore *jobs.Store, downMbps float64) {
 	srv.speedtestJobs = detection.NewBatchSpeedtestJobManager(
 		func(ctx context.Context, n *subscription.Node) detection.TestResult {
@@ -260,7 +260,7 @@ func TestOnSpeedtestComplete_DualThresholdCaliber(t *testing.T) {
 			node.BandwidthUpMbps = tc.poolUp
 			srv, st := newTestServer(t, []*subscription.Node{node})
 
-			srv.onSpeedtestComplete(node, tc.result)
+			srv.onSpeedtestComplete(0, node, tc.result)
 
 			views, err := st.GetLatestDetectionResults([]string{node.NodeKey()})
 			if err != nil {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -77,6 +78,45 @@ func TestHandleNodeShareURI(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestHandleNodeShareURI_ScopedToUserPool 验证 share-uri 按请求者用户空间隔离:
+// 普通用户读不到其他用户池内节点的分享链接(含凭证,跨租户泄露红线),
+// 命中自己池则正常返回;节点属他人时一律 404,不暴露存在性。
+func TestHandleNodeShareURI_ScopedToUserPool(t *testing.T) {
+	adminNode := &subscription.Node{
+		Name:    "Admin Node",
+		Type:    "vless",
+		Server:  "example.com",
+		Port:    443,
+		UUID:    "00000000-0000-0000-0000-000000000000",
+		Source:  "test-source",
+		RawLink: "vless://00000000-0000-0000-0000-000000000000@example.com:443?type=tcp#admin",
+		UserID:  1, // 属 admin(user 1)的池分片
+	}
+	s, _ := newTestServer(t, []*subscription.Node{adminNode})
+
+	call := func(scope UserScope) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/nodes/"+adminNode.NodeKey()+"/share-uri", nil)
+		req.SetPathValue("nodeKey", adminNode.NodeKey())
+		req = req.WithContext(ContextWithUserScope(req.Context(), scope))
+		rec := httptest.NewRecorder()
+		s.handleNodeShareURI(rec, req)
+		return rec
+	}
+
+	// 普通用户(user 2)请求 admin 池里的节点:404,不泄露
+	if rec := call(UserScope{UserID: 2, Role: store.RoleUser}); rec.Code != http.StatusNotFound {
+		t.Errorf("cross-user status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	// 属主本人:200 且回放到 RawLink
+	rec := call(UserScope{UserID: 1, Role: store.RoleSuperAdmin})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Body.String(), "vless://") {
+		t.Errorf("owner response missing share uri: %s", rec.Body.String())
 	}
 }
 

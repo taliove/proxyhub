@@ -26,6 +26,8 @@ type fakeNodes struct {
 	refreshErr  error // StartRefreshJob 返回的错误（模拟刷新冲突等场景）
 	purgeErr    error // PurgeAirportNodes 返回的错误（模拟清空与刷新冲突等场景）
 	lastTrigger string
+	// lastRefreshUserID 记录 StartRefreshJobForUser 收到的属主(多租户断言用)
+	lastRefreshUserID int64
 	// testExclusiveErr StartAirportTestExclusive 返回的错误(模拟跨 kind 互斥 409)
 	testExclusiveErr error
 	// testConflictChecker 记录装配期注入的测试侧冲突查询(验证跨 kind 装配)
@@ -64,6 +66,7 @@ func (f *fakeNodes) CancelRefresh(string) bool { return true }
 
 // ticket 07 multi-tenant stubs.
 func (f *fakeNodes) StartRefreshJobForUser(userID int64, trigger string) (int64, string, bool, error) {
+	f.lastRefreshUserID = userID
 	return f.StartRefreshJob(trigger)
 }
 func (f *fakeNodes) StartAirportRefreshJobForUser(userID int64, trigger string, airportID int64) (int64, string, bool, error) {

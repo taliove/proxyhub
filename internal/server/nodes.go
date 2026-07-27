@@ -171,14 +171,18 @@ func (s *Server) handleToggleSelfNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"success": true})
 }
 
-// handleBlockNode 屏蔽机场节点（按 NodeKey）
+// handleBlockNode 屏蔽机场节点（按 NodeKey）。写请求者本人名单(多租户)。
 func (s *Server) handleBlockNode(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	key, err := decodeNodeKey(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.st.BlockNode(key); err != nil {
+	if err := s.st.BlockNodeForUser(EffectiveUserID(scope), key); err != nil {
 		s.logger.Error("block node failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -186,14 +190,18 @@ func (s *Server) handleBlockNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"success": true})
 }
 
-// handleUnblockNode 取消屏蔽机场节点
+// handleUnblockNode 取消屏蔽机场节点(只动请求者本人名单)。
 func (s *Server) handleUnblockNode(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	key, err := decodeNodeKey(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.st.UnblockNode(key); err != nil {
+	if err := s.st.UnblockNodeForUser(EffectiveUserID(scope), key); err != nil {
 		s.logger.Error("unblock node failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -209,9 +217,10 @@ type batchBlockRequest struct {
 }
 
 // resolveBatchKeys extracts target NodeKey list from request.
-// Prefers explicit node_keys; otherwise collects all NodeKeys from the current pool
-// for the given airport source (self-hosted nodes are exempt).
-func (s *Server) resolveBatchKeys(req batchBlockRequest) []string {
+// Prefers explicit node_keys; otherwise collects all NodeKeys from the caller's
+// own pool shard (multi-tenant) for the given airport source
+// (self-hosted nodes are exempt).
+func (s *Server) resolveBatchKeys(req batchBlockRequest, userID int64) []string {
 	if len(req.NodeKeys) > 0 {
 		return req.NodeKeys
 	}
@@ -221,7 +230,7 @@ func (s *Server) resolveBatchKeys(req batchBlockRequest) []string {
 	}
 	seen := make(map[string]bool)
 	var keys []string
-	for _, n := range s.nodes.Nodes() {
+	for _, n := range s.nodes.NodesForUser(userID) {
 		if n.Source != source || n.Source == subscription.SourceSelfHosted {
 			continue
 		}
@@ -235,18 +244,24 @@ func (s *Server) resolveBatchKeys(req batchBlockRequest) []string {
 }
 
 // handleBatchBlockNodes 批量屏蔽：按机场（source）或显式 node_keys 一次性拉黑，跨刷新持久。
+// 写请求者本人名单(多租户)。
 func (s *Server) handleBatchBlockNodes(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	var req batchBlockRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	keys := s.resolveBatchKeys(req)
+	effUID := EffectiveUserID(scope)
+	keys := s.resolveBatchKeys(req, effUID)
 	if len(keys) == 0 {
 		http.Error(w, "no matching nodes: provide node_keys or a valid source", http.StatusBadRequest)
 		return
 	}
-	if err := s.st.BlockNodes(keys); err != nil {
+	if err := s.st.BlockNodesForUser(effUID, keys); err != nil {
 		s.logger.Error("batch block nodes failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -255,18 +270,24 @@ func (s *Server) handleBatchBlockNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBatchUnblockNodes 批量取消屏蔽：按机场（source）或显式 node_keys。
+// 只动请求者本人名单(多租户)。
 func (s *Server) handleBatchUnblockNodes(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	var req batchBlockRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	keys := s.resolveBatchKeys(req)
+	effUID := EffectiveUserID(scope)
+	keys := s.resolveBatchKeys(req, effUID)
 	if len(keys) == 0 {
 		http.Error(w, "no matching nodes: provide node_keys or a valid source", http.StatusBadRequest)
 		return
 	}
-	if err := s.st.UnblockNodes(keys); err != nil {
+	if err := s.st.UnblockNodesForUser(effUID, keys); err != nil {
 		s.logger.Error("batch unblock nodes failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

@@ -89,7 +89,12 @@ func (s *Server) handleSpeedtestUpload(w http.ResponseWriter, r *http.Request) {
 
 // handleSaveSpeedtestResult 落库一条实测结果:数值必须有限且非负,
 // node_key 空 = 直连/未标注(独立修剪桶),写入即修剪该桶至最近 50 条。
+// 按请求者属主分桶(多租户):历史互不可见、修剪互不占额。
 func (s *Server) handleSaveSpeedtestResult(w http.ResponseWriter, r *http.Request) {
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		NodeKey       string  `json:"node_key"`
 		DownMbps      float64 `json:"down_mbps"`
@@ -113,7 +118,7 @@ func (s *Server) handleSaveSpeedtestResult(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	id, err := s.st.SaveSpeedtestResult(store.SpeedtestResult{
+	id, err := s.st.SaveSpeedtestResultForUser(EffectiveUserID(userScope), store.SpeedtestResult{
 		NodeKey:       req.NodeKey,
 		DownMbps:      req.DownMbps,
 		UpMbps:        req.UpMbps,
@@ -131,13 +136,18 @@ func (s *Server) handleSaveSpeedtestResult(w http.ResponseWriter, r *http.Reques
 
 // handleListSpeedtestResults 查询实测历史(时间倒序)。
 // node_key 参数缺省 = 全量;存在但为空 = 只看直连;具体值 = 该节点历史(孤儿历史照常读出)。
+// 按请求者属主过滤(多租户):他人历史不可见。
 func (s *Server) handleListSpeedtestResults(w http.ResponseWriter, r *http.Request) {
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	var filter *string
 	if vals, ok := r.URL.Query()["node_key"]; ok && len(vals) > 0 {
 		v := vals[0]
 		filter = &v
 	}
-	list, err := s.st.ListSpeedtestResults(filter)
+	list, err := s.st.ListSpeedtestResultsForUser(EffectiveUserID(userScope), filter)
 	if err != nil {
 		s.logger.Error("list speedtest results failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -146,14 +156,18 @@ func (s *Server) handleListSpeedtestResults(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, list)
 }
 
-// handleDeleteSpeedtestResult 按 id 删除一条实测历史;不存在 404。
+// handleDeleteSpeedtestResult 按 id 删除一条实测历史;不存在或属他人 404(多租户)。
 func (s *Server) handleDeleteSpeedtestResult(w http.ResponseWriter, r *http.Request) {
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
 		return
 	}
-	if err := s.st.DeleteSpeedtestResult(id); err != nil {
+	if err := s.st.DeleteSpeedtestResultForUser(EffectiveUserID(userScope), id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeJSONStatus(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return

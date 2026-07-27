@@ -74,9 +74,14 @@ func (s *Server) handleDetectionStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
-// handleGetDetectionTargets 获取检测目标配置
+// handleGetDetectionTargets 获取检测目标配置(视角驱动):
+// 超管未 impersonate = 全局配置;普通用户/impersonate = 本人覆盖(回退全局默认)。
 func (s *Server) handleGetDetectionTargets(w http.ResponseWriter, r *http.Request) {
-	targets, err := s.st.GetDetectionTargets()
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	targets, err := s.st.GetDetectionTargetsForUser(viewScopeUserID(scope))
 	if err != nil {
 		s.logger.Error("get detection targets failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -87,8 +92,14 @@ func (s *Server) handleGetDetectionTargets(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(targets)
 }
 
-// handleSaveDetectionTargets 保存检测目标配置
+// handleSaveDetectionTargets 保存检测目标配置(视角驱动):
+// 超管未 impersonate = 写全局;普通用户/impersonate = 写本人覆盖(user_settings)。
 func (s *Server) handleSaveDetectionTargets(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	uid := viewScopeUserID(scope)
 	var targets []detection.Target
 
 	if err := json.NewDecoder(r.Body).Decode(&targets); err != nil {
@@ -97,7 +108,13 @@ func (s *Server) handleSaveDetectionTargets(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := s.st.SetDetectionTargets(targets); err != nil {
+	var err error
+	if uid == 0 {
+		err = s.st.SetDetectionTargets(targets)
+	} else {
+		err = s.st.SetDetectionTargetsForUser(uid, targets)
+	}
+	if err != nil {
 		s.logger.Error("save detection targets failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -133,7 +150,12 @@ func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing target: self_node_id or node_key required", http.StatusBadRequest)
 		return
 	}
-	node := s.resolveTestNode(req.SelfNodeID, req.NodeKey)
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(scope)
+	node := s.resolveTestNode(effUID, req.SelfNodeID, req.NodeKey)
 	if node == nil {
 		http.NotFound(w, r)
 		return
@@ -157,16 +179,17 @@ func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
 
 	// 写回内存池，前端列表无需等下次读库即可见到最新结果（自建节点未入池时返回 false，忽略）。
 	// 用 result.Mode 而非 req.Mode:speedtest 档结果 Mode=bandwidth,写回走带宽字段分支。
-	s.nodes.UpdateNodeTestResult(node.NodeKey(), result.Mode, result.Available, result.Latency, result.DownMbps, result.UpMbps, result.FailReason, result.Error)
+	s.nodes.UpdateNodeTestResultForUser(effUID, node.NodeKey(), result.Mode, result.Available, result.Latency, result.DownMbps, result.UpMbps, result.FailReason, result.Error)
 
 	writeJSON(w, result)
 }
 
 // resolveTestNode 节点解析公共逻辑:自建查库 ToNode,机场查内存池(返回 nil 表示未找到或参数错误)。
-func (s *Server) resolveTestNode(selfNodeID int64, nodeKey string) *subscription.Node {
+// 按属主限定用户空间(多租户):自建查本人表,机场查本人池分片;命中他人资源一律 nil(404)。
+func (s *Server) resolveTestNode(userID, selfNodeID int64, nodeKey string) *subscription.Node {
 	switch {
 	case selfNodeID > 0:
-		all, err := s.st.ListAllSelfHostedNodes()
+		all, err := s.st.ListAllSelfHostedNodesByUser(userID)
 		if err != nil {
 			return nil
 		}
@@ -176,7 +199,7 @@ func (s *Server) resolveTestNode(selfNodeID int64, nodeKey string) *subscription
 			}
 		}
 	case nodeKey != "":
-		for _, n := range s.nodes.Nodes() {
+		for _, n := range s.nodes.NodesForUser(userID) {
 			if n.NodeKey() == nodeKey {
 				return n
 			}
@@ -210,7 +233,12 @@ func (s *Server) handleTestNodeStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	node := s.resolveTestNode(selfNodeID, nodeKey)
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(scope)
+	node := s.resolveTestNode(effUID, selfNodeID, nodeKey)
 	if node == nil {
 		http.NotFound(w, r)
 		return
@@ -251,7 +279,7 @@ func (s *Server) handleTestNodeStream(w http.ResponseWriter, r *http.Request) {
 	if err := s.st.SaveTestResult(node.NodeKey(), node.Name, node.Source, result); err != nil {
 		s.logger.Warn("save test result failed", "error", err)
 	}
-	s.nodes.UpdateNodeTestResult(node.NodeKey(), "bandwidth", result.Available, result.Latency, result.DownMbps, result.UpMbps, "", "")
+	s.nodes.UpdateNodeTestResultForUser(effUID, node.NodeKey(), "bandwidth", result.Available, result.Latency, result.DownMbps, result.UpMbps, "", "")
 
 	// done 帧(包含最终 TestResult 全字段)
 	emit("done", map[string]any{
@@ -288,7 +316,12 @@ func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
 		selfNodeID = id
 	}
 
-	node := s.resolveTestNode(selfNodeID, nodeKey)
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(scope)
+	node := s.resolveTestNode(effUID, selfNodeID, nodeKey)
 	if node == nil {
 		http.NotFound(w, r)
 		return
@@ -315,11 +348,12 @@ func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// force=1:"重新体检"语义,已收口的旧任务丢弃重开(进行中的任务不受影响,仍附加)。
+	// 任务按属主分片(多租户):同节点不同用户各自单实例。
 	var sub *detection.ExamSubscription
 	if q.Get("force") == "1" {
-		sub = s.examJobs.OpenForce(node.NodeKey(), node)
+		sub = s.examJobs.OpenForceFor(effUID, node.NodeKey(), node)
 	} else {
-		sub = s.examJobs.Open(node.NodeKey(), node)
+		sub = s.examJobs.OpenFor(effUID, node.NodeKey(), node)
 	}
 	defer sub.Close()
 
@@ -351,13 +385,18 @@ func (s *Server) handleNodeExamCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodeKey := s.resolveExamNodeKey(r)
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(scope)
+	nodeKey := s.resolveExamNodeKey(effUID, r)
 	if nodeKey == "" {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "missing node_key or self_node_id"})
 		return
 	}
 
-	if !s.examJobs.Cancel(nodeKey) {
+	if !s.examJobs.CancelFor(effUID, nodeKey) {
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": "no active exam"})
 		return
 	}
@@ -367,14 +406,16 @@ func (s *Server) handleNodeExamCancel(w http.ResponseWriter, r *http.Request) {
 
 // resolveExamNodeKey 从 query 解析体检历史的 node_key:显式 node_key 优先,
 // 否则用 self_node_id 解析出对应节点的 NodeKey(节点已不在池中则返回空)。
-func (s *Server) resolveExamNodeKey(r *http.Request) string {
+// 显式 node_key 原样返回:读侧已按属主过滤历史(多租户),key 本身不构成泄露;
+// self_node_id 路径按属主限定(他人自建节点解析不到)。
+func (s *Server) resolveExamNodeKey(userID int64, r *http.Request) string {
 	q := r.URL.Query()
 	if nk := q.Get("node_key"); nk != "" {
 		return nk
 	}
 	if v := q.Get("self_node_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			if node := s.resolveTestNode(id, ""); node != nil {
+			if node := s.resolveTestNode(userID, id, ""); node != nil {
 				return node.NodeKey()
 			}
 		}
@@ -385,12 +426,16 @@ func (s *Server) resolveExamNodeKey(r *http.Request) string {
 // handleGetExamLatest 查询某节点最近一次深度体检报告(完整体检口径:排除"出网+稳定性"
 // 任务的缺段报告)。无历史返回 JSON null(200),不报错。
 func (s *Server) handleGetExamLatest(w http.ResponseWriter, r *http.Request) {
-	nodeKey := s.resolveExamNodeKey(r)
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	nodeKey := s.resolveExamNodeKey(EffectiveUserID(scope), r)
 	if nodeKey == "" {
 		http.Error(w, "missing node_key or self_node_id", http.StatusBadRequest)
 		return
 	}
-	entry, err := s.st.LatestCompleteExamHistory(nodeKey)
+	entry, err := s.st.LatestCompleteExamHistoryForUser(EffectiveUserID(scope), nodeKey)
 	if err != nil {
 		s.logger.Error("get latest exam history failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -402,12 +447,16 @@ func (s *Server) handleGetExamLatest(w http.ResponseWriter, r *http.Request) {
 // handleGetExamHistory 查询某节点深度体检历史(时间倒序,完整体检口径:排除"出网+稳定性"
 // 任务的缺段报告)。无历史返回空数组(200),不报错。
 func (s *Server) handleGetExamHistory(w http.ResponseWriter, r *http.Request) {
-	nodeKey := s.resolveExamNodeKey(r)
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	nodeKey := s.resolveExamNodeKey(EffectiveUserID(scope), r)
 	if nodeKey == "" {
 		http.Error(w, "missing node_key or self_node_id", http.StatusBadRequest)
 		return
 	}
-	list, err := s.st.ListCompleteExamHistory(nodeKey)
+	list, err := s.st.ListCompleteExamHistoryForUser(EffectiveUserID(scope), nodeKey)
 	if err != nil {
 		s.logger.Error("list exam history failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -417,11 +466,17 @@ func (s *Server) handleGetExamHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleBatchExam 启动批量体检:node_keys 为空则对全部节点体检。
+// 按请求者用户空间(多租户):"全部"= 本人池分片;任务按属主分片,互不干扰。
 func (s *Server) handleBatchExam(w http.ResponseWriter, r *http.Request) {
 	if s.detectionService == nil || s.batchExamJobs == nil {
 		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "detection service not initialized"})
 		return
 	}
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(userScope)
 
 	var req struct {
 		NodeKeys []string `json:"node_keys"`
@@ -438,20 +493,21 @@ func (s *Server) handleBatchExam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// node_keys 为空时对全部节点体检
+	// node_keys 为空时对本人池全部节点体检
+	pool := s.nodes.NodesForUser(effUID)
 	nodeKeys := req.NodeKeys
 	scope := "selected"
 	if len(nodeKeys) == 0 {
 		scope = "all"
-		for _, n := range s.nodes.Nodes() {
+		for _, n := range pool {
 			nodeKeys = append(nodeKeys, n.NodeKey())
 		}
 	}
 
-	// 收集活节点(含凭证)
+	// 收集活节点(含凭证,限本人池)
 	var nodes []*subscription.Node
 	for _, nk := range nodeKeys {
-		for _, n := range s.nodes.Nodes() {
+		for _, n := range pool {
 			if n.NodeKey() == nk {
 				nodes = append(nodes, n)
 				break
@@ -459,7 +515,7 @@ func (s *Server) handleBatchExam(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	key, err := s.batchExamJobs.Start(nodeKeys, nodes, scope, req.Mode)
+	key, err := s.batchExamJobs.StartFor(effUID, nodeKeys, nodes, scope, req.Mode)
 	if err != nil {
 		s.logger.Error("start batch exam failed", "error", err)
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": err.Error()})
@@ -476,10 +532,14 @@ func (s *Server) handleBatchExamStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 任务 key 固定为 "batch_exam"(全局单例)
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	// 任务 key 固定为 "batch_exam"(按属主分片单例)
 	key := "batch_exam"
 
-	sub, err := s.batchExamJobs.Subscribe(key)
+	sub, err := s.batchExamJobs.SubscribeFor(EffectiveUserID(userScope), key)
 	if err != nil {
 		http.Error(w, "no active batch exam", http.StatusNotFound)
 		return
@@ -527,10 +587,14 @@ func (s *Server) handleBatchExamCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 任务 key 固定为 "batch_exam"
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	// 任务 key 固定为 "batch_exam"(按属主分片单例)
 	key := "batch_exam"
 
-	if !s.batchExamJobs.Cancel(key) {
+	if !s.batchExamJobs.CancelFor(EffectiveUserID(userScope), key) {
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": "no active batch exam"})
 		return
 	}
@@ -540,11 +604,17 @@ func (s *Server) handleBatchExamCancel(w http.ResponseWriter, r *http.Request) {
 
 // handleBatchSpeedtest 启动批量快速测速:对勾选节点逐个测基准下行(与体检基准行同口径)。
 // node_keys 为空则对全部节点测速。
+// 按请求者用户空间(多租户):"全部"= 本人池分片;任务按属主分片,互不干扰。
 func (s *Server) handleBatchSpeedtest(w http.ResponseWriter, r *http.Request) {
 	if s.detectionService == nil || s.speedtestJobs == nil {
 		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "detection service not initialized"})
 		return
 	}
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(userScope)
 
 	var req struct {
 		NodeKeys []string `json:"node_keys"`
@@ -554,20 +624,21 @@ func (s *Server) handleBatchSpeedtest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// node_keys 为空时对全部节点测速
+	// node_keys 为空时对本人池全部节点测速
+	pool := s.nodes.NodesForUser(effUID)
 	nodeKeys := req.NodeKeys
 	scope := "selected"
 	if len(nodeKeys) == 0 {
 		scope = "all"
-		for _, n := range s.nodes.Nodes() {
+		for _, n := range pool {
 			nodeKeys = append(nodeKeys, n.NodeKey())
 		}
 	}
 
-	// 收集活节点(含凭证)
+	// 收集活节点(含凭证,限本人池)
 	var nodes []*subscription.Node
 	for _, nk := range nodeKeys {
-		for _, n := range s.nodes.Nodes() {
+		for _, n := range pool {
 			if n.NodeKey() == nk {
 				nodes = append(nodes, n)
 				break
@@ -575,7 +646,7 @@ func (s *Server) handleBatchSpeedtest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	key, err := s.speedtestJobs.Start(nodeKeys, nodes, scope)
+	key, err := s.speedtestJobs.StartFor(effUID, nodeKeys, nodes, scope)
 	if err != nil {
 		s.logger.Error("start batch speedtest failed", "error", err)
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": err.Error()})
@@ -592,10 +663,14 @@ func (s *Server) handleBatchSpeedtestStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 任务 key 固定为 "batch_speedtest"(全局单例)
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	// 任务 key 固定为 "batch_speedtest"(按属主分片单例)
 	key := "batch_speedtest"
 
-	sub, err := s.speedtestJobs.Subscribe(key)
+	sub, err := s.speedtestJobs.SubscribeFor(EffectiveUserID(userScope), key)
 	if err != nil {
 		http.Error(w, "no active batch speedtest", http.StatusNotFound)
 		return
@@ -643,10 +718,14 @@ func (s *Server) handleBatchSpeedtestCancel(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 任务 key 固定为 "batch_speedtest"
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	// 任务 key 固定为 "batch_speedtest"(按属主分片单例)
 	key := "batch_speedtest"
 
-	if !s.speedtestJobs.Cancel(key) {
+	if !s.speedtestJobs.CancelFor(EffectiveUserID(userScope), key) {
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": "no active batch speedtest"})
 		return
 	}

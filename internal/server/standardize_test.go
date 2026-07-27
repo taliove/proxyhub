@@ -103,13 +103,13 @@ func TestResolveNameConfig_EndpointOverride(t *testing.T) {
 	}
 
 	// nil 端点 → 取全局(关)
-	if std, _ := srv.resolveNameConfig(nil); std {
+	if std, _ := srv.resolveNameConfig(0, nil); std {
 		t.Error("global off, nil endpoint should be off")
 	}
 
 	// 端点强制开 + 自定义模板 → 覆盖全局
 	ep := &store.Endpoint{NameMode: store.NameModeOn, NameTemplate: "{emoji}{index}"}
-	std, tmpl := srv.resolveNameConfig(ep)
+	std, tmpl := srv.resolveNameConfig(0, ep)
 	if !std {
 		t.Error("endpoint NameModeOn should force standardize on")
 	}
@@ -122,13 +122,13 @@ func TestResolveNameConfig_EndpointOverride(t *testing.T) {
 		t.Fatalf("save settings: %v", err)
 	}
 	off := &store.Endpoint{NameMode: store.NameModeOff}
-	if std, _ := srv.resolveNameConfig(off); std {
+	if std, _ := srv.resolveNameConfig(0, off); std {
 		t.Error("endpoint NameModeOff should force standardize off despite global on")
 	}
 
 	// 端点 inherit + 空模板 → 回退全局(开 + 全局模板)
 	inherit := &store.Endpoint{NameMode: store.NameModeInherit}
-	std, tmpl = srv.resolveNameConfig(inherit)
+	std, tmpl = srv.resolveNameConfig(0, inherit)
 	if !std {
 		t.Error("inherit should follow global on")
 	}
@@ -169,7 +169,7 @@ func TestApplyStandardization_SelfHostedGetsSelfAbbr(t *testing.T) {
 	nodes := []*subscription.Node{
 		{Name: "我的东京机", Region: "JP", Source: subscription.SourceSelfHosted, Server: "1.2.3.4", Port: 443},
 	}
-	std, tmpl := srv.resolveNameConfig(nil)
+	std, tmpl := srv.resolveNameConfig(0, nil)
 	out := srv.applyStandardization(nodes, std, tmpl)
 	if out[0].DisplayName == "" || !strings.Contains(out[0].DisplayName, "SELF") {
 		t.Fatalf("self-hosted DisplayName = %q, want to contain SELF", out[0].DisplayName)

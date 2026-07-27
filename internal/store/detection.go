@@ -212,3 +212,32 @@ func (s *Store) SaveTestResult(nodeKey, nodeName, nodeSource string, result dete
 
 	return err
 }
+
+// GetDetectionTargetsForUser 按回退链读取检测目标(租户级设置,多租户):
+// 用户覆盖 ?? 全局默认 ?? 空列表(播种由 SeedDetectionTargets 负责)。
+// userID<=0 = 全局视角(等价 GetDetectionTargets)。
+func (s *Store) GetDetectionTargetsForUser(userID int64) ([]detection.Target, error) {
+	if userID > 0 {
+		val, err := s.GetUserSetting(userID, "detection_targets")
+		if err == nil {
+			var targets []detection.Target
+			if err := json.Unmarshal([]byte(val), &targets); err != nil {
+				return nil, fmt.Errorf("unmarshal user detection_targets: %w", err)
+			}
+			return targets, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+	}
+	return s.GetDetectionTargets()
+}
+
+// SetDetectionTargetsForUser 保存指定用户的检测目标覆盖(user_settings upsert)。
+func (s *Store) SetDetectionTargetsForUser(userID int64, targets []detection.Target) error {
+	data, err := json.Marshal(targets)
+	if err != nil {
+		return fmt.Errorf("marshal detection_targets: %w", err)
+	}
+	return s.SetUserSetting(userID, "detection_targets", string(data))
+}

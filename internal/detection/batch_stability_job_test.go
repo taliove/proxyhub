@@ -46,7 +46,7 @@ func TestBatchStabilityKind_Run_EmptyNodeList(t *testing.T) {
 			t.Fatal("runCheck should not be called with empty node list")
 			return ExamReport{}
 		},
-		onComplete: func(nodeKey string, report ExamReport) {
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {
 			t.Fatal("onComplete should not be called with empty node list")
 		},
 	}
@@ -78,7 +78,7 @@ func TestBatchStabilityKind_Run_SingleNode(t *testing.T) {
 			}
 			return stabilityCheckReport(96)
 		},
-		onComplete: func(nodeKey string, report ExamReport) {
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {
 			completeCalled = true
 			if report.Stability == nil {
 				t.Error("onComplete report.Stability = nil, want non-nil")
@@ -89,7 +89,7 @@ func TestBatchStabilityKind_Run_SingleNode(t *testing.T) {
 			}
 		},
 	}
-	k.nodes.Store(node.NodeKey(), node)
+	k.nodes.Store(examNodeRef{userID: 0, nodeKey: node.NodeKey()}, node)
 
 	params, _ := json.Marshal(batchStabilityParams{NodeKeys: []string{node.NodeKey()}})
 	err := k.Run(context.Background(), params, "", func(data json.RawMessage) {
@@ -132,10 +132,10 @@ func TestBatchStabilityKind_Run_MultipleNodes(t *testing.T) {
 			mu.Unlock()
 			return stabilityCheckReport(80)
 		},
-		onComplete: func(nodeKey string, report ExamReport) {},
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {},
 	}
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 	}
 
 	keys := make([]string, len(nodes))
@@ -170,10 +170,10 @@ func TestBatchStabilityKind_Run_ResumesFromCursor(t *testing.T) {
 			runNodes = append(runNodes, n.Name)
 			return stabilityCheckReport(80)
 		},
-		onComplete: func(nodeKey string, report ExamReport) {},
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {},
 	}
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 	}
 
 	keys := []string{nodes[0].NodeKey(), nodes[1].NodeKey()}
@@ -203,10 +203,10 @@ func TestBatchStabilityKind_Run_ProgressCallback(t *testing.T) {
 		runCheck: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
 			return stabilityCheckReport(80)
 		},
-		onComplete: func(nodeKey string, report ExamReport) {},
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {},
 	}
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 	}
 
 	keys := []string{nodes[0].NodeKey(), nodes[1].NodeKey()}
@@ -235,9 +235,9 @@ func TestBatchStabilityKind_Run_Cancellation(t *testing.T) {
 			cancel() // 第一个节点跑完后取消
 			return stabilityCheckReport(80)
 		},
-		onComplete: func(nodeKey string, report ExamReport) {},
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {},
 	}
-	k.nodes.Store(node.NodeKey(), node)
+	k.nodes.Store(examNodeRef{userID: 0, nodeKey: node.NodeKey()}, node)
 
 	params, _ := json.Marshal(batchStabilityParams{NodeKeys: []string{node.NodeKey(), "other-key"}})
 	err := k.Run(ctx, params, "", func(json.RawMessage) {}, func(string) {})
@@ -254,7 +254,7 @@ func TestBatchStabilityKind_Run_MissingNode(t *testing.T) {
 			t.Fatal("runCheck should not be called for missing node")
 			return ExamReport{}
 		},
-		onComplete: func(nodeKey string, report ExamReport) {
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {
 			t.Fatal("onComplete should not be called for missing node")
 		},
 	}
@@ -312,7 +312,7 @@ func TestBatchStabilityJobManager_StartCancel(t *testing.T) {
 			<-ctx.Done()
 			return ExamReport{}
 		},
-		func(nodeKey string, report ExamReport) {},
+		func(userID int64, nodeKey string, report ExamReport) {},
 	)
 
 	key, err := mgr.Start([]string{node.NodeKey()}, []*subscription.Node{node}, "selected")

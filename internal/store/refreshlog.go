@@ -55,6 +55,12 @@ type RefreshEvent struct {
 // CreateRefreshRun 新建一条刷新记录，并在同一事务内清理超限的旧记录。
 // jobID 为关联的 jobs 任务 id(刷新任务化),无关联传 0。
 func (s *Store) CreateRefreshRun(trigger string, jobID int64) (*RefreshRun, error) {
+	return s.CreateRefreshRunForUser(0, trigger, jobID)
+}
+
+// CreateRefreshRunForUser 与 CreateRefreshRun 同语义,但记录属主 user_id(多租户):
+// 刷新历史按用户隔离,0 = 全局(定时/启动刷新,聚合全部机场)。
+func (s *Store) CreateRefreshRunForUser(userID int64, trigger string, jobID int64) (*RefreshRun, error) {
 	now := time.Now()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -63,8 +69,8 @@ func (s *Store) CreateRefreshRun(trigger string, jobID int64) (*RefreshRun, erro
 	defer tx.Rollback()
 
 	result, err := tx.Exec(
-		`INSERT INTO refresh_runs (trigger_type, status, job_id, started_at) VALUES (?, ?, ?, ?)`,
-		trigger, RefreshStatusRunning, jobID, now)
+		`INSERT INTO refresh_runs (trigger_type, status, job_id, started_at, user_id) VALUES (?, ?, ?, ?, ?)`,
+		trigger, RefreshStatusRunning, jobID, now, userID)
 	if err != nil {
 		return nil, fmt.Errorf("insert refresh run: %w", err)
 	}
@@ -104,9 +110,20 @@ func (s *Store) FinishRefreshRun(id int64, status string, total, available, fina
 
 // GetRefreshRun 获取单条刷新记录
 func (s *Store) GetRefreshRun(id int64) (*RefreshRun, error) {
-	row := s.db.QueryRow(
-		`SELECT id, trigger_type, status, total_nodes, available_nodes, final_nodes, error, started_at, finished_at, job_id
-		 FROM refresh_runs WHERE id = ?`, id)
+	return s.GetRefreshRunByUser(0, id)
+}
+
+// GetRefreshRunByUser 与 GetRefreshRun 同语义,但按属主过滤(多租户):
+// userID>0 时行属他人返回 ErrNotFound,不暴露存在性;0 = 不过滤(超管全局视角)。
+func (s *Store) GetRefreshRunByUser(userID, id int64) (*RefreshRun, error) {
+	query := `SELECT id, trigger_type, status, total_nodes, available_nodes, final_nodes, error, started_at, finished_at, job_id
+		 FROM refresh_runs WHERE id = ?`
+	args := []any{id}
+	if userID > 0 {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	row := s.db.QueryRow(query, args...)
 	run, err := scanRefreshRun(row)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
@@ -135,9 +152,22 @@ func (s *Store) GetRefreshRunByJobID(jobID int64) (*RefreshRun, error) {
 
 // ListRefreshRuns 按时间倒序列出刷新记录
 func (s *Store) ListRefreshRuns(limit int) ([]*RefreshRun, error) {
-	rows, err := s.db.Query(
-		`SELECT id, trigger_type, status, total_nodes, available_nodes, final_nodes, error, started_at, finished_at, job_id
-		 FROM refresh_runs ORDER BY id DESC LIMIT ?`, limit)
+	return s.ListRefreshRunsByUser(0, limit)
+}
+
+// ListRefreshRunsByUser 与 ListRefreshRuns 同语义,但按属主过滤(多租户):
+// userID>0 只列该用户的刷新记录;0 = 全量(超管全局视角)。
+func (s *Store) ListRefreshRunsByUser(userID int64, limit int) ([]*RefreshRun, error) {
+	query := `SELECT id, trigger_type, status, total_nodes, available_nodes, final_nodes, error, started_at, finished_at, job_id
+		 FROM refresh_runs`
+	args := []any{}
+	if userID > 0 {
+		query += ` WHERE user_id = ?`
+		args = append(args, userID)
+	}
+	query += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query refresh runs: %w", err)
 	}

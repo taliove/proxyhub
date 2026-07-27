@@ -62,6 +62,8 @@ type batchExamParams struct {
 	// Mode 体检模式:simplified(默认)| full(完整四段)。老任务 params 无此字段,
 	// 归一化时按 simplified 处理(升级后重启游标续跑口径不漂移)。
 	Mode string `json:"mode,omitempty"`
+	// UserID 任务属主(多租户):旁路与回调按属主索引,0 = 未归属(旧调用路径)。
+	UserID int64 `json:"user_id,omitempty"`
 }
 
 // SimplifiedExamRunner 运行精简体检:出网 + 稳定性 + 基准下行,跳过多地域 8 区与解锁。
@@ -71,10 +73,10 @@ type SimplifiedExamRunner func(ctx context.Context, node *subscription.Node, emi
 // batchExamKind 批量体检 kind:逐节点体检(模式由 params 选 runner),串行或低并发,游标续跑,每节点落历史。
 type batchExamKind struct {
 	runSimplified SimplifiedExamRunner
-	runFull       ExamRunner                              // full 模式:完整四段,与单节点深度体检同口径
-	onComplete    func(nodeKey string, report ExamReport) // 落历史 + 触发标签重算
+	runFull       ExamRunner                                            // full 模式:完整四段,与单节点深度体检同口径
+	onComplete    func(userID int64, nodeKey string, report ExamReport) // 落历史 + 触发标签重算
 	onErr         func(error)
-	nodes         sync.Map // nodeKey -> *subscription.Node(活节点,仅内存)
+	nodes         sync.Map // examNodeRef -> *subscription.Node(活节点,仅内存)
 }
 
 func (k *batchExamKind) Name() string    { return "batch_exam" }
@@ -152,8 +154,8 @@ func (k *batchExamKind) Run(ctx context.Context, params json.RawMessage, cursor 
 			Total:   total,
 		})
 
-		// 从内存旁路取活节点
-		v, ok := k.nodes.Load(nodeKey)
+		// 从内存旁路取活节点(按属主索引)
+		v, ok := k.nodes.Load(examNodeRef{userID: p.UserID, nodeKey: nodeKey})
 		if !ok {
 			// 节点不在内存池:发射 node_error 事件,继续下一个
 			k.emitEvent(emit, BatchExamEvent{
@@ -174,9 +176,14 @@ func (k *batchExamKind) Run(ctx context.Context, params json.RawMessage, cursor 
 			// 体检内部事件不转发(批量体检只推进度,不推详细采样)
 		})
 
+		// 体检中途被取消:不落地半截报告、不发 node_done(取消语义=本节点无产出)。
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		// 有稳定性段才落历史(与单节点体检语义一致)
 		if report.Stability != nil && k.onComplete != nil {
-			k.onComplete(nodeKey, report)
+			k.onComplete(p.UserID, nodeKey, report)
 		}
 
 		// 发射 node_done 事件
@@ -243,7 +250,7 @@ func WithBatchExamErrorHandler(h func(error)) BatchExamJobOption {
 // runSimplified: 精简体检运行器(出网 + 稳定性 + 基准下行),mode=simplified 或未指定时使用。
 // runFull: 完整体检运行器(完整四段,与单节点深度体检同口径),mode=full 时使用。
 // onComplete: 每节点完成回调(落历史 + 触发标签重算)。
-func NewBatchExamJobManager(runSimplified SimplifiedExamRunner, runFull ExamRunner, onComplete func(nodeKey string, report ExamReport), opts ...BatchExamJobOption) *BatchExamJobManager {
+func NewBatchExamJobManager(runSimplified SimplifiedExamRunner, runFull ExamRunner, onComplete func(userID int64, nodeKey string, report ExamReport), opts ...BatchExamJobOption) *BatchExamJobManager {
 	cfg := batchExamJobConfig{}
 	for _, o := range opts {
 		o(&cfg)
@@ -267,26 +274,34 @@ func NewBatchExamJobManager(runSimplified SimplifiedExamRunner, runFull ExamRunn
 }
 
 // Start 启动批量体检任务:nodeKeys 为空则对全部节点体检。返回任务 key(供订阅/取消)。
-// nodes 是活节点列表(含凭证),存入内存旁路。scope 为触发范围标记("all"/"selected"),
-// 仅记录进 params 供任务中心展示。mode 为体检模式(simplified/full),空按 simplified。
+// 等价于 StartFor(0, ...)(未归属分片,旧语义)。
 func (m *BatchExamJobManager) Start(nodeKeys []string, nodes []*subscription.Node, scope string, mode string) (string, error) {
-	// 活节点存内存旁路
+	return m.StartFor(0, nodeKeys, nodes, scope, mode)
+}
+
+// StartFor 与 Start 同语义,但按属主分片(多租户):每用户各自一个进行中批量体检,
+// 互不附加、互不取消;nodes 是活节点列表(含凭证),存入按属主索引的内存旁路。
+// scope 为触发范围标记("all"/"selected"),仅记录进 params 供任务中心展示。
+// mode 为体检模式(simplified/full),空按 simplified。
+func (m *BatchExamJobManager) StartFor(userID int64, nodeKeys []string, nodes []*subscription.Node, scope string, mode string) (string, error) {
+	// 活节点存内存旁路(按属主索引)
 	for _, n := range nodes {
-		m.kind.nodes.Store(n.NodeKey(), n)
+		m.kind.nodes.Store(examNodeRef{userID: userID, nodeKey: n.NodeKey()}, n)
 	}
 
 	p, err := newBatchExamParams(nodeKeys, scope, mode)
 	if err != nil {
 		return "", err
 	}
+	p.UserID = userID
 	params, err := json.Marshal(p)
 	if err != nil {
 		return "", fmt.Errorf("batch_exam: marshal params: %w", err)
 	}
 
-	// 任务 key 固定为 "batch_exam"(全局单例,同一时刻只能跑一个批量体检)
+	// 任务 key 固定为 "batch_exam"(按属主分片单例:同一用户同一时刻只能跑一个批量体检)
 	key := "batch_exam"
-	sub, err := m.mgr.Open(m.kind.Name(), key, params)
+	sub, err := m.mgr.OpenFor(userID, m.kind.Name(), key, params)
 	if err != nil {
 		return "", err
 	}
@@ -302,9 +317,19 @@ func (m *BatchExamJobManager) Subscribe(key string) (*jobs.Subscription, error) 
 	return m.mgr.Attach(m.kind.Name(), key)
 }
 
+// SubscribeFor 订阅指定属主的批量体检任务事件流(多租户)。
+func (m *BatchExamJobManager) SubscribeFor(userID int64, key string) (*jobs.Subscription, error) {
+	return m.mgr.AttachFor(userID, m.kind.Name(), key)
+}
+
 // Cancel 取消批量体检任务。
 func (m *BatchExamJobManager) Cancel(key string) bool {
 	return m.mgr.Cancel(m.kind.Name(), key)
+}
+
+// CancelFor 取消指定属主的批量体检任务(多租户)。
+func (m *BatchExamJobManager) CancelFor(userID int64, key string) bool {
+	return m.mgr.CancelFor(userID, m.kind.Name(), key)
 }
 
 // RecoverInterrupted 重启恢复:批量体检可续跑,从游标续跑。

@@ -30,8 +30,13 @@ type topNodeView struct {
 // handleDashboardTopNodes 优质节点聚合:返回"体检过且当前在节点池"的节点清单。
 // Go 侧不算加权总分(前端复用 calculateExamScore 排序取 Top 10,计分单一事实源);
 // 不做分页,返回全量(上限 topNodesMax)。空结果返回 [] 而非 null。
+// 按请求者用户空间取池(多租户):普通用户只聚合自己池内的节点。
 func (s *Server) handleDashboardTopNodes(w http.ResponseWriter, r *http.Request) {
-	pool := s.nodes.Nodes()
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	pool := s.nodes.NodesForUser(EffectiveUserID(scope))
 	keys := make([]string, 0, len(pool))
 	for _, n := range pool {
 		keys = append(keys, n.NodeKey())

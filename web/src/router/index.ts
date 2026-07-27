@@ -71,10 +71,11 @@ const routes: RouteRecordRaw[] = [
         redirect: 'jobs'
       },
       {
+        // 安全审计(登录/封禁事件流水 + 解封 IP):超管专属(后端 adminGuard 同样 403)
         path: 'audit',
         name: 'Audit',
         component: () => import('@/views/Audit.vue'),
-        meta: { title: '安全审计', icon: 'Warning', group: 'config' }
+        meta: { title: '安全审计', icon: 'Warning', group: 'config', requiresSuperAdmin: true }
       },
       {
         path: 'jobs',

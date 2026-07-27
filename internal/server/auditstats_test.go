@@ -30,6 +30,32 @@ func store_PullRecord(endpointID int64, ip string) store.PullRecord {
 
 func timeNow() time.Time { return time.Now() }
 
+// TestAuditAPI_RegularUserForbidden 安全审计面是超管专属(含写操作解封 IP):
+// 普通用户会话访问 events/banned/unban 一律 403。
+func TestAuditAPI_RegularUserForbidden(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	seedSuperAdmin(t, st)
+	memberID := seedRegularUser(t, st, "member", "member-pass-1")
+	memberCookie := memberSession(t, srv, memberID)
+
+	endpoints := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/audit/events"},
+		{http.MethodGet, "/api/audit/banned"},
+		{http.MethodPost, "/api/audit/unban"},
+	}
+	for _, ep := range endpoints {
+		t.Run(ep.method+" "+ep.path, func(t *testing.T) {
+			w := serveAdminHTTP(t, srv, memberCookie, ep.method, ep.path, nil)
+			if w.Code != http.StatusForbidden {
+				t.Errorf("status = %d, want 403; body=%s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 // TestAuditAPI_LoginEventsRecorded 登录成功/失败后审计事件可查
 func TestAuditAPI_LoginEventsRecorded(t *testing.T) {
 	srv, _ := newTestServer(t, nil)

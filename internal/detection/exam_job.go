@@ -37,6 +37,15 @@ type ExamRunner func(ctx context.Context, node *subscription.Node, emit func(Exa
 // 绝不进 jobs 表(安全红线:凭证不入库);活节点经内存旁路传递(见 examKind.nodes)。
 type examParams struct {
 	NodeKey string `json:"node_key"`
+	// UserID 任务属主(多租户):旁路按 (userID, nodeKey) 索引,回调按属主写池。
+	// 与 jobs 行的 user_id 同值,0 = 未归属(旧调用路径)。
+	UserID int64 `json:"user_id,omitempty"`
+}
+
+// examNodeRef 活节点旁路的索引:属主 + node_key(多租户下同 key 分属不同用户)。
+type examNodeRef struct {
+	userID  int64
+	nodeKey string
 }
 
 // examKind 把体检实现为一个 jobs.Kind。单发任务(不可续跑):进程重启时中断标记 interrupted。
@@ -44,10 +53,10 @@ type examParams struct {
 type examKind struct {
 	name       string // kind 名(默认 examKindName;出网+稳定性单节点检查等变体经 WithExamKindName 区分)
 	run        ExamRunner
-	onComplete func(nodeKey string, report ExamReport)
+	onComplete func(userID int64, nodeKey string, report ExamReport)
 	onErr      func(error)
-	nodes      sync.Map // nodeKey -> *subscription.Node(供 Run 消费的活节点,含凭证,仅内存)
-	pending    sync.Map // nodeKey -> *subscription.Node(open 暂存,OnStart 原子晋升进 nodes)
+	nodes      sync.Map // examNodeRef -> *subscription.Node(供 Run 消费的活节点,含凭证,仅内存)
+	pending    sync.Map // examNodeRef -> *subscription.Node(open 暂存,OnStartFor 原子晋升进 nodes)
 }
 
 // examKindName 默认 kind 名(完整体检单发任务)。
@@ -69,17 +78,20 @@ func (k *examKind) CancelEvent() (json.RawMessage, bool) {
 	return b, true
 }
 
-// OnStart 新任务创建后、Run goroutine 启动前(jobs 运行时在 manager 锁内同步调用):
+// OnStartFor 新任务创建后、Run goroutine 启动前(jobs 运行时在 manager 锁内同步调用):
 // 把 open 暂存于 pending 的活节点原子晋升进 nodes,建立"节点就位 happens-before Run"。
 // 仅创建路径触发;附加到既有任务不触发(其 pending 暂存由 open 收尾清理)。
-func (k *examKind) OnStart(nodeKey string) {
-	if v, ok := k.pending.LoadAndDelete(nodeKey); ok {
-		k.nodes.Store(nodeKey, v)
+// 属主感知(jobs.ownerStarter):同 nodeKey 不同用户的任务旁路互不覆盖。
+func (k *examKind) OnStartFor(userID int64, nodeKey string) {
+	ref := examNodeRef{userID: userID, nodeKey: nodeKey}
+	if v, ok := k.pending.LoadAndDelete(ref); ok {
+		k.nodes.Store(ref, v)
 	}
 }
 
 // examResult 包装体检结果,承载 report(OnComplete 要用)经 Run 返回值传递给 hook。
 type examResult struct {
+	userID  int64
 	nodeKey string
 	report  ExamReport
 }
@@ -95,7 +107,7 @@ func (k *examKind) Run(ctx context.Context, params json.RawMessage, _ string, em
 	if err := json.Unmarshal(params, &p); err != nil {
 		return fmt.Errorf("exam: bad params: %w", err)
 	}
-	v, ok := k.nodes.LoadAndDelete(p.NodeKey)
+	v, ok := k.nodes.LoadAndDelete(examNodeRef{userID: p.UserID, nodeKey: p.NodeKey})
 	if !ok {
 		return fmt.Errorf("exam: no live node for key %q", p.NodeKey)
 	}
@@ -114,7 +126,7 @@ func (k *examKind) Run(ctx context.Context, params json.RawMessage, _ string, em
 
 	// 返回包装的 report(自然完成标记):OnComplete 取出并落历史。
 	// 建会话失败等(report.Stability=nil)也到此,OnComplete 据此不落历史。
-	return examResult{nodeKey: node.NodeKey(), report: report}
+	return examResult{userID: p.UserID, nodeKey: node.NodeKey(), report: report}
 }
 
 // OnComplete 自然完成 hook(finalize 之后,已读权威 cancelled):取出 report,有稳定性段才落历史。
@@ -132,7 +144,7 @@ func (k *examKind) OnComplete(key string, runErr error) {
 		return
 	}
 	if k.onComplete != nil {
-		k.onComplete(res.nodeKey, res.report)
+		k.onComplete(res.userID, res.nodeKey, res.report)
 	}
 }
 
@@ -228,8 +240,9 @@ func WithExamErrorHandler(h func(error)) ExamJobOption {
 	return func(c *examJobConfig) { c.onErr = h }
 }
 
-// NewExamJobManager 构造体检任务管理器。onComplete 可为 nil(不落历史)。
-func NewExamJobManager(run ExamRunner, onComplete func(nodeKey string, report ExamReport), opts ...ExamJobOption) *ExamJobManager {
+// NewExamJobManager 构造体检任务管理器。onComplete 可为 nil(不落历史);
+// 回调带任务属主 userID(多租户:写回按属主选池),0 = 未归属。
+func NewExamJobManager(run ExamRunner, onComplete func(userID int64, nodeKey string, report ExamReport), opts ...ExamJobOption) *ExamJobManager {
 	cfg := examJobConfig{kindName: examKindName}
 	for _, o := range opts {
 		o(&cfg)
@@ -246,37 +259,49 @@ func NewExamJobManager(run ExamRunner, onComplete func(nodeKey string, report Ex
 }
 
 // Open 启动或附加该节点的体检任务,并返回一次订阅(回放 + 直播)。供 SSE handler 使用。
+// 等价于 OpenFor(0, ...)(未归属分片,旧语义)。
 func (m *ExamJobManager) Open(nodeKey string, node *subscription.Node) *ExamSubscription {
-	return m.open(nodeKey, node, false)
+	return m.open(0, nodeKey, node, false)
 }
 
 // OpenForce 强制开始一场新体检:已收口的旧任务直接丢弃重开(用于"重新体检",
 // 避免 TTL 窗口内附加到上次结果);仍在运行的任务不打断,按 Open 语义附加。
 func (m *ExamJobManager) OpenForce(nodeKey string, node *subscription.Node) *ExamSubscription {
-	return m.open(nodeKey, node, true)
+	return m.open(0, nodeKey, node, true)
 }
 
-func (m *ExamJobManager) open(nodeKey string, node *subscription.Node, force bool) *ExamSubscription {
+// OpenFor 与 Open 同语义,但按属主分片(多租户):同 nodeKey 不同用户各自单实例。
+func (m *ExamJobManager) OpenFor(userID int64, nodeKey string, node *subscription.Node) *ExamSubscription {
+	return m.open(userID, nodeKey, node, false)
+}
+
+// OpenForceFor 与 OpenForce 同语义,但按属主分片(多租户)。
+func (m *ExamJobManager) OpenForceFor(userID int64, nodeKey string, node *subscription.Node) *ExamSubscription {
+	return m.open(userID, nodeKey, node, true)
+}
+
+func (m *ExamJobManager) open(userID int64, nodeKey string, node *subscription.Node, force bool) *ExamSubscription {
 	// 活节点存内存旁路(凭证不进 params_json)。先暂存进 pending:若 mgr 判定为新任务,
-	// 会在锁内、Run goroutine 启动前调 OnStart 把它原子晋升进 nodes(被 Run LoadAndDelete 消费),
-	// 消除"Run 抢先于旁路写入"的竞态。附加到既有任务不触发 OnStart,暂存由收尾 LoadAndDelete 清掉,
+	// 会在锁内、Run goroutine 启动前调 OnStartFor 把它原子晋升进 nodes(被 Run LoadAndDelete 消费),
+	// 消除"Run 抢先于旁路写入"的竞态。附加到既有任务不触发 OnStartFor,暂存由收尾 LoadAndDelete 清掉,
 	// 避免凭证对象留存超出任务生命周期(M2 修复)。
-	params, err := json.Marshal(examParams{NodeKey: nodeKey})
+	params, err := json.Marshal(examParams{NodeKey: nodeKey, UserID: userID})
 	if err != nil && m.kind.onErr != nil {
 		m.kind.onErr(fmt.Errorf("exam: marshal params: %w", err))
 	}
 
-	m.kind.pending.Store(nodeKey, node)
+	ref := examNodeRef{userID: userID, nodeKey: nodeKey}
+	m.kind.pending.Store(ref, node)
 
 	var inner *jobs.Subscription
 	if force {
-		inner, err = m.mgr.OpenForce(m.kind.Name(), nodeKey, params)
+		inner, err = m.mgr.OpenForceFor(userID, m.kind.Name(), nodeKey, params)
 	} else {
-		inner, err = m.mgr.Open(m.kind.Name(), nodeKey, params)
+		inner, err = m.mgr.OpenFor(userID, m.kind.Name(), nodeKey, params)
 	}
-	// 收尾清理暂存:创建路径 OnStart 已 LoadAndDelete(此处 no-op);附加路径 OnStart 未触发,
+	// 收尾清理暂存:创建路径 OnStartFor 已 LoadAndDelete(此处 no-op);附加路径 OnStartFor 未触发,
 	// 此处删掉暂存,避免活节点(含凭证)留存超出任务生命周期。
-	m.kind.pending.LoadAndDelete(nodeKey)
+	m.kind.pending.LoadAndDelete(ref)
 	if err != nil {
 		// 仅当 kind 未注册才可能到此(编程错误);此处 kind 恒已注册,理论不达。
 		closed := make(chan ExamFrame)
@@ -288,8 +313,14 @@ func (m *ExamJobManager) open(nodeKey string, node *subscription.Node, force boo
 }
 
 // Cancel 取消该节点任务:无任务或已收口返回 false。
+// 等价于 CancelFor(0, ...)(未归属分片,旧语义)。
 func (m *ExamJobManager) Cancel(nodeKey string) bool {
 	return m.mgr.Cancel(m.kind.Name(), nodeKey)
+}
+
+// CancelFor 取消指定属主的该节点任务(多租户)。
+func (m *ExamJobManager) CancelFor(userID int64, nodeKey string) bool {
+	return m.mgr.CancelFor(userID, m.kind.Name(), nodeKey)
 }
 
 // SweepExpired 清理超过 TTL 的已完成任务(供后台/测试触发)。

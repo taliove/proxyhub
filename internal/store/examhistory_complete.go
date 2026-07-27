@@ -25,17 +25,31 @@ const completeExamFilter = `COALESCE(json_extract(report_json, '$.source'), '') 
 // LatestCompleteExamHistory 返回某节点最近一次完整体检口径记录(排除 stability_check);
 // 无记录返回 (nil, nil)。
 func (s *Store) LatestCompleteExamHistory(nodeKey string) (*ExamHistoryEntry, error) {
+	return s.LatestCompleteExamHistoryForUser(0, nodeKey)
+}
+
+// LatestCompleteExamHistoryForUser 同 LatestCompleteExamHistory,但按属主过滤(多租户):
+// userID>0 只查该用户名下历史(查不到返回 (nil, nil),与他无此节点/无历史同态,
+// 不暴露存在性);0 = 全量(超管跨用户视角或旧单用户语义)。
+func (s *Store) LatestCompleteExamHistoryForUser(userID int64, nodeKey string) (*ExamHistoryEntry, error) {
 	var (
 		entry      ExamHistoryEntry
 		reportJSON string
 		createdStr string
 	)
-	err := s.db.QueryRow(`
+	query := `
 		SELECT id, node_key, report_json, created_at
 		FROM exam_history
-		WHERE node_key = ? AND `+completeExamFilter+`
+		WHERE node_key = ? AND ` + completeExamFilter
+	args := []any{nodeKey, detection.ExamSourceStabilityCheck}
+	if userID > 0 {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	query += `
 		ORDER BY id DESC
-		LIMIT 1`, nodeKey, detection.ExamSourceStabilityCheck).Scan(&entry.ID, &entry.NodeKey, &reportJSON, &createdStr)
+		LIMIT 1`
+	err := s.db.QueryRow(query, args...).Scan(&entry.ID, &entry.NodeKey, &reportJSON, &createdStr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -153,11 +167,24 @@ func (s *Store) LatestCompleteExamReports(nodeKeys []string) (map[string]ExamHis
 // ListCompleteExamHistory 返回某节点完整体检口径的历史时间线(时间倒序),
 // stability_check 条目被过滤;无记录返回空切片。
 func (s *Store) ListCompleteExamHistory(nodeKey string) ([]ExamHistoryEntry, error) {
-	rows, err := s.db.Query(`
+	return s.ListCompleteExamHistoryForUser(0, nodeKey)
+}
+
+// ListCompleteExamHistoryForUser 同 ListCompleteExamHistory,但按属主过滤(多租户);
+// userID<=0 返回全量(超管跨用户视角或旧单用户语义)。
+func (s *Store) ListCompleteExamHistoryForUser(userID int64, nodeKey string) ([]ExamHistoryEntry, error) {
+	query := `
 		SELECT id, node_key, report_json, created_at
 		FROM exam_history
-		WHERE node_key = ? AND `+completeExamFilter+`
-		ORDER BY id DESC`, nodeKey, detection.ExamSourceStabilityCheck)
+		WHERE node_key = ? AND ` + completeExamFilter
+	args := []any{nodeKey, detection.ExamSourceStabilityCheck}
+	if userID > 0 {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	query += `
+		ORDER BY id DESC`
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query complete exam history: %w", err)
 	}

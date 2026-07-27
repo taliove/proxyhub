@@ -188,18 +188,24 @@ CREATE INDEX IF NOT EXISTS idx_nodes_position ON nodes(position);
 
 -- 机场节点屏蔽名单：按 NodeKey(server:port) 精确拉黑单个机场节点，
 -- 跨刷新持久，订阅生成时剔除；自建节点豁免（见 ADR 0009）。
+-- (user_id, node_key) 联合主键:同一节点可被不同用户独立屏蔽(多租户,021)。
 CREATE TABLE IF NOT EXISTS node_blocks (
-	node_key   TEXT PRIMARY KEY,
-	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	user_id    INTEGER NOT NULL DEFAULT 0,
+	node_key   TEXT NOT NULL,
+	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (user_id, node_key)
 );
 
 -- 机场节点编辑覆盖层：按 NodeKey 覆盖展示字段（display_name/region），
 -- 跨刷新持久，独立于 nodes 快照生命周期（见 spec-node-testing-upsert.md）。
+-- (user_id, node_key) 联合主键:同一节点可被不同用户独立覆盖(多租户,021)。
 CREATE TABLE IF NOT EXISTS node_overrides (
-	node_key     TEXT PRIMARY KEY,
+	user_id      INTEGER NOT NULL DEFAULT 0,
+	node_key     TEXT NOT NULL,
 	display_name TEXT NOT NULL DEFAULT '',
 	region       TEXT NOT NULL DEFAULT '',
-	updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (user_id, node_key)
 );
 
 -- 安全审计事件流水：登录成功/失败/蜜罐命中/达阈值封禁。保留 90 天。
@@ -341,6 +347,12 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	// 超管落位后回填:user_id=0 的历史行统一归属超管(ticket 06 expand)。
 	// 无超管(全新安装)时幂等为空操作,首位超管创建后由下次启动补齐。
 	if err := s.BackfillUserID(); err != nil {
+		return err
+	}
+
+	// 屏蔽名单/覆盖层主键重建为 (user_id, node_key)(多租户写隔离,021)。
+	// 必须在 migrateMultiTenant(user_id 列)与 BackfillUserID(归属回填)之后。
+	if err := s.migrateNodeOwnershipScope(); err != nil {
 		return err
 	}
 

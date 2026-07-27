@@ -37,10 +37,10 @@ const (
 	proxyBrowserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 )
 
-// resolveProxySpeedtestNode 解析透传测速的节点(复用 resolveTestNode 口径)。
+// resolveProxySpeedtestNode 解析透传测速的节点(复用 resolveTestNode 口径,按属主限定)。
 // nodeKey/selfNodeID 都空 = 直连基线(后端直连 Cloudflare,不经节点);解析不到返回 nil。
-func (s *Server) resolveProxySpeedtestNode(selfNodeID int64, nodeKey string) *subscription.Node {
-	return s.resolveTestNode(selfNodeID, nodeKey)
+func (s *Server) resolveProxySpeedtestNode(userID, selfNodeID int64, nodeKey string) *subscription.Node {
+	return s.resolveTestNode(userID, selfNodeID, nodeKey)
 }
 
 // handleSpeedtestProxyDownload 透传下载:经节点 GET Cloudflare 大文件,流式转发给浏览器。
@@ -51,8 +51,12 @@ func (s *Server) handleSpeedtestProxyDownload(w http.ResponseWriter, r *http.Req
 		http.Error(w, "detection service not initialized", http.StatusServiceUnavailable)
 		return
 	}
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	q := r.URL.Query()
-	node, err := s.resolveAndValidateNode(w, q)
+	node, err := s.resolveAndValidateNode(w, EffectiveUserID(userScope), q)
 	if err != nil {
 		return // resolveAndValidateNode 已写错误响应
 	}
@@ -134,8 +138,12 @@ func (s *Server) handleSpeedtestProxyLatency(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "detection service not initialized", http.StatusServiceUnavailable)
 		return
 	}
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	q := r.URL.Query()
-	node, err := s.resolveAndValidateNode(w, q)
+	node, err := s.resolveAndValidateNode(w, EffectiveUserID(userScope), q)
 	if err != nil {
 		return
 	}
@@ -181,8 +189,12 @@ func (s *Server) handleSpeedtestProxyUpload(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "detection service not initialized", http.StatusServiceUnavailable)
 		return
 	}
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	q := r.URL.Query()
-	node, err := s.resolveAndValidateNode(w, q)
+	node, err := s.resolveAndValidateNode(w, EffectiveUserID(userScope), q)
 	if err != nil {
 		return
 	}
@@ -229,8 +241,8 @@ func (s *Server) handleSpeedtestProxyUpload(w http.ResponseWriter, r *http.Reque
 }
 
 // resolveAndValidateNode 解析透传节点:都空=直连基线(返回 nil, nil);
-// 给了但解析不到返回 404 错误。成功返回节点(或 nil=直连)。
-func (s *Server) resolveAndValidateNode(w http.ResponseWriter, q url.Values) (*subscription.Node, error) {
+// 给了但解析不到(含命中他人资源)返回 404 错误。成功返回节点(或 nil=直连)。
+func (s *Server) resolveAndValidateNode(w http.ResponseWriter, userID int64, q url.Values) (*subscription.Node, error) {
 	var selfNodeID int64
 	if v := q.Get("self_node_id"); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
@@ -241,7 +253,7 @@ func (s *Server) resolveAndValidateNode(w http.ResponseWriter, q url.Values) (*s
 		selfNodeID = id
 	}
 	nodeKey := q.Get("node_key")
-	node := s.resolveProxySpeedtestNode(selfNodeID, nodeKey)
+	node := s.resolveProxySpeedtestNode(userID, selfNodeID, nodeKey)
 	if (selfNodeID > 0 || nodeKey != "") && node == nil {
 		http.Error(w, "node not found", http.StatusNotFound)
 		return nil, fmt.Errorf("node not found")

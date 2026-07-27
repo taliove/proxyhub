@@ -86,3 +86,20 @@ func (s *Store) ListUserSettings(userID int64) (map[string]string, error) {
 	}
 	return result, rows.Err()
 }
+
+// GetSettingForUser 按回退链读取配置(租户级设置,多租户):
+// 用户覆盖(user_settings) ?? 全局默认(system_settings) ?? ErrNotFound(调用方给内置默认)。
+// userID<=0 只读全局默认(超管全局视角/未归属路径)。
+// "重置"语义由 DeleteUserSetting 实现(删覆盖行,回到跟随全局)。
+func (s *Store) GetSettingForUser(userID int64, key string) (string, error) {
+	if userID > 0 {
+		val, err := s.GetUserSetting(userID, key)
+		if err == nil {
+			return val, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return "", err
+		}
+	}
+	return s.GetSetting(key)
+}

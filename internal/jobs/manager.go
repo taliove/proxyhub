@@ -292,7 +292,10 @@ func (m *Manager) startOrAttach(userID int64, kind, key string, params json.RawM
 	m.jobs[id] = j
 	// OnStart 在锁内、goroutine 启动前同步调用:让 kind 把运行首步就要读的旁路数据
 	// (体检活节点)原子就位,消除 Run 的 LoadAndDelete 抢先于旁路写入的竞态。
-	if s, ok := k.(starter); ok {
+	// 属主感知变体优先(多租户:同 key 不同属主的任务旁路按 (userID, key) 索引)。
+	if s, ok := k.(ownerStarter); ok {
+		s.OnStartFor(id.ownerUserID, key)
+	} else if s, ok := k.(starter); ok {
 		s.OnStart(key)
 	}
 	go m.runJob(j, params, "")

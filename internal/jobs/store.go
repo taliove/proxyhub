@@ -26,6 +26,8 @@ type Record struct {
 	Cursor    string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// UserID 任务属主(ticket 07 多租户):0 = 未归属(旧任务/启动期全局任务)。
+	UserID int64
 }
 
 // Insert 追加一条 running 任务记录,返回自增 id。params 为空时存 'null'。
@@ -80,7 +82,7 @@ func (s *Store) Finish(id int64, status Status) error {
 // LoadRunning 加载所有仍处于 running 的任务(重启恢复用),按 id 升序。
 func (s *Store) LoadRunning() ([]Record, error) {
 	rows, err := s.db.Query(
-		`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at
+		`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at, user_id
 		 FROM jobs WHERE status = ? ORDER BY id ASC`,
 		string(StatusRunning),
 	)
@@ -98,7 +100,7 @@ func (s *Store) LoadRunning() ([]Record, error) {
 			createdStr string
 			updatedStr string
 		)
-		if err := rows.Scan(&rec.ID, &rec.Kind, &rec.Key, &params, &status, &rec.Cursor, &createdStr, &updatedStr); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.Kind, &rec.Key, &params, &status, &rec.Cursor, &createdStr, &updatedStr, &rec.UserID); err != nil {
 			return nil, fmt.Errorf("scan running job: %w", err)
 		}
 		rec.Params = json.RawMessage(params)
@@ -110,9 +112,37 @@ func (s *Store) LoadRunning() ([]Record, error) {
 	return records, rows.Err()
 }
 
+// FindRunningOwner 返回 kind+key 的 running 任务属主 user_id(超管取消任务时定位分片用);
+// 无 running 任务返回 (0, nil)。同 kind+key 理论上单实例,多行时取最新。
+func (s *Store) FindRunningOwner(kind, key string) (int64, error) {
+	var userID int64
+	err := s.db.QueryRow(
+		`SELECT user_id FROM jobs WHERE kind = ? AND key = ? AND status = ? ORDER BY id DESC LIMIT 1`,
+		kind, key, string(StatusRunning)).Scan(&userID)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find running job owner: %w", err)
+	}
+	return userID, nil
+}
+
+// HasRunningForUser 判断指定用户在 kind+key 上是否有 running 任务(取消接口的属主校验用)。
+func (s *Store) HasRunningForUser(userID int64, kind, key string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM jobs WHERE user_id = ? AND kind = ? AND key = ? AND status = ?`,
+		userID, kind, key, string(StatusRunning)).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("check running job ownership: %w", err)
+	}
+	return n > 0, nil
+}
+
 // LoadAll 加载所有任务记录(供任务中心列表展示),按 id 降序(最新在前)。
 func (s *Store) LoadAll() ([]Record, error) {
-	return s.loadJobs(`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at
+	return s.loadJobs(`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at, user_id
 		 FROM jobs ORDER BY id DESC`)
 }
 
@@ -122,7 +152,7 @@ func (s *Store) LoadAllByUser(userID int64) ([]Record, error) {
 	if userID <= 0 {
 		return s.LoadAll()
 	}
-	return s.loadJobs(`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at
+	return s.loadJobs(`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at, user_id
 		 FROM jobs WHERE user_id = ? ORDER BY id DESC`, userID)
 }
 
@@ -142,7 +172,7 @@ func (s *Store) loadJobs(query string, args ...any) ([]Record, error) {
 			createdStr string
 			updatedStr string
 		)
-		if err := rows.Scan(&rec.ID, &rec.Kind, &rec.Key, &params, &status, &rec.Cursor, &createdStr, &updatedStr); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.Kind, &rec.Key, &params, &status, &rec.Cursor, &createdStr, &updatedStr, &rec.UserID); err != nil {
 			return nil, fmt.Errorf("scan job: %w", err)
 		}
 		rec.Params = json.RawMessage(params)
@@ -168,9 +198,9 @@ func (s *Store) GetByUser(userID, id int64) (*Record, error) {
 		updatedStr string
 	)
 	err := s.db.QueryRow(
-		`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at
+		`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at, user_id
 		 FROM jobs WHERE id = ? AND user_id = ?`, id, userID,
-	).Scan(&rec.ID, &rec.Kind, &rec.Key, &params, &status, &rec.Cursor, &createdStr, &updatedStr)
+	).Scan(&rec.ID, &rec.Kind, &rec.Key, &params, &status, &rec.Cursor, &createdStr, &updatedStr, &rec.UserID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -194,9 +224,9 @@ func (s *Store) Get(id int64) (*Record, error) {
 		updatedStr string
 	)
 	err := s.db.QueryRow(
-		`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at
+		`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at, user_id
 		 FROM jobs WHERE id = ?`, id,
-	).Scan(&rec.ID, &rec.Kind, &rec.Key, &params, &status, &rec.Cursor, &createdStr, &updatedStr)
+	).Scan(&rec.ID, &rec.Kind, &rec.Key, &params, &status, &rec.Cursor, &createdStr, &updatedStr, &rec.UserID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

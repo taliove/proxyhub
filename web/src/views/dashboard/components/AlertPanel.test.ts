@@ -1,8 +1,10 @@
 // AlertPanel 组件测试:四类异常聚合渲染、阈值边界、24h 窗口、未测试弱提示、降级与跳转
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import AlertPanel from './AlertPanel.vue'
 import client from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import type { Job } from '@/api/jobs'
 import type { Airport } from '@/types'
 
@@ -75,6 +77,10 @@ const mountPanel = () =>
 describe('AlertPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // 异常面板的审计两路(封禁 IP/审计事件)只对超管发请求:
+    // 本套件既有用例全部以超管身份挂载(普通用户用例见末尾)。
+    setActivePinia(createPinia())
+    useAuthStore().setAuth('admin', 'super_admin')
   })
 
   it('四类异常齐备时聚合渲染,各条目点击跳转对应页面', async () => {
@@ -247,5 +253,19 @@ describe('AlertPanel', () => {
     const text = wrapper.text()
     expect(text).toContain('IP 5.6.7.8 已被封禁')
     expect(wrapper.findAll('.alert-item')).toHaveLength(1)
+  })
+
+  it('普通用户视角:不发审计两路请求(后端 403 专属),其余区块照常', async () => {
+    useAuthStore().clearAuth()
+    useAuthStore().setAuth('member', 'user')
+    mockAll({
+      '/airports': [makeAirport({ last_test_status: 'completed', last_test_score: 45.4 })]
+    })
+    mountPanel()
+    await flushPromises()
+
+    const requested = vi.mocked(client.get).mock.calls.map((c) => c[0])
+    expect(requested.some((u) => String(u).startsWith('/audit/'))).toBe(false)
+    expect(requested).toContain('/airports')
   })
 })

@@ -47,7 +47,7 @@ func TestBatchSpeedtestKind_Run_EmptyNodeList(t *testing.T) {
 			t.Fatal("run should not be called with empty node list")
 			return TestResult{}
 		},
-		onComplete: func(node *subscription.Node, result TestResult) {
+		onComplete: func(userID int64, node *subscription.Node, result TestResult) {
 			t.Fatal("onComplete should not be called with empty node list")
 		},
 	}
@@ -82,7 +82,7 @@ func TestBatchSpeedtestKind_Run_SingleNode(t *testing.T) {
 			}
 			return TestResult{Available: true, Mode: "bandwidth", DownMbps: 55.5}
 		},
-		onComplete: func(n *subscription.Node, result TestResult) {
+		onComplete: func(userID int64, n *subscription.Node, result TestResult) {
 			completeCalled = true
 			if n == nil || n.NodeKey() != node.NodeKey() {
 				t.Errorf("onComplete node = %v, want %q", n, node.NodeKey())
@@ -92,7 +92,7 @@ func TestBatchSpeedtestKind_Run_SingleNode(t *testing.T) {
 			}
 		},
 	}
-	k.nodes.Store(node.NodeKey(), node)
+	k.nodes.Store(examNodeRef{userID: 0, nodeKey: node.NodeKey()}, node)
 
 	params, _ := json.Marshal(batchSpeedtestParams{NodeKeys: []string{node.NodeKey()}})
 	var phases []string
@@ -135,11 +135,11 @@ func TestBatchSpeedtestKind_Run_FailureStillCompletes(t *testing.T) {
 		run: func(ctx context.Context, n *subscription.Node) TestResult {
 			return TestResult{Available: false, Mode: "bandwidth", Error: "timeout: 连接超时"}
 		},
-		onComplete: func(n *subscription.Node, result TestResult) {
+		onComplete: func(userID int64, n *subscription.Node, result TestResult) {
 			completeResult = result
 		},
 	}
-	k.nodes.Store(node.NodeKey(), node)
+	k.nodes.Store(examNodeRef{userID: 0, nodeKey: node.NodeKey()}, node)
 
 	params, _ := json.Marshal(batchSpeedtestParams{NodeKeys: []string{node.NodeKey()}})
 	err := k.Run(context.Background(), params, "", func(data json.RawMessage) {}, func(cursor string) {})
@@ -174,7 +174,7 @@ func TestBatchSpeedtestKind_Run_MultipleNodes(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 			return TestResult{Available: true, Mode: "bandwidth", DownMbps: 10}
 		},
-		onComplete: func(n *subscription.Node, result TestResult) {
+		onComplete: func(userID int64, n *subscription.Node, result TestResult) {
 			mu.Lock()
 			completeOrder = append(completeOrder, n.NodeKey())
 			mu.Unlock()
@@ -183,7 +183,7 @@ func TestBatchSpeedtestKind_Run_MultipleNodes(t *testing.T) {
 
 	var nodeKeys []string
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 		nodeKeys = append(nodeKeys, n.NodeKey())
 	}
 
@@ -221,12 +221,12 @@ func TestBatchSpeedtestKind_Run_ResumesFromCursor(t *testing.T) {
 			runNodes = append(runNodes, n.Name)
 			return TestResult{Available: true, Mode: "bandwidth", DownMbps: 10}
 		},
-		onComplete: func(n *subscription.Node, result TestResult) {},
+		onComplete: func(userID int64, n *subscription.Node, result TestResult) {},
 	}
 
 	var nodeKeys []string
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 		nodeKeys = append(nodeKeys, n.NodeKey())
 	}
 
@@ -252,12 +252,12 @@ func TestBatchSpeedtestKind_Run_ProgressCallback(t *testing.T) {
 
 	k := &batchSpeedtestKind{
 		run:        func(ctx context.Context, n *subscription.Node) TestResult { return TestResult{Mode: "bandwidth"} },
-		onComplete: func(n *subscription.Node, result TestResult) {},
+		onComplete: func(userID int64, n *subscription.Node, result TestResult) {},
 	}
 
 	var nodeKeys []string
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 		nodeKeys = append(nodeKeys, n.NodeKey())
 	}
 
@@ -295,12 +295,12 @@ func TestBatchSpeedtestKind_Run_Cancellation(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 			return TestResult{Available: true, Mode: "bandwidth", DownMbps: 10}
 		},
-		onComplete: func(n *subscription.Node, result TestResult) {},
+		onComplete: func(userID int64, n *subscription.Node, result TestResult) {},
 	}
 
 	var nodeKeys []string
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 		nodeKeys = append(nodeKeys, n.NodeKey())
 	}
 
@@ -327,7 +327,7 @@ func TestBatchSpeedtestKind_Run_MissingNode(t *testing.T) {
 			t.Fatal("run should not be called for missing node")
 			return TestResult{}
 		},
-		onComplete: func(n *subscription.Node, result TestResult) {
+		onComplete: func(userID int64, n *subscription.Node, result TestResult) {
 			t.Fatal("onComplete should not be called for missing node")
 		},
 	}

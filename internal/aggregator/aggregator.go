@@ -328,16 +328,13 @@ func (a *Aggregator) UpdateNodeIdentityForUser(userID int64, nodeKey, name, regi
 	return false
 }
 
-// Run 定时执行聚合流水线(经 jobs 运行时发起刷新任务)
+// Run 定时执行聚合流水线(经 jobs 运行时发起刷新任务)。
+// 按用户分片(多租户):每个 tick 遍历全部启用用户,定时刷新开关(租户级设置,
+// 回退全局默认)生效者各自发起一轮 StartRefreshJobForUser;开关每 tick 重读,
+// 运行时切换下一个 tick 即生效。
 func (a *Aggregator) Run(ctx context.Context) {
 	// 启动时立即跑一轮（除非“定时刷新”已关闭，见 ADR 0004）
-	if a.autoRefreshEnabled() {
-		if _, _, _, err := a.StartRefreshJob(store.RefreshTriggerStartup); err != nil {
-			a.logger.Error("initial aggregation failed", "error", err)
-		}
-	} else {
-		a.logger.Info("scheduled refresh disabled, skipping startup aggregation")
-	}
+	a.startScheduledRefreshes(store.RefreshTriggerStartup)
 
 	ticker := time.NewTicker(a.cfg.HealthCheck.Interval)
 	defer ticker.Stop()
@@ -347,26 +344,43 @@ func (a *Aggregator) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// 每个 tick 重新读取开关，运行时切换下一个 tick 即生效
-			if !a.autoRefreshEnabled() {
-				a.logger.Debug("scheduled refresh disabled, skipping tick")
-				continue
-			}
-			// 撞车跳过:已有全量进行中(附加)或与单机场刷新冲突,本轮不再发起
-			_, _, started, err := a.StartRefreshJob(store.RefreshTriggerScheduled)
-			switch {
-			case errors.Is(err, ErrRefreshConflict):
-				a.logger.Info("scheduled aggregation skipped: conflicting refresh in progress")
-			case err != nil:
-				a.logger.Error("aggregation failed", "error", err)
-			case !started:
-				a.logger.Info("scheduled aggregation skipped: refresh already running")
-			}
+			a.startScheduledRefreshes(store.RefreshTriggerScheduled)
 		}
 	}
 }
 
-// autoRefreshEnabled 读取“定时刷新”开关（默认开）。只有显式设为 "false" 才关闭；
+// startScheduledRefreshes 遍历全部启用用户,为开关生效者发起一轮定时/启动刷新。
+// 用户列表读取失败时回退为旧全局全量刷新(fail-open:不让刷新永久停摆)。
+func (a *Aggregator) startScheduledRefreshes(trigger string) {
+	users, err := a.st.ListUsers()
+	if err != nil {
+		a.logger.Warn("list users failed, falling back to global refresh", "error", err)
+		if _, _, _, err := a.StartRefreshJob(trigger); err != nil {
+			a.logger.Error("aggregation failed", "error", err)
+		}
+		return
+	}
+	for _, u := range users {
+		if u.Disabled() {
+			continue
+		}
+		if !a.autoRefreshEnabledForUser(u.ID) {
+			continue
+		}
+		// 撞车跳过:该用户已有全量进行中(附加)或与单机场刷新冲突,本轮不再发起
+		_, _, started, err := a.StartRefreshJobForUser(u.ID, trigger)
+		switch {
+		case errors.Is(err, ErrRefreshConflict):
+			a.logger.Info("scheduled aggregation skipped: conflicting refresh in progress", "user_id", u.ID)
+		case err != nil:
+			a.logger.Error("aggregation failed", "user_id", u.ID, "error", err)
+		case !started:
+			a.logger.Info("scheduled aggregation skipped: refresh already running", "user_id", u.ID)
+		}
+	}
+}
+
+// autoRefreshEnabled 读取“定时刷新”全局开关（默认开）。只有显式设为 "false" 才关闭；
 // 读取设置失败时按开处理（fail-open：宁可多刷一轮，也不因设置读不出而让刷新永久停摆）。
 func (a *Aggregator) autoRefreshEnabled() bool {
 	settings, err := a.st.GetSystemSettings()
@@ -377,11 +391,21 @@ func (a *Aggregator) autoRefreshEnabled() bool {
 	return settings["scheduled_refresh_enabled"] != "false"
 }
 
+// autoRefreshEnabledForUser 读取指定用户的定时刷新开关(租户级设置,回退全局默认):
+// 用户未覆盖时跟随全局 autoRefreshEnabled;同样 fail-open。
+func (a *Aggregator) autoRefreshEnabledForUser(userID int64) bool {
+	val, err := a.st.GetSettingForUser(userID, "scheduled_refresh_enabled")
+	if err != nil {
+		return true
+	}
+	return val != "false"
+}
+
 // RunOnce 同步执行一轮完整的聚合流水线，并写入刷新记录。
 // 内部路径(测试/直接调用):自身无任何互斥,调用方自负并发安全
 // (生产路径一律走 jobs 运行时的 kind+key 单实例,见 refresh_job.go)。
 func (a *Aggregator) RunOnce(ctx context.Context, trigger string) error {
-	rl, err := a.newRunLog(trigger, 0)
+	rl, err := a.newRunLog(0, trigger, 0)
 	if err != nil {
 		// 刷新记录写不进去不阻断聚合，仅丢失本次日志
 		a.logger.Warn("create refresh run failed, continuing without refresh log", "error", err)
@@ -399,9 +423,10 @@ type runLog struct {
 
 // newRunLog 创建刷新记录；失败时返回可安全使用的 no-op 记录器和错误，由调用方决定是否降级。
 // jobID 为关联的 jobs 任务 id(任务化刷新回填;直接 RunOnce 传 0)。
-func (a *Aggregator) newRunLog(trigger string, jobID int64) (*runLog, error) {
+// userID 为属主(多租户):刷新历史按用户隔离;0 = 全局(定时/启动刷新)。
+func (a *Aggregator) newRunLog(userID int64, trigger string, jobID int64) (*runLog, error) {
 	rl := &runLog{st: a.st, logger: a.logger}
-	run, err := a.st.CreateRefreshRun(trigger, jobID)
+	run, err := a.st.CreateRefreshRunForUser(userID, trigger, jobID)
 	if err != nil {
 		return rl, err
 	}
@@ -535,7 +560,7 @@ func (a *Aggregator) executeForUser(ctx context.Context, rl *runLog, progress fu
 	mergedPool := subscription.MergePool(oldPool, allNodes)
 
 	// 应用覆盖层（机场节点的 display_name/region 编辑）
-	a.applyOverrides(mergedPool)
+	a.applyOverrides(owner, mergedPool)
 	// 属主回填:本轮节点全部归属刷新 owner 分片(Invariant B)
 	for _, n := range mergedPool {
 		if n.UserID == 0 {
@@ -881,8 +906,9 @@ func (a *Aggregator) recognizeRegions(rl *runLog, nodes []*subscription.Node) {
 }
 
 // applyOverrides 应用机场节点覆盖层(display_name/region 编辑);自建节点豁免。
-func (a *Aggregator) applyOverrides(pool []*subscription.Node) {
-	overrides, err := a.st.ListNodeOverrides()
+// 按池属主读覆盖层(多租户):同一节点可被不同用户独立覆盖。
+func (a *Aggregator) applyOverrides(userID int64, pool []*subscription.Node) {
+	overrides, err := a.st.ListNodeOverridesForUser(userID)
 	if err != nil {
 		a.logger.Warn("load node overrides failed", "error", err)
 		return
@@ -929,7 +955,7 @@ func (a *Aggregator) mergePartialOnCancel(rl *runLog, fetched *fetchResult) {
 	}
 
 	merged := subscription.MergePool(oldOfFetched, fetched.allNodes)
-	a.applyOverrides(merged)
+	a.applyOverrides(owner, merged)
 	newPool := append(merged, rest...)
 	for _, n := range newPool {
 		if n.UserID == 0 {

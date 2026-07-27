@@ -7,9 +7,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handleGetTemplate 返回当前生效的 Clash 配置模板（用户已保存的，或内嵌默认）。
+// handleGetTemplate 返回当前生效的 Clash 配置模板(视角驱动):
+// 超管未 impersonate = 全局默认;普通用户/impersonate = 本人覆盖(回退全局默认 ?? 内嵌默认)。
 func (s *Server) handleGetTemplate(w http.ResponseWriter, r *http.Request) {
-	tmpl, err := s.st.GetClashTemplate()
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	tmpl, err := s.st.GetClashTemplateForUser(viewScopeUserID(scope))
 	if err != nil {
 		s.logger.Error("get clash template failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -42,7 +47,18 @@ func (s *Server) handleSaveTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.st.SetClashTemplate(req.Template); err != nil {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	uid := viewScopeUserID(scope)
+	var err error
+	if uid == 0 {
+		err = s.st.SetClashTemplate(req.Template)
+	} else {
+		err = s.st.SetClashTemplateForUser(uid, req.Template)
+	}
+	if err != nil {
 		s.logger.Error("save clash template failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -50,9 +66,21 @@ func (s *Server) handleSaveTemplate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"success": true})
 }
 
-// handleResetTemplate 把配置模板恢复为内嵌默认模板。
+// handleResetTemplate 重置配置模板(视角驱动):
+// 超管未 impersonate = 全局恢复内嵌默认;普通用户/impersonate = 删除本人覆盖(回到跟随全局默认)。
 func (s *Server) handleResetTemplate(w http.ResponseWriter, r *http.Request) {
-	if err := s.st.ResetClashTemplate(); err != nil {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	uid := viewScopeUserID(scope)
+	var err error
+	if uid == 0 {
+		err = s.st.ResetClashTemplate()
+	} else {
+		err = s.st.DeleteClashTemplateForUser(uid)
+	}
+	if err != nil {
 		s.logger.Error("reset clash template failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

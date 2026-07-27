@@ -2,6 +2,7 @@ import { onMounted, ref } from 'vue'
 import client from '@/api/client'
 import { listJobs, type Job } from '@/api/jobs'
 import { kindLabel, scopeLabel, statusMeta } from '@/views/jobs/jobmeta'
+import { useAuthStore } from '@/stores/auth'
 import type { Airport } from '@/types'
 
 // 低分机场阈值:最近测试总分低于该值视为异常(spec 已拍板;60 分本身不算异常)。
@@ -133,41 +134,48 @@ function buildAuditAlerts(events: AuditEvent[]): AlertItem[] {
   }))
 }
 
-// useAlertPanel 聚合四路现成接口生成异常面板数据:
-// /airports(低分机场 + 未测试弱提示)、/jobs?status=failed,interrupted(24h 失败/中断任务)、
-// /audit/banned(当前封禁 IP)、/audit/events(24h 审计异常)。
-// 四路独立降级:单路失败只缺席该路数据(全局拦截器已提示),不拖垮整板。
+// useAlertPanel 聚合现成接口生成异常面板数据:
+// /airports(低分机场 + 未测试弱提示)、/jobs?status=failed,interrupted(24h 失败/中断任务);
+// 超管额外两路:/audit/banned(当前封禁 IP)、/audit/events(24h 审计异常)。
+// 各路独立降级:单路失败只缺席该路数据(全局拦截器已提示),不拖垮整板。
+// 审计两路是超管专属(后端 adminGuard 403),普通用户直接不发,避免无谓 403 噪音。
 export function useAlertPanel() {
   const alerts = ref<AlertItem[]>([])
   const untestedCount = ref(0)
   const loading = ref(true)
 
   onMounted(async () => {
+    const authStore = useAuthStore()
     // 后端 status 过滤支持逗号多值(ANY 匹配),failed/interrupted 一次请求
-    const [airportsR, jobsR, bannedR, eventsR] = await Promise.allSettled([
+    const requests: Promise<unknown>[] = [
       client.get<unknown, Airport[]>('/airports'),
-      listJobs({ status: 'failed,interrupted' }),
-      client.get<unknown, { banned: BannedIP[] }>('/audit/banned'),
-      client.get<unknown, { events: AuditEvent[]; total: number }>(
-        `/audit/events?event_type=${AUDIT_ALERT_TYPES.join(',')}&time_range=24h&limit=${AUDIT_EVENTS_LIMIT}`
+      listJobs({ status: 'failed,interrupted' })
+    ]
+    if (authStore.isSuperAdmin) {
+      requests.push(
+        client.get<unknown, { banned: BannedIP[] }>('/audit/banned'),
+        client.get<unknown, { events: AuditEvent[]; total: number }>(
+          `/audit/events?event_type=${AUDIT_ALERT_TYPES.join(',')}&time_range=24h&limit=${AUDIT_EVENTS_LIMIT}`
+        )
       )
-    ])
+    }
+    const [airportsR, jobsR, bannedR, eventsR] = await Promise.allSettled(requests)
 
     const items: AlertItem[] = []
 
     if (airportsR.status === 'fulfilled') {
-      const r = buildAirportAlerts(airportsR.value || [])
+      const r = buildAirportAlerts((airportsR.value as Airport[]) || [])
       items.push(...r.items)
       untestedCount.value = r.untested
     }
 
-    items.push(...buildJobAlerts(jobsR.status === 'fulfilled' ? jobsR.value : []))
+    items.push(...buildJobAlerts(jobsR.status === 'fulfilled' ? (jobsR.value as Job[]) : []))
 
-    if (bannedR.status === 'fulfilled') {
-      items.push(...buildBannedAlerts(bannedR.value?.banned || []))
+    if (bannedR?.status === 'fulfilled') {
+      items.push(...buildBannedAlerts((bannedR.value as { banned: BannedIP[] })?.banned || []))
     }
-    if (eventsR.status === 'fulfilled') {
-      items.push(...buildAuditAlerts(eventsR.value?.events || []))
+    if (eventsR?.status === 'fulfilled') {
+      items.push(...buildAuditAlerts((eventsR.value as { events: AuditEvent[] })?.events || []))
     }
 
     alerts.value = items

@@ -45,9 +45,14 @@ type batchExamResultParams struct {
 
 // handleGetJobResult GET /api/jobs/{id}/result 按 kind 返回"这次任务跑出了什么"。
 // 未知 kind/无结果 kind 返回空结果语义(200 + reason),不报错。
+// 行属他人返回 404,不暴露存在性(多租户)。
 func (s *Server) handleGetJobResult(w http.ResponseWriter, r *http.Request) {
 	if s.st == nil {
 		http.Error(w, "storage not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
 		return
 	}
 
@@ -57,7 +62,7 @@ func (s *Server) handleGetJobResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rec, err := s.st.Jobs().Get(id)
+	rec, err := s.st.Jobs().GetByUser(viewScopeUserID(scope), id)
 	if err != nil {
 		s.logger.Error("get job for result failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

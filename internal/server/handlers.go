@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -244,43 +245,136 @@ func (s *Server) handleDeleteAirport(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-// handleGetSettings 获取系统设置
+// tenantSettingKeys 租户级设置键(多租户,CONTEXT.md「租户级设置」):
+// 普通用户可读写(落 user_settings,读取回退全局默认);其余键为超管专属,
+// 普通用户提交一律忽略(不报错,避免旧前端混发炸掉,但绝不落库)。
+var tenantSettingKeys = map[string]bool{
+	"filter_whitelist":          true,
+	"filter_keywords":           true,
+	"region_whitelist":          true,
+	"standardize_names":         true,
+	"name_template":             true,
+	"scheduled_refresh_enabled": true,
+}
+
+// handleGetSettings 获取系统设置(视角驱动):
+// 超管未 impersonate = 全局视图(全部全局键,含超管专属,移除密码字段);
+// 普通用户/impersonate 视角 = 租户级键的生效视图(回退链求值)+ 每键 overridden 标记。
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	settings, err := s.st.GetSystemSettings()
-	if err != nil {
-		s.logger.Error("get settings failed", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	uid := viewScopeUserID(scope)
+
+	if uid == 0 {
+		settings, err := s.st.GetSystemSettings()
+		if err != nil {
+			s.logger.Error("get settings failed", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		// 移除密码字段
+		delete(settings, "admin_password")
+		json.NewEncoder(w).Encode(map[string]any{
+			"settings":   settings,
+			"overridden": map[string]bool{},
+		})
 		return
 	}
 
-	// 移除密码字段
-	delete(settings, "admin_password")
-
-	json.NewEncoder(w).Encode(settings)
+	settings := make(map[string]string, len(tenantSettingKeys))
+	overridden := make(map[string]bool, len(tenantSettingKeys))
+	for key := range tenantSettingKeys {
+		val, err := s.st.GetSettingForUser(uid, key)
+		if err != nil {
+			val = "" // 无全局默认亦无覆盖:空值(前端按内置默认展示)
+		}
+		settings[key] = val
+		_, oerr := s.st.GetUserSetting(uid, key)
+		overridden[key] = oerr == nil
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"settings":   settings,
+		"overridden": overridden,
+	})
 }
 
-// handleSaveSettings 保存系统设置
+// handleSaveSettings 保存系统设置(视角驱动):
+// 超管未 impersonate = 写全局 system_settings(现状语义,含超管专属键);
+// 普通用户/impersonate 视角 = 只写租户级键到 user_settings,reset 列出的键删除覆盖
+// (回到跟随全局默认);超管专属键对普通用户一律忽略,绝不落库。
+// 请求体:{"settings": {k: v, ...}, "reset": [k, ...]};兼容旧平铺 map(视为 settings)。
 func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
-	var settings map[string]string
-	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	uid := viewScopeUserID(scope)
+
+	var envelope struct {
+		Settings map[string]string `json:"settings"`
+		Reset    []string          `json:"reset"`
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		// 兼容旧平铺 map[string]string
+		var flat map[string]string
+		if err2 := json.Unmarshal(body, &flat); err2 != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		envelope.Settings = flat
+	}
+	if envelope.Settings == nil {
+		envelope.Settings = map[string]string{}
+	}
 
-	// 不允许修改敏感字段
-	delete(settings, "admin_user")
-	delete(settings, "admin_password")
-	delete(settings, "initialized")
-	// Site Path 只在初始化/轮换流程中变更,通用设置接口改写会导致管理面自我锁死
-	delete(settings, "site_path")
+	if uid == 0 {
+		settings := envelope.Settings
+		// 不允许修改敏感字段
+		delete(settings, "admin_user")
+		delete(settings, "admin_password")
+		delete(settings, "initialized")
+		// Site Path 只在初始化/轮换流程中变更,通用设置接口改写会导致管理面自我锁死
+		delete(settings, "site_path")
 
-	if err := s.st.SaveSystemSettings(settings); err != nil {
-		s.logger.Error("save settings failed", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		if err := s.st.SaveSystemSettings(settings); err != nil {
+			s.logger.Error("save settings failed", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		s.logger.Info("settings saved (global)")
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 		return
 	}
 
-	s.logger.Info("settings saved")
+	// 普通用户:只落租户级键;超管专属键忽略(记日志,不报错)
+	for key, val := range envelope.Settings {
+		if !tenantSettingKeys[key] {
+			s.logger.Warn("non-admin settings key rejected for regular user", "key", key, "user_id", uid)
+			continue
+		}
+		if err := s.st.SetUserSetting(uid, key, val); err != nil {
+			s.logger.Error("save user setting failed", "key", key, "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
+	for _, key := range envelope.Reset {
+		if !tenantSettingKeys[key] {
+			continue
+		}
+		if err := s.st.DeleteUserSetting(uid, key); err != nil {
+			s.logger.Error("reset user setting failed", "key", key, "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
@@ -334,8 +428,13 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 
 // handleManualRefresh 经 jobs 运行时发起全量刷新任务,返回任务信息供前端进任务中心查看。
 // 同 key 重复触发按单实例附加(不再 409);与进行中的单机场刷新冲突时返回 409。
+// 按请求者用户空间刷新(多租户):只聚合该用户名下机场(ticket 07 分片)。
 func (s *Server) handleManualRefresh(w http.ResponseWriter, r *http.Request) {
-	jobID, key, started, err := s.nodes.StartRefreshJob(store.RefreshTriggerManual)
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	jobID, key, started, err := s.nodes.StartRefreshJobForUser(EffectiveUserID(scope), store.RefreshTriggerManual)
 	if err != nil {
 		if errors.Is(err, aggregator.ErrRefreshConflict) {
 			http.Error(w, "conflicts with a running single-airport refresh", http.StatusConflict)

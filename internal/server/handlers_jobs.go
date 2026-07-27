@@ -21,10 +21,15 @@ type JobInfo struct {
 	UpdatedAt string          `json:"updated_at"`
 }
 
-// handleListJobs GET /api/jobs 列出所有任务(从 jobs 表读取)。
+// handleListJobs GET /api/jobs 列出任务(从 jobs 表读取)。
+// 按请求者用户口径(多租户):普通用户只见自己发起的任务;超管未 impersonate 看全量。
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	if s.st == nil {
 		http.Error(w, "storage not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
 		return
 	}
 
@@ -45,8 +50,8 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 从 jobs 表加载所有记录(当前无分页,任务表行数可控)
-	records, err := s.st.Jobs().LoadAll()
+	// 从 jobs 表加载记录(当前无分页,任务表行数可控);按属主过滤(ticket 07)。
+	records, err := s.st.Jobs().LoadAllByUser(viewScopeUserID(scope))
 	if err != nil {
 		s.logger.Error("list jobs failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -85,6 +90,8 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCancelJob POST /api/jobs/{kind}/{key}/cancel 取消指定任务。
+// 属主闸门(多租户):普通用户只能取消自己名下的 running 任务(超管未 impersonate 不受限);
+// 他人/全局(user_id=0)任务对普通用户等同不存在,409 与"无进行中任务"同口径,不暴露存在性。
 func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
 	key := r.PathValue("key")
@@ -92,6 +99,35 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	if kind == "" || key == "" {
 		http.Error(w, "missing kind or key", http.StatusBadRequest)
 		return
+	}
+
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	// 目标分片:普通用户只能取消自己名下的 running 任务(闸门校验);
+	// 超管未 impersonate 时按 running 行的实际属主定位(自己分片/全局分片/他用户分片皆可)。
+	uid := viewScopeUserID(scope)
+	owner := uid
+	if uid > 0 {
+		owned, err := s.st.Jobs().HasRunningForUser(uid, kind, key)
+		if err != nil {
+			s.logger.Error("check job ownership failed", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if !owned {
+			writeJSONStatus(w, http.StatusConflict, map[string]string{"error": "no active job"})
+			return
+		}
+	} else {
+		var err error
+		owner, err = s.st.Jobs().FindRunningOwner(kind, key)
+		if err != nil {
+			s.logger.Error("find running job owner failed", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// 根据 kind 分发到对应管理器
@@ -124,10 +160,11 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 			cancelled = s.stabilityExamJobs.Cancel(key)
 		}
 	case "refresh":
-		cancelled = s.nodes.CancelRefresh(key)
+		// 按属主分片取消(ticket 07):owner 已由闸门/属主查询定位
+		cancelled = s.nodes.CancelRefreshForUser(owner, key)
 	case "airport_test":
 		if s.airportTestJobs != nil {
-			cancelled = s.airportTestJobs.Cancel("airport_test", key)
+			cancelled = s.airportTestJobs.CancelFor(owner, "airport_test", key)
 		}
 	default:
 		http.Error(w, "unknown kind", http.StatusBadRequest)
@@ -143,9 +180,14 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetJobDetail GET /api/jobs/{id} 查询单个任务详情(从 jobs 表读取)。
+// 行属他人返回 404,不暴露存在性(多租户)。
 func (s *Server) handleGetJobDetail(w http.ResponseWriter, r *http.Request) {
 	if s.st == nil {
 		http.Error(w, "storage not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
 		return
 	}
 
@@ -156,7 +198,7 @@ func (s *Server) handleGetJobDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rec, err := s.st.Jobs().Get(id)
+	rec, err := s.st.Jobs().GetByUser(viewScopeUserID(scope), id)
 	if err != nil {
 		s.logger.Error("get job failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

@@ -17,7 +17,14 @@ type refreshNamesRequest struct {
 // For airport nodes: re-applies standardization using current region (which may have been updated by health check).
 // For self-hosted nodes: re-runs GeoIP resolution and name fallback.
 // Returns {updated, total} count.
+// 按请求者用户空间操作(多租户):只处理本人池与本人自建节点表。
 func (s *Server) handleRefreshNames(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(scope)
+
 	var req refreshNamesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -34,10 +41,10 @@ func (s *Server) handleRefreshNames(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Refresh airport nodes
-	airportUpdated := s.refreshAirportNodeNames(targetKeys)
+	airportUpdated := s.refreshAirportNodeNames(effUID, targetKeys)
 
 	// Refresh self-hosted nodes
-	selfUpdated := s.refreshSelfHostedNodeNames(targetKeys)
+	selfUpdated := s.refreshSelfHostedNodeNames(effUID, targetKeys)
 
 	total := airportUpdated + selfUpdated
 	writeJSON(w, map[string]int{
@@ -46,16 +53,16 @@ func (s *Server) handleRefreshNames(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// refreshAirportNodeNames re-applies standardization to airport nodes in the memory pool.
-// Returns count of nodes updated.
-func (s *Server) refreshAirportNodeNames(targetKeys map[string]bool) int {
+// refreshAirportNodeNames re-applies standardization to airport nodes in the
+// caller's own pool shard (multi-tenant). Returns count of nodes updated.
+func (s *Server) refreshAirportNodeNames(userID int64, targetKeys map[string]bool) int {
 	if s.nodes == nil {
 		return 0
 	}
 
 	// Collect airport nodes to refresh
 	var toRefresh []*subscription.Node
-	for _, n := range s.nodes.Nodes() {
+	for _, n := range s.nodes.NodesForUser(userID) {
 		if n.Source == subscription.SourceSelfHosted {
 			continue // Skip self-hosted nodes
 		}
@@ -82,13 +89,14 @@ func (s *Server) refreshAirportNodeNames(targetKeys map[string]bool) int {
 	return len(toRefresh)
 }
 
-// refreshSelfHostedNodeNames re-runs region resolution and applies region-based naming for self-hosted nodes.
+// refreshSelfHostedNodeNames re-runs region resolution and applies region-based naming
+// for the caller's own self-hosted nodes (multi-tenant).
 // Region resolution priority: latest exam egress > offline GeoIP > preserve existing.
 // For nodes with known region: always renames to "自建{region}" format, overwriting custom names.
 // For nodes with Unknown/empty region: preserves existing name.
 // Returns count of nodes updated.
-func (s *Server) refreshSelfHostedNodeNames(targetKeys map[string]bool) int {
-	nodes, err := s.st.ListAllSelfHostedNodes()
+func (s *Server) refreshSelfHostedNodeNames(userID int64, targetKeys map[string]bool) int {
+	nodes, err := s.st.ListAllSelfHostedNodesByUser(userID)
 	if err != nil {
 		s.logger.Warn("list self nodes for refresh failed", "error", err)
 		return 0
@@ -118,13 +126,13 @@ func (s *Server) refreshSelfHostedNodeNames(targetKeys map[string]bool) int {
 
 		// Only update DB if something changed
 		if n.RegionCode != oldRegion || n.Name != oldName {
-			if err := s.st.UpdateSelfHostedNode(n); err != nil {
+			if err := s.st.UpdateSelfHostedNodeForUser(userID, n); err != nil {
 				s.logger.Warn("update self node after refresh failed", "nodeKey", nodeKey, "error", err)
 				continue
 			}
 			// Sync memory pool so /nodes reflects the new name/region immediately
 			// (ticket 47): no waiting for the next aggregation refresh.
-			s.syncSelfHostedNodeIdentity(nodeKey, n.Name, n.RegionCode)
+			s.syncSelfHostedNodeIdentityForUser(userID, nodeKey, n.Name, n.RegionCode)
 			updated++
 		}
 	}

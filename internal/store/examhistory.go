@@ -33,7 +33,14 @@ func (s *Store) SaveExamHistory(nodeKey string, report detection.ExamReport) err
 
 // SaveExamHistoryWithJob 同 SaveExamHistory,但记录产出它的 jobs 任务 id
 // (ticket 0022 任务结果关联;jobID=0 表示未关联,与旧数据同口径)。
+// 等价于 SaveExamHistoryWithJobForUser(0, ...)(未归属桶,旧语义)。
 func (s *Store) SaveExamHistoryWithJob(nodeKey string, report detection.ExamReport, jobID int64) error {
+	return s.SaveExamHistoryWithJobForUser(0, nodeKey, report, jobID)
+}
+
+// SaveExamHistoryWithJobForUser 同 SaveExamHistoryWithJob,但记录属主 user_id(多租户):
+// 历史按 (user_id, node_key) 分桶,读侧按属主过滤;修剪也按属主分桶互不占额。
+func (s *Store) SaveExamHistoryWithJobForUser(userID int64, nodeKey string, report detection.ExamReport, jobID int64) error {
 	reportJSON, err := json.Marshal(report)
 	if err != nil {
 		return fmt.Errorf("marshal exam report: %w", err)
@@ -46,22 +53,22 @@ func (s *Store) SaveExamHistoryWithJob(nodeKey string, report detection.ExamRepo
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(
-		`INSERT INTO exam_history (node_key, report_json, job_id, created_at) VALUES (?, ?, ?, ?)`,
-		nodeKey, string(reportJSON), jobID, time.Now(),
+		`INSERT INTO exam_history (node_key, report_json, job_id, created_at, user_id) VALUES (?, ?, ?, ?, ?)`,
+		nodeKey, string(reportJSON), jobID, time.Now(), userID,
 	); err != nil {
 		return fmt.Errorf("insert exam history: %w", err)
 	}
 
-	// 修剪:仅保留该节点最近 examHistoryRetention 条(id 单调递增=写入顺序),其余删除。
+	// 修剪:仅保留该桶(属主+节点)最近 examHistoryRetention 条(id 单调递增=写入顺序),其余删除。
 	if _, err := tx.Exec(`
 		DELETE FROM exam_history
-		WHERE node_key = ?
+		WHERE user_id = ? AND node_key = ?
 		  AND id NOT IN (
 			SELECT id FROM exam_history
-			WHERE node_key = ?
+			WHERE user_id = ? AND node_key = ?
 			ORDER BY id DESC
 			LIMIT ?
-		)`, nodeKey, nodeKey, examHistoryRetention); err != nil {
+		)`, userID, nodeKey, userID, nodeKey, examHistoryRetention); err != nil {
 		return fmt.Errorf("trim exam history: %w", err)
 	}
 

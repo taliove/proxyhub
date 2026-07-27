@@ -9,16 +9,22 @@ import (
 
 // handleNodeShareURI generates a share URI for a given node by node_key
 // Used for QR code generation in the frontend
+// 按请求者用户空间隔离(多租户):只在 EffectiveUserID 池分片内解析,
+// 命中他人池一律 404——分享链接含凭证,跨租户泄露是红线。
 func (s *Server) handleNodeShareURI(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	nodeKey := r.PathValue("nodeKey")
 	if nodeKey == "" {
 		http.Error(w, "node_key is required", http.StatusBadRequest)
 		return
 	}
 
-	// Find node in current pool
+	// Find node in the caller's own pool shard
 	var targetNode *subscription.Node
-	for _, n := range s.nodes.Nodes() {
+	for _, n := range s.nodes.NodesForUser(EffectiveUserID(scope)) {
 		if n.NodeKey() == nodeKey {
 			targetNode = n
 			break

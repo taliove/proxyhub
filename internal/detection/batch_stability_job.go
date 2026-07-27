@@ -19,6 +19,8 @@ type batchStabilityParams struct {
 	NodeKeys []string `json:"node_keys"`
 	// Scope 触发范围标记("all"/"selected"),仅用于任务中心展示,不影响执行语义
 	Scope string `json:"scope,omitempty"`
+	// UserID 任务属主(多租户):旁路与回调按属主索引,0 = 未归属(旧调用路径)。
+	UserID int64 `json:"user_id,omitempty"`
 }
 
 // StabilityCheckRunner 运行单节点"出网+稳定性"检查:出网画像 + 稳定性评分,不含解锁/测速。
@@ -31,9 +33,9 @@ type StabilityCheckRunner func(ctx context.Context, node *subscription.Node, emi
 // 事件流复用 BatchExamEvent 结构(wire 格式相同:node_start/node_done/node_error/done/cancelled)。
 type batchStabilityKind struct {
 	runCheck   StabilityCheckRunner
-	onComplete func(nodeKey string, report ExamReport) // 落历史 + 触发标签重算
+	onComplete func(userID int64, nodeKey string, report ExamReport) // 落历史 + 触发标签重算
 	onErr      func(error)
-	nodes      sync.Map // nodeKey -> *subscription.Node(活节点,仅内存)
+	nodes      sync.Map // examNodeRef -> *subscription.Node(活节点,仅内存)
 }
 
 func (k *batchStabilityKind) Name() string    { return batchStabilitySingletonKey }
@@ -85,8 +87,8 @@ func (k *batchStabilityKind) Run(ctx context.Context, params json.RawMessage, cu
 			Total:   total,
 		})
 
-		// 从内存旁路取活节点
-		v, ok := k.nodes.Load(nodeKey)
+		// 从内存旁路取活节点(按属主索引)
+		v, ok := k.nodes.Load(examNodeRef{userID: p.UserID, nodeKey: nodeKey})
 		if !ok {
 			k.emitEvent(emit, BatchExamEvent{
 				Phase:   "node_error",
@@ -104,9 +106,15 @@ func (k *batchStabilityKind) Run(ctx context.Context, params json.RawMessage, cu
 		// 运行出网+稳定性检查(检查内部事件不转发,批量任务只推进度)
 		report := k.runCheck(ctx, node, func(ExamEvent) {})
 
+		// 检查中途被取消:不落地半截报告、不发 node_done(取消语义=本节点无产出)。
+		// 探测在 ctx 取消后仍返回带 Stability 段的零分报告,仅靠"有段才落"挡不住。
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		// 有稳定性段才落历史(与单节点体检/批量体检语义一致)
 		if report.Stability != nil && k.onComplete != nil {
-			k.onComplete(nodeKey, report)
+			k.onComplete(p.UserID, nodeKey, report)
 		}
 
 		k.emitEvent(emit, BatchExamEvent{
@@ -168,7 +176,7 @@ func WithBatchStabilityErrorHandler(h func(error)) BatchStabilityJobOption {
 // NewBatchStabilityJobManager 构造批量"出网+稳定性"任务管理器。
 // runCheck: 单节点检查运行器(出网画像 + 稳定性评分)。
 // onComplete: 每节点完成回调(落历史带来源标记 + 触发标签重算)。
-func NewBatchStabilityJobManager(runCheck StabilityCheckRunner, onComplete func(nodeKey string, report ExamReport), opts ...BatchStabilityJobOption) *BatchStabilityJobManager {
+func NewBatchStabilityJobManager(runCheck StabilityCheckRunner, onComplete func(userID int64, nodeKey string, report ExamReport), opts ...BatchStabilityJobOption) *BatchStabilityJobManager {
 	cfg := batchStabilityJobConfig{}
 	for _, o := range opts {
 		o(&cfg)
@@ -190,20 +198,26 @@ func NewBatchStabilityJobManager(runCheck StabilityCheckRunner, onComplete func(
 	return &BatchStabilityJobManager{mgr: mgr, kind: k}
 }
 
-// Start 启动批量检查任务。返回任务 key(固定 batchStabilitySingletonKey,全局单例)。
-// nodes 是活节点列表(含凭证),存入内存旁路。scope 为触发范围标记,仅记录进 params 供任务中心展示。
+// Start 启动批量检查任务。返回任务 key(固定 batchStabilitySingletonKey)。
+// 等价于 StartFor(0, ...)(未归属分片,旧语义)。
 func (m *BatchStabilityJobManager) Start(nodeKeys []string, nodes []*subscription.Node, scope string) (string, error) {
+	return m.StartFor(0, nodeKeys, nodes, scope)
+}
+
+// StartFor 与 Start 同语义,但按属主分片(多租户):每用户各自一个进行中批量任务,
+// 互不附加、互不取消;nodes 是活节点列表(含凭证),存入按属主索引的内存旁路。
+func (m *BatchStabilityJobManager) StartFor(userID int64, nodeKeys []string, nodes []*subscription.Node, scope string) (string, error) {
 	for _, n := range nodes {
-		m.kind.nodes.Store(n.NodeKey(), n)
+		m.kind.nodes.Store(examNodeRef{userID: userID, nodeKey: n.NodeKey()}, n)
 	}
 
-	params, err := json.Marshal(batchStabilityParams{NodeKeys: nodeKeys, Scope: scope})
+	params, err := json.Marshal(batchStabilityParams{NodeKeys: nodeKeys, Scope: scope, UserID: userID})
 	if err != nil {
 		return "", fmt.Errorf("batch_stability: marshal params: %w", err)
 	}
 
 	key := batchStabilitySingletonKey
-	sub, err := m.mgr.Open(m.kind.Name(), key, params)
+	sub, err := m.mgr.OpenFor(userID, m.kind.Name(), key, params)
 	if err != nil {
 		return "", err
 	}
@@ -219,9 +233,19 @@ func (m *BatchStabilityJobManager) Subscribe(key string) (*jobs.Subscription, er
 	return m.mgr.Attach(m.kind.Name(), key)
 }
 
-// Cancel 取消批量检查任务。
+// SubscribeFor 订阅指定属主的批量检查任务事件流(多租户)。
+func (m *BatchStabilityJobManager) SubscribeFor(userID int64, key string) (*jobs.Subscription, error) {
+	return m.mgr.AttachFor(userID, m.kind.Name(), key)
+}
+
+// Cancel 取消批量检查任务(未归属分片,旧语义)。
 func (m *BatchStabilityJobManager) Cancel(key string) bool {
 	return m.mgr.Cancel(m.kind.Name(), key)
+}
+
+// CancelFor 取消指定属主的批量检查任务(多租户)。
+func (m *BatchStabilityJobManager) CancelFor(userID int64, key string) bool {
+	return m.mgr.CancelFor(userID, m.kind.Name(), key)
 }
 
 // RecoverInterrupted 重启恢复:批量检查可续跑,从游标续跑。

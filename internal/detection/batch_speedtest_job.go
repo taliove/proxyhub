@@ -27,6 +27,8 @@ type batchSpeedtestParams struct {
 	NodeKeys []string `json:"node_keys"`
 	// Scope 触发范围标记("all"/"selected"),仅用于任务中心展示,不影响执行语义
 	Scope string `json:"scope,omitempty"`
+	// UserID 任务属主(多租户):旁路与回调按属主索引,0 = 未归属(旧调用路径)。
+	UserID int64 `json:"user_id,omitempty"`
 }
 
 // SpeedtestRunner 基准下行测量器(批量档:仅下行,控成本;签名与 Detector.TestBaselineDown 一致)。
@@ -37,9 +39,9 @@ type SpeedtestRunner func(ctx context.Context, node *subscription.Node) TestResu
 // 全局单例 key(见 BatchSpeedtestJobManager.Start)。
 type batchSpeedtestKind struct {
 	run        SpeedtestRunner
-	onComplete func(node *subscription.Node, result TestResult) // 写回 node_health + 内存池
+	onComplete func(userID int64, node *subscription.Node, result TestResult) // 写回 node_health + 内存池
 	onErr      func(error)
-	nodes      sync.Map // nodeKey -> *subscription.Node(活节点,仅内存)
+	nodes      sync.Map // examNodeRef -> *subscription.Node(活节点,仅内存)
 }
 
 func (k *batchSpeedtestKind) Name() string    { return "batch_speedtest" }
@@ -90,8 +92,8 @@ func (k *batchSpeedtestKind) Run(ctx context.Context, params json.RawMessage, cu
 			Total:   total,
 		})
 
-		// 从内存旁路取活节点
-		v, ok := k.nodes.Load(nodeKey)
+		// 从内存旁路取活节点(按属主索引)
+		v, ok := k.nodes.Load(examNodeRef{userID: p.UserID, nodeKey: nodeKey})
 		if !ok {
 			k.emitEvent(emit, BatchSpeedtestEvent{
 				Phase:   "node_error",
@@ -108,9 +110,15 @@ func (k *batchSpeedtestKind) Run(ctx context.Context, params json.RawMessage, cu
 
 		// 测基准下行(成功与失败结果都写回:失败让节点视图看到"测过但失败"而非停留旧值)
 		result := k.run(ctx, node)
+
+		// 测速中途被取消:不写回半截结果、不发 node_done(取消语义=本节点无产出)。
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		rc := result
 		if k.onComplete != nil {
-			k.onComplete(node, result)
+			k.onComplete(p.UserID, node, result)
 		}
 
 		k.emitEvent(emit, BatchSpeedtestEvent{
@@ -170,7 +178,7 @@ func WithBatchSpeedtestErrorHandler(h func(error)) BatchSpeedtestJobOption {
 
 // NewBatchSpeedtestJobManager 构造批量快速测速任务管理器。
 // run: 基准下行测量器(仅下行);onComplete: 每节点完成回调(写回 node_health + 内存池)。
-func NewBatchSpeedtestJobManager(run SpeedtestRunner, onComplete func(node *subscription.Node, result TestResult), opts ...BatchSpeedtestJobOption) *BatchSpeedtestJobManager {
+func NewBatchSpeedtestJobManager(run SpeedtestRunner, onComplete func(userID int64, node *subscription.Node, result TestResult), opts ...BatchSpeedtestJobOption) *BatchSpeedtestJobManager {
 	cfg := batchSpeedtestJobConfig{}
 	for _, o := range opts {
 		o(&cfg)
@@ -193,21 +201,26 @@ func NewBatchSpeedtestJobManager(run SpeedtestRunner, onComplete func(node *subs
 }
 
 // Start 启动批量快速测速任务:nodeKeys 为空则对全部节点测速。返回任务 key(供订阅/取消)。
-// nodes 是活节点列表(含凭证),存入内存旁路。scope 为触发范围标记("all"/"selected"),
-// 仅记录进 params 供任务中心展示。
+// 等价于 StartFor(0, ...)(未归属分片,旧语义)。
 func (m *BatchSpeedtestJobManager) Start(nodeKeys []string, nodes []*subscription.Node, scope string) (string, error) {
+	return m.StartFor(0, nodeKeys, nodes, scope)
+}
+
+// StartFor 与 Start 同语义,但按属主分片(多租户):每用户各自一个进行中批量测速,
+// 互不附加、互不取消;nodes 是活节点列表(含凭证),存入按属主索引的内存旁路。
+func (m *BatchSpeedtestJobManager) StartFor(userID int64, nodeKeys []string, nodes []*subscription.Node, scope string) (string, error) {
 	for _, n := range nodes {
-		m.kind.nodes.Store(n.NodeKey(), n)
+		m.kind.nodes.Store(examNodeRef{userID: userID, nodeKey: n.NodeKey()}, n)
 	}
 
-	params, err := json.Marshal(batchSpeedtestParams{NodeKeys: nodeKeys, Scope: scope})
+	params, err := json.Marshal(batchSpeedtestParams{NodeKeys: nodeKeys, Scope: scope, UserID: userID})
 	if err != nil {
 		return "", fmt.Errorf("batch_speedtest: marshal params: %w", err)
 	}
 
-	// 任务 key 固定为 "batch_speedtest"(全局单例,同一时刻只能跑一个批量快速测速)
+	// 任务 key 固定为 "batch_speedtest"(按属主分片单例:同一用户同一时刻只能跑一个批量快速测速)
 	key := "batch_speedtest"
-	sub, err := m.mgr.Open(m.kind.Name(), key, params)
+	sub, err := m.mgr.OpenFor(userID, m.kind.Name(), key, params)
 	if err != nil {
 		return "", err
 	}
@@ -223,9 +236,19 @@ func (m *BatchSpeedtestJobManager) Subscribe(key string) (*jobs.Subscription, er
 	return m.mgr.Attach(m.kind.Name(), key)
 }
 
+// SubscribeFor 订阅指定属主的批量快速测速任务事件流(多租户)。
+func (m *BatchSpeedtestJobManager) SubscribeFor(userID int64, key string) (*jobs.Subscription, error) {
+	return m.mgr.AttachFor(userID, m.kind.Name(), key)
+}
+
 // Cancel 取消批量快速测速任务。
 func (m *BatchSpeedtestJobManager) Cancel(key string) bool {
 	return m.mgr.Cancel(m.kind.Name(), key)
+}
+
+// CancelFor 取消指定属主的批量快速测速任务(多租户)。
+func (m *BatchSpeedtestJobManager) CancelFor(userID int64, key string) bool {
+	return m.mgr.CancelFor(userID, m.kind.Name(), key)
 }
 
 // RecoverInterrupted 重启恢复:批量快速测速可续跑,从游标续跑。

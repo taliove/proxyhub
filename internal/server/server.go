@@ -130,9 +130,9 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 	if detectionService != nil {
 		s.examJobs = detection.NewExamJobManager(
 			detectionService.ExamStream,
-			// 写入侧反查 job id(ADR 0026 样板):回调时任务行仍 running,同 kind+key 单实例保证唯一。
-			func(nodeKey string, report detection.ExamReport) {
-				s.onExamComplete(0, nodeKey, report, s.findRunningJobID("exam", nodeKey))
+			// 写入侧反查 job id(ADR 0026 样板):回调时任务行仍 running,同 kind+key+属主单实例保证唯一。
+			func(userID int64, nodeKey string, report detection.ExamReport) {
+				s.onExamComplete(userID, nodeKey, report, s.findRunningJobIDForUser(userID, "exam", nodeKey))
 			},
 			detection.WithExamJobStore(st.Jobs()),
 			detection.WithExamErrorHandler(func(err error) {
@@ -146,8 +146,8 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		s.batchExamJobs = detection.NewBatchExamJobManager(
 			detectionService.ExamStreamSimplified,
 			detectionService.ExamStream,
-			func(nodeKey string, report detection.ExamReport) {
-				s.onExamComplete(0, nodeKey, report, s.findRunningJobID("batch_exam", "batch_exam"))
+			func(userID int64, nodeKey string, report detection.ExamReport) {
+				s.onExamComplete(userID, nodeKey, report, s.findRunningJobIDForUser(userID, "batch_exam", "batch_exam"))
 			},
 			detection.WithBatchExamJobStore(st.Jobs()),
 			detection.WithBatchExamErrorHandler(func(err error) {
@@ -160,8 +160,8 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		// 收口复用 onExamComplete:落历史带 source=stability_check 来源标记 + 标签重算。
 		s.stabilityExamJobs = detection.NewExamJobManager(
 			detectionService.ExamStreamEgressStability,
-			func(nodeKey string, report detection.ExamReport) {
-				s.onExamComplete(0, nodeKey, report, s.findRunningJobID("exam_stability", nodeKey))
+			func(userID int64, nodeKey string, report detection.ExamReport) {
+				s.onExamComplete(userID, nodeKey, report, s.findRunningJobIDForUser(userID, "exam_stability", nodeKey))
 			},
 			detection.WithExamKindName(detection.ExamStabilityKindName),
 			detection.WithExamJobStore(st.Jobs()),
@@ -173,8 +173,8 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		// 批量"出网+稳定性"任务管理器:全局单例 + 游标续跑,契约同批量体检。
 		s.batchStabilityJobs = detection.NewBatchStabilityJobManager(
 			detectionService.ExamStreamEgressStability,
-			func(nodeKey string, report detection.ExamReport) {
-				s.onExamComplete(0, nodeKey, report, s.findRunningJobID("batch_stability", "batch_stability"))
+			func(userID int64, nodeKey string, report detection.ExamReport) {
+				s.onExamComplete(userID, nodeKey, report, s.findRunningJobIDForUser(userID, "batch_stability", "batch_stability"))
 			},
 			detection.WithBatchStabilityJobStore(st.Jobs()),
 			detection.WithBatchStabilityErrorHandler(func(err error) {
@@ -274,7 +274,7 @@ func (s *Server) airportTestConflict(airportID int64) (string, bool) {
 // jobID=0 表示未关联(持久化退化或测试直调),落库后与旧数据同口径,查询侧走时间窗回退。
 // userID 为任务属主(ticket 07):写回时按它选择目标池与自建节点表;0 = 全局池。
 func (s *Server) onExamComplete(userID int64, nodeKey string, report detection.ExamReport, jobID int64) {
-	if err := s.st.SaveExamHistoryWithJob(nodeKey, report, jobID); err != nil {
+	if err := s.st.SaveExamHistoryWithJobForUser(userID, nodeKey, report, jobID); err != nil {
 		s.logger.Warn("save exam history failed", "error", err)
 	}
 	if err := s.st.RecomputeNodeTags(nodeKey); err != nil {
@@ -283,18 +283,23 @@ func (s *Server) onExamComplete(userID int64, nodeKey string, report detection.E
 	s.writebackRegionIfNeeded(userID, nodeKey, report)
 }
 
-// findRunningJobID 反查进行中任务的 jobs 行 id(ADR 0026 写入侧反查样板,
+// findRunningJobID 反查进行中任务的 jobs 行 id(未归属分片,旧语义)。
+func (s *Server) findRunningJobID(kind, key string) int64 {
+	return s.findRunningJobIDForUser(0, kind, key)
+}
+
+// findRunningJobIDForUser 反查指定属主进行中任务的 jobs 行 id(ADR 0026 写入侧反查样板,
 // 参照 aggregator.findRunningJobID):完成回调触发时本任务行仍处 running
 // (runJob 中 Finish 后于 OnComplete;批量任务 per-node 回调在 Run 期间),
-// 同 kind+key 单实例保证唯一;查不到退化 0(查询侧走任务时间窗回退)。
-func (s *Server) findRunningJobID(kind, key string) int64 {
+// 同 kind+key+属主单实例保证唯一;查不到退化 0(查询侧走任务时间窗回退)。
+func (s *Server) findRunningJobIDForUser(userID int64, kind, key string) int64 {
 	recs, err := s.st.Jobs().LoadRunning()
 	if err != nil {
 		s.logger.Warn("load running jobs failed, exam history will not link job", "error", err)
 		return 0
 	}
 	for _, r := range recs {
-		if r.Kind == kind && r.Key == key {
+		if r.Kind == kind && r.Key == key && r.UserID == userID {
 			return r.ID
 		}
 	}
@@ -304,9 +309,10 @@ func (s *Server) findRunningJobID(kind, key string) int64 {
 // onSpeedtestComplete 批量快速测速每节点完成的写回:基准下行写回节点视图带宽字段
 // (node_health target_name=bandwidth + 内存池),与 handleTestNode 既有写回路径同轨。
 // 批量只测下行:上行沿用池内现值写回,避免 up=0 覆盖既有测量(best-effort,失败只记日志)。
-func (s *Server) onSpeedtestComplete(node *subscription.Node, result detection.TestResult) {
+// userID 为任务属主(多租户):内存池写回按属主选池。
+func (s *Server) onSpeedtestComplete(userID int64, node *subscription.Node, result detection.TestResult) {
 	res := result // 局部副本:补上行保留值,不改调用方结果(不可变语义)
-	res.UpMbps = s.currentBandwidthUp(node.NodeKey())
+	res.UpMbps = s.currentBandwidthUpForUser(userID, node.NodeKey())
 	// 可用判定与单节点 bandwidth 档同轨(down+up 双阈值):池内有上行测量(或上行阈值为 0)
 	// 时按双阈值重算,仅下行合格不得翻转既有双阈值判定;池内无上行测量时保留批量档
 	// 自身的下行判定,不以"缺数据"推翻节点。
@@ -316,16 +322,21 @@ func (s *Server) onSpeedtestComplete(node *subscription.Node, result detection.T
 	if err := s.st.SaveTestResult(node.NodeKey(), node.Name, node.Source, res); err != nil {
 		s.logger.Warn("save speedtest result failed", "node_key", node.NodeKey(), "error", err)
 	}
-	s.nodes.UpdateNodeTestResult(node.NodeKey(), "bandwidth", res.Available, res.Latency, res.DownMbps, res.UpMbps, "", "")
+	s.nodes.UpdateNodeTestResultForUser(userID, node.NodeKey(), "bandwidth", res.Available, res.Latency, res.DownMbps, res.UpMbps, "", "")
 }
 
-// currentBandwidthUp 读池内节点当前上行带宽(无此节点或池为空返回 0)。
-// 从池实时查而非用任务启动时的旁路指针:池写回是不可变替换,旁路指针可能已腐化。
+// currentBandwidthUp 读池内节点当前上行带宽(未归属分片,旧语义)。
 func (s *Server) currentBandwidthUp(nodeKey string) float64 {
+	return s.currentBandwidthUpForUser(0, nodeKey)
+}
+
+// currentBandwidthUpForUser 读指定属主池内节点当前上行带宽(无此节点或池为空返回 0)。
+// 从池实时查而非用任务启动时的旁路指针:池写回是不可变替换,旁路指针可能已腐化。
+func (s *Server) currentBandwidthUpForUser(userID int64, nodeKey string) float64 {
 	if s.nodes == nil {
 		return 0
 	}
-	for _, n := range s.nodes.Nodes() {
+	for _, n := range s.nodes.NodesForUser(userID) {
 		if n.NodeKey() == nodeKey {
 			return n.BandwidthUpMbps
 		}
@@ -518,6 +529,12 @@ func (s *Server) Handler() http.Handler {
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
 		return s.requireAuth(s.requirePasswordChanged(h))
 	}
+	// 超管专属路由链:requireAuth + requirePasswordChanged + requireAdmin。普通用户 403;
+	// 首登未改密的超管同样先 403 去改密(改密入口 /api/me/password 已豁免,无锁死)。
+	// 提前声明:安全审计/批量解锁检测等超管面在路由表前段即引用。
+	adminGuard := func(h http.HandlerFunc) http.HandlerFunc {
+		return s.requireAuth(s.requirePasswordChanged(s.requireAdmin(h)))
+	}
 	// 首登强改密的豁免面:must_change_password 会话被挡在业务路由外,但
 	// 读自身状态、改自己密码、登出必须可达,否则改密接口把自己锁死。
 	mux.HandleFunc("POST /api/logout", s.requireAuth(s.handleLogout))
@@ -581,10 +598,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/refresh/runs", guard(s.handleListRefreshRuns))
 	mux.HandleFunc("GET /api/refresh/runs/{id}", guard(s.handleGetRefreshRun))
 
-	// 节点解锁检测
-	mux.HandleFunc("POST /api/detection/trigger", guard(s.handleTriggerDetection))
-	mux.HandleFunc("POST /api/detection/cancel", guard(s.handleCancelDetection))
-	mux.HandleFunc("GET /api/detection/status", guard(s.handleDetectionStatus))
+	// 节点解锁检测(批量,全局单例内存态 + 遍历合并池):超管专属。
+	// 按用户分片的收益低(结果按 node_key 全局共享)而重构成本高(spec-multi-tenant-isolation 遗留待决 3 的落地决策)。
+	mux.HandleFunc("POST /api/detection/trigger", adminGuard(s.handleTriggerDetection))
+	mux.HandleFunc("POST /api/detection/cancel", adminGuard(s.handleCancelDetection))
+	mux.HandleFunc("GET /api/detection/status", adminGuard(s.handleDetectionStatus))
 
 	// 通用任务 API(任务中心)
 	mux.HandleFunc("GET /api/jobs", guard(s.handleListJobs))
@@ -625,9 +643,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings/detection-targets", guard(s.handleGetDetectionTargets))
 	mux.HandleFunc("PUT /api/settings/detection-targets", guard(s.handleSaveDetectionTargets))
 
-	// 晚间标签重算调度配置(schedule_retag_time / schedule_retag_enabled)
-	mux.HandleFunc("GET /api/settings/schedule", guard(s.handleGetSchedule))
-	mux.HandleFunc("PUT /api/settings/schedule", guard(s.handleSaveSchedule))
+	// 晚间标签重算调度配置(schedule_retag_time / schedule_retag_enabled):
+	// 全局单例调度器 + 全局共享标签数据,超管专属(见 CONTEXT.md「租户级设置」)。
+	mux.HandleFunc("GET /api/settings/schedule", adminGuard(s.handleGetSchedule))
+	mux.HandleFunc("PUT /api/settings/schedule", adminGuard(s.handleSaveSchedule))
 
 	// 地区白名单
 	mux.HandleFunc("GET /api/settings/region-whitelist", guard(s.handleGetRegionWhitelist))
@@ -642,11 +661,6 @@ func (s *Server) Handler() http.Handler {
 	// 仪表盘统计 + 优质节点聚合
 	mux.HandleFunc("GET /api/dashboard/stats", guard(s.handleDashboardStats))
 	mux.HandleFunc("GET /api/dashboard/top-nodes", guard(s.handleDashboardTopNodes))
-
-	// 安全审计（登录/封禁事件流水 + 当前封禁 IP 管理）
-	mux.HandleFunc("GET /api/audit/events", guard(s.handleAuditEvents))
-	mux.HandleFunc("GET /api/audit/banned", guard(s.handleBannedIPs))
-	mux.HandleFunc("POST /api/audit/unban", guard(s.handleUnbanIP))
 
 	// 访问统计（全局汇总 + 拉取趋势）
 	mux.HandleFunc("GET /api/stats/global", guard(s.handleGlobalStats))
@@ -672,11 +686,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/users/{id}/xray/restart", guard(s.handleRestartUserXray))
 
 	// 用户管理(ticket 03,超管专属):列表/创建/详情/修改/启停/删除/重置密码。
-	// 走 requireAuth + requirePasswordChanged + requireAdmin 链:普通用户 403;
-	// 首登未改密的超管同样先 403 去改密(改密入口 /api/me/password 已豁免,无锁死)。
-	adminGuard := func(h http.HandlerFunc) http.HandlerFunc {
-		return s.requireAuth(s.requirePasswordChanged(s.requireAdmin(h)))
-	}
+	// 走 requireAuth + requirePasswordChanged + requireAdmin 链(adminGuard 见路由表前段)。
 	mux.HandleFunc("GET /api/admin/users", adminGuard(s.handleAdminListUsers))
 	mux.HandleFunc("POST /api/admin/users", adminGuard(s.handleAdminCreateUser))
 	mux.HandleFunc("GET /api/admin/users/{id}", adminGuard(s.handleAdminGetUser))
@@ -685,6 +695,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/users/{id}/enable", adminGuard(s.handleAdminEnableUser))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", adminGuard(s.handleAdminDeleteUser))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-password", adminGuard(s.handleAdminResetPassword))
+
+	// 安全审计(登录/封禁事件流水 + 当前封禁 IP 管理):超管专属。
+	// 含写操作(解封 IP),普通用户可达即越权。
+	mux.HandleFunc("GET /api/audit/events", adminGuard(s.handleAuditEvents))
+	mux.HandleFunc("GET /api/audit/banned", adminGuard(s.handleBannedIPs))
+	mux.HandleFunc("POST /api/audit/unban", adminGuard(s.handleUnbanIP))
 
 	// 超管视角切换(ticket 09):进入/退出用户空间,查询当前生效视角。
 	// 持久化在 session 上;之后所有请求经 requireAuth 自动套用 acting target。
@@ -801,7 +817,7 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 节点名称标准化（见 ADR 0012）：按该订阅地址的生效配置（端点覆盖 → 全局回退）统一名称。
-	nodes = s.standardizeNodesForEndpoint(nodes, ep)
+	nodes = s.standardizeNodesForEndpoint(nodes, ep, ep.UserID)
 
 	// 格式：显式参数优先，否则按 User-Agent 猜测，默认 Clash
 	format := r.URL.Query().Get("format")
@@ -814,7 +830,7 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	data, contentType, err := s.renderSubscription(nodes, format)
+	data, contentType, err := s.renderSubscription(nodes, format, ep.UserID)
 	if err != nil {
 		s.logger.Error("generate subscription failed", "format", format, "error", err)
 		http.Error(w, "generate subscription failed", http.StatusInternalServerError)
@@ -1388,8 +1404,8 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	effUID := EffectiveUserID(scope)
-	// 读屏蔽名单以标记节点状态；读失败降级为空集（节点仍展示，只是都标为未屏蔽）
-	blocked, err := s.st.ListBlockedNodes()
+	// 读本人屏蔽名单以标记节点状态；读失败降级为空集（节点仍展示，只是都标为未屏蔽）
+	blocked, err := s.st.ListBlockedNodesForUser(effUID)
 	if err != nil {
 		s.logger.Warn("list blocked nodes failed", "error", err)
 		blocked = map[string]bool{}
@@ -1397,7 +1413,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 
 	// 管理页展示全量池（含不可用/被屏蔽）并附标准化名，便于原名↔标准名对比（见 ADR 0012/0013）。
 	// 管理列表无端点上下文,用全局配置。
-	nodes := s.standardizeNodesForEndpoint(s.nodes.NodesForUser(effUID), nil)
+	nodes := s.standardizeNodesForEndpoint(s.nodes.NodesForUser(effUID), nil, effUID)
 	q := parseNodeQuery(r)
 	res := QueryNodes(nodes, blocked, q)
 
@@ -1525,18 +1541,24 @@ func (s *Server) filteredNodes(nodes []*subscription.Node, userID int64) []*subs
 	// serve-time 合并自建节点:填补「新增后到下轮刷新前」的空档,并保证机场全挂时自建节点仍在。
 	nodes = s.mergeSelfHosted(nodes, userID)
 
-	settings, err := s.st.GetSystemSettings()
-	if err != nil {
-		s.logger.Warn("get system settings failed, skipping keyword filters", "error", err)
+	// 过滤链三键按属主读取(租户级设置,回退全局默认);读取失败降级跳过对应过滤。
+	if wl, err := s.st.GetSettingForUser(userID, "region_whitelist"); err == nil {
+		nodes = s.filterByRegionWhitelist(nodes, wl)
 	} else {
-		// 地区白名单过滤（在关键词白名单之前，更精确）
-		nodes = s.filterByRegionWhitelist(nodes, settings["region_whitelist"])
-		// 关键词白名单/黑名单
-		nodes = filter.FilterByWhitelist(nodes, filter.SplitKeywords(settings["filter_whitelist"]))
-		nodes = filter.FilterByKeywords(nodes, filter.SplitKeywords(settings["filter_keywords"]))
+		s.logger.Warn("get region whitelist failed, skipping region filter", "error", err)
+	}
+	if kw, err := s.st.GetSettingForUser(userID, "filter_whitelist"); err == nil {
+		nodes = filter.FilterByWhitelist(nodes, filter.SplitKeywords(kw))
+	} else {
+		s.logger.Warn("get filter whitelist failed, skipping keyword whitelist", "error", err)
+	}
+	if kw, err := s.st.GetSettingForUser(userID, "filter_keywords"); err == nil {
+		nodes = filter.FilterByKeywords(nodes, filter.SplitKeywords(kw))
+	} else {
+		s.logger.Warn("get filter keywords failed, skipping keyword blacklist", "error", err)
 	}
 
-	blocked, err := s.st.ListBlockedNodes()
+	blocked, err := s.st.ListBlockedNodesForUser(userID)
 	if err != nil {
 		s.logger.Warn("list blocked nodes failed, skipping block filter", "error", err)
 	} else {
@@ -1558,18 +1580,19 @@ func (s *Server) filteredNodes(nodes []*subscription.Node, userID int64) []*subs
 
 // resolveNameConfig 计算节点名称标准化的生效配置（见 ADR 0012）。
 //
-// 以全局设置为基准（standardize_names / name_template），再按订阅地址覆盖:
-// ep.NameMode "on"/"off" 强制开关,ep.NameTemplate 非空则替换模板。ep 为 nil
-// 时只取全局（用于无端点上下文的管理列表）。读设置失败时降级为不标准化。
-func (s *Server) resolveNameConfig(ep *store.Endpoint) (standardize bool, template string) {
+// 以属主生效设置为基准（standardize_names / name_template,租户级回退全局默认），
+// 再按订阅地址覆盖:ep.NameMode "on"/"off" 强制开关,ep.NameTemplate 非空则替换模板。
+// ep 为 nil 时只取属主设置（用于无端点上下文的管理列表）。读设置失败时降级为不标准化。
+// userID 为属主(多租户):0 = 全局视角(只读全局默认)。
+func (s *Server) resolveNameConfig(userID int64, ep *store.Endpoint) (standardize bool, template string) {
 	template = subscription.DefaultNameTemplate
-	settings, err := s.st.GetSystemSettings()
+	val, err := s.st.GetSettingForUser(userID, "standardize_names")
 	if err != nil {
 		s.logger.Warn("get settings failed, skipping name standardization", "error", err)
 		return false, template
 	}
-	standardize = settings["standardize_names"] == "true"
-	if t := settings["name_template"]; t != "" {
+	standardize = val == "true"
+	if t, err := s.st.GetSettingForUser(userID, "name_template"); err == nil && t != "" {
 		template = t
 	}
 
@@ -1612,8 +1635,9 @@ func (s *Server) applyStandardization(nodes []*subscription.Node, standardize bo
 }
 
 // standardizeNodesForEndpoint 用订阅地址的生效配置标准化节点池（订阅/预览路径）。
-func (s *Server) standardizeNodesForEndpoint(nodes []*subscription.Node, ep *store.Endpoint) []*subscription.Node {
-	std, tmpl := s.resolveNameConfig(ep)
+// userID 为属主(多租户):管理列表(ep=nil)传调用方 effUID;订阅路径传端点属主。
+func (s *Server) standardizeNodesForEndpoint(nodes []*subscription.Node, ep *store.Endpoint, userID int64) []*subscription.Node {
+	std, tmpl := s.resolveNameConfig(userID, ep)
 	return s.applyStandardization(nodes, std, tmpl)
 }
 
@@ -1689,13 +1713,14 @@ func filterStaleNodes(nodes []*subscription.Node) []*subscription.Node {
 //
 // Clash 格式基于用户可编辑的配置模板渲染（含 hosts/dns/proxy-groups/rules，
 // 节点通过 {{nodes}} 占位符动态注入）；V2Ray 格式仍是简单的 base64 链接列表，不走模板。
-func (s *Server) renderSubscription(nodes []*subscription.Node, format string) (data []byte, contentType string, err error) {
+// userID 为属主(多租户):Clash 模板按属主回退链读取(用户覆盖 ?? 全局默认 ?? 内嵌默认)。
+func (s *Server) renderSubscription(nodes []*subscription.Node, format string, userID int64) (data []byte, contentType string, err error) {
 	switch format {
 	case "v2ray":
 		data, err = generator.GenerateV2Ray(nodes)
 		return data, "text/plain; charset=utf-8", err
 	default:
-		tmpl, tErr := s.st.GetClashTemplate()
+		tmpl, tErr := s.st.GetClashTemplateForUser(userID)
 		if tErr != nil {
 			return nil, "", fmt.Errorf("load clash template: %w", tErr)
 		}
@@ -1734,7 +1759,7 @@ func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
 	// 过滤后可能为空（节点池未就绪或全被过滤链剔除）；此时返回空内容而非 500，方便后台排查
 	content := ""
 	if len(nodes) > 0 {
-		data, _, genErr := s.renderSubscription(nodes, format)
+		data, _, genErr := s.renderSubscription(nodes, format, ep.UserID)
 		if genErr != nil {
 			s.logger.Error("generate preview failed", "format", format, "error", genErr)
 			http.Error(w, "generate preview failed", http.StatusInternalServerError)

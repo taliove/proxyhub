@@ -15,11 +15,17 @@ import (
 // 结果带 source=stability_check 落 exam_history;"最近体检"消费方只认完整体检口径,不被抢占。
 
 // handleBatchStability 启动批量"出网+稳定性"任务:node_keys 为空则对全部节点检查。
+// 按请求者用户空间(多租户):"全部"= 本人池分片;任务按属主分片,互不干扰。
 func (s *Server) handleBatchStability(w http.ResponseWriter, r *http.Request) {
 	if s.detectionService == nil || s.batchStabilityJobs == nil {
 		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "detection service not initialized"})
 		return
 	}
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(userScope)
 
 	var req struct {
 		NodeKeys []string `json:"node_keys"`
@@ -29,20 +35,21 @@ func (s *Server) handleBatchStability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// node_keys 为空时对全部节点检查
+	// node_keys 为空时对本人池全部节点检查
+	pool := s.nodes.NodesForUser(effUID)
 	nodeKeys := req.NodeKeys
 	scope := "selected"
 	if len(nodeKeys) == 0 {
 		scope = "all"
-		for _, n := range s.nodes.Nodes() {
+		for _, n := range pool {
 			nodeKeys = append(nodeKeys, n.NodeKey())
 		}
 	}
 
-	// 收集活节点(含凭证)
+	// 收集活节点(含凭证,限本人池)
 	var nodes []*subscription.Node
 	for _, nk := range nodeKeys {
-		for _, n := range s.nodes.Nodes() {
+		for _, n := range pool {
 			if n.NodeKey() == nk {
 				nodes = append(nodes, n)
 				break
@@ -50,7 +57,7 @@ func (s *Server) handleBatchStability(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	key, err := s.batchStabilityJobs.Start(nodeKeys, nodes, scope)
+	key, err := s.batchStabilityJobs.StartFor(effUID, nodeKeys, nodes, scope)
 	if err != nil {
 		s.logger.Error("start batch stability failed", "error", err)
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": err.Error()})
@@ -67,10 +74,14 @@ func (s *Server) handleBatchStabilityStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 任务 key 固定为 "batch_stability"(全局单例)
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	// 任务 key 固定为 "batch_stability"(按属主分片单例)
 	key := "batch_stability"
 
-	sub, err := s.batchStabilityJobs.Subscribe(key)
+	sub, err := s.batchStabilityJobs.SubscribeFor(EffectiveUserID(userScope), key)
 	if err != nil {
 		http.Error(w, "no active batch stability check", http.StatusNotFound)
 		return
@@ -116,8 +127,12 @@ func (s *Server) handleBatchStabilityCancel(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	key := "batch_stability"
-	if !s.batchStabilityJobs.Cancel(key) {
+	if !s.batchStabilityJobs.CancelFor(EffectiveUserID(userScope), key) {
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": "no active batch stability check"})
 		return
 	}
@@ -146,7 +161,12 @@ func (s *Server) handleNodeStabilityStream(w http.ResponseWriter, r *http.Reques
 		selfNodeID = id
 	}
 
-	node := s.resolveTestNode(selfNodeID, nodeKey)
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(userScope)
+	node := s.resolveTestNode(effUID, selfNodeID, nodeKey)
 	if node == nil {
 		http.NotFound(w, r)
 		return
@@ -173,11 +193,12 @@ func (s *Server) handleNodeStabilityStream(w http.ResponseWriter, r *http.Reques
 	}
 
 	// force=1:"重新检查"语义,已收口的旧任务丢弃重开(进行中的任务不受影响,仍附加)。
+	// 任务按属主分片(多租户):同节点不同用户各自单实例。
 	var sub *detection.ExamSubscription
 	if q.Get("force") == "1" {
-		sub = s.stabilityExamJobs.OpenForce(node.NodeKey(), node)
+		sub = s.stabilityExamJobs.OpenForceFor(effUID, node.NodeKey(), node)
 	} else {
-		sub = s.stabilityExamJobs.Open(node.NodeKey(), node)
+		sub = s.stabilityExamJobs.OpenFor(effUID, node.NodeKey(), node)
 	}
 	defer sub.Close()
 
@@ -205,13 +226,18 @@ func (s *Server) handleNodeStabilityCancel(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	nodeKey := s.resolveExamNodeKey(r)
+	userScope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(userScope)
+	nodeKey := s.resolveExamNodeKey(effUID, r)
 	if nodeKey == "" {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "missing node_key or self_node_id"})
 		return
 	}
 
-	if !s.stabilityExamJobs.Cancel(nodeKey) {
+	if !s.stabilityExamJobs.CancelFor(effUID, nodeKey) {
 		writeJSONStatus(w, http.StatusConflict, map[string]string{"error": "no active stability check"})
 		return
 	}

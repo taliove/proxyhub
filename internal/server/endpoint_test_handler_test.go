@@ -320,7 +320,9 @@ func TestHandleEndpointTestProbe_SampledRun(t *testing.T) {
 		t.Errorf("progress = checked %d sampled %d, want 2/2", final.Checked, final.Sampled)
 	}
 
-	// 实测写回池(与健康检查同语义):Available/Latency 按桩结果更新
+	// 实测写回池(与健康检查同语义):Available/Latency 按桩结果更新。
+	// 抽样是层内随机(sampling.go rand.Shuffle),桩按切片序号发延迟(50,51),
+	// 故只断言两节点拿到 {50,51} 这个集合,不断言具体映射(顺序是规格内随机)。
 	latencyByServer := map[string]int{}
 	for _, n := range srv.nodes.Nodes() {
 		if !n.Available {
@@ -328,8 +330,9 @@ func TestHandleEndpointTestProbe_SampledRun(t *testing.T) {
 		}
 		latencyByServer[n.Server] = n.Latency
 	}
-	if latencyByServer["a.example.com"] != 50 || latencyByServer["b.example.com"] != 51 {
-		t.Errorf("writeback latencies = %v, want a=50 b=51", latencyByServer)
+	a, b := latencyByServer["a.example.com"], latencyByServer["b.example.com"]
+	if !((a == 50 && b == 51) || (a == 51 && b == 50)) {
+		t.Errorf("writeback latencies = %v, want {50, 51} in any order", latencyByServer)
 	}
 }
 

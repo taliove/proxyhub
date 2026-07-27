@@ -71,7 +71,7 @@ func (k *refreshKind) Run(ctx context.Context, params json.RawMessage, _ string,
 // runFull 全量刷新:完整聚合流水线(拉取→地区识别→健康检查→合并入池)。
 // 取消时 execute 内部中断于当前阶段,已拉取部分照常入池,refresh_runs 记 cancelled。
 func (k *refreshKind) runFull(ctx context.Context, p *RefreshJobParams, progress func(string)) error {
-	rl, err := k.agg.newRunLog(p.Trigger, k.agg.findRunningJobID(refreshKeyAll))
+	rl, err := k.agg.newRunLog(p.UserID, p.Trigger, k.agg.findRunningJobID(refreshKeyAll))
 	if err != nil {
 		// 刷新记录写不进去不阻断聚合,仅丢失本次日志
 		k.agg.logger.Warn("create refresh run failed, continuing without refresh log", "error", err)
@@ -88,7 +88,7 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 		return fmt.Errorf("get airport %d: %w", p.AirportID, err)
 	}
 
-	rl, err := k.agg.newRunLog(p.Trigger, k.agg.findRunningJobID(refreshJobKey(p.AirportID)))
+	rl, err := k.agg.newRunLog(p.UserID, p.Trigger, k.agg.findRunningJobID(refreshJobKey(p.AirportID)))
 	if err != nil {
 		k.agg.logger.Warn("create refresh run failed, continuing without refresh log", "error", err)
 	}

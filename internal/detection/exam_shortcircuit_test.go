@@ -194,7 +194,7 @@ func TestExamOrchestrator_NoShortCircuitWhenNoEgress(t *testing.T) {
 // TestExamKind_ShortCircuitNoHistory 短路体检(report.Stability=nil)→ OnComplete 不落历史。
 func TestExamKind_ShortCircuitNoHistory(t *testing.T) {
 	var saved bool
-	onComplete := func(string, ExamReport) { saved = true }
+	onComplete := func(userID int64, _ string, _ ExamReport) { saved = true }
 
 	runner := func(_ context.Context, _ *subscription.Node, emit func(ExamEvent)) ExamReport {
 		// 模拟出网全失败短路:只有 Egress,无 Stability。
@@ -215,7 +215,7 @@ func TestExamKind_ShortCircuitNoHistory(t *testing.T) {
 	paramsJSON, _ := json.Marshal(params)
 
 	node := &subscription.Node{}
-	kind.nodes.Store("test-node", node)
+	kind.nodes.Store(examNodeRef{userID: 0, nodeKey: "test-node"}, node)
 
 	err := kind.Run(context.Background(), paramsJSON, "", func(json.RawMessage) {}, func(string) {})
 

@@ -4,7 +4,7 @@
 
     <el-card>
       <el-tabs>
-        <el-tab-pane label="安全设置">
+        <el-tab-pane v-if="authStore.isSuperAdmin" label="安全设置">
           <el-form :model="settings" label-width="180px" class="settings-form">
             <el-form-item label="登录失败封禁阈值">
               <el-input-number v-model="settings.ban_threshold" :min="3" :max="10" />
@@ -18,7 +18,7 @@
           </el-form>
         </el-tab-pane>
 
-        <el-tab-pane label="告警设置">
+        <el-tab-pane v-if="authStore.isSuperAdmin" label="告警设置">
           <el-form :model="settings" label-width="180px" class="settings-form">
             <el-form-item label="飞书 Webhook">
               <el-input v-model="settings.feishu_webhook" placeholder="https://..." />
@@ -35,6 +35,10 @@
         <el-tab-pane label="订阅设置">
           <el-form :model="settings" label-width="180px" class="settings-form">
             <el-form-item label="定时刷新机场">
+              <template #label>
+                定时刷新机场
+                <TenantBadge v-if="!authStore.isSuperAdmin" k="scheduled_refresh_enabled" />
+              </template>
               <el-switch
                 v-model="settings.scheduled_refresh_enabled"
                 active-value="true"
@@ -46,7 +50,7 @@
               </span>
             </el-form-item>
 
-            <el-form-item label="机场拉取并行度">
+            <el-form-item v-if="authStore.isSuperAdmin" label="机场拉取并行度">
               <el-input-number v-model="settings.fetch_concurrency" :min="1" :max="10" />
               <span class="hint">
                 全量刷新时同时拉取的机场数(1-10,默认 4)。只作用于拉取阶段;健康检查并发独立配置。
@@ -60,6 +64,10 @@
 
             <!-- 节点名称标准化（见 ADR 0012） -->
             <el-form-item label="节点名称标准化">
+              <template #label>
+                节点名称标准化
+                <TenantBadge v-if="!authStore.isSuperAdmin" k="standardize_names" />
+              </template>
               <el-switch
                 v-model="settings.standardize_names"
                 active-value="true"
@@ -71,6 +79,10 @@
               </span>
             </el-form-item>
             <el-form-item v-if="settings.standardize_names === 'true'" label="名称模板">
+              <template #label>
+                名称模板
+                <TenantBadge v-if="!authStore.isSuperAdmin" k="name_template" />
+              </template>
               <el-input
                 v-model="settings.name_template"
                 placeholder="{emoji} {region} {source_abbr}-{index}"
@@ -82,6 +94,10 @@
             </el-form-item>
 
             <el-form-item label="订阅关键词白名单">
+              <template #label>
+                订阅关键词白名单
+                <TenantBadge v-if="!authStore.isSuperAdmin" k="filter_whitelist" />
+              </template>
               <el-input
                 v-model="settings.filter_whitelist"
                 type="textarea"
@@ -94,6 +110,10 @@
               >
             </el-form-item>
             <el-form-item label="订阅关键词过滤">
+              <template #label>
+                订阅关键词过滤
+                <TenantBadge v-if="!authStore.isSuperAdmin" k="filter_keywords" />
+              </template>
               <el-input
                 v-model="settings.filter_keywords"
                 type="textarea"
@@ -111,7 +131,7 @@
         </el-tab-pane>
 
         <!-- 带宽测试配置 -->
-        <el-tab-pane label="带宽测试配置">
+        <el-tab-pane v-if="authStore.isSuperAdmin" label="带宽测试配置">
           <el-form label-width="180px" class="settings-form">
             <el-alert
               type="info"
@@ -175,67 +195,14 @@
           </el-form>
         </el-tab-pane>
 
-        <!-- 直连出口(见 CONTEXT.md「直连出口」;ticket 0021) -->
-        <el-tab-pane label="直连出口">
+        <!-- 直连出口(见 CONTEXT.md「直连出口」;ticket 0021):碰本机网络出口,超管专属 -->
+        <el-tab-pane v-if="authStore.isSuperAdmin" label="直连出口">
           <DirectEgressSettings />
         </el-tab-pane>
 
-        <!-- 检测目标配置 -->
+        <!-- 检测目标配置(每租户,独立组件) -->
         <el-tab-pane label="检测目标配置">
-          <div class="target-toolbar">
-            <el-button type="primary" @click="addTarget">添加目标</el-button>
-            <el-button @click="loadTargets">刷新</el-button>
-          </div>
-          <el-table :data="detectionTargets" border>
-            <el-table-column prop="name" label="名称" width="120">
-              <template #default="{ row }">
-                <el-input v-model="row.name" size="small" />
-              </template>
-            </el-table-column>
-            <el-table-column prop="kind" label="类型" width="130">
-              <template #default="{ row }">
-                <el-tag
-                  size="small"
-                  :type="row.kind && row.kind !== 'generic' ? 'warning' : 'info'"
-                >
-                  {{ row.kind && row.kind !== 'generic' ? row.kind : 'generic' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="url" label="URL" min-width="200">
-              <template #default="{ row }">
-                <el-input v-model="row.url" size="small" />
-              </template>
-            </el-table-column>
-            <el-table-column prop="method" label="方法" width="80">
-              <template #default="{ row }">
-                <el-select v-model="row.method" size="small">
-                  <el-option label="GET" value="GET" />
-                  <el-option label="POST" value="POST" />
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column prop="expect_status" label="期望状态码" width="150">
-              <template #default="{ row }">
-                <el-input v-model="row.expect_status_str" size="small" placeholder="200,204" />
-              </template>
-            </el-table-column>
-            <el-table-column prop="response_excludes" label="排除关键字" width="180">
-              <template #default="{ row }">
-                <el-input v-model="row.response_excludes_str" size="small" placeholder="逗号分隔" />
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="100">
-              <template #default="{ $index }">
-                <el-button type="danger" size="small" link @click="removeTarget($index)"
-                  >删除</el-button
-                >
-              </template>
-            </el-table-column>
-          </el-table>
-          <div class="target-actions">
-            <el-button type="primary" @click="saveTargets">保存配置</el-button>
-          </div>
+          <DetectionTargets />
         </el-tab-pane>
       </el-tabs>
     </el-card>
@@ -243,13 +210,57 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
-import client from '@/api/client'
-import { getSettings, saveSettings as persistSettings, MAIN_SETTINGS_KEYS } from '@/api/settings'
+import { ref, onMounted, h } from 'vue'
+import { ElMessage, ElTag, ElButton } from 'element-plus'
+import {
+  getSettings,
+  saveSettings as persistSettings,
+  MAIN_SETTINGS_KEYS,
+  TENANT_SETTINGS_KEYS
+} from '@/api/settings'
+import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/PageHeader.vue'
 import RegionWhitelist from '@/components/RegionWhitelist.vue'
 import DirectEgressSettings from '@/components/DirectEgressSettings.vue'
+import DetectionTargets from '@/components/DetectionTargets.vue'
+
+const authStore = useAuthStore()
+
+// overridden 每键覆盖标记(仅普通用户视角有真值;超管编辑全局默认,恒为空)。
+const overridden = ref<Record<string, boolean>>({})
+
+// TenantBadge 租户级键的状态徽标(本地渲染组件):跟随全局默认 / 已自定义 + 重置。
+// 重置 = 删除本人覆盖,回到跟随全局默认(立即生效,不等保存)。
+const TenantBadge = (props: { k: string }) => {
+  const isCustom = overridden.value[props.k] === true
+  return h('span', { class: 'tenant-badge' }, [
+    h(ElTag, { size: 'small', effect: 'plain', type: isCustom ? 'warning' : 'info' }, () =>
+      isCustom ? '已自定义' : '跟随全局默认'
+    ),
+    isCustom
+      ? h(
+          ElButton,
+          { size: 'small', link: true, type: 'danger', onClick: () => resetTenantKey(props.k) },
+          () => '重置'
+        )
+      : null
+  ])
+}
+TenantBadge.props = ['k']
+
+// resetTenantKey 删除某租户级键的本人覆盖并刷新生效视图。
+const resetTenantKey = async (k: string) => {
+  await persistSettings({}, [k])
+  const { settings: s, overridden: o } = await getSettings()
+  Object.assign(settings.value, pickKeys(s, TENANT_SETTINGS_KEYS))
+  overridden.value = o
+  ElMessage.success('已重置为跟随全局默认')
+}
+
+// pickKeys 从信封 settings 里挑出指定键(普通用户视角后端只回租户级键,
+// 超管视角是全量键;挑键防止其他 tab 的值被 Object.assign 吞进主表单)。
+const pickKeys = (src: Record<string, string>, keys: readonly string[]) =>
+  Object.fromEntries(keys.filter((k) => k in src).map((k) => [k, src[k]]))
 
 // 主保存 payload 只含主表单自己的键(白名单见 MAIN_SETTINGS_KEYS):
 // onMounted 的 Object.assign 会吞进全量键(含 direct_egress_* 等其他 tab 的键),
@@ -279,91 +290,23 @@ const settings = ref<Record<string, string | number>>({
   bandwidth_min_up_mbps: ''
 })
 
-// 检测目标配置
-interface DetectionTarget {
-  name: string
-  // 检测类型:空/generic=通用判定,其余(netflix 等)=专用解锁判定。
-  // UI 只读展示并原样回传,避免保存时丢失播种目标的 kind。
-  kind?: string
-  url: string
-  method: string
-  headers: Record<string, string>
-  expect_status: number[]
-  response_contains: string[]
-  response_excludes: string[]
-  // UI 辅助字段(数组转逗号字符串)
-  expect_status_str?: string
-  response_excludes_str?: string
-}
-
-const detectionTargets = ref<DetectionTarget[]>([])
-
 onMounted(async () => {
-  const data = await getSettings()
-  Object.assign(settings.value, data)
-  await loadTargets()
+  const { settings: s, overridden: o } = await getSettings()
+  Object.assign(settings.value, s)
+  overridden.value = o
 })
 
 const saveSettings = async () => {
-  // 后端 /settings 解码为 map[string]string,数字/布尔值会导致 400。
   // 统一序列化为字符串,兼容 el-input-number(数字)与 el-switch(字符串)取值。
-  // 只回写主表单白名单键(见 MAIN_SETTINGS_KEYS),不覆盖其他 tab 的键。
-  const payload = Object.fromEntries(MAIN_SETTINGS_KEYS.map((k) => [k, String(settings.value[k])]))
+  // 超管写全局默认(主表单全键);普通用户只写租户级键(落本人 user_settings),
+  // 超管专属键即使夹带也会被后端忽略,但这里直接不发,语义更干净。
+  const keys = authStore.isSuperAdmin ? MAIN_SETTINGS_KEYS : TENANT_SETTINGS_KEYS
+  const payload = Object.fromEntries(keys.map((k) => [k, String(settings.value[k])]))
   await persistSettings(payload)
+  // 保存后刷新覆盖标记(新写的键变为已自定义)
+  const { overridden: o } = await getSettings()
+  overridden.value = o
   ElMessage.success('保存成功')
-}
-
-const loadTargets = async () => {
-  const data = await client.get<unknown, DetectionTarget[]>('/settings/detection-targets')
-  // 转换数组为字符串(便于编辑)
-  detectionTargets.value = data.map((t: DetectionTarget) => ({
-    ...t,
-    headers: t.headers || {},
-    expect_status_str: (t.expect_status || []).join(','),
-    response_excludes_str: (t.response_excludes || []).join(',')
-  }))
-}
-
-const saveTargets = async () => {
-  // 转换字符串回数组
-  const payload = detectionTargets.value.map((t) => ({
-    name: t.name,
-    // 原样回传 kind(专用解锁目标),缺省交由后端按 generic 处理
-    ...(t.kind ? { kind: t.kind } : {}),
-    url: t.url,
-    method: t.method,
-    headers: t.headers || {},
-    expect_status: (t.expect_status_str || '')
-      .split(',')
-      .map((s) => parseInt(s.trim()))
-      .filter((n) => !isNaN(n)),
-    response_contains: t.response_contains || [],
-    response_excludes: (t.response_excludes_str || '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s)
-  }))
-  await client.put('/settings/detection-targets', payload)
-  ElMessage.success('保存成功')
-  await loadTargets()
-}
-
-const addTarget = () => {
-  detectionTargets.value.push({
-    name: '',
-    url: '',
-    method: 'GET',
-    headers: {},
-    expect_status: [200],
-    response_contains: [],
-    response_excludes: [],
-    expect_status_str: '200',
-    response_excludes_str: ''
-  })
-}
-
-const removeTarget = (index: number) => {
-  detectionTargets.value.splice(index, 1)
 }
 </script>
 
@@ -393,5 +336,12 @@ const removeTarget = (index: number) => {
 }
 .target-actions {
   margin-top: var(--ph-space-4);
+}
+.tenant-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ph-space-1);
+  margin-left: var(--ph-space-2);
+  vertical-align: middle;
 }
 </style>

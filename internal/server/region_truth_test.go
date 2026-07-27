@@ -152,7 +152,7 @@ func TestRefreshNamesEgressPriority(t *testing.T) {
 	}
 
 	// Refresh names should use egress (HK), not GeoIP (US)
-	updated := srv.refreshSelfHostedNodeNames(nil)
+	updated := srv.refreshSelfHostedNodeNames(0, nil)
 
 	if updated != 1 {
 		t.Errorf("expected 1 update, got %d", updated)
@@ -192,7 +192,7 @@ func TestRefreshNamesGeoIPFallback(t *testing.T) {
 	}
 
 	// No exam history saved - should fallback to GeoIP
-	updated := srv.refreshSelfHostedNodeNames(nil)
+	updated := srv.refreshSelfHostedNodeNames(0, nil)
 
 	if updated != 1 {
 		t.Errorf("expected 1 update, got %d", updated)
@@ -232,7 +232,7 @@ func TestRefreshNamesPreserveWhenBothFail(t *testing.T) {
 	}
 
 	// No exam history, GeoIP fails - should preserve existing region
-	_ = srv.refreshSelfHostedNodeNames(nil)
+	_ = srv.refreshSelfHostedNodeNames(0, nil)
 
 	// Should still update (re-apply naming even if region unchanged)
 	nodes, err := st.ListAllSelfHostedNodes()
@@ -279,7 +279,7 @@ func TestRefreshNamesAirportEgressPriority(t *testing.T) {
 	srv.writebackRegionIfNeeded(0, nodeKey, examReport)
 
 	// Then refresh names - should use the corrected HK region
-	updated := srv.refreshAirportNodeNames(nil)
+	updated := srv.refreshAirportNodeNames(0, nil)
 
 	if updated != 1 {
 		t.Errorf("expected 1 update, got %d", updated)

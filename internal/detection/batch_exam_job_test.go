@@ -35,7 +35,7 @@ func TestBatchExamKind_Run_EmptyNodeList(t *testing.T) {
 			t.Fatal("runSimplified should not be called with empty node list")
 			return ExamReport{}
 		},
-		onComplete: func(nodeKey string, report ExamReport) {
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {
 			t.Fatal("onComplete should not be called with empty node list")
 		},
 	}
@@ -77,14 +77,14 @@ func TestBatchExamKind_Run_SingleNode(t *testing.T) {
 			emit(ExamEvent{Phase: "sample", Section: "stability"})
 			return ExamReport{Stability: &StabilityMetrics{Total: 10, Succeeded: 10, Score: 100}}
 		},
-		onComplete: func(nodeKey string, report ExamReport) {
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {
 			completeCalled = true
 			if report.Stability == nil {
 				t.Error("onComplete report.Stability = nil, want non-nil")
 			}
 		},
 	}
-	k.nodes.Store(node.NodeKey(), node)
+	k.nodes.Store(examNodeRef{userID: 0, nodeKey: node.NodeKey()}, node)
 
 	params, _ := json.Marshal(batchExamParams{NodeKeys: []string{node.NodeKey()}})
 	err := k.Run(context.Background(), params, "", func(data json.RawMessage) {
@@ -133,7 +133,7 @@ func TestBatchExamKind_Run_MultipleNodes(t *testing.T) {
 			time.Sleep(10 * time.Millisecond) // Simulate work
 			return ExamReport{Stability: &StabilityMetrics{Total: 10, Succeeded: 9, Score: 95}}
 		},
-		onComplete: func(nodeKey string, report ExamReport) {
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {
 			mu.Lock()
 			completeOrder = append(completeOrder, nodeKey)
 			mu.Unlock()
@@ -142,7 +142,7 @@ func TestBatchExamKind_Run_MultipleNodes(t *testing.T) {
 
 	var nodeKeys []string
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 		nodeKeys = append(nodeKeys, n.NodeKey())
 	}
 
@@ -184,12 +184,12 @@ func TestBatchExamKind_Run_ResumesFromCursor(t *testing.T) {
 			runNodes = append(runNodes, n.Name)
 			return ExamReport{Stability: &StabilityMetrics{Total: 10, Succeeded: 10, Score: 100}}
 		},
-		onComplete: func(nodeKey string, report ExamReport) {},
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {},
 	}
 
 	var nodeKeys []string
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 		nodeKeys = append(nodeKeys, n.NodeKey())
 	}
 
@@ -223,12 +223,12 @@ func TestBatchExamKind_Run_ProgressCallback(t *testing.T) {
 		runSimplified: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
 			return ExamReport{Stability: &StabilityMetrics{Total: 10, Succeeded: 10, Score: 100}}
 		},
-		onComplete: func(nodeKey string, report ExamReport) {},
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {},
 	}
 
 	var nodeKeys []string
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 		nodeKeys = append(nodeKeys, n.NodeKey())
 	}
 
@@ -271,12 +271,12 @@ func TestBatchExamKind_Run_Cancellation(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 			return ExamReport{Stability: &StabilityMetrics{Total: 10, Succeeded: 10, Score: 100}}
 		},
-		onComplete: func(nodeKey string, report ExamReport) {},
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {},
 	}
 
 	var nodeKeys []string
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 		nodeKeys = append(nodeKeys, n.NodeKey())
 	}
 
@@ -309,7 +309,7 @@ func TestBatchExamKind_Run_MissingNode(t *testing.T) {
 			t.Fatal("runSimplified should not be called for missing node")
 			return ExamReport{}
 		},
-		onComplete: func(nodeKey string, report ExamReport) {
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {
 			t.Fatal("onComplete should not be called for missing node")
 		},
 	}
@@ -434,11 +434,11 @@ func TestBatchExamKind_Run_ModeFull_UsesFullRunner(t *testing.T) {
 				Unlock:    &UnlockMetrics{},
 			}
 		},
-		onComplete: func(nodeKey string, report ExamReport) {
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {
 			completedReport = report
 		},
 	}
-	k.nodes.Store(node.NodeKey(), node)
+	k.nodes.Store(examNodeRef{userID: 0, nodeKey: node.NodeKey()}, node)
 
 	params, _ := json.Marshal(batchExamParams{NodeKeys: []string{node.NodeKey()}, Mode: BatchExamModeFull})
 	err := k.Run(context.Background(), params, "", func(data json.RawMessage) {}, func(cursor string) {})
@@ -475,12 +475,12 @@ func TestBatchExamKind_Run_LegacyParamsResume_KeepsSimplified(t *testing.T) {
 			fullRuns = append(fullRuns, n.Name)
 			return ExamReport{Stability: &StabilityMetrics{Total: 10, Succeeded: 10, Score: 100}}
 		},
-		onComplete: func(nodeKey string, report ExamReport) {},
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {},
 	}
 
 	var nodeKeys []string
 	for _, n := range nodes {
-		k.nodes.Store(n.NodeKey(), n)
+		k.nodes.Store(examNodeRef{userID: 0, nodeKey: n.NodeKey()}, n)
 		nodeKeys = append(nodeKeys, n.NodeKey())
 	}
 

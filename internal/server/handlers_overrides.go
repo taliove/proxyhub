@@ -23,8 +23,13 @@ func decodeNodeKeyRequest(r *http.Request) (string, error) {
 	return req.NodeKey, nil
 }
 
-// handleSetNodeOverride 设置机场节点覆盖层（display_name/region）
+// handleSetNodeOverride 设置机场节点覆盖层（display_name/region）。
+// 按请求者属主写(多租户):同一节点可被不同用户独立覆盖,互不串扰。
 func (s *Server) handleSetNodeOverride(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		NodeKey     string `json:"node_key"`
 		DisplayName string `json:"display_name"`
@@ -39,7 +44,7 @@ func (s *Server) handleSetNodeOverride(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.st.SetNodeOverride(req.NodeKey, req.DisplayName, req.Region); err != nil {
+	if err := s.st.SetNodeOverrideForUser(EffectiveUserID(scope), req.NodeKey, req.DisplayName, req.Region); err != nil {
 		s.logger.Error("set node override failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -48,15 +53,19 @@ func (s *Server) handleSetNodeOverride(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"success": true})
 }
 
-// handleClearNodeOverride 清除机场节点覆盖层
+// handleClearNodeOverride 清除机场节点覆盖层(只清请求者自己名下的覆盖行)。
 func (s *Server) handleClearNodeOverride(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	nodeKey, err := decodeNodeKeyRequest(r)
 	if err != nil {
 		http.Error(w, "invalid request or missing node_key", http.StatusBadRequest)
 		return
 	}
 
-	if err := s.st.ClearNodeOverride(nodeKey); err != nil {
+	if err := s.st.ClearNodeOverrideForUser(EffectiveUserID(scope), nodeKey); err != nil {
 		s.logger.Error("clear node override failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -65,8 +74,16 @@ func (s *Server) handleClearNodeOverride(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]any{"success": true})
 }
 
-// handleCleanupNodes 批量清理失败节点（机场→屏蔽，自建→禁用/删除）
+// handleCleanupNodes 批量清理失败节点（机场→屏蔽，自建→禁用/删除）。
+// 按请求者用户空间操作(多租户):类型判定用本人池,自建节点只查本人表,
+// 屏蔽写本人名单,禁用/删除带属主校验。
 func (s *Server) handleCleanupNodes(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(scope)
+
 	var req struct {
 		NodeKeys []string `json:"node_keys"`
 		Action   string   `json:"action"` // "block" | "disable" | "delete"
@@ -89,8 +106,8 @@ func (s *Server) handleCleanupNodes(w http.ResponseWriter, r *http.Request) {
 	var airportKeys []string
 	var selfNodeIDs []int64
 
-	allNodes := s.nodes.Nodes()
-	selfNodes, _ := s.st.ListAllSelfHostedNodes()
+	allNodes := s.nodes.NodesForUser(effUID)
+	selfNodes, _ := s.st.ListAllSelfHostedNodesByUser(effUID)
 
 	// 建 NodeKey → source 索引，用于判定节点类型
 	sourceByKey := make(map[string]string, len(allNodes))
@@ -115,25 +132,25 @@ func (s *Server) handleCleanupNodes(w http.ResponseWriter, r *http.Request) {
 
 	var blocked, disabled, deleted int
 
-	// 机场节点：屏蔽
+	// 机场节点：屏蔽(写本人名单)
 	for _, key := range airportKeys {
-		if err := s.st.BlockNode(key); err != nil {
+		if err := s.st.BlockNodeForUser(effUID, key); err != nil {
 			s.logger.Warn("block node failed", "key", key, "error", err)
 		} else {
 			blocked++
 		}
 	}
 
-	// 自建节点：禁用或删除
+	// 自建节点：禁用或删除(带属主校验,行属他人不落)
 	for _, id := range selfNodeIDs {
 		if req.Action == "delete" {
-			if err := s.st.DeleteSelfHostedNode(id); err != nil {
+			if err := s.st.DeleteSelfHostedNodeForUser(effUID, id); err != nil {
 				s.logger.Warn("delete self node failed", "id", id, "error", err)
 			} else {
 				deleted++
 			}
 		} else { // disable
-			if err := s.st.SetSelfHostedNodeEnabled(id, false); err != nil {
+			if err := s.st.SetSelfHostedNodeEnabledForUser(effUID, id, false); err != nil {
 				s.logger.Warn("disable self node failed", "id", id, "error", err)
 			} else {
 				disabled++
@@ -153,8 +170,13 @@ func (s *Server) handleCleanupNodes(w http.ResponseWriter, r *http.Request) {
 // 屏蔽名单/名称覆盖保留;CONTEXT.md「机场节点清空」)。
 // 并发语义(拒绝而非等待):有刷新任务进行中返回 409,由前端提示稍后重试——
 // 否则进行中的刷新可能在清空后把旧节点写回池。
+// 按请求者池分片清空(多租户):只清自己池,不动他人池。
 func (s *Server) handlePurgeAirportNodes(w http.ResponseWriter, r *http.Request) {
-	removed, err := s.nodes.PurgeAirportNodes()
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	removed, err := s.nodes.PurgeAirportNodesForUser(EffectiveUserID(scope))
 	if errors.Is(err, aggregator.ErrPurgeConflict) {
 		http.Error(w, "有刷新任务进行中,请稍后重试", http.StatusConflict)
 		return

@@ -11,7 +11,8 @@
       <el-button :loading="loading" @click="reload">刷新</el-button>
     </PageHeader>
 
-    <ScheduleCard />
+    <!-- 晚间标签重算调度是全局单例+超管专属(后端 adminGuard),普通用户不渲染 -->
+    <ScheduleCard v-if="authStore.isSuperAdmin" />
 
     <el-card>
       <el-table v-loading="loading" :data="filteredJobs" @row-click="openDetail">
@@ -63,9 +64,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { listJobs, cancelJob, getJob, type Job } from '@/api/jobs'
 import { kindLabel, statusMeta, isRunning, parseProgress, scopeLabel, jobTrigger } from './jobmeta'
+import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/PageHeader.vue'
 import ScheduleCard from './ScheduleCard.vue'
 import JobDetailDialog from './JobDetailDialog.vue'
+
+const authStore = useAuthStore()
 
 const jobs = ref<Job[]>([])
 const loading = ref(false)

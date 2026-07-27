@@ -74,6 +74,10 @@ func (s *Server) mustUserScope(w http.ResponseWriter, r *http.Request) (UserScop
 	if ok {
 		return scope, true
 	}
+	if s.st == nil {
+		// 测试直调路径(手工构造的无 store Server):同"无用户"语义放行。
+		return UserScope{UserID: 0, Role: store.RoleSuperAdmin}, true
+	}
 	users, err := s.st.ListUsers()
 	if err == nil && len(users) == 0 {
 		return UserScope{UserID: 0, Role: store.RoleSuperAdmin}, true

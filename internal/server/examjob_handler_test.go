@@ -39,7 +39,7 @@ func TestHandleNodeExamCancel_CancelsRunningJobNoHistory(t *testing.T) {
 			<-ctx.Done()
 			return detection.ExamReport{Stability: &detection.StabilityMetrics{Succeeded: 1}}
 		},
-		func(string, detection.ExamReport) { mu.Lock(); saved++; mu.Unlock() },
+		func(userID int64, _ string, _ detection.ExamReport) { mu.Lock(); saved++; mu.Unlock() },
 	)
 
 	sub := srv.examJobs.Open(node.NodeKey(), node)
@@ -95,7 +95,7 @@ func TestHandleNodeExamStream_DisconnectKeepsJobAlive(t *testing.T) {
 				}
 			}
 		},
-		func(k string, _ detection.ExamReport) { mu.Lock(); savedKey = k; mu.Unlock() },
+		func(userID int64, k string, _ detection.ExamReport) { mu.Lock(); savedKey = k; mu.Unlock() },
 	)
 
 	// 连接 1:可取消的请求 ctx 模拟客户端断开。

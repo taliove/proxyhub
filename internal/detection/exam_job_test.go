@@ -119,7 +119,7 @@ func TestExamJobManager_AttachReplaysThenLive(t *testing.T) {
 func TestExamJobManager_CancelEmitsCancelledNoHistory(t *testing.T) {
 	var mu sync.Mutex
 	var saved []string
-	onComplete := func(key string, _ ExamReport) {
+	onComplete := func(userID int64, key string, _ ExamReport) {
 		mu.Lock()
 		saved = append(saved, key)
 		mu.Unlock()
@@ -161,7 +161,7 @@ func TestExamJobManager_CompleteSavesHistory(t *testing.T) {
 	var mu sync.Mutex
 	var savedKey string
 	var savedReport ExamReport
-	onComplete := func(k string, r ExamReport) {
+	onComplete := func(userID int64, k string, r ExamReport) {
 		mu.Lock()
 		savedKey = k
 		savedReport = r
@@ -192,7 +192,7 @@ func TestExamJobManager_CompleteSavesHistory(t *testing.T) {
 
 func TestExamJobManager_FailedNoHistory(t *testing.T) {
 	var saved atomic.Int32
-	onComplete := func(string, ExamReport) { saved.Add(1) }
+	onComplete := func(userID int64, _ string, _ ExamReport) { saved.Add(1) }
 
 	se := newScriptedExam()
 	se.report = ExamReport{} // Stability 为 nil,视为失败(建会话失败等)
@@ -219,7 +219,7 @@ func TestExamJobManager_FailedNoHistory(t *testing.T) {
 func TestExamJobManager_OpenStoresNodeBeforeRun(t *testing.T) {
 	var completed atomic.Int32
 	var errs atomic.Int32
-	onComplete := func(string, ExamReport) { completed.Add(1) }
+	onComplete := func(userID int64, _ string, _ ExamReport) { completed.Add(1) }
 	onErr := func(error) { errs.Add(1) }
 
 	// runner 立即自然完成(带稳定性段 -> 应落历史),放大 open/Run 的时序竞争窗口。

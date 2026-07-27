@@ -56,14 +56,14 @@ const dohUrlError = ref('')
 
 onMounted(async () => {
   try {
-    const data = await getSettings()
+    const { settings } = await getSettings()
     form.value = {
       direct_egress_enabled:
-        data.direct_egress_enabled ?? DIRECT_EGRESS_DEFAULTS.direct_egress_enabled,
+        settings.direct_egress_enabled ?? DIRECT_EGRESS_DEFAULTS.direct_egress_enabled,
       direct_egress_doh_url:
-        data.direct_egress_doh_url ?? DIRECT_EGRESS_DEFAULTS.direct_egress_doh_url,
+        settings.direct_egress_doh_url ?? DIRECT_EGRESS_DEFAULTS.direct_egress_doh_url,
       direct_egress_interface:
-        data.direct_egress_interface ?? DIRECT_EGRESS_DEFAULTS.direct_egress_interface
+        settings.direct_egress_interface ?? DIRECT_EGRESS_DEFAULTS.direct_egress_interface
     }
   } catch (e) {
     ElMessage.error(`加载直连出口设置失败: ${e instanceof Error ? e.message : String(e)}`)
