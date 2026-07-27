@@ -7,16 +7,52 @@
         占位当前聚合的所有节点，生成订阅时自动展开。
       </template>
       <el-button @click="dialogVisible = true">新建模板</el-button>
-      <el-button :disabled="!selectedTemplate || saving" @click="handleDelete">删除</el-button>
+      <el-button :disabled="!selectedTemplate || autosaving" @click="handleDelete">删除</el-button>
       <el-button
-        :disabled="!selectedTemplate || selectedTemplate.is_default || saving"
+        :disabled="!selectedTemplate || selectedTemplate.is_default || autosaving"
         @click="handleSetDefault"
       >
         设为默认
       </el-button>
-      <el-button type="primary" :loading="saving" :disabled="!selectedTemplate" @click="handleSave">
-        保存
-      </el-button>
+      <el-dropdown
+        :disabled="!selectedTemplate"
+        trigger="click"
+        @command="handleVersionCommand"
+        @visible-change="onHistoryDropdownVisibleChange"
+      >
+        <el-button :disabled="!selectedTemplate">
+          历史
+          <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+        </el-button>
+        <template #dropdown>
+          <el-dropdown-menu v-loading="versionsLoading">
+            <el-dropdown-item v-if="versions.length === 0" disabled>暂无历史版本</el-dropdown-item>
+            <el-dropdown-item
+              v-for="ver in versions"
+              :key="ver.version"
+              :command="{ action: 'preview', version: ver.version }"
+              :disabled="previewingVersion === ver.version"
+            >
+              <div class="version-item">
+                <span>版本 {{ ver.version }}</span>
+                <span class="version-time">{{ formatTime(ver.created_at) }}</span>
+                <el-tag v-if="ver.version === currentVersion" type="success" size="small"
+                  >当前</el-tag
+                >
+              </div>
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+      <div class="autosave-status">
+        <span v-if="autosaving" class="status-saving">保存中…</span>
+        <span v-else-if="validationError" class="status-error" :title="validationError">
+          校验失败
+        </span>
+        <span v-else-if="lastSavedAt" class="status-saved">
+          已保存 {{ formatTime(lastSavedAt) }}
+        </span>
+      </div>
     </PageHeader>
 
     <el-card v-loading="loading">
@@ -29,6 +65,30 @@
         :closable="true"
         @close="errorMsg = ''"
       />
+
+      <el-alert
+        v-if="previewingVersion !== null"
+        class="editor-alert preview-alert"
+        type="warning"
+        show-icon
+        :closable="false"
+      >
+        <template #title>
+          <span>预览版本 {{ previewingVersion }},未生效</span>
+          <el-button
+            type="primary"
+            size="small"
+            :loading="restoring"
+            class="restore-btn"
+            @click="handleRestoreVersion"
+          >
+            恢复此版本
+          </el-button>
+          <el-button size="small" class="exit-preview-btn" @click="handleExitPreview">
+            返回当前版本
+          </el-button>
+        </template>
+      </el-alert>
 
       <div class="template-layout">
         <TemplateList
@@ -75,226 +135,166 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TemplateList from '@/components/TemplateList.vue'
 import YamlEditor from '@/components/YamlEditor.vue'
 import { useLayoutStore } from '@/stores/layout'
-import client from '@/api/client'
-import {
-  listTemplates,
-  getTemplate,
-  createTemplate,
-  updateTemplate,
-  deleteTemplate,
-  setDefaultTemplate,
-  type Template
-} from '@/api/templates'
-import { extractErrorDetail } from '@/utils/errors'
+import { useTemplateAutosave } from '@/composables/useTemplateAutosave'
+import { useTemplateVersions } from '@/composables/useTemplateVersions'
+import { useTemplateOperations } from '@/composables/useTemplateOperations'
+import { useTemplateSelection } from '@/composables/useTemplateSelection'
+import type { Template } from '@/api/templates'
 
 const layout = useLayoutStore()
 const { isDark } = storeToRefs(layout)
 
 const editorRef = ref<InstanceType<typeof YamlEditor> | null>(null)
 const editorContent = ref('')
-const loading = ref(true)
-const saving = ref(false)
-const creating = ref(false)
-const errorMsg = ref('')
 const placeholder = '{{nodes}}'
-
-const templates = ref<Template[]>([])
-const selectedTemplate = ref<Template | null>(null)
-const originalContent = ref('')
 const dialogVisible = ref(false)
 const createForm = ref({ name: '' })
+const creating = ref(false)
+
+// Composables
+const templateOps = useTemplateOperations()
+const { templates } = templateOps
+
+const selection = useTemplateSelection()
+const { selectedTemplate, originalContent, loading, errorMsg } = selection
+
+const autosave = useTemplateAutosave()
+const { autosaving, validationError, lastSavedAt } = autosave
+
+const versionHistory = useTemplateVersions()
+const { versions, versionsLoading, previewingVersion, currentVersion, restoring } = versionHistory
+
+// Format time as HH:mm:ss
+function formatTime(isoString: string): string {
+  const date = new Date(isoString)
+  return date.toLocaleTimeString('zh-CN', { hour12: false })
+}
+
+// Setup autosave watcher
+autosave.setupAutosave(
+  editorContent,
+  () => selectedTemplate.value?.name ?? null,
+  () => previewingVersion.value === null
+)
+
+// Handle history dropdown commands
+async function handleVersionCommand(command: { action: string; version: number }) {
+  if (command.action === 'preview' && selectedTemplate.value) {
+    await versionHistory.previewVersion(selectedTemplate.value.name, command.version, (content) => {
+      editorContent.value = content
+      editorRef.value?.setValue(content)
+      validationError.value = ''
+    })
+  }
+}
+
+// Exit preview mode
+function handleExitPreview() {
+  versionHistory.exitPreview(originalContent.value, (content) => {
+    editorContent.value = content
+    editorRef.value?.setValue(content)
+    validationError.value = ''
+  })
+}
+
+// Restore a version
+async function handleRestoreVersion() {
+  if (previewingVersion.value === null || !selectedTemplate.value) return
+  const contentToRestore = editorRef.value?.getValue() ?? ''
+  const templateName = selectedTemplate.value.name
+  await versionHistory.restoreVersion(
+    templateName,
+    previewingVersion.value,
+    contentToRestore,
+    async () => {
+      originalContent.value = contentToRestore
+      await versionHistory.loadVersions(templateName)
+    },
+    async (content) => {
+      const result = await autosave.triggerAutosave(templateName, content)
+      return result ?? false
+    }
+  )
+}
+
+// Load versions when dropdown opens
+function onHistoryDropdownVisibleChange(visible: boolean) {
+  if (visible && selectedTemplate.value) {
+    versionHistory.loadVersions(selectedTemplate.value.name)
+  }
+}
 
 async function loadTemplates() {
-  loading.value = true
-  errorMsg.value = ''
-  try {
-    const data = await listTemplates()
-    templates.value = data.templates
-    if (templates.value.length > 0 && !selectedTemplate.value) {
-      const defaultTmpl = templates.value.find((t) => t.is_default) || templates.value[0]
-      await selectTemplate(defaultTmpl)
-    }
-  } catch (e) {
-    const detail = extractErrorDetail(e)
-    errorMsg.value = detail || '加载模板列表失败'
-  } finally {
-    loading.value = false
+  const tmplList = await templateOps.loadTemplates()
+  if (tmplList.length > 0 && !selectedTemplate.value) {
+    const defaultTmpl = tmplList.find((t) => t.is_default) || tmplList[0]
+    await selectTemplate(defaultTmpl)
   }
 }
 
 async function selectTemplate(tmpl: Template) {
-  if (selectedTemplate.value && editorRef.value) {
-    const currentContent = editorRef.value.getValue()
-    if (currentContent !== originalContent.value) {
-      try {
-        await ElMessageBox.confirm(
-          '当前模板有未保存的修改，切换后将丢失。是否继续？',
-          '未保存的修改',
-          {
-            type: 'warning',
-            confirmButtonText: '放弃修改',
-            cancelButtonText: '取消'
-          }
-        )
-      } catch {
-        return
-      }
-    }
-  }
-
-  loading.value = true
-  errorMsg.value = ''
-  try {
-    const fullTmpl = await getTemplate(tmpl.name)
-    selectedTemplate.value = fullTmpl
-    originalContent.value = fullTmpl.content || ''
-    editorContent.value = originalContent.value
-    editorRef.value?.setValue(originalContent.value)
-  } catch (e) {
-    const detail = extractErrorDetail(e)
-    errorMsg.value = detail || '加载模板内容失败'
-  } finally {
-    loading.value = false
-  }
+  await selection.selectTemplate(
+    tmpl,
+    () => editorRef.value?.getValue() ?? '',
+    previewingVersion.value !== null,
+    () => {
+      autosave.reset()
+      versionHistory.reset()
+    },
+    (content) => {
+      editorContent.value = content
+      editorRef.value?.setValue(content)
+    },
+    () => versionHistory.loadVersions(tmpl.name)
+  )
 }
 
 async function handleCreate() {
-  const name = createForm.value.name.trim()
-  if (!name) {
-    ElMessage.error('模板名称不能为空')
-    return
-  }
-
   creating.value = true
-  try {
-    // 新模板以当前生效模板为底稿:库默认成员 ?? 回退链生效值(全局默认 ?? 内嵌)。
-    // 注意占位符必须是带引号的列表项(- '{{nodes}}'),裸 {{nodes}} 不是合法 YAML。
-    let scaffold = ''
-    const defaultMember = templates.value.find((t) => t.is_default) ?? templates.value[0]
-    if (defaultMember) {
-      scaffold = (await getTemplate(defaultMember.name)).content ?? ''
-    } else {
-      const resp = await client.get<unknown, { template: string }>('/settings/template', {
-        skipErrorToast: true
-      })
-      scaffold = resp.template
-    }
-    await createTemplate({ name, content: scaffold })
-    ElMessage.success('模板创建成功')
+  const success = await templateOps.create(createForm.value.name.trim(), templates.value, () => {
     dialogVisible.value = false
     createForm.value.name = ''
+  })
+  if (success) {
     await loadTemplates()
-    const newTmpl = templates.value.find((t) => t.name === name)
-    if (newTmpl) {
-      await selectTemplate(newTmpl)
-    }
-  } catch (e) {
-    const detail = extractErrorDetail(e)
-    if (detail?.includes('quota exceeded')) {
-      ElMessage.error('模板数量已达配额上限，请删除不需要的模板后重试')
-    } else if (detail?.includes('already exists')) {
-      ElMessage.error('模板名称已存在')
-    } else {
-      ElMessage.error(detail || '创建模板失败')
-    }
-  } finally {
-    creating.value = false
+    const newTmpl = templates.value.find((t) => t.name === createForm.value.name)
+    if (newTmpl) await selectTemplate(newTmpl)
   }
-}
-
-async function handleSave() {
-  if (!selectedTemplate.value) return
-
-  const content = editorRef.value?.getValue() ?? ''
-  if (!content.trim()) {
-    errorMsg.value = '模板内容不能为空'
-    return
-  }
-
-  saving.value = true
-  errorMsg.value = ''
-  try {
-    await updateTemplate(selectedTemplate.value.name, { content })
-    originalContent.value = content
-    ElMessage.success('模板已保存，订阅立即生效')
-  } catch (e) {
-    const detail = extractErrorDetail(e)
-    errorMsg.value = detail || '保存失败'
-  } finally {
-    saving.value = false
-  }
+  creating.value = false
 }
 
 async function handleDelete() {
   if (!selectedTemplate.value) return
-
-  // 列表项自带引用数,删除确认前置展示"N 个订阅地址将改用默认模板"
   const refCount =
     templates.value.find((t) => t.name === selectedTemplate.value?.name)?.ref_count ?? 0
-  const refWarning = refCount > 0 ? `,${refCount} 个订阅地址将改用默认模板` : ''
-
-  try {
-    await ElMessageBox.confirm(
-      `确定删除模板「${selectedTemplate.value.name}」吗${refWarning}?此操作无法撤销。`,
-      '删除模板',
-      {
-        type: 'warning',
-        confirmButtonText: '删除',
-        cancelButtonText: '取消'
-      }
-    )
-  } catch {
-    return
-  }
-
-  saving.value = true
-  errorMsg.value = ''
-  try {
-    const result = await deleteTemplate(selectedTemplate.value.name)
-    if (result.ref_count > 0) {
-      ElMessage.success(
-        `已删除模板「${selectedTemplate.value.name}」，${result.ref_count} 个订阅地址将改用默认模板`
-      )
-    } else {
-      ElMessage.success(`已删除模板「${selectedTemplate.value.name}」`)
-    }
-    selectedTemplate.value = null
-    originalContent.value = ''
+  autosaving.value = true
+  const success = await templateOps.remove(selectedTemplate.value, refCount)
+  if (success) {
     editorContent.value = ''
     editorRef.value?.setValue('')
+    selection.reset()
+    autosave.reset()
+    versionHistory.reset()
     await loadTemplates()
-  } catch (e) {
-    const detail = extractErrorDetail(e)
-    errorMsg.value = detail || '删除失败'
-  } finally {
-    saving.value = false
   }
+  autosaving.value = false
 }
 
 async function handleSetDefault() {
   if (!selectedTemplate.value || selectedTemplate.value.is_default) return
-
-  saving.value = true
-  errorMsg.value = ''
-  try {
-    await setDefaultTemplate(selectedTemplate.value.name)
-    ElMessage.success(`已将「${selectedTemplate.value.name}」设为默认模板`)
+  autosaving.value = true
+  const success = await templateOps.setDefault(selectedTemplate.value)
+  if (success) {
     await loadTemplates()
     const updated = templates.value.find((t) => t.name === selectedTemplate.value?.name)
-    if (updated) {
-      selectedTemplate.value = { ...selectedTemplate.value, is_default: true }
-    }
-  } catch (e) {
-    const detail = extractErrorDetail(e)
-    errorMsg.value = detail || '设置默认失败'
-  } finally {
-    saving.value = false
+    if (updated) selectedTemplate.value = { ...selectedTemplate.value, is_default: true }
   }
+  autosaving.value = false
 }
 
 onMounted(async () => {
@@ -310,6 +310,57 @@ onMounted(async () => {
 }
 .editor-alert {
   margin-bottom: var(--ph-space-3);
+}
+
+.preview-alert {
+  display: flex;
+  align-items: center;
+}
+
+.preview-alert :deep(.el-alert__title) {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+}
+
+.restore-btn {
+  margin-left: var(--ph-space-2);
+}
+
+.exit-preview-btn {
+  margin-left: var(--ph-space-1);
+}
+
+.version-item {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+  min-width: 200px;
+}
+
+.version-time {
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
+  margin-left: auto;
+}
+
+.autosave-status {
+  margin-left: auto;
+  font-size: var(--ph-text-sm);
+  padding: 0 var(--ph-space-2);
+}
+
+.status-saving {
+  color: var(--el-color-primary);
+}
+
+.status-saved {
+  color: var(--ph-text-secondary);
+}
+
+.status-error {
+  color: var(--el-color-danger);
+  cursor: help;
 }
 
 .template-layout {

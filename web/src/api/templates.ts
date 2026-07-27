@@ -61,3 +61,33 @@ export function deleteTemplate(name: string): Promise<DeleteTemplateResponse> {
 export function setDefaultTemplate(name: string): Promise<{ success: boolean }> {
   return client.put<unknown, { success: boolean }>(`/templates/${encodeURIComponent(name)}/default`)
 }
+
+// Template version history
+export interface TemplateVersion {
+  version: number
+  created_at: string
+}
+
+export interface TemplateVersionListResponse {
+  versions: TemplateVersion[]
+}
+
+export interface TemplateVersionContent {
+  version: number
+  content: string
+  created_at: string
+}
+
+// List all versions of a template
+export function listTemplateVersions(name: string): Promise<TemplateVersionListResponse> {
+  return client.get<unknown, TemplateVersionListResponse>(
+    `/templates/${encodeURIComponent(name)}/versions`
+  )
+}
+
+// Get specific version content
+export function getTemplateVersion(name: string, version: number): Promise<TemplateVersionContent> {
+  return client.get<unknown, TemplateVersionContent>(
+    `/templates/${encodeURIComponent(name)}/versions/${version}`
+  )
+}
