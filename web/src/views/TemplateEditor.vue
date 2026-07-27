@@ -40,9 +40,15 @@
           <div v-if="!selectedTemplate" class="editor-placeholder">
             请从左侧选择一个模板进行编辑，或新建模板
           </div>
-          <!-- v-show 而非 v-if:编辑器 div 必须始终挂载,onMounted 才能初始化 Monaco;
-               v-if 会在首次选中后才插入 DOM,错过初始化时机(右栏空白)。 -->
-          <div v-show="selectedTemplate" ref="editorEl" class="editor"></div>
+          <!-- v-show 而非 v-if:编辑器组件必须始终挂载,才能正确初始化;
+               v-if 会在首次选中后才插入 DOM,导致编辑器无法初始化。 -->
+          <YamlEditor
+            v-show="selectedTemplate"
+            ref="editorRef"
+            v-model="editorContent"
+            :is-dark="isDark"
+            class="editor"
+          />
         </div>
       </div>
     </el-card>
@@ -67,13 +73,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, shallowRef, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
-import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import TemplateList from '@/components/TemplateList.vue'
+import YamlEditor from '@/components/YamlEditor.vue'
 import { useLayoutStore } from '@/stores/layout'
 import client from '@/api/client'
 import {
@@ -89,10 +94,9 @@ import { extractErrorDetail } from '@/utils/errors'
 
 const layout = useLayoutStore()
 const { isDark } = storeToRefs(layout)
-const monacoTheme = () => (isDark.value ? 'vs-dark' : 'vs')
 
-const editorEl = ref<HTMLElement | null>(null)
-const editor = shallowRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+const editorRef = ref<InstanceType<typeof YamlEditor> | null>(null)
+const editorContent = ref('')
 const loading = ref(true)
 const saving = ref(false)
 const creating = ref(false)
@@ -124,8 +128,8 @@ async function loadTemplates() {
 }
 
 async function selectTemplate(tmpl: Template) {
-  if (selectedTemplate.value && editor.value) {
-    const currentContent = editor.value.getValue()
+  if (selectedTemplate.value && editorRef.value) {
+    const currentContent = editorRef.value.getValue()
     if (currentContent !== originalContent.value) {
       try {
         await ElMessageBox.confirm(
@@ -149,7 +153,8 @@ async function selectTemplate(tmpl: Template) {
     const fullTmpl = await getTemplate(tmpl.name)
     selectedTemplate.value = fullTmpl
     originalContent.value = fullTmpl.content || ''
-    editor.value?.setValue(originalContent.value)
+    editorContent.value = originalContent.value
+    editorRef.value?.setValue(originalContent.value)
   } catch (e) {
     const detail = extractErrorDetail(e)
     errorMsg.value = detail || '加载模板内容失败'
@@ -205,7 +210,7 @@ async function handleCreate() {
 async function handleSave() {
   if (!selectedTemplate.value) return
 
-  const content = editor.value?.getValue() ?? ''
+  const content = editorRef.value?.getValue() ?? ''
   if (!content.trim()) {
     errorMsg.value = '模板内容不能为空'
     return
@@ -260,7 +265,8 @@ async function handleDelete() {
     }
     selectedTemplate.value = null
     originalContent.value = ''
-    editor.value?.setValue('')
+    editorContent.value = ''
+    editorRef.value?.setValue('')
     await loadTemplates()
   } catch (e) {
     const detail = extractErrorDetail(e)
@@ -292,27 +298,7 @@ async function handleSetDefault() {
 }
 
 onMounted(async () => {
-  if (editorEl.value) {
-    editor.value = monaco.editor.create(editorEl.value, {
-      value: '',
-      language: 'yaml',
-      theme: monacoTheme(),
-      automaticLayout: true,
-      minimap: { enabled: true },
-      scrollBeyondLastLine: false,
-      fontSize: 13,
-      tabSize: 2
-    })
-  }
   await loadTemplates()
-})
-
-watch(isDark, () => {
-  monaco.editor.setTheme(monacoTheme())
-})
-
-onBeforeUnmount(() => {
-  editor.value?.dispose()
 })
 </script>
 
@@ -354,7 +340,5 @@ onBeforeUnmount(() => {
 
 .editor {
   flex: 1;
-  border: 1px solid var(--ph-border);
-  border-radius: var(--ph-radius-sm);
 }
 </style>
