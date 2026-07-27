@@ -40,7 +40,9 @@
           <div v-if="!selectedTemplate" class="editor-placeholder">
             请从左侧选择一个模板进行编辑，或新建模板
           </div>
-          <div v-else ref="editorEl" class="editor"></div>
+          <!-- v-show 而非 v-if:编辑器 div 必须始终挂载,onMounted 才能初始化 Monaco;
+               v-if 会在首次选中后才插入 DOM,错过初始化时机(右栏空白)。 -->
+          <div v-show="selectedTemplate" ref="editorEl" class="editor"></div>
         </div>
       </div>
     </el-card>
