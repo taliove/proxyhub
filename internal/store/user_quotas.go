@@ -13,6 +13,7 @@ type UserQuota struct {
 	UserID        int64 `json:"user_id"`
 	MaxAirports   int   `json:"max_airports"`
 	MaxEndpoints  int   `json:"max_endpoints"`
+	MaxTemplates  int   `json:"max_templates"`
 	XrayPortStart int   `json:"xray_port_start"`
 	XrayPortEnd   int   `json:"xray_port_end"`
 }
@@ -22,7 +23,8 @@ type UserQuota struct {
 // "unlimited" or "deny").
 func (s *Store) GetUserQuota(userID int64) (*UserQuota, error) {
 	q, err := scanUserQuotaFrom(s.db.QueryRow(
-		`SELECT user_id, max_airports, max_endpoints, xray_port_start, xray_port_end
+		`SELECT user_id, max_airports, max_endpoints, xray_port_start, xray_port_end,
+		        COALESCE(max_templates, 10) as max_templates
 		 FROM user_quotas WHERE user_id = ?`, userID,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -40,7 +42,7 @@ func (s *Store) UpsertUserQuota(q *UserQuota) error {
 	if q.UserID <= 0 {
 		return fmt.Errorf("%w: user_id must be positive", ErrInvalidInput)
 	}
-	if q.MaxAirports < 0 || q.MaxEndpoints < 0 {
+	if q.MaxAirports < 0 || q.MaxEndpoints < 0 || q.MaxTemplates < 0 {
 		return fmt.Errorf("%w: quotas cannot be negative", ErrInvalidInput)
 	}
 	if q.XrayPortStart < 0 || q.XrayPortEnd < 0 {
@@ -51,14 +53,15 @@ func (s *Store) UpsertUserQuota(q *UserQuota) error {
 	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO user_quotas (user_id, max_airports, max_endpoints, xray_port_start, xray_port_end)
-		 VALUES (?, ?, ?, ?, ?)
+		`INSERT INTO user_quotas (user_id, max_airports, max_endpoints, max_templates, xray_port_start, xray_port_end)
+		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(user_id) DO UPDATE SET
 		   max_airports = excluded.max_airports,
 		   max_endpoints = excluded.max_endpoints,
+		   max_templates = excluded.max_templates,
 		   xray_port_start = excluded.xray_port_start,
 		   xray_port_end = excluded.xray_port_end`,
-		q.UserID, q.MaxAirports, q.MaxEndpoints, q.XrayPortStart, q.XrayPortEnd,
+		q.UserID, q.MaxAirports, q.MaxEndpoints, q.MaxTemplates, q.XrayPortStart, q.XrayPortEnd,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert user quota: %w", err)
@@ -79,7 +82,7 @@ func (s *Store) DeleteUserQuota(userID int64) error {
 func scanUserQuotaFrom(r rowScanner) (*UserQuota, error) {
 	var q UserQuota
 	if err := r.Scan(
-		&q.UserID, &q.MaxAirports, &q.MaxEndpoints, &q.XrayPortStart, &q.XrayPortEnd,
+		&q.UserID, &q.MaxAirports, &q.MaxEndpoints, &q.XrayPortStart, &q.XrayPortEnd, &q.MaxTemplates,
 	); err != nil {
 		return nil, err
 	}

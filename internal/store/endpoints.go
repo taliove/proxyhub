@@ -39,6 +39,10 @@ type Endpoint struct {
 	// Conditions 节点范围筛选条件的原始 JSON(见 internal/subfilter.Conditions)。
 	// 空串=不筛选=全量(现状行为)。store 只存原始串,谓词语义由 subfilter 解释。
 	Conditions string `json:"conditions"`
+
+	// TemplateName 指定订阅地址使用的模板名称(ticket endpoint-template-02)。
+	// 空串=跟随用户默认模板,按四级回退链解析。软引用:名称不存在时回退,不报错。
+	TemplateName string `json:"template_name"`
 }
 
 // URL 返回订阅地址的相对路径
@@ -56,7 +60,7 @@ func randomHex(bytes int) (string, error) {
 }
 
 // endpointColumns 查询列表共用的列清单(ticket 07 起带 user_id,读取侧三处保持一致)。
-const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id`
+const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name`
 
 // CreateEndpoint 创建订阅地址（随机 Path + Token）。
 // 未指定属主(旧调用/直接库调用)时归一到首个 super_admin(ticket 07 Invariant B);
@@ -264,6 +268,29 @@ func (s *Store) UpdateEndpointConditionsForUser(userID, id int64, conditions str
 	return checkAffected(res)
 }
 
+// UpdateEndpointTemplate binds an endpoint to a template from the user's library.
+// Empty templateName clears the binding (follow default). Non-empty name must exist
+// in the user's template library, otherwise returns error "template not found" (fail-fast validation).
+// Soft reference: deletion of the referenced template is allowed; rendering will fall back.
+func (s *Store) UpdateEndpointTemplate(userID, id int64, templateName string) error {
+	// Validate template exists if non-empty (fail-fast at boundary)
+	if templateName != "" {
+		_, err := s.GetTemplateByName(userID, templateName)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("template %q: %w", templateName, ErrNotFound)
+			}
+			return err
+		}
+	}
+
+	res, err := s.db.Exec(`UPDATE endpoints SET template_name = ? WHERE id = ? AND user_id = ?`, templateName, id, userID)
+	if err != nil {
+		return fmt.Errorf("update endpoint template: %w", err)
+	}
+	return checkAffected(res)
+}
+
 // DeleteEndpoint 删除订阅地址
 func (s *Store) DeleteEndpoint(id int64) error {
 	res, err := s.db.Exec(`DELETE FROM endpoints WHERE id = ?`, id)
@@ -305,7 +332,7 @@ func scanEndpointFrom(r rowScanner) (*Endpoint, error) {
 	var ep Endpoint
 	var enabled int
 	if err := r.Scan(&ep.ID, &ep.Alias, &ep.Path, &ep.Token, &enabled, &ep.CreatedAt,
-		&ep.NameMode, &ep.NameTemplate, &ep.Conditions, &ep.UserID); err != nil {
+		&ep.NameMode, &ep.NameTemplate, &ep.Conditions, &ep.UserID, &ep.TemplateName); err != nil {
 		return nil, err
 	}
 	ep.Enabled = enabled != 0

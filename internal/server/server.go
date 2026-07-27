@@ -544,6 +544,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/endpoints", guard(s.handleCreateEndpoint))
 	mux.HandleFunc("POST /api/endpoints/{id}/toggle", guard(s.handleToggleEndpoint))
 	mux.HandleFunc("PUT /api/endpoints/{id}/name-config", guard(s.handleUpdateEndpointNameConfig))
+	mux.HandleFunc("PUT /api/endpoints/{id}/template", guard(s.handleUpdateEndpointTemplate))
 	mux.HandleFunc("PUT /api/endpoints/{id}/conditions", guard(s.handleUpdateEndpointConditions))
 	mux.HandleFunc("POST /api/endpoints/preview-conditions", guard(s.handlePreviewConditions))
 	mux.HandleFunc("DELETE /api/endpoints/{id}", guard(s.handleDeleteEndpoint))
@@ -657,6 +658,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings/template", guard(s.handleGetTemplate))
 	mux.HandleFunc("PUT /api/settings/template", guard(s.handleSaveTemplate))
 	mux.HandleFunc("POST /api/settings/template/reset", guard(s.handleResetTemplate))
+
+	// 模板库(ticket endpoint-template-01):用户级多模板,每用户可创建多套命名模板
+	mux.HandleFunc("GET /api/templates", guard(s.handleListTemplates))
+	mux.HandleFunc("POST /api/templates", guard(s.handleCreateTemplate))
+	mux.HandleFunc("GET /api/templates/{name}", guard(s.handleGetTemplateByName))
+	mux.HandleFunc("PUT /api/templates/{name}", guard(s.handleUpdateTemplate))
+	mux.HandleFunc("DELETE /api/templates/{name}", guard(s.handleDeleteTemplate))
+	mux.HandleFunc("PUT /api/templates/{name}/default", guard(s.handleSetDefaultTemplate))
 
 	// 仪表盘统计 + 优质节点聚合
 	mux.HandleFunc("GET /api/dashboard/stats", guard(s.handleDashboardStats))
@@ -830,7 +839,7 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	data, contentType, err := s.renderSubscription(nodes, format, ep.UserID)
+	data, contentType, err := s.renderSubscriptionForEndpoint(nodes, format, ep)
 	if err != nil {
 		s.logger.Error("generate subscription failed", "format", format, "error", err)
 		http.Error(w, "generate subscription failed", http.StatusInternalServerError)
@@ -1150,18 +1159,41 @@ func (s *Server) handleCreateEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Alias string `json:"alias"`
+		Alias        string `json:"alias"`
+		TemplateName string `json:"template_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Alias) == "" {
 		http.Error(w, "alias is required", http.StatusBadRequest)
 		return
 	}
 
-	ep, err := s.st.CreateEndpointForUser(EffectiveUserID(scope), strings.TrimSpace(req.Alias))
+	effUID := EffectiveUserID(scope)
+
+	// Validate template exists if specified (fail-fast)
+	if req.TemplateName != "" {
+		_, err := s.st.GetTemplateByName(effUID, req.TemplateName)
+		if err != nil {
+			http.Error(w, "template not found", http.StatusBadRequest)
+			return
+		}
+	}
+
+	ep, err := s.st.CreateEndpointForUser(effUID, strings.TrimSpace(req.Alias))
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+
+	// Bind template if specified
+	if req.TemplateName != "" {
+		if err := s.st.UpdateEndpointTemplate(effUID, ep.ID, req.TemplateName); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		// Reload to get updated template_name
+		ep, _ = s.st.GetEndpointByIDForUser(effUID, ep.ID)
+	}
+
 	writeJSON(w, ep)
 }
 
@@ -1221,6 +1253,47 @@ func (s *Server) handleUpdateEndpointNameConfig(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleUpdateEndpointTemplate binds or clears an endpoint's template reference (ticket endpoint-template-02).
+func (s *Server) handleUpdateEndpointTemplate(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		TemplateName string `json:"template_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	effUID := EffectiveUserID(scope)
+
+	// Verify endpoint exists and user owns it
+	_, err = s.st.GetEndpointByIDForUser(effUID, id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Update template binding (validates template exists if non-empty)
+	if err := s.st.UpdateEndpointTemplate(effUID, id, req.TemplateName); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "template not found", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"success": true})
 }
 
 func (s *Server) handleDeleteEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -1714,6 +1787,8 @@ func filterStaleNodes(nodes []*subscription.Node) []*subscription.Node {
 // Clash 格式基于用户可编辑的配置模板渲染（含 hosts/dns/proxy-groups/rules，
 // 节点通过 {{nodes}} 占位符动态注入）；V2Ray 格式仍是简单的 base64 链接列表，不走模板。
 // userID 为属主(多租户):Clash 模板按属主回退链读取(用户覆盖 ?? 全局默认 ?? 内嵌默认)。
+//
+// Deprecated: Use renderSubscriptionForEndpoint for endpoint-aware rendering with template_name support.
 func (s *Server) renderSubscription(nodes []*subscription.Node, format string, userID int64) (data []byte, contentType string, err error) {
 	switch format {
 	case "v2ray":
@@ -1727,6 +1802,64 @@ func (s *Server) renderSubscription(nodes []*subscription.Node, format string, u
 		data, err = generator.RenderTemplate(tmpl, nodes)
 		return data, "text/yaml; charset=utf-8", err
 	}
+}
+
+// renderSubscriptionForEndpoint generates subscription content with endpoint-aware template resolution.
+// Four-level fallback chain for Clash templates (ticket endpoint-template-02):
+// 1. endpoint.template_name (if set and exists in user's library)
+// 2. user default template (is_default=1 in user's library)
+// 3. system_settings.clash_template (global default set by super admin)
+// 4. embedded default template (generator.DefaultTemplate)
+//
+// V2Ray format is unaffected (no template, just base64 link list).
+// Soft reference: missing template at any level falls through to next level; never errors.
+func (s *Server) renderSubscriptionForEndpoint(nodes []*subscription.Node, format string, ep *store.Endpoint) (data []byte, contentType string, err error) {
+	switch format {
+	case "v2ray":
+		data, err = generator.GenerateV2Ray(nodes)
+		return data, "text/plain; charset=utf-8", err
+	default:
+		// Four-level fallback chain
+		tmpl, tErr := s.resolveTemplateForEndpoint(ep)
+		if tErr != nil {
+			return nil, "", fmt.Errorf("resolve template: %w", tErr)
+		}
+		data, err = generator.RenderTemplate(tmpl, nodes)
+		return data, "text/yaml; charset=utf-8", err
+	}
+}
+
+// resolveTemplateForEndpoint implements the 4-level fallback chain for template resolution.
+// Returns template content (never empty), never errors (falls back to embedded default).
+func (s *Server) resolveTemplateForEndpoint(ep *store.Endpoint) (string, error) {
+	userID := ep.UserID
+
+	// Level 1: endpoint.template_name (if set)
+	if ep.TemplateName != "" {
+		tmpl, err := s.st.GetTemplateByName(userID, ep.TemplateName)
+		if err == nil && tmpl.Content != "" {
+			return tmpl.Content, nil
+		}
+		// Miss or empty: fall through (soft reference)
+	}
+
+	// Level 2: user default template
+	if userID > 0 {
+		def, err := s.st.GetDefaultTemplate(userID)
+		if err == nil && def != nil && def.Content != "" {
+			return def.Content, nil
+		}
+		// Miss or empty: fall through
+	}
+
+	// Level 3: global default (system_settings.clash_template)
+	globalTmpl, err := s.st.GetClashTemplate()
+	if err == nil && globalTmpl != "" {
+		return globalTmpl, nil
+	}
+
+	// Level 4: embedded default (always succeeds)
+	return generator.DefaultTemplate(), nil
 }
 
 // handleEndpointPreview 后台预览：对指定订阅地址在“当前那一刻”生成订阅内容与节点清单，
@@ -1759,7 +1892,7 @@ func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
 	// 过滤后可能为空（节点池未就绪或全被过滤链剔除）；此时返回空内容而非 500，方便后台排查
 	content := ""
 	if len(nodes) > 0 {
-		data, _, genErr := s.renderSubscription(nodes, format, ep.UserID)
+		data, _, genErr := s.renderSubscriptionForEndpoint(nodes, format, ep)
 		if genErr != nil {
 			s.logger.Error("generate preview failed", "format", format, "error", genErr)
 			http.Error(w, "generate preview failed", http.StatusInternalServerError)

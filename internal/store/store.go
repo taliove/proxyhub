@@ -373,6 +373,19 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 模板库升级(ticket endpoint-template-01):template 表重建为带 is_default
+	// 和 UNIQUE(user_id, name) 的库表;endpoints 加 template_name 准备列(02 消费);
+	// user_quotas 加 max_templates 配额列(默认 10)。
+	if err := s.migrateTemplateLibrary(); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("endpoints", "template_name", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("user_quotas", "max_templates", "INTEGER NOT NULL DEFAULT 10"); err != nil {
+		return err
+	}
+
 	// 初始化地区识别规则表
 	return s.InitRegionRules()
 }

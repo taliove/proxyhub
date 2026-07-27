@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 
@@ -41,48 +40,61 @@ func (s *Store) ResetClashTemplate() error {
 }
 
 // GetClashTemplateForUser 按回退链读取 Clash 模板(租户级设置,多租户):
-// 用户覆盖(template 表 name='clash' 行) ?? 全局默认(system_settings.clash_template) ?? 内嵌默认模板。
+// 用户默认模板(template 表 is_default=1) ?? 全局默认(system_settings.clash_template) ?? 内嵌默认模板。
 // userID<=0 = 全局视角(等价 GetClashTemplate)。
+//
+// Ticket endpoint-template-01 后语义变更:读用户默认模板而非 name='clash' 单行,
+// 迁移保证现有 name='clash' 行已标为默认,行为等价。
 func (s *Store) GetClashTemplateForUser(userID int64) (string, error) {
 	if userID > 0 {
-		var content string
-		err := s.db.QueryRow(
-			`SELECT content FROM template WHERE user_id = ? AND name = 'clash'`, userID,
-		).Scan(&content)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		def, err := s.GetDefaultTemplate(userID)
+		if err != nil {
 			return "", err
 		}
-		if content != "" {
-			return content, nil
+		if def != nil && def.Content != "" {
+			return def.Content, nil
 		}
 	}
 	return s.GetClashTemplate()
 }
 
-// SetClashTemplateForUser 保存指定用户的模板覆盖(template 表 name='clash' 行,
-// DELETE+INSERT 单事务:表无 UNIQUE(user_id,name) 约束,不能用 ON CONFLICT)。
+// SetClashTemplateForUser 保存指定用户的模板覆盖。
+// Ticket endpoint-template-01 后:upsert 名为 'clash' 的模板(向后兼容旧行为)。
+// 若库为空自动标为默认;若已有其他默认模板则不改变默认标记。
 func (s *Store) SetClashTemplateForUser(userID int64, tmpl string) error {
 	if tmpl == "" {
 		return errors.New("template is empty")
 	}
-	tx, err := s.db.Begin()
+
+	// Check if template 'clash' exists
+	existing, err := s.GetTemplateByName(userID, "clash")
+	if err != nil && err.Error() != "not found" {
+		return err
+	}
+
+	if existing != nil {
+		// Update existing 'clash' template
+		return s.UpdateTemplate(userID, "clash", tmpl)
+	}
+
+	// Create new 'clash' template
+	// Check if library is empty (auto-default)
+	var count int
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM template WHERE user_id = ?`, userID).Scan(&count)
 	if err != nil {
-		return fmt.Errorf("begin set clash template: %w", err)
+		return fmt.Errorf("count templates: %w", err)
 	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM template WHERE user_id = ? AND name = 'clash'`, userID); err != nil {
-		return fmt.Errorf("clear clash template: %w", err)
-	}
-	if _, err := tx.Exec(`
-		INSERT INTO template (user_id, name, content, updated_at)
-		VALUES (?, 'clash', ?, CURRENT_TIMESTAMP)
-	`, userID, tmpl); err != nil {
-		return fmt.Errorf("insert clash template: %w", err)
-	}
-	return tx.Commit()
+	isFirst := count == 0
+
+	_, err = s.db.Exec(`
+		INSERT INTO template (user_id, name, content, is_default, updated_at)
+		VALUES (?, 'clash', ?, ?, CURRENT_TIMESTAMP)
+	`, userID, tmpl, boolToInt(isFirst))
+	return err
 }
 
 // DeleteClashTemplateForUser 删除指定用户的模板覆盖("重置":回到跟随全局默认)。
+// Ticket endpoint-template-01 后:删除名为 'clash' 的模板(向后兼容旧行为)。
 // 无覆盖行是 no-op(幂等)。
 func (s *Store) DeleteClashTemplateForUser(userID int64) error {
 	_, err := s.db.Exec(`DELETE FROM template WHERE user_id = ? AND name = 'clash'`, userID)
