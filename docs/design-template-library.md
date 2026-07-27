@@ -12,6 +12,8 @@
 
 **user_quotas.max_templates**:创建模板的数量配额(默认 10,超管在用户管理中调整)。
 
+**template_versions 表**(历史版本):`(id, template_id, version, content, created_at)`,`UNIQUE(template_id, version)`。每次成功落库(创建/更新)在同一事务内追加一版(版本号 = max+1),并将该模板历史裁剪至最近 20 个;删除模板同事务级联删除其全部版本。历史只追加不可变;存量模板不回填,版本从下一次落库开始累积。
+
 **迁移**(022,Go 内联 `migrateTemplateLibrary`):重建 template 表带出 is_default 与唯一约束,存量 `name='clash'` 行标默认。守卫 = "template 表是否已有 is_default 列"(PRAGMA 探测),整体单事务。守卫不能按中间表 `template_library` 是否存在判定——该表在迁移末尾被重命名,据此判定会让每次重启重跑重建、把自定义默认重置为 0(回归测试 `TestTemplateLibraryMigrationPreservesDefault`)。
 
 ## 关键流程
@@ -30,6 +32,10 @@ endpoint.template_name 非空且库中命中 → 用之        (Level 1,软引�
 **写入侧校验(fail-fast)**:创建/更新订阅地址带非空 `template_name` 时,必须存在于该用户库中,否则 400(`ErrNotFound` 经 `errors.Is` 映射)。
 
 **删除语义**:允许删除被引用模板;DELETE 响应带 `ref_count`(引用该模板的订阅地址数),前端在确认框前置提示"N 个订阅地址将改用默认模板"。
+
+**编辑落库(校验门控自动保存)**:编辑页无显式保存主通道——编辑停止防抖约 1 秒,前端 YAML 解析通过才 PUT 落库,不通过只本地标红。门控保证"落库即生效"语义下坏配置永远不落库。每次成功落库追加一个模板版本(见模型节)。
+
+**版本历史与回滚**:历史下拉展示版本号与落库时间;选中载入编辑器为预览态(明确标注未生效、自动保存挂起);"恢复此版本"显式确认后以该内容走校验门控通道落库——回滚即一次新落库,自身成为新版本,无专用 rollback 接口。
 
 **多用户语义**:库接口按 EffectiveUserID 落属:普通用户操作自己的库;**超管未切换视角时操作自己的库**(超管同样是资源属主,其订阅地址按本人 user_id 渲染);切换视角(impersonate)时操作目标用户库;超管全局默认(`system_settings.clash_template`)的编辑面在设置页(`/api/settings/template`),不入库。跨用户按名访问 = 404;无用户身份的遗留会话(EffectiveUserID=0)拒绝写操作、列表返回空。
 
