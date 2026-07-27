@@ -74,6 +74,41 @@ func TestTemplateLibraryHTTPCrossUserIsolation(t *testing.T) {
 	}
 }
 
+// TestTemplateLibrarySuperAdminOwnLibrary verifies that a super admin who is
+// NOT impersonating manages their own library (their endpoints render with
+// their own user id), instead of being rejected as "global scope".
+func TestTemplateLibrarySuperAdminOwnLibrary(t *testing.T) {
+	srv, st := newEndpointTestServer(t, endpointTestPool())
+
+	const anyHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+	admin, err := st.CreateUser("tpl-admin", anyHash, store.RoleSuperAdmin, false)
+	if err != nil {
+		t.Fatalf("CreateUser admin: %v", err)
+	}
+
+	h := srv.Handler()
+	cookie := templateLibrarySession(t, srv, admin.ID, store.RoleSuperAdmin)
+
+	// Create in own library
+	rec := doEndpointRequest(t, h, cookie, "POST", "/api/templates", `{"name":"admin-tmpl","content":"port: 7890"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("super admin create status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+	}
+
+	// Listed in own library
+	rec = doEndpointRequest(t, h, cookie, "GET", "/api/templates", "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "admin-tmpl") {
+		t.Fatalf("super admin list missing own template: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Lands in the admin's own user space
+	tmpl, err := st.GetTemplateByName(admin.ID, "admin-tmpl")
+	if err != nil || tmpl == nil {
+		t.Fatalf("template not stored under admin's user id: %v", err)
+	}
+}
+
+
 // TestTemplateLibraryQuotaHTTP verifies the quota contract at the HTTP layer:
 // exceeding max_templates returns 403 with the "template quota exceeded" error
 // body the frontend keys on.

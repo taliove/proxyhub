@@ -31,7 +31,7 @@ endpoint.template_name 非空且库中命中 → 用之        (Level 1,软引�
 
 **删除语义**:允许删除被引用模板;DELETE 响应带 `ref_count`(引用该模板的订阅地址数),前端在确认框前置提示"N 个订阅地址将改用默认模板"。
 
-**多用户语义**:库接口全部按 EffectiveUserID 过滤;普通用户只能见/操作自己的库(跨用户按名访问 = 404);超管 impersonate 时操作目标用户库,未 impersonate 时维持超管全局默认编辑面(`/api/settings/template`,不走库)。
+**多用户语义**:库接口按 EffectiveUserID 落属:普通用户操作自己的库;**超管未切换视角时操作自己的库**(超管同样是资源属主,其订阅地址按本人 user_id 渲染);切换视角(impersonate)时操作目标用户库;超管全局默认(`system_settings.clash_template`)的编辑面在设置页(`/api/settings/template`),不入库。跨用户按名访问 = 404;无用户身份的遗留会话(EffectiveUserID=0)拒绝写操作、列表返回空。
 
 ## 与其他模块的边界
 

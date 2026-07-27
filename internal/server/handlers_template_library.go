@@ -16,7 +16,7 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID := viewScopeUserID(scope)
+	userID := EffectiveUserID(scope)
 	if userID == 0 {
 		// Global scope: return empty list (global default is not in any user's library)
 		writeJSON(w, map[string]interface{}{"templates": []interface{}{}})
@@ -93,7 +93,7 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID := viewScopeUserID(scope)
+	userID := EffectiveUserID(scope)
 	if userID == 0 {
 		http.Error(w, "global scope cannot create templates", http.StatusBadRequest)
 		return
@@ -145,7 +145,7 @@ func (s *Server) handleGetTemplateByName(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	userID := viewScopeUserID(scope)
+	userID := EffectiveUserID(scope)
 	if userID == 0 {
 		http.Error(w, "global scope cannot access user templates", http.StatusBadRequest)
 		return
@@ -206,7 +206,7 @@ func (s *Server) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID := viewScopeUserID(scope)
+	userID := EffectiveUserID(scope)
 	if userID == 0 {
 		http.Error(w, "global scope cannot update user templates", http.StatusBadRequest)
 		return
@@ -238,7 +238,7 @@ func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID := viewScopeUserID(scope)
+	userID := EffectiveUserID(scope)
 	if userID == 0 {
 		http.Error(w, "global scope cannot delete user templates", http.StatusBadRequest)
 		return
@@ -280,7 +280,7 @@ func (s *Server) handleSetDefaultTemplate(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	userID := viewScopeUserID(scope)
+	userID := EffectiveUserID(scope)
 	if userID == 0 {
 		http.Error(w, "global scope cannot set default user template", http.StatusBadRequest)
 		return
