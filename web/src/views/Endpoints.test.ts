@@ -133,6 +133,7 @@ const endpoint: Endpoint = {
   name_mode: '',
   name_template: '',
   conditions: '',
+  template_name: '',
   availability: { available: 3, total: 5 }
 }
 

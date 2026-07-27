@@ -23,6 +23,9 @@
               {{ hasConditions(endpoint.conditions) ? '自定义' : '全量' }}
             </el-tag>
           </el-descriptions-item>
+          <el-descriptions-item label="配置模板">
+            <span>{{ templateDisplay }}</span>
+          </el-descriptions-item>
           <el-descriptions-item label="状态">
             <StatusDot
               :tone="endpoint.enabled ? 'success' : 'muted'"
@@ -38,6 +41,7 @@
           </el-button>
           <el-button size="small" @click="emit('name-config', endpoint)">命名设置</el-button>
           <el-button size="small" @click="emit('conditions', endpoint)">节点范围</el-button>
+          <el-button size="small" @click="openTemplateConfig">配置模板</el-button>
           <el-button size="small" type="danger" @click="emit('delete', endpoint)">删除</el-button>
         </div>
       </div>
@@ -109,6 +113,34 @@
         <IPStatsTable :endpoint-id="endpoint.id" />
       </div>
     </template>
+
+    <!-- 配置模板对话框:挂在抽屉外层,不受抽屉关闭影响 -->
+    <el-dialog v-model="templateConfigVisible" title="配置模板" width="460px" append-to-body>
+      <el-form label-width="80px">
+        <el-form-item label="配置模板">
+          <el-select
+            v-model="templateConfigForm.template_name"
+            placeholder="跟随默认模板"
+            clearable
+            class="full-width"
+          >
+            <el-option
+              v-for="tpl in templates"
+              :key="tpl.name"
+              :label="tpl.name"
+              :value="tpl.name"
+            />
+          </el-select>
+          <div class="cfg-hint">
+            留空则跟随用户默认模板(四级回退:订阅地址 → 用户默认 → 超管全局 → 内嵌默认)
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="templateConfigVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveTemplateConfig">保存</el-button>
+      </template>
+    </el-dialog>
   </el-drawer>
 </template>
 
@@ -116,7 +148,10 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Endpoint } from '@/types'
+import type { Template } from '@/api/templates'
 import client from '@/api/client'
+import { listTemplates } from '@/api/templates'
+import { updateEndpointTemplate } from '@/api/endpoints'
 import StatusDot from '@/components/StatusDot.vue'
 import IPStatsTable from '@/components/IPStatsTable.vue'
 import EndpointTestSection from '@/components/EndpointTestSection.vue'
@@ -148,11 +183,50 @@ const emit = defineEmits<{
   (e: 'conditions', endpoint: Endpoint): void
   (e: 'delete', endpoint: Endpoint): void
   (e: 'qrcode', endpoint: Endpoint): void
+  (e: 'template-changed'): void
 }>()
 
 const drawerTitle = computed(() =>
   props.endpoint ? `订阅详情 - ${props.endpoint.alias}` : '订阅详情'
 )
+
+// ---- 模板配置:显示当前模板,提供改绑入口 ----
+const templates = ref<Template[]>([])
+const templateDisplay = computed(() => {
+  if (!props.endpoint) return ''
+  return props.endpoint.template_name || '默认模板'
+})
+
+const templateConfigVisible = ref(false)
+const templateConfigForm = ref({ template_name: '' })
+
+const loadTemplates = async () => {
+  try {
+    const resp = await listTemplates()
+    templates.value = resp.templates || []
+  } catch {
+    templates.value = []
+  }
+}
+
+const openTemplateConfig = async () => {
+  if (!props.endpoint) return
+  await loadTemplates()
+  templateConfigForm.value.template_name = props.endpoint.template_name || ''
+  templateConfigVisible.value = true
+}
+
+const saveTemplateConfig = async () => {
+  if (!props.endpoint) return
+  try {
+    await updateEndpointTemplate(props.endpoint.id, templateConfigForm.value.template_name)
+    ElMessage.success('模板已更新')
+    templateConfigVisible.value = false
+    emit('template-changed')
+  } catch (err) {
+    ElMessage.error(`更新失败: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
 
 // ---- 下发节点清单段:打开抽屉按当前格式拉一次;切换格式重拉。失败降级空态,不阻塞抽屉。 ----
 const format = ref<'clash' | 'v2ray'>('clash')
@@ -246,5 +320,14 @@ const copyUrl = async () => {
 }
 .num {
   font-variant-numeric: tabular-nums;
+}
+.cfg-hint {
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
+  line-height: 1.5;
+  margin-top: var(--ph-space-1);
+}
+.full-width {
+  width: 100%;
 }
 </style>

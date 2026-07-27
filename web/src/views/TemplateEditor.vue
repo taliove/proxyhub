@@ -6,8 +6,17 @@
         <code class="desc-code">{{ placeholder }}</code>
         占位当前聚合的所有节点，生成订阅时自动展开。
       </template>
-      <el-button :disabled="saving" @click="handleReset">恢复默认</el-button>
-      <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
+      <el-button @click="dialogVisible = true">新建模板</el-button>
+      <el-button :disabled="!selectedTemplate || saving" @click="handleDelete">删除</el-button>
+      <el-button
+        :disabled="!selectedTemplate || selectedTemplate.is_default || saving"
+        @click="handleSetDefault"
+      >
+        设为默认
+      </el-button>
+      <el-button type="primary" :loading="saving" :disabled="!selectedTemplate" @click="handleSave">
+        保存
+      </el-button>
     </PageHeader>
 
     <el-card v-loading="loading">
@@ -21,61 +30,179 @@
         @close="errorMsg = ''"
       />
 
-      <div ref="editorEl" class="editor"></div>
+      <div class="template-layout">
+        <TemplateList
+          :templates="templates"
+          :selected-id="selectedTemplate?.id ?? null"
+          @select="selectTemplate"
+        />
+        <div class="editor-wrapper">
+          <div v-if="!selectedTemplate" class="editor-placeholder">
+            请从左侧选择一个模板进行编辑，或新建模板
+          </div>
+          <div v-else ref="editorEl" class="editor"></div>
+        </div>
+      </div>
     </el-card>
+
+    <el-dialog v-model="dialogVisible" title="新建模板" width="400px">
+      <el-form :model="createForm" label-width="80px">
+        <el-form-item label="模板名称">
+          <el-input
+            v-model="createForm.name"
+            placeholder="例如：完整分流版"
+            maxlength="50"
+            show-word-limit
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="handleCreate">创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-// 仅按需引入 Monaco 核心 API + YAML 语言高亮，避免打包全部语言导致体积暴涨。
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import client from '@/api/client'
 import PageHeader from '@/components/PageHeader.vue'
+import TemplateList from '@/components/TemplateList.vue'
 import { useLayoutStore } from '@/stores/layout'
+import {
+  listTemplates,
+  getTemplate,
+  createTemplate,
+  updateTemplate,
+  deleteTemplate,
+  setDefaultTemplate,
+  type Template
+} from '@/api/templates'
 
 const layout = useLayoutStore()
 const { isDark } = storeToRefs(layout)
-// Monaco 主题跟随全局明暗态：亮='vs'，暗='vs-dark'
 const monacoTheme = () => (isDark.value ? 'vs-dark' : 'vs')
 
 const editorEl = ref<HTMLElement | null>(null)
 const editor = shallowRef<monaco.editor.IStandaloneCodeEditor | null>(null)
 const loading = ref(true)
 const saving = ref(false)
+const creating = ref(false)
 const errorMsg = ref('')
-// 说明文字里展示的占位符字面量（避免与 Vue 的 {{ }} 插值语法冲突）
 const placeholder = '{{nodes}}'
 
-// 加载当前模板并把内容灌入编辑器
-async function loadTemplate() {
+const templates = ref<Template[]>([])
+const selectedTemplate = ref<Template | null>(null)
+const originalContent = ref('')
+const dialogVisible = ref(false)
+const createForm = ref({ name: '' })
+
+async function loadTemplates() {
   loading.value = true
+  errorMsg.value = ''
   try {
-    const data = await client.get<unknown, { template: string }>('/settings/template')
-    editor.value?.setValue(data.template ?? '')
-  } catch {
-    errorMsg.value = '加载模板失败'
+    const data = await listTemplates()
+    templates.value = data.templates
+    if (templates.value.length > 0 && !selectedTemplate.value) {
+      const defaultTmpl = templates.value.find((t) => t.is_default) || templates.value[0]
+      await selectTemplate(defaultTmpl)
+    }
+  } catch (e) {
+    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    errorMsg.value = detail || '加载模板列表失败'
   } finally {
     loading.value = false
   }
 }
 
-async function handleSave() {
-  const template = editor.value?.getValue() ?? ''
-  if (!template.trim()) {
-    errorMsg.value = '模板不能为空'
+async function selectTemplate(tmpl: Template) {
+  if (selectedTemplate.value && editor.value) {
+    const currentContent = editor.value.getValue()
+    if (currentContent !== originalContent.value) {
+      try {
+        await ElMessageBox.confirm(
+          '当前模板有未保存的修改，切换后将丢失。是否继续？',
+          '未保存的修改',
+          {
+            type: 'warning',
+            confirmButtonText: '放弃修改',
+            cancelButtonText: '取消'
+          }
+        )
+      } catch {
+        return
+      }
+    }
+  }
+
+  loading.value = true
+  errorMsg.value = ''
+  try {
+    const fullTmpl = await getTemplate(tmpl.name)
+    selectedTemplate.value = fullTmpl
+    originalContent.value = fullTmpl.content || ''
+    editor.value?.setValue(originalContent.value)
+  } catch (e) {
+    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    errorMsg.value = detail || '加载模板内容失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handleCreate() {
+  const name = createForm.value.name.trim()
+  if (!name) {
+    ElMessage.error('模板名称不能为空')
     return
   }
+
+  creating.value = true
+  try {
+    const defaultContent = `# ${name}\nproxies:\n  - {{nodes}}\n`
+    await createTemplate({ name, content: defaultContent })
+    ElMessage.success('模板创建成功')
+    dialogVisible.value = false
+    createForm.value.name = ''
+    await loadTemplates()
+    const newTmpl = templates.value.find((t) => t.name === name)
+    if (newTmpl) {
+      await selectTemplate(newTmpl)
+    }
+  } catch (e) {
+    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    if (detail?.includes('quota exceeded')) {
+      ElMessage.error('模板数量已达配额上限，请删除不需要的模板后重试')
+    } else if (detail?.includes('already exists')) {
+      ElMessage.error('模板名称已存在')
+    } else {
+      ElMessage.error(detail || '创建模板失败')
+    }
+  } finally {
+    creating.value = false
+  }
+}
+
+async function handleSave() {
+  if (!selectedTemplate.value) return
+
+  const content = editor.value?.getValue() ?? ''
+  if (!content.trim()) {
+    errorMsg.value = '模板内容不能为空'
+    return
+  }
+
   saving.value = true
   errorMsg.value = ''
   try {
-    await client.put('/settings/template', { template })
+    await updateTemplate(selectedTemplate.value.name, { content })
+    originalContent.value = content
     ElMessage.success('模板已保存，订阅立即生效')
   } catch (e) {
-    // 后端对 YAML 格式错误返回 400 + { error }
     const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
     errorMsg.value = detail || '保存失败'
   } finally {
@@ -83,24 +210,62 @@ async function handleSave() {
   }
 }
 
-async function handleReset() {
+async function handleDelete() {
+  if (!selectedTemplate.value) return
+
   try {
-    await ElMessageBox.confirm('确定恢复为默认模板吗？当前的自定义内容将被覆盖。', '恢复默认模板', {
-      type: 'warning',
-      confirmButtonText: '恢复默认',
-      cancelButtonText: '取消'
-    })
+    await ElMessageBox.confirm(
+      `确定删除模板「${selectedTemplate.value.name}」吗？此操作无法撤销。`,
+      '删除模板',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消'
+      }
+    )
   } catch {
-    return // 用户取消
+    return
   }
+
   saving.value = true
   errorMsg.value = ''
   try {
-    await client.post('/settings/template/reset')
-    await loadTemplate()
-    ElMessage.success('已恢复默认模板')
-  } catch {
-    errorMsg.value = '恢复默认失败'
+    const result = await deleteTemplate(selectedTemplate.value.name)
+    if (result.ref_count > 0) {
+      ElMessage.success(
+        `已删除模板「${selectedTemplate.value.name}」，${result.ref_count} 个订阅地址将改用默认模板`
+      )
+    } else {
+      ElMessage.success(`已删除模板「${selectedTemplate.value.name}」`)
+    }
+    selectedTemplate.value = null
+    originalContent.value = ''
+    editor.value?.setValue('')
+    await loadTemplates()
+  } catch (e) {
+    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    errorMsg.value = detail || '删除失败'
+  } finally {
+    saving.value = false
+  }
+}
+
+async function handleSetDefault() {
+  if (!selectedTemplate.value || selectedTemplate.value.is_default) return
+
+  saving.value = true
+  errorMsg.value = ''
+  try {
+    await setDefaultTemplate(selectedTemplate.value.name)
+    ElMessage.success(`已将「${selectedTemplate.value.name}」设为默认模板`)
+    await loadTemplates()
+    const updated = templates.value.find((t) => t.name === selectedTemplate.value?.name)
+    if (updated) {
+      selectedTemplate.value = { ...selectedTemplate.value, is_default: true }
+    }
+  } catch (e) {
+    const detail = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+    errorMsg.value = detail || '设置默认失败'
   } finally {
     saving.value = false
   }
@@ -119,10 +284,9 @@ onMounted(async () => {
       tabSize: 2
     })
   }
-  await loadTemplate()
+  await loadTemplates()
 })
 
-// 全局明暗切换时同步 Monaco 主题（编辑器实例是全局单例主题，setTheme 即时生效）
 watch(isDark, () => {
   monaco.editor.setTheme(monacoTheme())
 })
@@ -141,9 +305,35 @@ onBeforeUnmount(() => {
 .editor-alert {
   margin-bottom: var(--ph-space-3);
 }
-.editor {
+
+.template-layout {
+  display: flex;
+  gap: var(--ph-space-3);
   height: calc(100vh - 260px);
   min-height: 400px;
+}
+
+.editor-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.editor-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--ph-text-sm);
+  color: var(--ph-text-secondary);
+  border: 1px solid var(--ph-border);
+  border-radius: var(--ph-radius-sm);
+  background: var(--ph-bg-hover);
+}
+
+.editor {
+  flex: 1;
   border: 1px solid var(--ph-border);
   border-radius: var(--ph-radius-sm);
 }

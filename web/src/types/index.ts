@@ -10,6 +10,8 @@ export interface Endpoint {
   name_template: string
   // 节点范围筛选条件的原始 JSON(见 internal/subfilter.Conditions);''=不筛选=全量
   conditions: string
+  // 配置模板名称(软引用);''=跟随默认模板(见模板库四级回退链)
+  template_name: string
   // 会下发集合的可用性汇总(列表接口加性附加,池状态实时算,见 ADR 0028 决策 2)
   availability?: { available: number; total: number }
 }

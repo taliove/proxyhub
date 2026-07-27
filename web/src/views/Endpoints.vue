@@ -59,9 +59,25 @@
     </el-card>
 
     <el-dialog v-model="dialogVisible" title="新建订阅地址" width="500px">
-      <el-form :model="form">
+      <el-form :model="form" label-width="90px">
         <el-form-item label="别名">
           <el-input v-model="form.alias" placeholder="例如：老爸的手机" />
+        </el-form-item>
+        <el-form-item label="配置模板">
+          <el-select
+            v-model="form.template_name"
+            placeholder="跟随默认模板"
+            clearable
+            class="full-width"
+          >
+            <el-option
+              v-for="tpl in templates"
+              :key="tpl.name"
+              :label="tpl.name"
+              :value="tpl.name"
+            />
+          </el-select>
+          <div class="cfg-hint">留空则使用用户默认模板(用户级模板库四级回退链)</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -114,6 +130,7 @@
       @conditions="openConditions"
       @delete="deleteEndpoint"
       @qrcode="showSubscriptionQR"
+      @template-changed="loadEndpoints"
     />
 
     <!-- 订阅地址二维码:扫码导入客户端 -->
@@ -130,7 +147,9 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Endpoint } from '@/types'
+import type { Template } from '@/api/templates'
 import client from '@/api/client'
+import { listTemplates } from '@/api/templates'
 import PageHeader from '@/components/PageHeader.vue'
 import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
 import EndpointDetailDrawer from '@/components/EndpointDetailDrawer.vue'
@@ -141,7 +160,8 @@ import { nameModeLabel, nameModeTag } from '@/utils/namemode'
 const endpoints = ref<Endpoint[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
-const form = ref({ alias: '' })
+const form = ref({ alias: '', template_name: '' })
+const templates = ref<Template[]>([])
 
 // 详情抽屉状态:行内「详情」打开;抽屉内动作复用本页既有处理函数(事件上抛)。
 const detailVisible = ref(false)
@@ -172,11 +192,24 @@ const copyUrl = (row: Endpoint) => {
 }
 
 const createEndpoint = async () => {
-  await client.post('/endpoints', form.value)
+  const payload: { alias: string; template_name?: string } = { alias: form.value.alias }
+  if (form.value.template_name) {
+    payload.template_name = form.value.template_name
+  }
+  await client.post('/endpoints', payload)
   ElMessage.success('创建成功')
   dialogVisible.value = false
-  form.value.alias = ''
+  form.value = { alias: '', template_name: '' }
   loadEndpoints()
+}
+
+const loadTemplates = async () => {
+  try {
+    const resp = await listTemplates()
+    templates.value = resp.templates || []
+  } catch {
+    templates.value = []
+  }
 }
 
 const toggleEndpoint = async (row: Endpoint) => {
@@ -233,7 +266,10 @@ const showSubscriptionQR = async (row: Endpoint) => {
   qrDialog.value?.show(url)
 }
 
-onMounted(loadEndpoints)
+onMounted(() => {
+  loadEndpoints()
+  loadTemplates()
+})
 </script>
 
 <style scoped>
@@ -264,5 +300,8 @@ onMounted(loadEndpoints)
 }
 .muted {
   color: var(--ph-text-secondary);
+}
+.full-width {
+  width: 100%;
 }
 </style>
