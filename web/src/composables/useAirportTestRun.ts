@@ -11,6 +11,7 @@ import {
   getDiagnosticState,
   type DiagnosticResult,
   type CheckingProgress,
+  type CompletedResult,
   type TestRun,
   type TestRunStatus,
   type DiagnosticState
@@ -37,6 +38,8 @@ export function useAirportTestRun(onFinished: () => void) {
   // checkingProgress 从未赋值,此时从 run 维度取(抽样=sampled_nodes 数,全量=total_nodes)
   const terminalInvolvedCount = ref<number | null>(null)
   const overallScore = ref<number>(0)
+  // 完成态维度明细(内嵌精简报告用;评分同源解析,秒级/正常完成一致填充)
+  const completedResult = ref<CompletedResult | null>(null)
   const errorMessage = ref('')
   const currentJobId = ref<number | null>(null)
   const currentJobKey = ref('')
@@ -222,7 +225,8 @@ export function useAirportTestRun(onFinished: () => void) {
   const handleCompletedRun = (run: TestRun) => {
     phase.value = 'completed'
     overallScore.value = run.overall_score ?? 0
-    if (!parseCompletedResult(run.dimensions_json)) {
+    completedResult.value = parseCompletedResult(run.dimensions_json)
+    if (!completedResult.value) {
       // 兜底:completed 但维度缺失(不应发生),仍按分数呈现结论
       console.warn('completed run missing score dimensions', run.id)
     }
@@ -243,6 +247,7 @@ export function useAirportTestRun(onFinished: () => void) {
     checkingProgress.value = null
     terminalInvolvedCount.value = null
     overallScore.value = 0
+    completedResult.value = null
     errorMessage.value = ''
   }
 
@@ -258,6 +263,7 @@ export function useAirportTestRun(onFinished: () => void) {
     diagnosticResult,
     checkingProgress,
     overallScore,
+    completedResult,
     errorMessage,
     isRunningPhase,
     involvedCount,

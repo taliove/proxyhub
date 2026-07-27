@@ -1,4 +1,6 @@
 import type { Router } from 'vue-router'
+import { getActivePinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 
 // 导航相关的单一来源:路径归一化 + 分组菜单派生,Sidebar 与页首共用路由 meta
 export const HOME_PATH = '/'
@@ -35,12 +37,17 @@ export function toAbsolutePath(childPath: string): string {
 }
 
 // 从根布局路由的子路由派生分组菜单(带 meta.title 的才纳入;
-// meta.group 缺省归"配置"组,空组不渲染)
+// meta.group 缺省归"配置"组,空组不渲染;
+// meta.requiresSuperAdmin 的项仅对超管可见)
 export function getMenuSections(router: Router): NavSection[] {
+  // useAuthStore requires an active pinia; when called outside a component
+  // (e.g. pure unit tests without pinia) admin items degrade to hidden.
+  const isSuperAdmin = getActivePinia() ? useAuthStore().isSuperAdmin : false
   const root = router.options.routes.find((r) => r.path === HOME_PATH)
   const children = root?.children ?? []
   const items: NavItem[] = children
     .filter((c) => c.meta && c.meta.title)
+    .filter((c) => !c.meta!.requiresSuperAdmin || isSuperAdmin)
     .map((c) => ({
       path: toAbsolutePath(c.path),
       title: c.meta!.title as string,

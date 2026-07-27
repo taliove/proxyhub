@@ -135,7 +135,7 @@ func TestExamWriteback_SelfHosted_PoolRegionSyncsImmediately(t *testing.T) {
 			IPv4: &detection.EgressIPv4{CountryCode: "JP"},
 		},
 	}
-	srv.onExamComplete("192.0.2.1:443", report, 0)
+	srv.onExamComplete(0, "192.0.2.1:443", report, 0)
 
 	got := listNodeViews(t, h, cookie)["192.0.2.1:443"]
 	if got.Region != "JP" {
@@ -165,7 +165,7 @@ func TestExamWriteback_Airport_PoolRegionSyncsImmediately(t *testing.T) {
 			IPv4: &detection.EgressIPv4{CountryCode: "US"},
 		},
 	}
-	srv.onExamComplete("hk.example.com:443", report, 0)
+	srv.onExamComplete(0, "hk.example.com:443", report, 0)
 
 	got := listNodeViews(t, h, cookie)["hk.example.com:443"]
 	if got.Region != "US" {

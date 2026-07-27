@@ -16,25 +16,38 @@ const StaleRetentionDays = 7
 // SaveNodePool 以 NodeKey 为唯一 ID 进行 upsert，保留检测状态并标记消失节点为 stale。
 // 相比旧版（DELETE + 全量 INSERT），upsert 修复了刷新抹掉真实检测结果的 bug。
 // 传入空池则将所有机场节点标记为 stale（自建节点不受影响，由聚合注入保证在场）。
+// userID>0 时只操作该用户分片(stale 标记/删除均限定 user_id,跨用户互不影响,ticket 07);
+// userID=0 为旧行为(全表,兼容未分片的既有调用与测试)。
 func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
+	return s.SaveNodePoolForUser(0, nodes)
+}
+
+// SaveNodePoolForUser 按属主分片保存节点池(ticket 07)。见 SaveNodePool。
+func (s *Store) SaveNodePoolForUser(userID int64, nodes []*subscription.Node) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	// 第一步：将所有现有行标记为 stale=1，并设置大 position（确保 stale 节点排在后面）
-	if _, err := tx.Exec(`UPDATE nodes SET stale = 1, position = 999999`); err != nil {
+	// 第一步：将本用户分片现有行标记为 stale=1，并设置大 position（确保 stale 节点排在后面）
+	markStale := `UPDATE nodes SET stale = 1, position = 999999`
+	args := []any{}
+	if userID > 0 {
+		markStale += ` WHERE user_id = ?`
+		args = append(args, userID)
+	}
+	if _, err := tx.Exec(markStale, args...); err != nil {
 		return fmt.Errorf("mark all stale: %w", err)
 	}
 
 	if len(nodes) == 0 {
 		// 空池：全标记 stale，清理所有死节点标签后提交
-		if err := pruneStaleNodeTags(tx); err != nil {
+		if err := pruneStaleNodeTags(tx, userID); err != nil {
 			return err
 		}
 		// 空池不豁免超期清理：历史 stale 节点到期照样删除
-		if err := purgeExpiredStaleNodes(tx, time.Now()); err != nil {
+		if err := purgeExpiredStaleNodes(tx, time.Now(), userID); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -46,8 +59,8 @@ func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
 			node_key, name, type, server, port, uuid, password, alter_id, cipher, network, tls,
 			sni, grpc_service_name, region, source, available, latency_ms, position, stale, last_seen,
 			detection_last_check, bandwidth_down, bandwidth_up, bandwidth_check, plugin, plugin_opts,
-			detection_kind, detection_fail_reason, detection_fail_detail
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			detection_kind, detection_fail_reason, detection_fail_detail, user_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(node_key) DO UPDATE SET
 			name = excluded.name,
 			type = excluded.type,
@@ -76,7 +89,8 @@ func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
 			plugin_opts = excluded.plugin_opts,
 			detection_kind = excluded.detection_kind,
 			detection_fail_reason = excluded.detection_fail_reason,
-			detection_fail_detail = excluded.detection_fail_detail
+			detection_fail_detail = excluded.detection_fail_detail,
+			user_id = excluded.user_id
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare upsert: %w", err)
@@ -93,18 +107,19 @@ func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
 			timeOrNull(n.DetectionLastCheck),
 			n.BandwidthDownMbps, n.BandwidthUpMbps, timeOrNull(n.BandwidthCheck),
 			n.Plugin, n.PluginOpts, n.DetectionKind, n.DetectionFailReason, n.DetectionFailDetail,
+			n.UserID,
 		); err != nil {
 			return fmt.Errorf("upsert node %s: %w", key, err)
 		}
 	}
 
 	// 清理死节点标签:本轮消失(仍 stale=1)的节点标签失去意义,随刷新删除。
-	if err := pruneStaleNodeTags(tx); err != nil {
+	if err := pruneStaleNodeTags(tx, userID); err != nil {
 		return err
 	}
 
 	// 清理超期 stale 节点:下架超过 StaleRetentionDays 的节点物理删除,防无限累积。
-	if err := purgeExpiredStaleNodes(tx, time.Now()); err != nil {
+	if err := purgeExpiredStaleNodes(tx, time.Now(), userID); err != nil {
 		return err
 	}
 
@@ -120,10 +135,16 @@ func (s *Store) SaveNodePool(nodes []*subscription.Node) error {
 // SQLite datetime() 无法解析、裸串比较依赖时区巧合,故必须在 Go 侧解析后比较。
 // 有意不级联删 node_overrides/node_blocks/exam_history:保留期内节点复活时这些仍应生效;
 // 超期删除后若同 key 节点再次复活,旧 override/block 会重新生效(接受此语义)。
-func purgeExpiredStaleNodes(tx *sql.Tx, now time.Time) error {
+func purgeExpiredStaleNodes(tx *sql.Tx, now time.Time, userID int64) error {
 	cutoff := now.AddDate(0, 0, -StaleRetentionDays)
 
-	rows, err := tx.Query(`SELECT node_key, last_seen FROM nodes WHERE stale = 1`)
+	query := `SELECT node_key, last_seen FROM nodes WHERE stale = 1`
+	args := []any{}
+	if userID > 0 {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	rows, err := tx.Query(query, args...)
 	if err != nil {
 		return fmt.Errorf("query stale nodes: %w", err)
 	}
@@ -150,21 +171,31 @@ func purgeExpiredStaleNodes(tx *sql.Tx, now time.Time) error {
 	}
 
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(expired)), ",")
-	args := make([]any, len(expired))
+	delArgs := make([]any, len(expired))
 	for i, k := range expired {
-		args[i] = k
+		delArgs[i] = k
 	}
-	if _, err := tx.Exec(`DELETE FROM nodes WHERE node_key IN (`+placeholders+`)`, args...); err != nil {
+	delQuery := `DELETE FROM nodes WHERE node_key IN (` + placeholders + `)`
+	if userID > 0 {
+		delQuery += ` AND user_id = ?`
+		delArgs = append(delArgs, userID)
+	}
+	if _, err := tx.Exec(delQuery, delArgs...); err != nil {
 		return fmt.Errorf("delete expired stale nodes: %w", err)
 	}
 	return nil
 }
 
 // pruneStaleNodeTags 删除当前所有 stale 节点的自动标签(在 SaveNodePool 事务内调用)。
-func pruneStaleNodeTags(tx *sql.Tx) error {
-	if _, err := tx.Exec(
-		`DELETE FROM node_tags WHERE node_key IN (SELECT node_key FROM nodes WHERE stale = 1)`,
-	); err != nil {
+func pruneStaleNodeTags(tx *sql.Tx, userID int64) error {
+	query := `DELETE FROM node_tags WHERE node_key IN (SELECT node_key FROM nodes WHERE stale = 1`
+	args := []any{}
+	if userID > 0 {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	query += `)`
+	if _, err := tx.Exec(query, args...); err != nil {
 		return fmt.Errorf("prune stale node tags: %w", err)
 	}
 	return nil
@@ -192,14 +223,29 @@ func (s *Store) AllNodeKeys() ([]string, error) {
 
 // LoadNodePool 读取节点池快照，按 position 排序（stale 节点也返回，由调用方决定过滤）。
 func (s *Store) LoadNodePool() ([]*subscription.Node, error) {
-	rows, err := s.db.Query(`
-		SELECT node_key, name, type, server, port, uuid, password, alter_id, cipher, network, tls,
-		       sni, grpc_service_name, region, source, available, latency_ms, stale, last_seen,
-		       detection_last_check, bandwidth_down, bandwidth_up, bandwidth_check, plugin, plugin_opts,
-		       detection_kind, detection_fail_reason, detection_fail_detail
+	return s.loadNodePoolQuery(`SELECT node_key, name, type, server, port, uuid, password, alter_id, cipher, network, tls,
+	       sni, grpc_service_name, region, source, available, latency_ms, stale, last_seen,
+	       detection_last_check, bandwidth_down, bandwidth_up, bandwidth_check, plugin, plugin_opts,
+	       detection_kind, detection_fail_reason, detection_fail_detail, user_id
 		FROM nodes
-		ORDER BY position
-	`)
+		ORDER BY position`)
+}
+
+// LoadNodePoolByUser 读取指定用户分片的节点池快照(ticket 07)。
+// 注:不含 user_id=0 未归属桶——未归属节点在 Invariant B 下应已回填超管;
+// 仍在桶里的行按"不属于任何用户"处理,不与该用户数据混淆。
+func (s *Store) LoadNodePoolByUser(userID int64) ([]*subscription.Node, error) {
+	return s.loadNodePoolQuery(`SELECT node_key, name, type, server, port, uuid, password, alter_id, cipher, network, tls,
+	       sni, grpc_service_name, region, source, available, latency_ms, stale, last_seen,
+	       detection_last_check, bandwidth_down, bandwidth_up, bandwidth_check, plugin, plugin_opts,
+	       detection_kind, detection_fail_reason, detection_fail_detail, user_id
+		FROM nodes
+		WHERE user_id = ?
+		ORDER BY position`, userID)
+}
+
+func (s *Store) loadNodePoolQuery(query string, args ...any) ([]*subscription.Node, error) {
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query nodes: %w", err)
 	}
@@ -217,6 +263,7 @@ func (s *Store) LoadNodePool() ([]*subscription.Node, error) {
 			&n.Region, &n.Source, &available, &n.Latency, &stale, &lastSeen,
 			&detectionLastCheck, &n.BandwidthDownMbps, &n.BandwidthUpMbps, &bandwidthCheck,
 			&n.Plugin, &n.PluginOpts, &n.DetectionKind, &n.DetectionFailReason, &n.DetectionFailDetail,
+			&n.UserID,
 		); err != nil {
 			return nil, fmt.Errorf("scan node: %w", err)
 		}

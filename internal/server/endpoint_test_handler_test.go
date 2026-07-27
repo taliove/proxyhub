@@ -89,7 +89,7 @@ func TestHandleEndpointTest_PullAndSnapshot(t *testing.T) {
 	srv, st := newEndpointTestServer(t, endpointTestPool())
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("diag")
+	ep, _ := st.CreateEndpointForUser(1, "diag")
 
 	w := doEndpointRequest(t, h, cookie, http.MethodPost, fmt.Sprintf("/api/endpoints/%d/test", ep.ID), "")
 	if w.Code != http.StatusOK {
@@ -142,7 +142,7 @@ func TestHandleEndpointTest_DisabledEndpoint(t *testing.T) {
 	srv, st := newEndpointTestServer(t, endpointTestPool())
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("disabled")
+	ep, _ := st.CreateEndpointForUser(1, "disabled")
 	if err := st.SetEndpointEnabled(ep.ID, false); err != nil {
 		t.Fatalf("SetEndpointEnabled: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestHandleEndpointTest_EmptyPool(t *testing.T) {
 	srv, st := newTestServer(t, nil)
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("empty")
+	ep, _ := st.CreateEndpointForUser(1, "empty")
 
 	w := doEndpointRequest(t, h, cookie, http.MethodPost, fmt.Sprintf("/api/endpoints/%d/test", ep.ID), "")
 	if w.Code != http.StatusOK {
@@ -183,7 +183,7 @@ func TestHandleEndpointTest_ConditionsRespected(t *testing.T) {
 	srv, st := newEndpointTestServer(t, endpointTestPool())
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("hk")
+	ep, _ := st.CreateEndpointForUser(1, "hk")
 	setConditions(t, srv, ep.ID, `{"regions":["HK"]}`)
 
 	w := doEndpointRequest(t, h, cookie, http.MethodPost, fmt.Sprintf("/api/endpoints/%d/test", ep.ID), "")
@@ -204,7 +204,7 @@ func TestHandleEndpointTest_InvalidTemplate(t *testing.T) {
 	srv, st := newEndpointTestServer(t, endpointTestPool())
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("badtmpl")
+	ep, _ := st.CreateEndpointForUser(1, "badtmpl")
 	if err := st.SetClashTemplate("just a scalar, not a mapping"); err != nil {
 		t.Fatalf("SetClashTemplate: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestHandleEndpointTest_UnavailableSelfHostedCounts(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateSelfHostedNode: %v", err)
 	}
-	ep, _ := st.CreateEndpoint("with-self")
+	ep, _ := st.CreateEndpointForUser(1, "with-self")
 
 	w := doEndpointRequest(t, h, cookie, http.MethodPost, fmt.Sprintf("/api/endpoints/%d/test", ep.ID), "")
 	if w.Code != http.StatusOK {
@@ -298,7 +298,7 @@ func TestHandleEndpointTestProbe_SampledRun(t *testing.T) {
 	srv.probeChecker = stubProbeChecker{}
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("probe")
+	ep, _ := st.CreateEndpointForUser(1, "probe")
 
 	w := doEndpointRequest(t, h, cookie, http.MethodPost, fmt.Sprintf("/api/endpoints/%d/test/probe", ep.ID), `{"full":false}`)
 	if w.Code != http.StatusOK {
@@ -338,7 +338,7 @@ func TestHandleEndpointTestProbe_FullFlagEchoed(t *testing.T) {
 	srv.probeChecker = stubProbeChecker{}
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("probe-full")
+	ep, _ := st.CreateEndpointForUser(1, "probe-full")
 
 	w := doEndpointRequest(t, h, cookie, http.MethodPost, fmt.Sprintf("/api/endpoints/%d/test/probe", ep.ID), `{"full":true}`)
 	if w.Code != http.StatusOK {
@@ -357,7 +357,7 @@ func TestHandleEndpointTestProbe_DisabledEndpoint(t *testing.T) {
 	srv.probeChecker = stubProbeChecker{}
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("probe-disabled")
+	ep, _ := st.CreateEndpointForUser(1, "probe-disabled")
 	if err := st.SetEndpointEnabled(ep.ID, false); err != nil {
 		t.Fatalf("SetEndpointEnabled: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestHandleEndpointTestProbe_EmptyPool(t *testing.T) {
 	srv, st := newTestServer(t, nil)
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("probe-empty")
+	ep, _ := st.CreateEndpointForUser(1, "probe-empty")
 
 	w := doEndpointRequest(t, h, cookie, http.MethodPost, fmt.Sprintf("/api/endpoints/%d/test/probe", ep.ID), `{"full":false}`)
 	if w.Code != http.StatusBadRequest {
@@ -398,7 +398,7 @@ func TestHandleGetEndpointTestProbe_UnknownRun(t *testing.T) {
 	srv, st := newEndpointTestServer(t, endpointTestPool())
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("probe-404")
+	ep, _ := st.CreateEndpointForUser(1, "probe-404")
 
 	w := doEndpointRequest(t, h, cookie, http.MethodGet, fmt.Sprintf("/api/endpoints/%d/test/probe/no-such-run", ep.ID), "")
 	if w.Code != http.StatusNotFound {
@@ -411,8 +411,8 @@ func TestHandleGetEndpointTestProbe_WrongEndpoint(t *testing.T) {
 	srv.probeChecker = stubProbeChecker{}
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep1, _ := st.CreateEndpoint("owner")
-	ep2, _ := st.CreateEndpoint("other")
+	ep1, _ := st.CreateEndpointForUser(1, "owner")
+	ep2, _ := st.CreateEndpointForUser(1, "other")
 
 	w := doEndpointRequest(t, h, cookie, http.MethodPost, fmt.Sprintf("/api/endpoints/%d/test/probe", ep1.ID), `{"full":false}`)
 	created := decodeProbeRunView(t, w)
@@ -428,8 +428,8 @@ func TestHandleListEndpoints_Availability(t *testing.T) {
 	srv, st := newEndpointTestServer(t, endpointTestPool())
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	epAll, _ := st.CreateEndpoint("all")
-	epHK, _ := st.CreateEndpoint("hk")
+	epAll, _ := st.CreateEndpointForUser(1, "all")
+	epHK, _ := st.CreateEndpointForUser(1, "hk")
 	setConditions(t, srv, epHK.ID, `{"regions":["HK"]}`)
 
 	w := doEndpointRequest(t, h, cookie, http.MethodGet, "/api/endpoints", "")

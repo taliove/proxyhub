@@ -8,6 +8,17 @@
     </div>
 
     <div class="ph-navbar__right">
+      <!-- Impersonation banner (ticket 09): shown while the super admin is
+           inside another user's space; exit returns to their own scope. -->
+      <div v-if="authStore.actingUser" class="ph-navbar__acting" data-testid="acting-banner">
+        <el-tag type="warning" size="small" effect="dark">
+          正在查看:{{ authStore.actingUser.username }}
+        </el-tag>
+        <el-button link type="warning" size="small" class="ph-navbar__exit" @click="onExitSwitch">
+          退出
+        </el-button>
+      </div>
+
       <el-tooltip :content="isDark ? '切换亮色' : '切换暗色'" placement="bottom">
         <el-icon class="ph-navbar__action" @click="layout.toggleDark()">
           <IconMoon v-if="!isDark" :size="22" />
@@ -55,6 +66,7 @@ import {
 } from '@tabler/icons-vue'
 import { useLayoutStore } from '@/stores/layout'
 import { useAuthStore } from '@/stores/auth'
+import { exitSwitch } from '@/api/users'
 import client from '@/api/client'
 
 defineProps<{ collapsed: boolean }>()
@@ -72,6 +84,20 @@ function toggleFullscreen(): void {
     ? document.documentElement.requestFullscreen()
     : document.exitFullscreen()
   action?.catch(() => ElMessage.warning('当前浏览器不支持全屏或已被拒绝'))
+}
+
+// onExitSwitch leaves the impersonated user space and returns to the
+// super admin's own scope; the page is reloaded so every view re-fetches
+// data under the correct user id.
+async function onExitSwitch(): Promise<void> {
+  try {
+    await exitSwitch()
+    authStore.setActingUser(null)
+    ElMessage.success('已退出用户空间')
+    router.push('/').then(() => router.go(0))
+  } catch {
+    ElMessage.error('退出失败')
+  }
 }
 
 async function onCommand(command: string): Promise<void> {
@@ -150,5 +176,22 @@ async function onCommand(command: string): Promise<void> {
 
 .ph-navbar__username {
   font-size: 14px;
+}
+
+/* Impersonation banner: warning tone so the admin cannot miss they're
+   acting on behalf of another user (ticket 09). */
+.ph-navbar__acting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--ph-radius-sm);
+  background: var(--ph-bg-hover);
+}
+
+.ph-navbar__exit {
+  padding: 0;
+  height: auto;
+  line-height: 1;
 }
 </style>

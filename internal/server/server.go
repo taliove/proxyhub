@@ -28,31 +28,51 @@ import (
 	"github.com/taliove/proxyhub/internal/poolops"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
+	"github.com/taliove/proxyhub/internal/xraymgr"
 )
 
 // NodeSource 节点来源接口（由 Aggregator 实现）
 type NodeSource interface {
 	Nodes() []*subscription.Node
+	// NodesForUser 返回指定用户的节点池(ticket 07 多租户分片)。
+	// userID=0 返回全局池(与 Nodes 等价)。
+	NodesForUser(userID int64) []*subscription.Node
 	LastUpdate() time.Time
+	// LastUpdateForUser 返回指定用户池的最近刷新时刻(ticket 07)。
+	// userID=0 等价于 LastUpdate()。
+	LastUpdateForUser(userID int64) time.Time
 	// StartRefreshJob 经 jobs 运行时发起全量刷新任务(trigger 记入 params)。
 	// 返回 jobs 行 id/任务 key/是否新启动;同 key 重复触发附加到进行中任务,
 	// 与进行中的单机场刷新冲突时返回 aggregator.ErrRefreshConflict。
 	StartRefreshJob(trigger string) (jobID int64, key string, started bool, err error)
+	// StartRefreshJobForUser 与 StartRefreshJob 同语义,但携带属主 userID(ticket 07):
+	// 任务按 userID 分片(同 key 不同用户互不冲突),刷新只聚合该用户名下机场。
+	StartRefreshJobForUser(userID int64, trigger string) (jobID int64, key string, started bool, err error)
 	// StartAirportRefreshJob 发起单机场刷新(只拉取入池,不含健康检查)。
 	// 与全量或同机场的进行中刷新冲突时返回 aggregator.ErrRefreshConflict。
 	StartAirportRefreshJob(trigger string, airportID int64) (jobID int64, key string, started bool, err error)
+	// StartAirportRefreshJobForUser 与 StartAirportRefreshJob 同语义,但携带属主 userID(ticket 07)。
+	StartAirportRefreshJobForUser(userID int64, trigger string, airportID int64) (jobID int64, key string, started bool, err error)
 	// CancelRefresh 取消指定 key 的刷新任务;无进行中任务返回 false。
 	CancelRefresh(key string) bool
+	// CancelRefreshForUser 取消指定用户进行中刷新的任务 key(ticket 07)。
+	CancelRefreshForUser(userID int64, key string) bool
 	// UpdateNodeTestResult 将单节点即时测试结果写回内存池（按 NodeKey 匹配）。
 	// failReason/failDetail 为失败原因分类与短详情(成功时传空串清空,见 ticket 0017)。
 	// 找到返回 true；池中无此节点返回 false。
 	UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) bool
+	// UpdateNodeTestResultForUser 与 UpdateNodeTestResult 同语义,但写指定用户的池(ticket 07)。
+	UpdateNodeTestResultForUser(userID int64, nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) bool
 	// UpdateNodeIdentity 按 NodeKey 更新内存池中节点的身份字段(名称/地区)。
 	// name/region 为空表示本次不改该字段。找到返回 true；池中无此节点返回 false。
 	UpdateNodeIdentity(nodeKey, name, region string) bool
+	// UpdateNodeIdentityForUser 与 UpdateNodeIdentity 同语义,但写指定用户的池(ticket 07)。
+	UpdateNodeIdentityForUser(userID int64, nodeKey, name, region string) bool
 	// PurgeAirportNodes 一键清空机场节点(内存池+DB 双清,自建豁免,屏蔽/覆盖保留)。
 	// 有刷新任务进行中时返回 aggregator.ErrPurgeConflict(拒绝而非等待)。
 	PurgeAirportNodes() (int, error)
+	// PurgeAirportNodesForUser 与 PurgeAirportNodes 同语义,但只清指定用户的池(ticket 07)。
+	PurgeAirportNodesForUser(userID int64) (int, error)
 }
 
 // Server HTTP 服务
@@ -83,6 +103,10 @@ type Server struct {
 	// to drive the suggest/save paths without touching DNS or the embedded DB.
 	lookupHost    func(host string) ([]string, error)
 	countryLookup func(ip string) (string, error)
+	// xrayMgr per-user Xray process manager (ticket 08). Wired via
+	// SetXrayManager by main; nil in tests that don't exercise the Xray
+	// surface. Handlers must nil-check before use.
+	xrayMgr *xraymgr.Manager
 }
 
 // New 创建 HTTP 服务
@@ -108,7 +132,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 			detectionService.ExamStream,
 			// 写入侧反查 job id(ADR 0026 样板):回调时任务行仍 running,同 kind+key 单实例保证唯一。
 			func(nodeKey string, report detection.ExamReport) {
-				s.onExamComplete(nodeKey, report, s.findRunningJobID("exam", nodeKey))
+				s.onExamComplete(0, nodeKey, report, s.findRunningJobID("exam", nodeKey))
 			},
 			detection.WithExamJobStore(st.Jobs()),
 			detection.WithExamErrorHandler(func(err error) {
@@ -123,7 +147,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 			detectionService.ExamStreamSimplified,
 			detectionService.ExamStream,
 			func(nodeKey string, report detection.ExamReport) {
-				s.onExamComplete(nodeKey, report, s.findRunningJobID("batch_exam", "batch_exam"))
+				s.onExamComplete(0, nodeKey, report, s.findRunningJobID("batch_exam", "batch_exam"))
 			},
 			detection.WithBatchExamJobStore(st.Jobs()),
 			detection.WithBatchExamErrorHandler(func(err error) {
@@ -137,7 +161,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		s.stabilityExamJobs = detection.NewExamJobManager(
 			detectionService.ExamStreamEgressStability,
 			func(nodeKey string, report detection.ExamReport) {
-				s.onExamComplete(nodeKey, report, s.findRunningJobID("exam_stability", nodeKey))
+				s.onExamComplete(0, nodeKey, report, s.findRunningJobID("exam_stability", nodeKey))
 			},
 			detection.WithExamKindName(detection.ExamStabilityKindName),
 			detection.WithExamJobStore(st.Jobs()),
@@ -150,7 +174,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		s.batchStabilityJobs = detection.NewBatchStabilityJobManager(
 			detectionService.ExamStreamEgressStability,
 			func(nodeKey string, report detection.ExamReport) {
-				s.onExamComplete(nodeKey, report, s.findRunningJobID("batch_stability", "batch_stability"))
+				s.onExamComplete(0, nodeKey, report, s.findRunningJobID("batch_stability", "batch_stability"))
 			},
 			detection.WithBatchStabilityJobStore(st.Jobs()),
 			detection.WithBatchStabilityErrorHandler(func(err error) {
@@ -248,14 +272,15 @@ func (s *Server) airportTestConflict(airportID int64) (string, bool) {
 // + 按该节点重算自动标签 + 空/Unknown地区回写。
 // 三步均为 best-effort:任一失败只记日志,不影响体检结果本身(下一场体检会再算)。
 // jobID=0 表示未关联(持久化退化或测试直调),落库后与旧数据同口径,查询侧走时间窗回退。
-func (s *Server) onExamComplete(nodeKey string, report detection.ExamReport, jobID int64) {
+// userID 为任务属主(ticket 07):写回时按它选择目标池与自建节点表;0 = 全局池。
+func (s *Server) onExamComplete(userID int64, nodeKey string, report detection.ExamReport, jobID int64) {
 	if err := s.st.SaveExamHistoryWithJob(nodeKey, report, jobID); err != nil {
 		s.logger.Warn("save exam history failed", "error", err)
 	}
 	if err := s.st.RecomputeNodeTags(nodeKey); err != nil {
 		s.logger.Warn("recompute node tags after exam failed", "error", err)
 	}
-	s.writebackRegionIfNeeded(nodeKey, report)
+	s.writebackRegionIfNeeded(userID, nodeKey, report)
 }
 
 // findRunningJobID 反查进行中任务的 jobs 行 id(ADR 0026 写入侧反查样板,
@@ -314,7 +339,8 @@ func (s *Server) currentBandwidthUp(nodeKey string) float64 {
 // even if the node already has a non-empty region value (which may be an incorrect GeoIP guess).
 // Nodes are updated in memory pool (airport nodes) or database (self-hosted nodes).
 // No egress data means no writeback. Best-effort: failures are logged but don't block exam completion.
-func (s *Server) writebackRegionIfNeeded(nodeKey string, report detection.ExamReport) {
+// userID 为属主(ticket 07):0 = 全局池;非 0 写该用户的池/自建节点表。
+func (s *Server) writebackRegionIfNeeded(userID int64, nodeKey string, report detection.ExamReport) {
 	// No egress info or no country code - cannot writeback
 	if report.Egress == nil || report.Egress.IPv4 == nil || report.Egress.IPv4.CountryCode == "" {
 		return
@@ -323,12 +349,12 @@ func (s *Server) writebackRegionIfNeeded(nodeKey string, report detection.ExamRe
 	countryCode := report.Egress.IPv4.CountryCode
 
 	// Try updating airport node (memory pool)
-	if s.updateAirportNodeRegion(nodeKey, countryCode) {
+	if s.updateAirportNodeRegion(userID, nodeKey, countryCode) {
 		return
 	}
 
 	// Try updating self-hosted node (database)
-	if err := s.updateSelfHostedNodeRegion(nodeKey, countryCode); err != nil {
+	if err := s.updateSelfHostedNodeRegion(userID, nodeKey, countryCode); err != nil {
 		// 404 means node not in self-hosted table (may have been deleted or is airport node with refreshed pool), silently ignore
 		if err != store.ErrNotFound {
 			s.logger.Warn("writeback self-hosted node region failed", "nodeKey", nodeKey, "error", err)
@@ -340,11 +366,12 @@ func (s *Server) writebackRegionIfNeeded(nodeKey string, report detection.ExamRe
 // ALWAYS overwrites region with egress country code (egress is ground truth, existing region may be wrong GeoIP guess).
 // Returns true if node found and updated, false if not found.
 // Airport node region lives in memory pool; persistence depends on storage model (currently nodes table doesn't store region, rebuilt on refresh).
-func (s *Server) updateAirportNodeRegion(nodeKey, countryCode string) bool {
+// userID 为属主(ticket 07):0 = 全局池;非 0 写该用户的池。
+func (s *Server) updateAirportNodeRegion(userID int64, nodeKey, countryCode string) bool {
 	if s.nodes == nil {
 		return false
 	}
-	for _, n := range s.nodes.Nodes() {
+	for _, n := range s.nodes.NodesForUser(userID) {
 		if n.NodeKey() != nodeKey {
 			continue
 		}
@@ -363,8 +390,9 @@ func (s *Server) updateAirportNodeRegion(nodeKey, countryCode string) bool {
 // Located by server:port (NodeKey without SNI is sufficient for self-hosted nodes).
 // ALWAYS overwrites region with egress country code (egress is ground truth, existing region may be wrong GeoIP guess).
 // Returns store.ErrNotFound if not found.
-func (s *Server) updateSelfHostedNodeRegion(nodeKey, countryCode string) error {
-	nodes, err := s.st.ListAllSelfHostedNodes()
+// 按属主(ticket 07)查表与更新,防止跨用户写串。
+func (s *Server) updateSelfHostedNodeRegion(userID int64, nodeKey, countryCode string) error {
+	nodes, err := s.st.ListAllSelfHostedNodesByUser(userID)
 	if err != nil {
 		return err
 	}
@@ -374,27 +402,33 @@ func (s *Server) updateSelfHostedNodeRegion(nodeKey, countryCode string) error {
 		}
 		// Always overwrite region with egress country code
 		n.RegionCode = countryCode
-		if err := s.st.UpdateSelfHostedNode(n); err != nil {
+		if err := s.st.UpdateSelfHostedNodeForUser(userID, n); err != nil {
 			return err
 		}
 		// Sync memory pool region so /nodes reflects egress truth immediately
 		// (ticket 47); name unchanged here, pass empty to leave it.
-		s.syncSelfHostedNodeIdentity(nodeKey, "", countryCode)
+		s.syncSelfHostedNodeIdentityForUser(userID, nodeKey, "", countryCode)
 		return nil
 	}
 	return store.ErrNotFound
 }
 
-// syncSelfHostedNodeIdentity pushes a self-hosted node's new name/region into the
+// syncSelfHostedNodeIdentity 兼容旧签名(ticket 07 前):写全局池(userID=0)。
+func (s *Server) syncSelfHostedNodeIdentity(nodeKey, name, regionCode string) {
+	s.syncSelfHostedNodeIdentityForUser(0, nodeKey, name, regionCode)
+}
+
+// syncSelfHostedNodeIdentityForUser pushes a self-hosted node's new name/region into the
 // memory pool by NodeKey, so the admin /nodes list reflects renames and region
 // writebacks immediately instead of waiting for the next aggregation refresh
 // (ticket 47). name/region empty means "leave that field". No-op if the pool has
 // no such node (self-hosted node not yet merged into the pool).
-func (s *Server) syncSelfHostedNodeIdentity(nodeKey, name, regionCode string) {
+// userID 为属主(ticket 07):写该用户的池;0 = 全局池。
+func (s *Server) syncSelfHostedNodeIdentityForUser(userID int64, nodeKey, name, regionCode string) {
 	if s.nodes == nil {
 		return
 	}
-	s.nodes.UpdateNodeIdentity(nodeKey, name, regionCode)
+	s.nodes.UpdateNodeIdentityForUser(userID, nodeKey, name, regionCode)
 }
 
 // RecoverJobs 重启恢复:把上次进程遗留的 running 任务恢复或标记中断。
@@ -439,6 +473,12 @@ func (s *Server) SetDetectionJobs(dj *DetectionServiceJobs) {
 	s.detectionJobs = dj
 }
 
+// SetXrayManager 注入每用户 Xray 进程管理器(main 接线;ticket 08)。
+// 幂等 setter,未接线时 Xray handler 返回 503。
+func (s *Server) SetXrayManager(m *xraymgr.Manager) {
+	s.xrayMgr = m
+}
+
 // examSweepInterval 体检任务 TTL 清扫周期。
 const examSweepInterval = time.Minute
 
@@ -473,152 +513,184 @@ func (s *Server) Handler() http.Handler {
 
 	// 认证
 	mux.HandleFunc("POST /api/login", s.handleLogin)
+
+	// 订阅地址管理(业务路由统一走 requirePasswordChanged,首登强改密拦截)
+	guard := func(h http.HandlerFunc) http.HandlerFunc {
+		return s.requireAuth(s.requirePasswordChanged(h))
+	}
+	// 首登强改密的豁免面:must_change_password 会话被挡在业务路由外,但
+	// 读自身状态、改自己密码、登出必须可达,否则改密接口把自己锁死。
 	mux.HandleFunc("POST /api/logout", s.requireAuth(s.handleLogout))
 	mux.HandleFunc("GET /api/me", s.requireAuth(s.handleMe))
-
-	// 订阅地址管理
-	mux.HandleFunc("GET /api/endpoints", s.requireAuth(s.handleListEndpoints))
-	mux.HandleFunc("POST /api/endpoints", s.requireAuth(s.handleCreateEndpoint))
-	mux.HandleFunc("POST /api/endpoints/{id}/toggle", s.requireAuth(s.handleToggleEndpoint))
-	mux.HandleFunc("PUT /api/endpoints/{id}/name-config", s.requireAuth(s.handleUpdateEndpointNameConfig))
-	mux.HandleFunc("PUT /api/endpoints/{id}/conditions", s.requireAuth(s.handleUpdateEndpointConditions))
-	mux.HandleFunc("POST /api/endpoints/preview-conditions", s.requireAuth(s.handlePreviewConditions))
-	mux.HandleFunc("DELETE /api/endpoints/{id}", s.requireAuth(s.handleDeleteEndpoint))
-	mux.HandleFunc("GET /api/endpoints/{id}/stats", s.requireAuth(s.handleEndpointStats))
-	mux.HandleFunc("GET /api/endpoints/{id}/preview", s.requireAuth(s.handleEndpointPreview))
-	mux.HandleFunc("POST /api/endpoints/{id}/test", s.requireAuth(s.handleEndpointTest))
-	mux.HandleFunc("POST /api/endpoints/{id}/test/probe", s.requireAuth(s.handleEndpointTestProbe))
-	mux.HandleFunc("GET /api/endpoints/{id}/test/probe/{runId}", s.requireAuth(s.handleGetEndpointTestProbe))
+	mux.HandleFunc("POST /api/me/password", s.requireAuth(s.handleChangeMyPassword))
+	mux.HandleFunc("GET /api/endpoints", guard(s.handleListEndpoints))
+	mux.HandleFunc("POST /api/endpoints", guard(s.handleCreateEndpoint))
+	mux.HandleFunc("POST /api/endpoints/{id}/toggle", guard(s.handleToggleEndpoint))
+	mux.HandleFunc("PUT /api/endpoints/{id}/name-config", guard(s.handleUpdateEndpointNameConfig))
+	mux.HandleFunc("PUT /api/endpoints/{id}/conditions", guard(s.handleUpdateEndpointConditions))
+	mux.HandleFunc("POST /api/endpoints/preview-conditions", guard(s.handlePreviewConditions))
+	mux.HandleFunc("DELETE /api/endpoints/{id}", guard(s.handleDeleteEndpoint))
+	mux.HandleFunc("GET /api/endpoints/{id}/stats", guard(s.handleEndpointStats))
+	mux.HandleFunc("GET /api/endpoints/{id}/preview", guard(s.handleEndpointPreview))
+	mux.HandleFunc("POST /api/endpoints/{id}/test", guard(s.handleEndpointTest))
+	mux.HandleFunc("POST /api/endpoints/{id}/test/probe", guard(s.handleEndpointTestProbe))
+	mux.HandleFunc("GET /api/endpoints/{id}/test/probe/{runId}", guard(s.handleGetEndpointTestProbe))
 
 	// 机场管理
-	mux.HandleFunc("GET /api/airports", s.requireAuth(s.handleListAirports))
-	mux.HandleFunc("GET /api/airports/abbr-suggest", s.requireAuth(s.handleSuggestAbbr))
-	mux.HandleFunc("POST /api/airports", s.requireAuth(s.handleCreateAirport))
-	mux.HandleFunc("PUT /api/airports/{id}", s.requireAuth(s.handleUpdateAirport))
-	mux.HandleFunc("POST /api/airports/{id}/toggle", s.requireAuth(s.handleToggleAirport))
-	mux.HandleFunc("POST /api/airports/{id}/refresh", s.requireAuth(s.handleAirportRefresh))
-	mux.HandleFunc("DELETE /api/airports/{id}", s.requireAuth(s.handleDeleteAirport))
+	mux.HandleFunc("GET /api/airports", guard(s.handleListAirports))
+	mux.HandleFunc("GET /api/airports/abbr-suggest", guard(s.handleSuggestAbbr))
+	mux.HandleFunc("POST /api/airports", guard(s.handleCreateAirport))
+	mux.HandleFunc("PUT /api/airports/{id}", guard(s.handleUpdateAirport))
+	mux.HandleFunc("POST /api/airports/{id}/toggle", guard(s.handleToggleAirport))
+	mux.HandleFunc("POST /api/airports/{id}/refresh", guard(s.handleAirportRefresh))
+	mux.HandleFunc("DELETE /api/airports/{id}", guard(s.handleDeleteAirport))
 
 	// 机场测试（诊断+抽样检活+评分）
-	mux.HandleFunc("POST /api/airports/{id}/test", s.requireAuth(s.handleAirportTest))
-	mux.HandleFunc("GET /api/airports/{id}/test/runs/{runId}", s.requireAuth(s.handleGetAirportTestRun))
-	mux.HandleFunc("GET /api/airports/{id}/test/runs", s.requireAuth(s.handleListAirportTestRuns))
+	mux.HandleFunc("POST /api/airports/{id}/test", guard(s.handleAirportTest))
+	mux.HandleFunc("GET /api/airports/{id}/test/runs/{runId}", guard(s.handleGetAirportTestRun))
+	mux.HandleFunc("GET /api/airports/{id}/test/runs", guard(s.handleListAirportTestRuns))
 
 	// 节点状态
-	mux.HandleFunc("GET /api/nodes", s.requireAuth(s.handleListNodes))
+	mux.HandleFunc("GET /api/nodes", guard(s.handleListNodes))
 	// 节点分享 URI 生成（用于生成二维码）
-	mux.HandleFunc("GET /api/nodes/{nodeKey}/share-uri", s.requireAuth(s.handleNodeShareURI))
+	mux.HandleFunc("GET /api/nodes/{nodeKey}/share-uri", guard(s.handleNodeShareURI))
 
 	// 机场节点屏蔽（按 NodeKey 精确拉黑，跨刷新持久）
-	mux.HandleFunc("POST /api/nodes/block", s.requireAuth(s.handleBlockNode))
-	mux.HandleFunc("POST /api/nodes/unblock", s.requireAuth(s.handleUnblockNode))
+	mux.HandleFunc("POST /api/nodes/block", guard(s.handleBlockNode))
+	mux.HandleFunc("POST /api/nodes/unblock", guard(s.handleUnblockNode))
 
 	// 批量屏蔽：按机场（source）或显式 node_keys 一次性拉黑/取消
-	mux.HandleFunc("POST /api/nodes/batch-block", s.requireAuth(s.handleBatchBlockNodes))
-	mux.HandleFunc("POST /api/nodes/batch-unblock", s.requireAuth(s.handleBatchUnblockNodes))
+	mux.HandleFunc("POST /api/nodes/batch-block", guard(s.handleBatchBlockNodes))
+	mux.HandleFunc("POST /api/nodes/batch-unblock", guard(s.handleBatchUnblockNodes))
 
 	// 批量刷新名称：重跑地区识别+标准化
-	mux.HandleFunc("POST /api/nodes/refresh-names", s.requireAuth(s.handleRefreshNames))
+	mux.HandleFunc("POST /api/nodes/refresh-names", guard(s.handleRefreshNames))
 
 	// 自建节点管理（增/改/删/启停）
-	mux.HandleFunc("GET /api/self-nodes", s.requireAuth(s.handleListSelfNodes))
-	mux.HandleFunc("GET /api/self-nodes/suggest", s.requireAuth(s.handleSuggestSelfNode))
-	mux.HandleFunc("POST /api/self-nodes", s.requireAuth(s.handleCreateSelfNode))
-	mux.HandleFunc("PUT /api/self-nodes/{id}", s.requireAuth(s.handleUpdateSelfNode))
-	mux.HandleFunc("DELETE /api/self-nodes/{id}", s.requireAuth(s.handleDeleteSelfNode))
-	mux.HandleFunc("POST /api/self-nodes/{id}/toggle", s.requireAuth(s.handleToggleSelfNode))
+	mux.HandleFunc("GET /api/self-nodes", guard(s.handleListSelfNodes))
+	mux.HandleFunc("GET /api/self-nodes/suggest", guard(s.handleSuggestSelfNode))
+	mux.HandleFunc("POST /api/self-nodes", guard(s.handleCreateSelfNode))
+	mux.HandleFunc("PUT /api/self-nodes/{id}", guard(s.handleUpdateSelfNode))
+	mux.HandleFunc("DELETE /api/self-nodes/{id}", guard(s.handleDeleteSelfNode))
+	mux.HandleFunc("POST /api/self-nodes/{id}/toggle", guard(s.handleToggleSelfNode))
 
 	// 聚合器手动刷新
-	mux.HandleFunc("POST /api/aggregator/refresh", s.requireAuth(s.handleManualRefresh))
+	mux.HandleFunc("POST /api/aggregator/refresh", guard(s.handleManualRefresh))
 
 	// 刷新历史
-	mux.HandleFunc("GET /api/refresh/runs", s.requireAuth(s.handleListRefreshRuns))
-	mux.HandleFunc("GET /api/refresh/runs/{id}", s.requireAuth(s.handleGetRefreshRun))
+	mux.HandleFunc("GET /api/refresh/runs", guard(s.handleListRefreshRuns))
+	mux.HandleFunc("GET /api/refresh/runs/{id}", guard(s.handleGetRefreshRun))
 
 	// 节点解锁检测
-	mux.HandleFunc("POST /api/detection/trigger", s.requireAuth(s.handleTriggerDetection))
-	mux.HandleFunc("POST /api/detection/cancel", s.requireAuth(s.handleCancelDetection))
-	mux.HandleFunc("GET /api/detection/status", s.requireAuth(s.handleDetectionStatus))
+	mux.HandleFunc("POST /api/detection/trigger", guard(s.handleTriggerDetection))
+	mux.HandleFunc("POST /api/detection/cancel", guard(s.handleCancelDetection))
+	mux.HandleFunc("GET /api/detection/status", guard(s.handleDetectionStatus))
 
 	// 通用任务 API(任务中心)
-	mux.HandleFunc("GET /api/jobs", s.requireAuth(s.handleListJobs))
-	mux.HandleFunc("GET /api/jobs/{id}", s.requireAuth(s.handleGetJobDetail))
-	mux.HandleFunc("GET /api/jobs/{id}/result", s.requireAuth(s.handleGetJobResult))
-	mux.HandleFunc("POST /api/jobs/{kind}/{key}/cancel", s.requireAuth(s.handleCancelJob))
-	mux.HandleFunc("POST /api/nodes/test", s.requireAuth(s.handleTestNode))
-	mux.HandleFunc("GET /api/nodes/test/stream", s.requireAuth(s.handleTestNodeStream))
-	mux.HandleFunc("GET /api/nodes/exam/stream", s.requireAuth(s.handleNodeExamStream))
-	mux.HandleFunc("POST /api/nodes/exam/cancel", s.requireAuth(s.handleNodeExamCancel))
-	mux.HandleFunc("GET /api/nodes/exam/latest", s.requireAuth(s.handleGetExamLatest))
-	mux.HandleFunc("GET /api/nodes/exam/history", s.requireAuth(s.handleGetExamHistory))
-	mux.HandleFunc("POST /api/nodes/exam/batch", s.requireAuth(s.handleBatchExam))
-	mux.HandleFunc("GET /api/nodes/exam/batch/stream", s.requireAuth(s.handleBatchExamStream))
-	mux.HandleFunc("POST /api/nodes/exam/batch/cancel", s.requireAuth(s.handleBatchExamCancel))
+	mux.HandleFunc("GET /api/jobs", guard(s.handleListJobs))
+	mux.HandleFunc("GET /api/jobs/{id}", guard(s.handleGetJobDetail))
+	mux.HandleFunc("GET /api/jobs/{id}/result", guard(s.handleGetJobResult))
+	mux.HandleFunc("POST /api/jobs/{kind}/{key}/cancel", guard(s.handleCancelJob))
+	mux.HandleFunc("POST /api/nodes/test", guard(s.handleTestNode))
+	mux.HandleFunc("GET /api/nodes/test/stream", guard(s.handleTestNodeStream))
+	mux.HandleFunc("GET /api/nodes/exam/stream", guard(s.handleNodeExamStream))
+	mux.HandleFunc("POST /api/nodes/exam/cancel", guard(s.handleNodeExamCancel))
+	mux.HandleFunc("GET /api/nodes/exam/latest", guard(s.handleGetExamLatest))
+	mux.HandleFunc("GET /api/nodes/exam/history", guard(s.handleGetExamHistory))
+	mux.HandleFunc("POST /api/nodes/exam/batch", guard(s.handleBatchExam))
+	mux.HandleFunc("GET /api/nodes/exam/batch/stream", guard(s.handleBatchExamStream))
+	mux.HandleFunc("POST /api/nodes/exam/batch/cancel", guard(s.handleBatchExamCancel))
 	// 出网+稳定性检查(动作2):批量形态(任务化) + 单节点形态(行内 SSE)
-	mux.HandleFunc("GET /api/nodes/stability/stream", s.requireAuth(s.handleNodeStabilityStream))
-	mux.HandleFunc("POST /api/nodes/stability/cancel", s.requireAuth(s.handleNodeStabilityCancel))
-	mux.HandleFunc("POST /api/nodes/stability/batch", s.requireAuth(s.handleBatchStability))
-	mux.HandleFunc("GET /api/nodes/stability/batch/stream", s.requireAuth(s.handleBatchStabilityStream))
-	mux.HandleFunc("POST /api/nodes/stability/batch/cancel", s.requireAuth(s.handleBatchStabilityCancel))
+	mux.HandleFunc("GET /api/nodes/stability/stream", guard(s.handleNodeStabilityStream))
+	mux.HandleFunc("POST /api/nodes/stability/cancel", guard(s.handleNodeStabilityCancel))
+	mux.HandleFunc("POST /api/nodes/stability/batch", guard(s.handleBatchStability))
+	mux.HandleFunc("GET /api/nodes/stability/batch/stream", guard(s.handleBatchStabilityStream))
+	mux.HandleFunc("POST /api/nodes/stability/batch/cancel", guard(s.handleBatchStabilityCancel))
 
 	// 快速测速(动作3):批量形态(任务化,仅基准下行)
-	mux.HandleFunc("POST /api/nodes/speedtest/batch", s.requireAuth(s.handleBatchSpeedtest))
-	mux.HandleFunc("GET /api/nodes/speedtest/batch/stream", s.requireAuth(s.handleBatchSpeedtestStream))
-	mux.HandleFunc("POST /api/nodes/speedtest/batch/cancel", s.requireAuth(s.handleBatchSpeedtestCancel))
+	mux.HandleFunc("POST /api/nodes/speedtest/batch", guard(s.handleBatchSpeedtest))
+	mux.HandleFunc("GET /api/nodes/speedtest/batch/stream", guard(s.handleBatchSpeedtestStream))
+	mux.HandleFunc("POST /api/nodes/speedtest/batch/cancel", guard(s.handleBatchSpeedtestCancel))
 	// 节点管理（覆盖层 + 清理）
-	mux.HandleFunc("PUT /api/nodes/override", s.requireAuth(s.handleSetNodeOverride))
-	mux.HandleFunc("DELETE /api/nodes/override", s.requireAuth(s.handleClearNodeOverride))
-	mux.HandleFunc("POST /api/nodes/cleanup", s.requireAuth(s.handleCleanupNodes))
-	mux.HandleFunc("POST /api/nodes/purge-airport", s.requireAuth(s.handlePurgeAirportNodes))
+	mux.HandleFunc("PUT /api/nodes/override", guard(s.handleSetNodeOverride))
+	mux.HandleFunc("DELETE /api/nodes/override", guard(s.handleClearNodeOverride))
+	mux.HandleFunc("POST /api/nodes/cleanup", guard(s.handleCleanupNodes))
+	mux.HandleFunc("POST /api/nodes/purge-airport", guard(s.handlePurgeAirportNodes))
 
 	// 系统设置
-	mux.HandleFunc("GET /api/settings", s.requireAuth(s.handleGetSettings))
-	mux.HandleFunc("POST /api/settings", s.requireAuth(s.handleSaveSettings))
+	mux.HandleFunc("GET /api/settings", guard(s.handleGetSettings))
+	mux.HandleFunc("POST /api/settings", guard(s.handleSaveSettings))
 
 	// 检测目标配置
-	mux.HandleFunc("GET /api/settings/detection-targets", s.requireAuth(s.handleGetDetectionTargets))
-	mux.HandleFunc("PUT /api/settings/detection-targets", s.requireAuth(s.handleSaveDetectionTargets))
+	mux.HandleFunc("GET /api/settings/detection-targets", guard(s.handleGetDetectionTargets))
+	mux.HandleFunc("PUT /api/settings/detection-targets", guard(s.handleSaveDetectionTargets))
 
 	// 晚间标签重算调度配置(schedule_retag_time / schedule_retag_enabled)
-	mux.HandleFunc("GET /api/settings/schedule", s.requireAuth(s.handleGetSchedule))
-	mux.HandleFunc("PUT /api/settings/schedule", s.requireAuth(s.handleSaveSchedule))
+	mux.HandleFunc("GET /api/settings/schedule", guard(s.handleGetSchedule))
+	mux.HandleFunc("PUT /api/settings/schedule", guard(s.handleSaveSchedule))
 
 	// 地区白名单
-	mux.HandleFunc("GET /api/settings/region-whitelist", s.requireAuth(s.handleGetRegionWhitelist))
-	mux.HandleFunc("POST /api/settings/region-whitelist", s.requireAuth(s.handleSetRegionWhitelist))
-	mux.HandleFunc("GET /api/settings/regions", s.requireAuth(s.handleListRegions))
+	mux.HandleFunc("GET /api/settings/region-whitelist", guard(s.handleGetRegionWhitelist))
+	mux.HandleFunc("POST /api/settings/region-whitelist", guard(s.handleSetRegionWhitelist))
+	mux.HandleFunc("GET /api/settings/regions", guard(s.handleListRegions))
 
 	// 配置模板（Clash 订阅骨架，含 hosts/dns/proxy-groups/rules）
-	mux.HandleFunc("GET /api/settings/template", s.requireAuth(s.handleGetTemplate))
-	mux.HandleFunc("PUT /api/settings/template", s.requireAuth(s.handleSaveTemplate))
-	mux.HandleFunc("POST /api/settings/template/reset", s.requireAuth(s.handleResetTemplate))
+	mux.HandleFunc("GET /api/settings/template", guard(s.handleGetTemplate))
+	mux.HandleFunc("PUT /api/settings/template", guard(s.handleSaveTemplate))
+	mux.HandleFunc("POST /api/settings/template/reset", guard(s.handleResetTemplate))
 
 	// 仪表盘统计 + 优质节点聚合
-	mux.HandleFunc("GET /api/dashboard/stats", s.requireAuth(s.handleDashboardStats))
-	mux.HandleFunc("GET /api/dashboard/top-nodes", s.requireAuth(s.handleDashboardTopNodes))
+	mux.HandleFunc("GET /api/dashboard/stats", guard(s.handleDashboardStats))
+	mux.HandleFunc("GET /api/dashboard/top-nodes", guard(s.handleDashboardTopNodes))
 
 	// 安全审计（登录/封禁事件流水 + 当前封禁 IP 管理）
-	mux.HandleFunc("GET /api/audit/events", s.requireAuth(s.handleAuditEvents))
-	mux.HandleFunc("GET /api/audit/banned", s.requireAuth(s.handleBannedIPs))
-	mux.HandleFunc("POST /api/audit/unban", s.requireAuth(s.handleUnbanIP))
+	mux.HandleFunc("GET /api/audit/events", guard(s.handleAuditEvents))
+	mux.HandleFunc("GET /api/audit/banned", guard(s.handleBannedIPs))
+	mux.HandleFunc("POST /api/audit/unban", guard(s.handleUnbanIP))
 
 	// 访问统计（全局汇总 + 拉取趋势）
-	mux.HandleFunc("GET /api/stats/global", s.requireAuth(s.handleGlobalStats))
-	mux.HandleFunc("GET /api/stats/trend", s.requireAuth(s.handlePullTrend))
+	mux.HandleFunc("GET /api/stats/global", guard(s.handleGlobalStats))
+	mux.HandleFunc("GET /api/stats/trend", guard(s.handlePullTrend))
 
 	// 本机实测（浏览器端测速,入站服务,与检测出站链路无关;ticket 0032）:
 	// 下行发流是带宽放大器,全部过 requireAuth,不挂公开面
-	mux.HandleFunc("GET /api/speedtest/ping", s.requireAuth(s.handleSpeedtestPing))
-	mux.HandleFunc("GET /api/speedtest/download", s.requireAuth(s.handleSpeedtestDownload))
-	mux.HandleFunc("POST /api/speedtest/upload", s.requireAuth(s.handleSpeedtestUpload))
+	mux.HandleFunc("GET /api/speedtest/ping", guard(s.handleSpeedtestPing))
+	mux.HandleFunc("GET /api/speedtest/download", guard(s.handleSpeedtestDownload))
+	mux.HandleFunc("POST /api/speedtest/upload", guard(s.handleSpeedtestUpload))
 	// 本机实测透传(经选定节点访问 Cloudflare,流式转发给浏览器):流量经浏览器可见大 Size,
 	// 且经用户下拉选定节点(不依赖客户端代理选择)。8 并行 fetch 聚合带宽。
-	mux.HandleFunc("GET /api/speedtest/proxy-download/stream", s.requireAuth(s.handleSpeedtestProxyDownload))
-	mux.HandleFunc("GET /api/speedtest/proxy-latency", s.requireAuth(s.handleSpeedtestProxyLatency))
-	mux.HandleFunc("POST /api/speedtest/proxy-upload/stream", s.requireAuth(s.handleSpeedtestProxyUpload))
-	mux.HandleFunc("POST /api/speedtest/results", s.requireAuth(s.handleSaveSpeedtestResult))
-	mux.HandleFunc("GET /api/speedtest/results", s.requireAuth(s.handleListSpeedtestResults))
-	mux.HandleFunc("DELETE /api/speedtest/results/{id}", s.requireAuth(s.handleDeleteSpeedtestResult))
+	mux.HandleFunc("GET /api/speedtest/proxy-download/stream", guard(s.handleSpeedtestProxyDownload))
+	mux.HandleFunc("GET /api/speedtest/proxy-latency", guard(s.handleSpeedtestProxyLatency))
+	mux.HandleFunc("POST /api/speedtest/proxy-upload/stream", guard(s.handleSpeedtestProxyUpload))
+	mux.HandleFunc("POST /api/speedtest/results", guard(s.handleSaveSpeedtestResult))
+	mux.HandleFunc("GET /api/speedtest/results", guard(s.handleListSpeedtestResults))
+	mux.HandleFunc("DELETE /api/speedtest/results/{id}", guard(s.handleDeleteSpeedtestResult))
+
+	// 每用户 Xray 实例(ticket 08):用户读自己的实例;超管读/重启任意用户实例
+	mux.HandleFunc("GET /api/me/xray", guard(s.handleGetMyXray))
+	mux.HandleFunc("GET /api/admin/users/{id}/xray", guard(s.handleGetUserXray))
+	mux.HandleFunc("POST /api/admin/users/{id}/xray/restart", guard(s.handleRestartUserXray))
+
+	// 用户管理(ticket 03,超管专属):列表/创建/详情/修改/启停/删除/重置密码。
+	// 走 requireAuth + requirePasswordChanged + requireAdmin 链:普通用户 403;
+	// 首登未改密的超管同样先 403 去改密(改密入口 /api/me/password 已豁免,无锁死)。
+	adminGuard := func(h http.HandlerFunc) http.HandlerFunc {
+		return s.requireAuth(s.requirePasswordChanged(s.requireAdmin(h)))
+	}
+	mux.HandleFunc("GET /api/admin/users", adminGuard(s.handleAdminListUsers))
+	mux.HandleFunc("POST /api/admin/users", adminGuard(s.handleAdminCreateUser))
+	mux.HandleFunc("GET /api/admin/users/{id}", adminGuard(s.handleAdminGetUser))
+	mux.HandleFunc("PUT /api/admin/users/{id}", adminGuard(s.handleAdminUpdateUser))
+	mux.HandleFunc("POST /api/admin/users/{id}/disable", adminGuard(s.handleAdminDisableUser))
+	mux.HandleFunc("POST /api/admin/users/{id}/enable", adminGuard(s.handleAdminEnableUser))
+	mux.HandleFunc("DELETE /api/admin/users/{id}", adminGuard(s.handleAdminDeleteUser))
+	mux.HandleFunc("POST /api/admin/users/{id}/reset-password", adminGuard(s.handleAdminResetPassword))
+
+	// 超管视角切换(ticket 09):进入/退出用户空间,查询当前生效视角。
+	// 持久化在 session 上;之后所有请求经 requireAuth 自动套用 acting target。
+	mux.HandleFunc("POST /api/admin/switch-user", adminGuard(s.handleAdminSwitchUser))
+	mux.HandleFunc("POST /api/admin/exit-switch", adminGuard(s.handleAdminExitSwitch))
+	mux.HandleFunc("GET /api/admin/current-view", adminGuard(s.handleAdminCurrentView))
 
 	// 订阅拉取端点（随机 Path + Token，公开访问）
 	mux.HandleFunc("GET /sub/{path}", s.handleSubscription)
@@ -672,18 +744,22 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-// clientIP 提取客户端 IP（优先 X-Forwarded-For，反向代理场景）
+// clientIP 提取客户端 IP。仅当对端是受信反代(loopback)时才采信
+// X-Forwarded-For / X-Real-IP;否则直连客户端可伪造 XFF 永久豁免
+// IP2Ban 与蜜罐判定(go-reviewer M5)。
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[0])
-	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			return strings.TrimSpace(parts[0])
+		}
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return xri
+		}
 	}
 	return host
 }
@@ -713,7 +789,8 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	// 订阅时过滤链：白名单 → 黑名单 → 机场屏蔽，自建节点全程豁免（见 ADR 0005/0009）。
 	// 注意：不在此处对空池提前 503——filteredNodes 内含 serve-time 合并自建节点,
 	// 全新装机仅配置自建节点时也必须能拉到订阅(与订阅测试口径一致,见 ADR 0028 决策 1)。
-	nodes := s.filteredNodes(s.nodes.Nodes())
+	// 订阅端点:按端点属主选择节点池与自建节点(ticket 07;属主 0 = 全局池)。
+	nodes := s.filteredNodes(s.nodes.NodesForUser(ep.UserID), ep.UserID)
 	// 该订阅地址的节点范围条件(动态查询,见 internal/subfilter);空条件=全量(零回归)
 	nodes = s.applyConditions(nodes, ep)
 	if len(nodes) == 0 {
@@ -802,7 +879,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.verifyCredentials(req.Username, req.Password) {
+	user, verr := s.verifyCredentials(req.Username, req.Password)
+	if verr != nil {
+		if errors.Is(verr, errAccountDisabled) {
+			// 已禁用账号:不再计入 IP 失败阈值(凭据本身是对的,只是账号被关),
+			// 直接 403,让管理员排障时区分"密码错"与"账号被禁用"。
+			s.recordAudit("login_disabled", ip, req.Username, "")
+			http.Error(w, "account disabled", http.StatusForbidden)
+			return
+		}
 		now := time.Now()
 		nowBanned, err := s.st.RecordLoginFailure(ip,
 			policy.BanThreshold, policy.BanDuration, now)
@@ -822,10 +907,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 登录成功：清空失败计数，发放会话
+	// 登录成功：清空失败计数，更新 last_login_at,发放携带身份载荷的会话
 	s.st.ResetLoginFailures(ip)
 	s.recordAudit("login_success", ip, req.Username, "")
-	token, err := s.sessions.Create()
+	now := time.Now()
+	if err := s.st.UpdateUser(user.ID, store.UserUpdate{LastLoginAt: &now}); err != nil {
+		// 登录动作本身已经成功,只记录日志不打断
+		s.logger.Warn("update last_login_at failed", "user_id", user.ID, "error", err)
+	}
+	token, err := s.sessions.CreateWithPayload(SessionPayload{
+		UserID:             user.ID,
+		Role:               user.Role,
+		MustChangePassword: user.MustChangePassword,
+	})
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -839,35 +933,118 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int((12 * time.Hour).Seconds()),
 	})
-	writeJSON(w, map[string]bool{"ok": true})
+	writeJSON(w, map[string]any{
+		"ok": true,
+		"user": map[string]any{
+			"id":                   user.ID,
+			"username":             user.Username,
+			"role":                 user.Role,
+			"must_change_password": user.MustChangePassword,
+		},
+	})
 }
 
-// verifyCredentials 校验用户名和密码（bcrypt）
-func (s *Server) verifyCredentials(username, password string) bool {
-	storedUser, err := s.st.GetSetting("admin_user")
-	if err != nil {
-		return false
-	}
-	storedHash, err := s.st.GetSetting("admin_pass_hash")
-	if err != nil {
-		return false
-	}
+// errAccountDisabled 表示凭据匹配但账号已被禁用(disabled_at 非空)。
+var errAccountDisabled = errors.New("account disabled")
 
-	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(storedUser)) == 1
-	passMatch := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password)) == nil
-	return userMatch && passMatch
+// verifyCredentials 按 users 表校验用户名和密码(bcrypt)。
+// 成功返回用户记录;用户名不存在/密码错/用户已禁用分别返回不同错误,
+// 其中禁用走 errAccountDisabled,其余统一当作"凭据无效"。
+// 未知用户也会执行一次 bcrypt 比较以均匀化时序,避免用户名枚举。
+func (s *Server) verifyCredentials(username, password string) (*store.User, error) {
+	// 固定 dummy 哈希,在用户不存在时用作比较对象,使响应时间接近真实校验。
+	// 值本身无意义,仅占用 CPU,防止通过时序探测用户名是否存在。
+	const dummyHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+
+	user, err := s.st.GetUserByUsername(username)
+	if err != nil {
+		// 不存在或其他错误:走 dummy 比较再统一报"凭据无效"。
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyHash), []byte(password))
+		return nil, errors.New("invalid credentials")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(password)) != nil {
+		return nil, errors.New("invalid credentials")
+	}
+	if user.Disabled() {
+		return nil, errAccountDisabled
+	}
+	return user, nil
 }
 
-// requireAuth 会话鉴权中间件
+// requireAuth 会话鉴权中间件:校验 session,解析用户身份注入 request context(ticket 07)。
+// 载荷解析规则:
+//   - 新会话(ticket 02 风格,带 UserID/Role)直接取用;
+//   - 旧会话(settings-KV 时代)回退为首个 super_admin(单管理员部署等价语义);
+//   - 超管视角切换走 POST /api/admin/switch-user(ticket 09),持久化到会话
+//         acting_user_id,之后请求免传。
+//
+// 在线再校验(go-reviewer H1/H2):非旧会话每请求重读 users 表——用户被删 401、
+// 被禁用 401、角色以库为准刷新进 scope(降级即刻生效)。读库失败(非 NotFound)
+// 降级放行并用会话声明,避免一次 DB 抖动把全员锁在门外(与 requirePasswordChanged
+// 同一策略)。
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie("session")
-		if err != nil || !s.sessions.Validate(cookie.Value) {
+		if err != nil {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		next(w, r)
+		payload, ok := s.sessions.Lookup(cookie.Value)
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		scope := UserScope{
+			UserID:       payload.UserID,
+			Role:         payload.Role,
+			ActingUserID: payload.ActingUserID,
+		}
+		if payload.Legacy {
+			// 旧会话无身份载荷:单管理员时代唯一可解析身份是首个 super_admin。
+			legacyID, lerr := s.firstSuperAdminID()
+			if lerr != nil {
+				s.logger.Error("resolve legacy session user failed", "error", lerr)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			scope.UserID = legacyID
+			scope.Role = store.RoleSuperAdmin
+		} else {
+			user, uerr := s.st.GetUserByID(payload.UserID)
+			switch {
+			case errors.Is(uerr, store.ErrNotFound):
+				// 用户已被删除:会话即刻失效。
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			case uerr != nil:
+				s.logger.Warn("re-validate session user failed, allowing with session claims",
+					"user_id", payload.UserID, "error", uerr)
+			case user.Disabled():
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			default:
+				scope.Role = user.Role
+			}
+		}
+
+		next(w, r.WithContext(ContextWithUserScope(r.Context(), scope)))
 	}
+}
+
+// firstSuperAdminID 返回首个 super_admin 的用户 id(旧会话身份回退用)。
+// 无用户(初始化前)返回错误。
+func (s *Server) firstSuperAdminID() (int64, error) {
+	users, err := s.st.ListUsers()
+	if err != nil {
+		return 0, err
+	}
+	for _, u := range users {
+		if u.Role == store.RoleSuperAdmin {
+			return u.ID, nil
+		}
+	}
+	return 0, errors.New("no super admin provisioned")
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -886,25 +1063,61 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// handleMe 返回当前登录用户信息，供前端刷新后恢复登录态
+// handleMe 返回当前登录用户的完整 profile(users 表 + 配额)。
+// 视图口径:超管处于 impersonate 视角时返回被视角用户的信息,便于前端展示
+// "当前正在以谁的身份操作";普通用户永远只能看到自己。
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	username, err := s.st.GetSetting("admin_user")
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effectiveID := EffectiveUserID(scope)
+
+	user, err := s.st.GetUserByID(effectiveID)
 	if err != nil {
+		// 会话指向的用户被删了,等同于登录态失效
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		s.logger.Error("get user failed", "user_id", effectiveID, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]string{"username": username})
+
+	resp := map[string]any{
+		"id":                   user.ID,
+		"username":             user.Username,
+		"role":                 user.Role,
+		"must_change_password": user.MustChangePassword,
+	}
+	// 配额是可选附属:无记录视为"未配置",不视为错误
+	if quota, qerr := s.st.GetUserQuota(effectiveID); qerr == nil {
+		resp["quota"] = quota
+	} else if !errors.Is(qerr, store.ErrNotFound) {
+		s.logger.Warn("get user quota failed", "user_id", effectiveID, "error", qerr)
+	}
+	// 标注视角,前端可据此显示"impersonating as X"
+	if scope.IsSuperAdmin() && scope.ActingUserID > 0 && scope.ActingUserID != scope.UserID {
+		resp["acting"] = true
+	}
+	writeJSON(w, resp)
 }
 
 func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
-	eps, err := s.st.ListEndpoints()
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(scope)
+	eps, err := s.st.ListEndpointsByUser(effUID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	// 可用性汇总加性附加(ADR 0028 决策 2):池在内存,全局过滤链只跑一遍,
 	// 各端点仅条件维度不同,逐个叠加计算。
-	base := s.filteredNodes(s.nodes.Nodes())
+	base := s.filteredNodes(s.nodes.NodesForUser(effUID), effUID)
 	items := make([]endpointListItem, 0, len(eps))
 	for _, ep := range eps {
 		items = append(items, endpointListItem{
@@ -916,6 +1129,10 @@ func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateEndpoint(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Alias string `json:"alias"`
 	}
@@ -924,7 +1141,7 @@ func (s *Server) handleCreateEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ep, err := s.st.CreateEndpoint(strings.TrimSpace(req.Alias))
+	ep, err := s.st.CreateEndpointForUser(EffectiveUserID(scope), strings.TrimSpace(req.Alias))
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -933,19 +1150,24 @@ func (s *Server) handleCreateEndpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleToggleEndpoint(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 
-	ep, err := s.st.GetEndpointByID(id)
+	effUID := EffectiveUserID(scope)
+	ep, err := s.st.GetEndpointByIDForUser(effUID, id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	if err := s.st.SetEndpointEnabled(id, !ep.Enabled); err != nil {
+	if err := s.st.SetEndpointEnabledForUser(effUID, id, !ep.Enabled); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -954,6 +1176,10 @@ func (s *Server) handleToggleEndpoint(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateEndpointNameConfig 设置订阅地址的节点名称标准化覆盖（见 ADR 0012）。
 func (s *Server) handleUpdateEndpointNameConfig(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -969,7 +1195,7 @@ func (s *Server) handleUpdateEndpointNameConfig(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if err := s.st.UpdateEndpointNameConfig(id, req.NameMode, req.NameTemplate); err != nil {
+	if err := s.st.UpdateEndpointNameConfigForUser(EffectiveUserID(scope), id, req.NameMode, req.NameTemplate); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
 			return
@@ -982,13 +1208,17 @@ func (s *Server) handleUpdateEndpointNameConfig(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleDeleteEndpoint(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 
-	if err := s.st.DeleteEndpoint(id); err != nil {
+	if err := s.st.DeleteEndpointForUser(EffectiveUserID(scope), id); err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -996,9 +1226,19 @@ func (s *Server) handleDeleteEndpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEndpointStats(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	// 校验属主(ticket 07):行属他人同样 404,不暴露存在性。
+	if _, err := s.st.GetEndpointByIDForUser(EffectiveUserID(scope), id); err != nil {
+		http.NotFound(w, r)
 		return
 	}
 
@@ -1143,6 +1383,11 @@ func toNodeViews(nodes []*subscription.Node, blocked map[string]bool, unlockResu
 }
 
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(scope)
 	// 读屏蔽名单以标记节点状态；读失败降级为空集（节点仍展示，只是都标为未屏蔽）
 	blocked, err := s.st.ListBlockedNodes()
 	if err != nil {
@@ -1152,7 +1397,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 
 	// 管理页展示全量池（含不可用/被屏蔽）并附标准化名，便于原名↔标准名对比（见 ADR 0012/0013）。
 	// 管理列表无端点上下文,用全局配置。
-	nodes := s.standardizeNodesForEndpoint(s.nodes.Nodes(), nil)
+	nodes := s.standardizeNodesForEndpoint(s.nodes.NodesForUser(effUID), nil)
 	q := parseNodeQuery(r)
 	res := QueryNodes(nodes, blocked, q)
 
@@ -1183,7 +1428,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"last_update": s.nodes.LastUpdate(),
+		"last_update": s.nodes.LastUpdateForUser(effUID),
 		"nodes":       toNodeViews(res.Nodes, blocked, unlockResults, nodeTags, stabilityScores),
 		"total":       res.Total,
 		"page":        res.Page,
@@ -1224,22 +1469,16 @@ func parseNodeQuery(r *http.Request) NodeQuery {
 	}
 }
 
-// mergeSelfHosted 把当前启用的自建节点合并进节点池，按 NodeKey 去重。
-//
-// 池中已有的（带上一轮聚合的真实健康状态）优先保留；池中缺失的从 DB 补入
-// （ToNode 的占位 Available/Latency，直到下轮聚合健康检查刷新）。这样刚新增的
-// 自建节点无需等下一轮刷新即刻出现在订阅/预览里，机场全部拉取失败时它们也仍在。
-// 读取失败时降级返回原池——宁可暂缺一次，也不让订阅生成失败。
-// 不修改入参底层数组（immutability）：有新增时复制到新切片再追加。
 // mergeSelfHosted 把启用的自建节点按"库配置为准 + 池健康覆盖"合并进节点池。
 //
 // 机场节点原样保留;池中自建节点整体丢弃、仅取其健康状态(Available/Latency/
-// LastCheck/DetectionLastCheck)做覆盖来源。自建节点最终由库(ListSelfHostedNodes,
+// LastCheck/DetectionLastCheck)做覆盖来源。自建节点最终由库(ListSelfHostedNodesByUser,
 // 仅启用)派生,保证编辑(协议/UUID/…)、禁用、删除都在下次订阅刷新即时生效;
 // 若池中有同 NodeKey 的真实健康状态则覆盖占位值。读库失败降级返回原池。
 // 不修改入参节点/底层数组(immutability):机场节点按引用保留,自建节点全部新建。
-func (s *Server) mergeSelfHosted(nodes []*subscription.Node) []*subscription.Node {
-	selfHosted, err := s.st.ListSelfHostedNodes()
+// userID 为属主(ticket 07):0 = 全局池(不校验属主)。
+func (s *Server) mergeSelfHosted(nodes []*subscription.Node, userID int64) []*subscription.Node {
+	selfHosted, err := s.st.ListSelfHostedNodesByUser(userID)
 	if err != nil {
 		s.logger.Warn("list self hosted nodes failed, skipping serve-time merge", "error", err)
 		return nodes
@@ -1281,9 +1520,10 @@ func (s *Server) mergeSelfHosted(nodes []*subscription.Node) []*subscription.Nod
 // 对应过滤——宁可多给节点，也不因设置/名单读不出而让订阅失效。
 //
 // 注意:节点池现在保留全量数据(含不可用/慢/重复),所有过滤在这里执行,刷新时不再砍节点。
-func (s *Server) filteredNodes(nodes []*subscription.Node) []*subscription.Node {
+// userID 为属主(ticket 07):0 = 全局池,非 0 时自建节点合并只读该用户的。
+func (s *Server) filteredNodes(nodes []*subscription.Node, userID int64) []*subscription.Node {
 	// serve-time 合并自建节点:填补「新增后到下轮刷新前」的空档,并保证机场全挂时自建节点仍在。
-	nodes = s.mergeSelfHosted(nodes)
+	nodes = s.mergeSelfHosted(nodes, userID)
 
 	settings, err := s.st.GetSystemSettings()
 	if err != nil {
@@ -1466,13 +1706,18 @@ func (s *Server) renderSubscription(nodes []*subscription.Node, format string) (
 
 // handleEndpointPreview 后台预览：对指定订阅地址在“当前那一刻”生成订阅内容与节点清单，
 // 应用与 /sub 完全相同的关键词过滤（所见即所得），但不记录拉取统计（见 ADR 0005）。
+// ticket 07: 校验属主,行属他人 404。
 func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	ep, err := s.st.GetEndpointByID(id)
+	ep, err := s.st.GetEndpointByIDForUser(EffectiveUserID(scope), id)
 	if err != nil {
 		http.NotFound(w, r)
 		return

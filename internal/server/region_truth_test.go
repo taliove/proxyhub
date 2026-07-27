@@ -36,7 +36,7 @@ func TestWritebackRegionAlwaysOverwrites(t *testing.T) {
 	}
 
 	nodeKey := node.ToNode().NodeKey()
-	srv.writebackRegionIfNeeded(nodeKey, report)
+	srv.writebackRegionIfNeeded(0, nodeKey, report)
 
 	// Verify region was updated to CA
 	nodes, err := st.ListAllSelfHostedNodes()
@@ -70,7 +70,7 @@ func TestWritebackRegionNoEgress(t *testing.T) {
 	report := detection.ExamReport{}
 
 	nodeKey := node.ToNode().NodeKey()
-	srv.writebackRegionIfNeeded(nodeKey, report)
+	srv.writebackRegionIfNeeded(0, nodeKey, report)
 
 	// Verify region unchanged
 	nodes, err := st.ListAllSelfHostedNodes()
@@ -107,7 +107,7 @@ func TestWritebackRegionAirportNode(t *testing.T) {
 	}
 
 	nodeKey := testNode.NodeKey()
-	srv.writebackRegionIfNeeded(nodeKey, report)
+	srv.writebackRegionIfNeeded(0, nodeKey, report)
 
 	if testNode.Region != "HK" {
 		t.Errorf("expected region HK, got %q", testNode.Region)
@@ -276,7 +276,7 @@ func TestRefreshNamesAirportEgressPriority(t *testing.T) {
 	}
 
 	// First writeback the egress region
-	srv.writebackRegionIfNeeded(nodeKey, examReport)
+	srv.writebackRegionIfNeeded(0, nodeKey, examReport)
 
 	// Then refresh names - should use the corrected HK region
 	updated := srv.refreshAirportNodeNames(nil)

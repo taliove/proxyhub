@@ -10,10 +10,10 @@ import (
 // 内存池节点的 Name/Region 立即更新为新值,不必等下一轮聚合刷新。
 func TestUpdateNodeIdentity_UpdatesNameAndRegion(t *testing.T) {
 	agg, _ := newTestAggregator(t)
-	agg.nodes = []*subscription.Node{
+	agg.SetNodesForUser(0, []*subscription.Node{
 		{Name: "boy SELF-02", Server: "192.0.2.1", Port: 443, Region: "Unknown", Source: subscription.SourceSelfHosted},
 		{Name: "HK-01", Server: "hk.example.com", Port: 443, Region: "HK", Source: "TestAirport"},
-	}
+	})
 
 	ok := agg.UpdateNodeIdentity("192.0.2.1:443", "自建香港", "HK")
 	if !ok {
@@ -36,9 +36,9 @@ func TestUpdateNodeIdentity_UpdatesNameAndRegion(t *testing.T) {
 // TestUpdateNodeIdentity_NotFound 池中无此 NodeKey 时返回 false,不改动任何节点。
 func TestUpdateNodeIdentity_NotFound(t *testing.T) {
 	agg, _ := newTestAggregator(t)
-	agg.nodes = []*subscription.Node{
+	agg.SetNodesForUser(0, []*subscription.Node{
 		{Name: "HK-01", Server: "hk.example.com", Port: 443, Region: "HK", Source: "TestAirport"},
-	}
+	})
 
 	if agg.UpdateNodeIdentity("no.such.host:443", "x", "JP") {
 		t.Fatal("UpdateNodeIdentity() = true for absent node, want false")
@@ -52,9 +52,9 @@ func TestUpdateNodeIdentity_NotFound(t *testing.T) {
 // 避免误抹已有身份字段(region 回写只带 region,rename 只带 name)。
 func TestUpdateNodeIdentity_EmptyValuesSkipped(t *testing.T) {
 	agg, _ := newTestAggregator(t)
-	agg.nodes = []*subscription.Node{
+	agg.SetNodesForUser(0, []*subscription.Node{
 		{Name: "orig", Server: "192.0.2.1", Port: 443, Region: "HK", Source: subscription.SourceSelfHosted},
-	}
+	})
 
 	// 只回写 region,name 传空:name 应保留
 	agg.UpdateNodeIdentity("192.0.2.1:443", "", "JP")
@@ -74,14 +74,14 @@ func TestUpdateNodeIdentity_EmptyValuesSkipped(t *testing.T) {
 func TestUpdateNodeIdentity_ReplacesObject(t *testing.T) {
 	agg, _ := newTestAggregator(t)
 	original := &subscription.Node{Name: "orig", Server: "192.0.2.1", Port: 443, Region: "HK", Source: subscription.SourceSelfHosted}
-	agg.nodes = []*subscription.Node{original}
+	agg.SetNodesForUser(0, []*subscription.Node{original})
 
 	agg.UpdateNodeIdentity("192.0.2.1:443", "renamed", "JP")
 
 	if original.Name != "orig" || original.Region != "HK" {
 		t.Errorf("original object mutated in place: %q/%q, want orig/HK", original.Name, original.Region)
 	}
-	if agg.nodes[0] == original {
+	if agg.NodesForUser(0)[0] == original {
 		t.Error("pool still holds the old pointer; expected replacement with a new object")
 	}
 }

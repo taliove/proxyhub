@@ -28,7 +28,7 @@ func TestFilteredNodes_MergesFreshSelfHosted(t *testing.T) {
 		t.Fatalf("CreateSelfHostedNode: %v", err)
 	}
 
-	result := srv.filteredNodes(srv.nodes.Nodes())
+	result := srv.filteredNodes(srv.nodes.Nodes(), 0)
 
 	if countSelfHosted(result) != 1 {
 		t.Fatalf("self-hosted count = %d, want 1 (should be merged at serve time)", countSelfHosted(result))
@@ -44,7 +44,7 @@ func TestMergeSelfHosted_SkipsDisabled(t *testing.T) {
 		t.Fatalf("CreateSelfHostedNode: %v", err)
 	}
 
-	if got := countSelfHosted(srv.mergeSelfHosted(nil)); got != 0 {
+	if got := countSelfHosted(srv.mergeSelfHosted(nil, 0)); got != 0 {
 		t.Errorf("merged disabled self-hosted count = %d, want 0", got)
 	}
 }
@@ -62,7 +62,7 @@ func TestMergeSelfHosted_DedupsExisting(t *testing.T) {
 	pool := []*subscription.Node{
 		{Name: "自建A", Server: "1.2.3.4", Port: 443, Source: subscription.SourceSelfHosted, Available: true, Latency: 42},
 	}
-	result := srv.mergeSelfHosted(pool)
+	result := srv.mergeSelfHosted(pool, 0)
 
 	if countSelfHosted(result) != 1 {
 		t.Errorf("self-hosted count = %d, want 1 (no duplicate)", countSelfHosted(result))
@@ -87,7 +87,7 @@ func TestMergeSelfHosted_DBConfigAuthoritative(t *testing.T) {
 		{Name: "自建A", Type: "vmess", Server: "1.2.3.4", Port: 443,
 			Source: subscription.SourceSelfHosted, Available: true, Latency: 42},
 	}
-	out := srv.mergeSelfHosted(pool)
+	out := srv.mergeSelfHosted(pool, 0)
 
 	if countSelfHosted(out) != 1 {
 		t.Fatalf("self-hosted count = %d, want 1", countSelfHosted(out))
@@ -106,7 +106,7 @@ func TestMergeSelfHosted_KeepsAirportNodes(t *testing.T) {
 	pool := []*subscription.Node{
 		{Name: "机场节点", Type: "vless", Server: "9.9.9.9", Port: 8443, Source: "机场X"},
 	}
-	out := srv.mergeSelfHosted(pool)
+	out := srv.mergeSelfHosted(pool, 0)
 	if len(out) != 1 || out[0].Source != "机场X" {
 		t.Fatalf("airport node not preserved: %+v", out)
 	}

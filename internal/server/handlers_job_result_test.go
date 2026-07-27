@@ -276,7 +276,7 @@ func TestOnExamComplete_PersistsJobID(t *testing.T) {
 	jobID := seedExamJob(t, srv, "exam", nodeKey, nil, false)
 
 	// 与 server.go 布线同款表达式:反查 running 行 id 再落历史。
-	srv.onExamComplete(nodeKey, sampleExamReportForJob(77), srv.findRunningJobID("exam", nodeKey))
+	srv.onExamComplete(0, nodeKey, sampleExamReportForJob(77), srv.findRunningJobID("exam", nodeKey))
 
 	entry, err := st.ExamHistoryByJob(nodeKey, jobID)
 	if err != nil {

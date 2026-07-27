@@ -52,7 +52,7 @@ func TestFetchAirports_WritesFetchDiags(t *testing.T) {
 	}
 	rl := &runLog{st: st, logger: agg.logger, runID: run.ID}
 
-	if _, err := agg.fetchAirports(context.Background(), rl, nil); err != nil {
+	if _, err := agg.fetchAirports(context.Background(), rl, nil, 0); err != nil {
 		t.Fatalf("fetchAirports() error = %v", err)
 	}
 

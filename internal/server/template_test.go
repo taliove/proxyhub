@@ -154,7 +154,7 @@ func TestTemplateAPI_Reset(t *testing.T) {
 func TestSubscription_UsesTemplate(t *testing.T) {
 	srv, st := newTestServer(t, templateNodes())
 	h := srv.Handler()
-	ep, _ := st.CreateEndpoint("dev")
+	ep, _ := st.CreateEndpointForUser(1, "dev")
 
 	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token+"&format=clash", nil)
 	req.RemoteAddr = "1.2.3.4:5678"
@@ -225,7 +225,7 @@ func TestSubscription_UsesTemplate(t *testing.T) {
 func TestSubscription_UsesCustomTemplate(t *testing.T) {
 	srv, st := newTestServer(t, templateNodes())
 	h := srv.Handler()
-	ep, _ := st.CreateEndpoint("dev")
+	ep, _ := st.CreateEndpointForUser(1, "dev")
 
 	custom := "mode: rule\nproxy-groups:\n  - name: 唯一组\n    type: select\n    proxies: [DIRECT, '{{nodes}}']\nrules:\n  - MATCH,唯一组\n"
 	if err := st.SetClashTemplate(custom); err != nil {

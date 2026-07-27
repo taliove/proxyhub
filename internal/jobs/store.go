@@ -30,14 +30,20 @@ type Record struct {
 
 // Insert 追加一条 running 任务记录,返回自增 id。params 为空时存 'null'。
 func (s *Store) Insert(kind, key string, params json.RawMessage) (int64, error) {
+	return s.InsertForUser(0, kind, key, params)
+}
+
+// InsertForUser 追加一条归属指定用户的 running 任务记录(ticket 07)。
+// userID=0 保留旧行为(未归属/旧任务)。
+func (s *Store) InsertForUser(userID int64, kind, key string, params json.RawMessage) (int64, error) {
 	if len(params) == 0 {
 		params = json.RawMessage("null")
 	}
 	now := time.Now()
 	res, err := s.db.Exec(
-		`INSERT INTO jobs (kind, key, params_json, status, cursor, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, '', ?, ?)`,
-		kind, key, string(params), string(StatusRunning), now, now,
+		`INSERT INTO jobs (kind, key, params_json, status, cursor, created_at, updated_at, user_id)
+		 VALUES (?, ?, ?, ?, '', ?, ?, ?)`,
+		kind, key, string(params), string(StatusRunning), now, now, userID,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert job: %w", err)
@@ -106,12 +112,24 @@ func (s *Store) LoadRunning() ([]Record, error) {
 
 // LoadAll 加载所有任务记录(供任务中心列表展示),按 id 降序(最新在前)。
 func (s *Store) LoadAll() ([]Record, error) {
-	rows, err := s.db.Query(
-		`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at
-		 FROM jobs ORDER BY id DESC`,
-	)
+	return s.loadJobs(`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at
+		 FROM jobs ORDER BY id DESC`)
+}
+
+// LoadAllByUser 加载指定用户的任务记录(ticket 07),按 id 降序。
+// userID<=0 回退为全量(超管跨用户视角用)。
+func (s *Store) LoadAllByUser(userID int64) ([]Record, error) {
+	if userID <= 0 {
+		return s.LoadAll()
+	}
+	return s.loadJobs(`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at
+		 FROM jobs WHERE user_id = ? ORDER BY id DESC`, userID)
+}
+
+func (s *Store) loadJobs(query string, args ...any) ([]Record, error) {
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query all jobs: %w", err)
+		return nil, fmt.Errorf("query jobs: %w", err)
 	}
 	defer rows.Close()
 
@@ -134,6 +152,36 @@ func (s *Store) LoadAll() ([]Record, error) {
 		records = append(records, rec)
 	}
 	return records, rows.Err()
+}
+
+// GetByUser 按 id + 属主读取单条记录(ticket 07);行属他人返回 (nil, nil)
+// (不暴露存在性)。userID<=0 回退为 Get(超管跨用户视角用)。
+func (s *Store) GetByUser(userID, id int64) (*Record, error) {
+	if userID <= 0 {
+		return s.Get(id)
+	}
+	var (
+		rec        Record
+		params     string
+		status     string
+		createdStr string
+		updatedStr string
+	)
+	err := s.db.QueryRow(
+		`SELECT id, kind, key, params_json, status, cursor, created_at, updated_at
+		 FROM jobs WHERE id = ? AND user_id = ?`, id, userID,
+	).Scan(&rec.ID, &rec.Kind, &rec.Key, &params, &status, &rec.Cursor, &createdStr, &updatedStr)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get job: %w", err)
+	}
+	rec.Params = json.RawMessage(params)
+	rec.Status = Status(status)
+	rec.CreatedAt = parseSQLTime(createdStr)
+	rec.UpdatedAt = parseSQLTime(updatedStr)
+	return &rec, nil
 }
 
 // Get 读取单条记录(测试/诊断用);无记录返回 (nil, nil)。

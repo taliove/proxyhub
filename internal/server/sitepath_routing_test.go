@@ -68,7 +68,7 @@ func TestSitePath_ConfiguredPrefixAllows(t *testing.T) {
 	}
 
 	// 订阅端点在前缀下完整可用
-	ep, err := st.CreateEndpoint("dev")
+	ep, err := st.CreateEndpointForUser(1, "dev")
 	if err != nil {
 		t.Fatalf("CreateEndpoint: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestSitePath_RootAndPrefixlessReturn404(t *testing.T) {
 	}
 	h := srv.Handler()
 
-	ep, err := st.CreateEndpoint("dev")
+	ep, err := st.CreateEndpointForUser(1, "dev")
 	if err != nil {
 		t.Fatalf("CreateEndpoint: %v", err)
 	}

@@ -160,12 +160,10 @@ func TestRunOnce_AllFailed_PreservesPool(t *testing.T) {
 	agg, st := newTestAggregator(t)
 
 	// 预置节点池(直接注入,避免依赖健康检查能否连通测试节点)
-	agg.mu.Lock()
-	agg.nodes = []*subscription.Node{
+	agg.SetNodesForUser(0, []*subscription.Node{
 		{Name: "HK 01", Type: "trojan", Server: "1.2.3.4", Port: 443, Available: true},
 		{Name: "US 01", Type: "trojan", Server: "5.6.7.8", Port: 443, Available: true},
-	}
-	agg.mu.Unlock()
+	})
 	before := len(agg.Nodes())
 
 	// 唯一的机场拉不通,模拟机场整体不可达 / 全量拉取失败

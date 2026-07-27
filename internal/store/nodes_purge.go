@@ -17,21 +17,34 @@ import (
 //
 // 单事务执行,失败整体回滚。
 func (s *Store) DeleteAirportNodes() (int64, error) {
+	return s.DeleteAirportNodesForUser(0)
+}
+
+// DeleteAirportNodesForUser 删除指定用户分片的机场节点(ticket 07);
+// userID=0 为旧行为(跨用户全清)。关联表语义同 DeleteAirportNodes。
+func (s *Store) DeleteAirportNodesForUser(userID int64) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
+	tagQuery := `DELETE FROM node_tags WHERE node_key IN (SELECT node_key FROM nodes WHERE source != ?`
+	nodeQuery := `DELETE FROM nodes WHERE source != ?`
+	args := []any{subscription.SourceSelfHosted}
+	if userID > 0 {
+		tagQuery += ` AND user_id = ?`
+		nodeQuery += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	tagQuery += `)`
+
 	// 先删机场节点的自动标签(需引用 nodes 表筛选,必须在删节点之前)
-	if _, err := tx.Exec(
-		`DELETE FROM node_tags WHERE node_key IN (SELECT node_key FROM nodes WHERE source != ?)`,
-		subscription.SourceSelfHosted,
-	); err != nil {
+	if _, err := tx.Exec(tagQuery, args...); err != nil {
 		return 0, fmt.Errorf("delete airport node tags: %w", err)
 	}
 
-	res, err := tx.Exec(`DELETE FROM nodes WHERE source != ?`, subscription.SourceSelfHosted)
+	res, err := tx.Exec(nodeQuery, args...)
 	if err != nil {
 		return 0, fmt.Errorf("delete airport nodes: %w", err)
 	}

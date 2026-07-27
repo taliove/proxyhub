@@ -34,18 +34,16 @@ func TestAggregator_CarryForwardDetectionState(t *testing.T) {
 	}
 
 	// 模拟真实检测：直接修改内存池的检测状态
-	a.mu.Lock()
-	if len(a.nodes) != 1 {
-		t.Fatalf("first round: nodes len = %d, want 1", len(a.nodes))
+	if len(a.NodesForUser(0)) != 1 {
+		t.Fatalf("first round: nodes len = %d, want 1", len(a.NodesForUser(0)))
 	}
-	a.nodes[0].Available = false
-	a.nodes[0].Latency = 999
-	a.nodes[0].DetectionLastCheck = detectionTime
+	a.NodesForUser(0)[0].Available = false
+	a.NodesForUser(0)[0].Latency = 999
+	a.NodesForUser(0)[0].DetectionLastCheck = detectionTime
 	// 持久化修改后的状态（模拟检测完成后的写回）
-	if err := st.SaveNodePool(a.nodes); err != nil {
+	if err := st.SaveNodePool(a.NodesForUser(0)); err != nil {
 		t.Fatalf("save detection state error = %v", err)
 	}
-	a.mu.Unlock()
 
 	// 第二轮刷新：同一节点（NodeKey 相同）
 	if err := a.RunOnce(context.Background(), "test"); err != nil {
@@ -53,9 +51,7 @@ func TestAggregator_CarryForwardDetectionState(t *testing.T) {
 	}
 
 	// 验证：检测状态应保留（Available=false, Latency=999, DetectionLastCheck 非零）
-	a.mu.RLock()
-	nodes := a.nodes
-	a.mu.RUnlock()
+	nodes := a.NodesForUser(0)
 
 	if len(nodes) != 1 {
 		t.Fatalf("second round: nodes len = %d, want 1", len(nodes))
@@ -100,9 +96,7 @@ func TestAggregator_StaleMissingNodes(t *testing.T) {
 	}
 
 	// 验证：应有2个节点（香港 active + 日本 stale）
-	a.mu.RLock()
-	nodes := a.nodes
-	a.mu.RUnlock()
+	nodes := a.NodesForUser(0)
 
 	if len(nodes) != 2 {
 		t.Fatalf("nodes len = %d, want 2 (1 active + 1 stale)", len(nodes))

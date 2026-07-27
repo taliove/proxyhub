@@ -22,21 +22,21 @@ func newKindTestNode(server string, port int) *subscription.Node {
 func TestUpdateNodeTestResult_DetectionKind(t *testing.T) {
 	agg, _ := newTestAggregator(t)
 	node := newKindTestNode("10.0.0.1", 8388)
-	agg.nodes = []*subscription.Node{node}
+	agg.SetNodesForUser(0, []*subscription.Node{node})
 	key := node.NodeKey()
 
 	if !agg.UpdateNodeTestResult(key, "quick", true, 100, 0, 0, "", "") {
 		t.Fatal("UpdateNodeTestResult(quick) 未命中节点")
 	}
 	// 写回为不可变语义(浅拷贝替换池内对象),断言须读池内当前节点而非旧指针
-	if got := agg.nodes[0].DetectionKind; got != subscription.DetectionKindHealth {
+	if got := agg.NodesForUser(0)[0].DetectionKind; got != subscription.DetectionKindHealth {
 		t.Errorf("quick 后 DetectionKind = %q, want %q", got, subscription.DetectionKindHealth)
 	}
 
 	if !agg.UpdateNodeTestResult(key, "real", true, 200, 0, 0, "", "") {
 		t.Fatal("UpdateNodeTestResult(real) 未命中节点")
 	}
-	if got := agg.nodes[0].DetectionKind; got != subscription.DetectionKindReal {
+	if got := agg.NodesForUser(0)[0].DetectionKind; got != subscription.DetectionKindReal {
 		t.Errorf("real 后 DetectionKind = %q, want %q", got, subscription.DetectionKindReal)
 	}
 
@@ -44,7 +44,7 @@ func TestUpdateNodeTestResult_DetectionKind(t *testing.T) {
 	if !agg.UpdateNodeTestResult(key, "bandwidth", true, 200, 50, 10, "", "") {
 		t.Fatal("UpdateNodeTestResult(bandwidth) 未命中节点")
 	}
-	if got := agg.nodes[0].DetectionKind; got != subscription.DetectionKindReal {
+	if got := agg.NodesForUser(0)[0].DetectionKind; got != subscription.DetectionKindReal {
 		t.Errorf("bandwidth 后 DetectionKind = %q, want %q(不应被改动)", got, subscription.DetectionKindReal)
 	}
 }
@@ -54,12 +54,12 @@ func TestUpdateNodeTestResult_DetectionKind(t *testing.T) {
 func TestUpdateNodeTestResult_QuickAfterReal(t *testing.T) {
 	agg, _ := newTestAggregator(t)
 	node := newKindTestNode("10.0.0.2", 8388)
-	agg.nodes = []*subscription.Node{node}
+	agg.SetNodesForUser(0, []*subscription.Node{node})
 	key := node.NodeKey()
 
 	agg.UpdateNodeTestResult(key, "real", true, 200, 0, 0, "", "")
 	agg.UpdateNodeTestResult(key, "quick", false, 0, 0, 0, "timeout", "dial tcp: i/o timeout")
-	if got := agg.nodes[0].DetectionKind; got != subscription.DetectionKindHealth {
+	if got := agg.NodesForUser(0)[0].DetectionKind; got != subscription.DetectionKindHealth {
 		t.Errorf("real 后再 quick,DetectionKind = %q, want %q(以最近一次判定为准)", got, subscription.DetectionKindHealth)
 	}
 }
@@ -69,29 +69,29 @@ func TestUpdateNodeTestResult_QuickAfterReal(t *testing.T) {
 func TestUpdateNodeTestResult_FailReason(t *testing.T) {
 	agg, _ := newTestAggregator(t)
 	node := newKindTestNode("10.0.0.3", 8388)
-	agg.nodes = []*subscription.Node{node}
+	agg.SetNodesForUser(0, []*subscription.Node{node})
 	key := node.NodeKey()
 
 	// 失败:记录分类与详情
 	longDetail := strings.Repeat("x", 500)
 	agg.UpdateNodeTestResult(key, "real", false, 0, 0, 0, "timeout", longDetail)
-	if got := agg.nodes[0].DetectionFailReason; got != "timeout" {
+	if got := agg.NodesForUser(0)[0].DetectionFailReason; got != "timeout" {
 		t.Errorf("失败后 DetectionFailReason = %q, want timeout", got)
 	}
-	if got := len([]rune(agg.nodes[0].DetectionFailDetail)); got != 200 {
+	if got := len([]rune(agg.NodesForUser(0)[0].DetectionFailDetail)); got != 200 {
 		t.Errorf("详情未截断到 200 字符, len = %d", got)
 	}
 
 	// 成功:清空原因
 	agg.UpdateNodeTestResult(key, "real", true, 120, 0, 0, "", "")
-	if n := agg.nodes[0]; n.DetectionFailReason != "" || n.DetectionFailDetail != "" {
+	if n := agg.NodesForUser(0)[0]; n.DetectionFailReason != "" || n.DetectionFailDetail != "" {
 		t.Errorf("成功后失败原因未清空: reason=%q detail=%q", n.DetectionFailReason, n.DetectionFailDetail)
 	}
 
 	// bandwidth 模式不动失败原因
 	agg.UpdateNodeTestResult(key, "real", false, 0, 0, 0, "refused", "connection refused")
 	agg.UpdateNodeTestResult(key, "bandwidth", true, 0, 50, 10, "", "")
-	if got := agg.nodes[0].DetectionFailReason; got != "refused" {
+	if got := agg.NodesForUser(0)[0].DetectionFailReason; got != "refused" {
 		t.Errorf("bandwidth 后 DetectionFailReason = %q, want refused(不应被改动)", got)
 	}
 }

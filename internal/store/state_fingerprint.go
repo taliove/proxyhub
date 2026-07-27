@@ -205,8 +205,10 @@ func isSecretSettingKey(key string) bool {
 }
 
 // loadSettingRecords settings: 身份=key;非机密设置摘要覆盖 value,机密设置只覆盖存在性。
+// 读 system_settings(ticket 06 settings 拆分后的全局作用域;遗留 settings 表
+// 仅作回滚备份,不再参与指纹)。
 func loadSettingRecords(db *sql.DB, key []byte) ([]RecordFingerprint, error) {
-	rows, err := db.Query(`SELECT key, value FROM settings`)
+	rows, err := db.Query(`SELECT key, value FROM system_settings`)
 	if err != nil {
 		return nil, fmt.Errorf("查询 settings: %w", err)
 	}

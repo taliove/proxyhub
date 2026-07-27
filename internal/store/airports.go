@@ -16,6 +16,8 @@ type Airport struct {
 	Abbr      string    `json:"abbr"` // 机场简称,空表示自动生成(见 ADR 0012)
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
+	// UserID 属主(ticket 06/07);0 = 未归属(历史数据桶,迁移后由超管认领)。
+	UserID int64 `json:"user_id,omitempty"`
 }
 
 // SelfHostedNode 自建节点
@@ -34,6 +36,8 @@ type SelfHostedNode struct {
 	RegionCode      string `json:"region_code"`
 	GrpcServiceName string `json:"grpc_service_name"`
 	Enabled         bool   `json:"enabled"`
+	// UserID 属主(ticket 06/07);0 = 未归属(历史数据桶,迁移后由超管认领)。
+	UserID int64 `json:"user_id,omitempty"`
 }
 
 // ToNode 把自建节点转换为聚合/订阅使用的 subscription.Node。
@@ -65,11 +69,36 @@ func (n *SelfHostedNode) ToNode() *subscription.Node {
 	}
 }
 
-// CreateAirport 添加机场
+// CreateAirport 添加机场。
+// 未指定属主(旧调用/直接库调用)时归一到首个 super_admin(ticket 07 Invariant B);
+// 没有超管(初始化前)才落未归属桶 0。
 func (s *Store) CreateAirport(name, url string) (*Airport, error) {
+	return s.CreateAirportForUser(s.defaultOwnerUserID(0), name, url)
+}
+
+// defaultOwnerUserID 归一属主:rowUserID>0 直接用;=0 回退首个 super_admin;
+// 无用户时保持 0(未归属桶)。
+func (s *Store) defaultOwnerUserID(rowUserID int64) int64 {
+	if rowUserID > 0 {
+		return rowUserID
+	}
+	users, err := s.ListUsers()
+	if err != nil {
+		return 0
+	}
+	for _, u := range users {
+		if u.Role == RoleSuperAdmin {
+			return u.ID
+		}
+	}
+	return 0
+}
+
+// CreateAirportForUser 创建归属指定用户的机场(ticket 07)。userID=0 保留旧行为(未归属)。
+func (s *Store) CreateAirportForUser(userID int64, name, url string) (*Airport, error) {
 	result, err := s.db.Exec(
-		`INSERT INTO airports (name, url) VALUES (?, ?)`,
-		name, url)
+		`INSERT INTO airports (name, url, user_id) VALUES (?, ?, ?)`,
+		name, url, userID)
 	if err != nil {
 		return nil, fmt.Errorf("insert airport: %w", err)
 	}
@@ -81,29 +110,56 @@ func (s *Store) CreateAirport(name, url string) (*Airport, error) {
 		URL:       url,
 		Enabled:   true,
 		CreatedAt: time.Now(),
+		UserID:    userID,
 	}, nil
 }
 
-// ListAirports 列出所有机场
+// airportColumns 机场查询共用的列清单(ticket 07 起带 user_id)。
+const airportColumns = `id, name, url, abbr, enabled, created_at, user_id`
+
+// ListAirports 列出所有机场(跨用户,全量视角;
+// 按用户过滤走 ListAirportsByUser)。
+//
+// 剩余调用者仅限:(a) 聚合器全量刷新分支(airportOwnerID=0 时);
+// (b) 测试代码 / 级联删除内部路径。生产 handler 已改用 ByUser 版本。
 func (s *Store) ListAirports() ([]*Airport, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, url, abbr, enabled, created_at FROM airports ORDER BY id DESC`)
+		`SELECT ` + airportColumns + ` FROM airports ORDER BY id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query airports: %w", err)
 	}
 	defer rows.Close()
 
+	return scanAirports(rows)
+}
+
+// ListAirportsByUser 列出指定用户名下的机场(ticket 06 新增接口;
+// 不影响 ListAirports 的全量语义)。userID 无匹配行时返回空切片。
+func (s *Store) ListAirportsByUser(userID int64) ([]*Airport, error) {
+	rows, err := s.db.Query(
+		`SELECT `+airportColumns+` FROM airports WHERE user_id = ? ORDER BY id DESC`,
+		userID)
+	if err != nil {
+		return nil, fmt.Errorf("query airports by user: %w", err)
+	}
+	defer rows.Close()
+
+	return scanAirports(rows)
+}
+
+// scanAirports 是 ListAirports/ListAirportsByUser 共用的行扫描器。
+func scanAirports(rows *sql.Rows) ([]*Airport, error) {
 	var airports []*Airport
 	for rows.Next() {
 		var a Airport
 		var enabled int
-		if err := rows.Scan(&a.ID, &a.Name, &a.URL, &a.Abbr, &enabled, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.URL, &a.Abbr, &enabled, &a.CreatedAt, &a.UserID); err != nil {
 			return nil, fmt.Errorf("scan airport: %w", err)
 		}
 		a.Enabled = enabled == 1
 		airports = append(airports, &a)
 	}
-	return airports, nil
+	return airports, rows.Err()
 }
 
 // GetAirportByID 获取机场
@@ -111,8 +167,29 @@ func (s *Store) GetAirportByID(id int64) (*Airport, error) {
 	var a Airport
 	var enabled int
 	err := s.db.QueryRow(
-		`SELECT id, name, url, abbr, enabled, created_at FROM airports WHERE id = ?`, id).
-		Scan(&a.ID, &a.Name, &a.URL, &a.Abbr, &enabled, &a.CreatedAt)
+		`SELECT `+airportColumns+` FROM airports WHERE id = ?`, id).
+		Scan(&a.ID, &a.Name, &a.URL, &a.Abbr, &enabled, &a.CreatedAt, &a.UserID)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query airport: %w", err)
+	}
+	a.Enabled = enabled == 1
+	return &a, nil
+}
+
+// GetAirportByIDForUser 按 ID 查询且校验属主(ticket 07):行属他人时同样 ErrNotFound。
+// userID=0 = 全局视角(测试逃生舱/超管未切换时使用),属主校验跳过。
+func (s *Store) GetAirportByIDForUser(userID, id int64) (*Airport, error) {
+	if userID == 0 {
+		return s.GetAirportByID(id)
+	}
+	var a Airport
+	var enabled int
+	err := s.db.QueryRow(
+		`SELECT `+airportColumns+` FROM airports WHERE id = ? AND user_id = ?`, id, userID).
+		Scan(&a.ID, &a.Name, &a.URL, &a.Abbr, &enabled, &a.CreatedAt, &a.UserID)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -131,6 +208,21 @@ func (s *Store) SetAirportEnabled(id int64, enabled bool) error {
 	return err
 }
 
+// SetAirportEnabledForUser 按属主启用/禁用机场(ticket 07);行属他人时 ErrNotFound。
+// userID=0 = 全局视角(测试逃生舱/超管未切换时使用),属主校验跳过。
+func (s *Store) SetAirportEnabledForUser(userID, id int64, enabled bool) error {
+	if userID == 0 {
+		return s.SetAirportEnabled(id, enabled)
+	}
+	res, err := s.db.Exec(
+		`UPDATE airports SET enabled = ? WHERE id = ? AND user_id = ?`,
+		boolToInt(enabled), id, userID)
+	if err != nil {
+		return err
+	}
+	return checkAffected(res)
+}
+
 // DeleteAirport 删除机场
 func (s *Store) DeleteAirport(id int64) error {
 	result, err := s.db.Exec(`DELETE FROM airports WHERE id = ?`, id)
@@ -144,42 +236,109 @@ func (s *Store) DeleteAirport(id int64) error {
 	return nil
 }
 
+// DeleteAirportForUser 按属主删除机场(ticket 07);行属他人时 ErrNotFound。
+// userID=0 = 全局视角(测试逃生舱/超管未切换时使用),属主校验跳过。
+func (s *Store) DeleteAirportForUser(userID, id int64) error {
+	if userID == 0 {
+		return s.DeleteAirport(id)
+	}
+	result, err := s.db.Exec(`DELETE FROM airports WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return fmt.Errorf("delete airport: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateAirportForUser 按属主更新机场(ticket 07);行属他人时 ErrNotFound。
+// userID=0 = 全局视角(测试逃生舱/超管未切换时使用),属主校验跳过。
+func (s *Store) UpdateAirportForUser(userID, id int64, name, url, abbr string) error {
+	if userID == 0 {
+		return s.UpdateAirport(id, name, url, abbr)
+	}
+	res, err := s.db.Exec(
+		`UPDATE airports SET name = ?, url = ?, abbr = ? WHERE id = ? AND user_id = ?`,
+		name, url, abbr, id, userID)
+	if err != nil {
+		return fmt.Errorf("update airport: %w", err)
+	}
+	return checkAffected(res)
+}
+
 // CreateSelfHostedNode 添加自建节点
+// CreateSelfHostedNode 添加自建节点。
+// 未指定属主(旧调用/直接库调用)时归一到首个 super_admin(ticket 07 Invariant B):
+	// 没有超管(初始化前)才落未归属桶 0,避免后台属主校验把孤儿行过滤掉。
 func (s *Store) CreateSelfHostedNode(node *SelfHostedNode) error {
+	return s.CreateSelfHostedNodeForUser(s.defaultOwnerUserID(node.UserID), node)
+}
+
+// CreateSelfHostedNodeForUser 创建归属指定用户的自建节点(ticket 07)。
+// userID=0 保留旧行为(未归属)。
+func (s *Store) CreateSelfHostedNodeForUser(userID int64, node *SelfHostedNode) error {
 	_, err := s.db.Exec(
 		`INSERT INTO self_hosted_nodes
-		(name, protocol, server, port, uuid, password, cipher, alter_id, network, tls, region_code, grpc_service_name, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(name, protocol, server, port, uuid, password, cipher, alter_id, network, tls, region_code, grpc_service_name, enabled, user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		node.Name, node.Protocol, node.Server, node.Port,
 		node.UUID, node.Password, node.Cipher, node.AlterID,
-		node.Network, boolToInt(node.TLS), node.RegionCode, node.GrpcServiceName, boolToInt(node.Enabled))
+		node.Network, boolToInt(node.TLS), node.RegionCode, node.GrpcServiceName, boolToInt(node.Enabled), userID)
 	return err
 }
 
-// ListSelfHostedNodes 列出所有自建节点
+// selfHostedColumns 自建节点查询共用列清单(ticket 07 起带 user_id)。
+const selfHostedColumns = `id, name, protocol, server, port, uuid, password, cipher,
+		alter_id, network, tls, region_code, grpc_service_name, enabled, user_id`
+
+// ListSelfHostedNodes 列出所有自建节点(跨用户,全量视角;
+// 按用户过滤走 ListSelfHostedNodesByUser)。
+//
+// 剩余调用者仅限:(a) 聚合器全量刷新分支(airportOwnerID=0 时);
+// (b) 测试代码 / 级联删除内部路径。生产 handler 已改用 ByUser 版本。
 func (s *Store) ListSelfHostedNodes() ([]*SelfHostedNode, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, protocol, server, port, uuid, password, cipher,
-		alter_id, network, tls, region_code, grpc_service_name, enabled FROM self_hosted_nodes WHERE enabled = 1`)
+		`SELECT ` + selfHostedColumns + ` FROM self_hosted_nodes WHERE enabled = 1`)
 	if err != nil {
 		return nil, fmt.Errorf("query self hosted nodes: %w", err)
 	}
 	defer rows.Close()
 
+	return scanSelfHostedNodes(rows)
+}
+
+// ListSelfHostedNodesByUser 列出指定用户名下的启用自建节点(ticket 06 新增接口;
+// 与 ListSelfHostedNodes 同样只返回 enabled=1 的行)。
+func (s *Store) ListSelfHostedNodesByUser(userID int64) ([]*SelfHostedNode, error) {
+	rows, err := s.db.Query(
+		`SELECT `+selfHostedColumns+` FROM self_hosted_nodes WHERE enabled = 1 AND user_id = ?`,
+		userID)
+	if err != nil {
+		return nil, fmt.Errorf("query self hosted nodes by user: %w", err)
+	}
+	defer rows.Close()
+
+	return scanSelfHostedNodes(rows)
+}
+
+// scanSelfHostedNodes 是 ListSelfHostedNodes/ListSelfHostedNodesByUser 共用的行扫描器。
+func scanSelfHostedNodes(rows *sql.Rows) ([]*SelfHostedNode, error) {
 	var nodes []*SelfHostedNode
 	for rows.Next() {
 		var n SelfHostedNode
 		var tls, enabled int
 		if err := rows.Scan(&n.ID, &n.Name, &n.Protocol, &n.Server, &n.Port,
 			&n.UUID, &n.Password, &n.Cipher, &n.AlterID, &n.Network, &tls, &n.RegionCode,
-			&n.GrpcServiceName, &enabled); err != nil {
+			&n.GrpcServiceName, &enabled, &n.UserID); err != nil {
 			return nil, fmt.Errorf("scan node: %w", err)
 		}
 		n.TLS = tls == 1
 		n.Enabled = enabled == 1
 		nodes = append(nodes, &n)
 	}
-	return nodes, nil
+	return nodes, rows.Err()
 }
 
 // DeleteSelfHostedNode 删除自建节点
@@ -188,9 +347,22 @@ func (s *Store) DeleteSelfHostedNode(id int64) error {
 	return err
 }
 
-// GetSystemSettings 获取系统设置（JSON 格式）
+// DeleteSelfHostedNodeForUser 按属主删除自建节点(ticket 07);行属他人时 ErrNotFound。
+func (s *Store) DeleteSelfHostedNodeForUser(userID, id int64) error {
+	if userID == 0 {
+		return s.DeleteSelfHostedNode(id)
+	}
+	res, err := s.db.Exec(`DELETE FROM self_hosted_nodes WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	return checkAffected(res)
+}
+
+// GetSystemSettings 获取系统设置（JSON 格式）。读 system_settings(ticket 06
+// settings 拆分后的全局作用域;遗留 settings 表仅作回滚备份)。
 func (s *Store) GetSystemSettings() (map[string]string, error) {
-	rows, err := s.db.Query(`SELECT key, value FROM settings`)
+	rows, err := s.db.Query(`SELECT key, value FROM system_settings`)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +379,7 @@ func (s *Store) GetSystemSettings() (map[string]string, error) {
 	return settings, nil
 }
 
-// SaveSystemSettings 批量保存系统设置
+// SaveSystemSettings 批量保存系统设置(写 system_settings,见 GetSystemSettings)。
 func (s *Store) SaveSystemSettings(settings map[string]string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -215,7 +387,7 @@ func (s *Store) SaveSystemSettings(settings map[string]string) error {
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`)
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)`)
 	if err != nil {
 		return err
 	}

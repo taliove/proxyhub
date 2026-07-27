@@ -53,8 +53,12 @@ type Aggregator struct {
 	logger     *slog.Logger
 	recognizer *store.RegionRecognizer // 地区识别器
 
-	mu         sync.RWMutex
-	nodes      []*subscription.Node
+	mu sync.RWMutex
+	// pools 按属主用户分片的内存节点池(ticket 07):map[userID] -> 该用户的节点。
+	// Invariant B(单管理员):未归属节点(user_id=0)在回填/合并时归一到超管分片,
+	// 节点池按用户隔离,互不串台。分片 key 永远 >0(有超管时);无超管(初始化前)退化为 0 桶。
+	pools map[int64][]*subscription.Node
+	// lastUpdate 最近一次成功聚合时刻(进程级;分片化后仍按同一时刻记录,够用)。
 	lastUpdate time.Time
 
 	// refreshJobs 刷新任务运行时(jobs kind=refresh;单实例/取消/中断标记)。
@@ -73,6 +77,29 @@ type Aggregator struct {
 
 	// 告警冷却：同一问题只告警一次，恢复后清除
 	alerted map[string]bool
+}
+
+// ownerUserID 机场/自建节点属主解析:行已带 user_id(>=1)时直接用;
+// 未归属(0)时回退为首个 super_admin(Invariant B:单管理员部署里一切归超管)。
+// 无用户(初始化前)回退 0(未归属桶)。
+func (a *Aggregator) ownerUserID(rowUserID int64) int64 {
+	if rowUserID > 0 {
+		return rowUserID
+	}
+	if a == nil || a.st == nil {
+		return 0
+	}
+	users, err := a.st.ListUsers()
+	if err != nil {
+		a.logger.Warn("list users for owner resolution failed, falling back to unowned shard", "error", err)
+		return 0
+	}
+	for _, u := range users {
+		if u.Role == store.RoleSuperAdmin {
+			return u.ID
+		}
+	}
+	return 0
 }
 
 // New 创建聚合器。会从库里回填上一次成功聚合的节点池快照，
@@ -94,14 +121,15 @@ func New(cfg *config.Config, alerter Notifier, st *store.Store, logger *slog.Log
 	checker.SetDirectEgressConfigProvider(st.GetDirectEgressConfig)
 
 	a := &Aggregator{
-		cfg:     cfg,
-		fetcher: subscription.NewFetcher(30 * time.Second),
-		checker: checker,
+		cfg:        cfg,
+		fetcher:    subscription.NewFetcher(30 * time.Second),
+		checker:    checker,
 		filt:       filter.NewFilter(cfg.Filter.NodesPerRegion, cfg.Filter.Deduplicate),
 		alerter:    alerter,
 		st:         st,
 		logger:     logger,
 		recognizer: recognizer,
+		pools:      make(map[int64][]*subscription.Node),
 		alerted:    make(map[string]bool),
 	}
 	// 刷新任务运行时:注册 refresh kind,恢复遗留 running 为 interrupted。
@@ -127,6 +155,7 @@ func New(cfg *config.Config, alerter Notifier, st *store.Store, logger *slog.Log
 
 // restoreNodePool 用库里持久化的快照回填内存节点池。
 // 读取失败或快照为空都不算错误——大不了等一次刷新，与旧行为一致。
+// 回填时把未归属节点(user_id=0)归一到超管分片(Invariant B),与其他路径同一归一规则。
 func (a *Aggregator) restoreNodePool() {
 	nodes, err := a.st.LoadNodePool()
 	if err != nil {
@@ -137,16 +166,53 @@ func (a *Aggregator) restoreNodePool() {
 		return
 	}
 	a.mu.Lock()
-	a.nodes = nodes
+	for _, n := range nodes {
+		shard := a.ownerUserID(n.UserID)
+		n.UserID = shard
+		a.pools[shard] = append(a.pools[shard], n)
+	}
 	a.mu.Unlock()
-	a.logger.Info("node pool restored from snapshot", "count", len(nodes))
+	a.logger.Info("node pool restored from snapshot", "count", len(nodes), "shards", len(a.pools))
 }
 
-// Nodes 返回当前可用节点（含自建节点）
+// Nodes 返回合并池(所有分片,跨用户,旧语义)。仅供订阅生成/内部聚合用;
+// 管理面 handler 必须改用 NodesForUser(ticket 07)。
 func (a *Aggregator) Nodes() []*subscription.Node {
+	return a.NodesForUser(0)
+}
+
+// NodesForUser 返回指定用户分片的节点池(ticket 07)。
+// userID=0 返回合并池(与 Nodes 等价,跨用户旧语义)。
+func (a *Aggregator) NodesForUser(userID int64) []*subscription.Node {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return a.nodes
+	if userID > 0 {
+		return a.pools[userID]
+	}
+	total := 0
+	for _, p := range a.pools {
+		total += len(p)
+	}
+	out := make([]*subscription.Node, 0, total)
+	for _, p := range a.pools {
+		out = append(out, p...)
+	}
+	return out
+}
+
+// SetNodesForUser 覆盖指定用户分片的节点池(ticket 07 测试/恢复用)。
+// 传入 nil 或空切片表示清空该分片。不修改入参底层数组(复制持有)。
+func (a *Aggregator) SetNodesForUser(userID int64, nodes []*subscription.Node) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(nodes) == 0 {
+		delete(a.pools, userID)
+		return
+	}
+	cp := make([]*subscription.Node, len(nodes))
+	copy(cp, nodes)
+	a.pools[userID] = cp
+	a.lastUpdate = time.Now()
 }
 
 // LastUpdate 返回最近一次成功更新时间
@@ -156,48 +222,77 @@ func (a *Aggregator) LastUpdate() time.Time {
 	return a.lastUpdate
 }
 
+// LastUpdateForUser 返回指定用户分片最近刷新时刻(ticket 07)。
+// 刷新时间戳按进程级记录(每次刷新更新同一时刻),userID 参数对齐接口,行为同 LastUpdate。
+func (a *Aggregator) LastUpdateForUser(userID int64) time.Time {
+	return a.LastUpdate()
+}
+
 // UpdateNodeTestResult 将单节点即时测试结果写回内存池（按 NodeKey 匹配）。
 // quick/real 更新 Available/Latency/DetectionLastCheck 与失败原因(failReason/failDetail,
 // 见 ticket 0017:失败填分类与截断详情,成功清空);bandwidth 更新带宽字段,不动失败原因。
 // 找到并更新返回 true；池中无此节点（如自建节点未入池）返回 false。
 func (a *Aggregator) UpdateNodeTestResult(nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) bool {
+	return a.UpdateNodeTestResultForUser(0, nodeKey, mode, available, latency, downMbps, upMbps, failReason, failDetail)
+}
+
+// UpdateNodeTestResultForUser 写回指定用户分片的节点(ticket 07);
+// userID=0 回退为跨分片查找(单管理员/内部路径等价旧行为)。
+func (a *Aggregator) UpdateNodeTestResultForUser(userID int64, nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := time.Now()
-	for i, n := range a.nodes {
-		if n.NodeKey() != nodeKey {
-			continue
-		}
-		// 不可变语义:浅拷贝再改,与 UpdateNodeIdentity 一致,和 Nodes() 返回引用的并发读者隔离。
-		updated := *n
-		if mode == "bandwidth" {
-			updated.BandwidthDownMbps = downMbps
-			updated.BandwidthUpMbps = upMbps
-			updated.BandwidthCheck = now
-		} else {
-			updated.Available = available
-			updated.Latency = latency
-			updated.DetectionLastCheck = now
-			// 判定来源如实跟随本次测试类型:quick=TCP 快检,real=真实代理检测(ticket 0016)。
-			// 不做单调升级——real 之后再 quick,Available 已被快检覆盖,来源须回落为 health。
-			if mode == "real" {
-				updated.DetectionKind = subscription.DetectionKindReal
-			} else {
-				updated.DetectionKind = subscription.DetectionKindHealth
+	for _, pool := range a.poolsFor(userID) {
+		for i, n := range pool {
+			if n.NodeKey() != nodeKey {
+				continue
 			}
-			// 失败原因:成功清空(不残留旧失败误导排障),失败记录分类+截断详情(ticket 0017)
-			if available {
-				updated.DetectionFailReason = ""
-				updated.DetectionFailDetail = ""
+			// 不可变语义:浅拷贝再改,与 UpdateNodeIdentity 一致,和 Nodes() 返回引用的并发读者隔离。
+			updated := *n
+			if mode == "bandwidth" {
+				updated.BandwidthDownMbps = downMbps
+				updated.BandwidthUpMbps = upMbps
+				updated.BandwidthCheck = now
 			} else {
-				updated.DetectionFailReason = failReason
-				updated.DetectionFailDetail = detection.TruncateFailDetail(failDetail)
+				updated.Available = available
+				updated.Latency = latency
+				updated.DetectionLastCheck = now
+				// 判定来源如实跟随本次测试类型:quick=TCP 快检,real=真实代理检测(ticket 0016)。
+				// 不做单调升级——real 之后再 quick,Available 已被快检覆盖,来源须回落为 health。
+				if mode == "real" {
+					updated.DetectionKind = subscription.DetectionKindReal
+				} else {
+					updated.DetectionKind = subscription.DetectionKindHealth
+				}
+				// 失败原因:成功清空(不残留旧失败误导排障),失败记录分类+截断详情(ticket 0017)
+				if available {
+					updated.DetectionFailReason = ""
+					updated.DetectionFailDetail = ""
+				} else {
+					updated.DetectionFailReason = failReason
+					updated.DetectionFailDetail = detection.TruncateFailDetail(failDetail)
+				}
 			}
+			pool[i] = &updated
+			return true
 		}
-		a.nodes[i] = &updated
-		return true
 	}
 	return false
+}
+
+// poolsFor 选取要遍历的分片集合:userID>0 只取该分片;=0 取全部分片(调用方须持锁)。
+func (a *Aggregator) poolsFor(userID int64) [][]*subscription.Node {
+	if userID > 0 {
+		if p, ok := a.pools[userID]; ok {
+			return [][]*subscription.Node{p}
+		}
+		return nil
+	}
+	out := make([][]*subscription.Node, 0, len(a.pools))
+	for _, p := range a.pools {
+		out = append(out, p)
+	}
+	return out
 }
 
 // UpdateNodeIdentity 按 NodeKey 更新内存池中节点的身份字段(名称/地区),
@@ -206,21 +301,29 @@ func (a *Aggregator) UpdateNodeTestResult(nodeKey, mode string, available bool, 
 // 不可变语义:命中后替换切片中的节点对象(浅拷贝再改),不原地改写旧指针,
 // 与 Nodes() 返回引用的并发读者隔离。找到并更新返回 true;池中无此节点返回 false。
 func (a *Aggregator) UpdateNodeIdentity(nodeKey, name, region string) bool {
+	return a.UpdateNodeIdentityForUser(0, nodeKey, name, region)
+}
+
+// UpdateNodeIdentityForUser 更新指定用户分片的节点身份(ticket 07);
+// userID=0 回退为跨分片查找。
+func (a *Aggregator) UpdateNodeIdentityForUser(userID int64, nodeKey, name, region string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for i, n := range a.nodes {
-		if n.NodeKey() != nodeKey {
-			continue
+	for _, pool := range a.poolsFor(userID) {
+		for i, n := range pool {
+			if n.NodeKey() != nodeKey {
+				continue
+			}
+			updated := *n // 浅拷贝,避免原地改写旧对象
+			if name != "" {
+				updated.Name = name
+			}
+			if region != "" {
+				updated.Region = region
+			}
+			pool[i] = &updated
+			return true
 		}
-		updated := *n // 浅拷贝,避免原地改写旧对象
-		if name != "" {
-			updated.Name = name
-		}
-		if region != "" {
-			updated.Region = region
-		}
-		a.nodes[i] = &updated
-		return true
 	}
 	return false
 }
@@ -360,16 +463,25 @@ func (r *runLog) fetchDiag(airport *store.Airport, diag *subscription.FetchDiagn
 type fetchResult struct {
 	airportNodes map[string][]*subscription.Node // 按机场分组（拉取失败的为 nil），供告警判断
 	allNodes     []*subscription.Node
-	enabled      int // 启用的机场数
-	failed       int // 拉取失败的机场数
+	enabled      int   // 启用的机场数
+	failed       int   // 拉取失败的机场数
+	owner        int64 // 本轮刷新的目标分片(ticket 07):拉取机场属主(未归属已归一到超管)
 }
 
-// execute 聚合流水线：拉取 → 健康检查 → 过滤 → 注入自建节点 → 更新节点池 → 告警。
+// execute 聚合流水线(旧入口,兼容既有调用):全表扫机场与自建节点,内部按分片归属
+// 为节点打上 UserID 后合入对应分片池(ticket 07 Invariant B:单管理员一切归超管)。
 // progress 为任务游标回调(已完成机场数;RunOnce 直接调用传 nil)。
 func (a *Aggregator) execute(ctx context.Context, rl *runLog, progress func(string)) {
-	a.logger.Info("aggregation started")
+	a.executeForUser(ctx, rl, progress, 0)
+}
 
-	fetched, err := a.fetchAirports(ctx, rl, progress)
+// executeForUser 聚合流水线:拉取(airportOwnerID>0 限定该用户机场,=0 全量)
+// → 地区识别 → 健康检查 → 按分片 MergePool 合并入池 → 持久化 → 告警。
+// 刷新任务统一以机场属主为 owner 调用(手动/定时全量走超管分片)。
+func (a *Aggregator) executeForUser(ctx context.Context, rl *runLog, progress func(string), airportOwnerID int64) {
+	a.logger.Info("aggregation started", "airport_owner", airportOwnerID)
+
+	fetched, err := a.fetchAirports(ctx, rl, progress, airportOwnerID)
 	if err != nil {
 		a.logger.Error("list airports failed", "error", err)
 		rl.event(levelError, stageFetch, "读取机场列表失败："+err.Error(), nil)
@@ -381,7 +493,7 @@ func (a *Aggregator) execute(ctx context.Context, rl *runLog, progress func(stri
 	// 避免一次网络抖动 / 机场临时不可达就把所有节点清空(见用户反馈:刷新失败清空节点)。
 	if fetched.enabled > 0 && fetched.failed == fetched.enabled {
 		a.mu.RLock()
-		retained := len(a.nodes)
+		retained := len(a.pools[fetched.owner])
 		a.mu.RUnlock()
 
 		errMsg := fmt.Sprintf("%d/%d 机场拉取失败", fetched.failed, fetched.enabled)
@@ -408,7 +520,7 @@ func (a *Aggregator) execute(ctx context.Context, rl *runLog, progress func(stri
 	// 注入自建节点(常驻安全网)。放在健康检查之前，使其与机场节点一起被检测——
 	// 自建节点的延迟/可用性才能反映真实状态，而非恒为「可用、延迟 0」。
 	// 放在 recognizeRegions 之后，保留其 Region "SELF" 标记不被地区识别覆盖。
-	allNodes := a.appendSelfHosted(rl, fetched.allNodes)
+	allNodes := a.appendSelfHosted(rl, fetched.allNodes, airportOwnerID)
 
 	// 健康检查：记录每个节点的可用性与延迟，但**不过滤**。
 	// 节点池保留全量数据(包括不可用/慢/重复的)，过滤延迟到订阅生成时。
@@ -416,22 +528,29 @@ func (a *Aggregator) execute(ctx context.Context, rl *runLog, progress func(stri
 
 	// MergePool carry-forward：用旧池的检测状态（DetectionLastCheck/Available/Latency/带宽）
 	// 覆盖新池（修复刷新抹掉真实检测结果的 bug），并标记消失节点为 stale。
+	owner := fetched.owner
 	a.mu.RLock()
-	oldPool := a.nodes
+	oldPool := a.pools[owner]
 	a.mu.RUnlock()
 	mergedPool := subscription.MergePool(oldPool, allNodes)
 
 	// 应用覆盖层（机场节点的 display_name/region 编辑）
 	a.applyOverrides(mergedPool)
+	// 属主回填:本轮节点全部归属刷新 owner 分片(Invariant B)
+	for _, n := range mergedPool {
+		if n.UserID == 0 {
+			n.UserID = owner
+		}
+	}
 
 	a.mu.Lock()
-	a.nodes = mergedPool
+	a.pools[owner] = mergedPool
 	a.lastUpdate = time.Now()
 	a.mu.Unlock()
 
 	// 持久化节点池快照，供进程重启后回填内存池（见 ADR 0008）。
 	// 写库失败只记日志、不阻断本轮聚合——内存池已更新，订阅照常可用。
-	if err := a.st.SaveNodePool(mergedPool); err != nil {
+	if err := a.st.SaveNodePoolForUser(owner, mergedPool); err != nil {
 		a.logger.Warn("persist node pool failed", "error", err)
 	}
 
@@ -458,8 +577,14 @@ func (a *Aggregator) execute(ctx context.Context, rl *runLog, progress func(stri
 // fetchAirports 拉取全部启用机场的订阅；单个机场失败不阻断，仅计入失败数。
 // 拉取按 fetchConcurrency() 的度并行(semaphore),结果按机场列表顺序归并,
 // 不随完成序漂移(事件按完成序写,带时间戳,顺序乱属正常)。
-func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress func(string)) (*fetchResult, error) {
-	airports, err := a.st.ListAirports()
+func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress func(string), airportOwnerID int64) (*fetchResult, error) {
+	var airports []*store.Airport
+	var err error
+	if airportOwnerID > 0 {
+		airports, err = a.st.ListAirportsByUser(airportOwnerID)
+	} else {
+		airports, err = a.st.ListAirports()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -469,6 +594,12 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 		if airport.Enabled {
 			enabled = append(enabled, airport)
 		}
+	}
+
+	// 本轮分片属主:单用户刷新直接用请求属主;全量刷新归一到首个超管(Invariant B)。
+	owner := airportOwnerID
+	if owner <= 0 {
+		owner = a.ownerUserID(0)
 	}
 
 	if len(enabled) == 0 {
@@ -517,6 +648,11 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 				return
 			}
 			a.logger.Info("fetched airport", "airport", airport.Name, "nodes", len(sub.Nodes))
+			// 属主打标(ticket 07):机场节点归属机场属主(未归属行归一到超管分片)。
+			nodeOwner := a.ownerUserID(airport.UserID)
+			for _, n := range sub.Nodes {
+				n.UserID = nodeOwner
+			}
 			rl.fetchDiag(airport, diag, "")
 			rl.event(levelInfo, stageFetch, fmt.Sprintf("「%s」拉取成功，%d 个节点", airport.Name, len(sub.Nodes)),
 				map[string]any{
@@ -532,6 +668,7 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 	result := &fetchResult{
 		airportNodes: make(map[string][]*subscription.Node),
 		enabled:      len(enabled),
+		owner:        owner,
 	}
 	for i, airport := range enabled {
 		o := outcomes[i]
@@ -637,8 +774,14 @@ func (a *Aggregator) checkHealth(ctx context.Context, rl *runLog, allNodes []*su
 // appendSelfHosted 注入自建节点（FailBack，常驻）。返回新切片，不修改入参。
 // 节点由 store.SelfHostedNode.ToNode() 统一构造（与 serve-time 合并共用）；
 // Available 交给随后的健康检查覆盖，反映真实状态。
-func (a *Aggregator) appendSelfHosted(rl *runLog, nodes []*subscription.Node) []*subscription.Node {
-	selfHostedNodes, err := a.st.ListSelfHostedNodes()
+func (a *Aggregator) appendSelfHosted(rl *runLog, nodes []*subscription.Node, airportOwnerID int64) []*subscription.Node {
+	var selfHostedNodes []*store.SelfHostedNode
+	var err error
+	if airportOwnerID > 0 {
+		selfHostedNodes, err = a.st.ListSelfHostedNodesByUser(airportOwnerID)
+	} else {
+		selfHostedNodes, err = a.st.ListSelfHostedNodes()
+	}
 	if err != nil {
 		a.logger.Warn("list self hosted nodes failed", "error", err)
 		return nodes
@@ -649,7 +792,10 @@ func (a *Aggregator) appendSelfHosted(rl *runLog, nodes []*subscription.Node) []
 	result := make([]*subscription.Node, 0, len(nodes)+len(selfHostedNodes))
 	result = append(result, nodes...)
 	for _, shn := range selfHostedNodes {
-		result = append(result, shn.ToNode())
+		node := shn.ToNode()
+		// 属主打标(ticket 07):自建节点归属其属主(未归属行归一到超管分片)。
+		node.UserID = a.ownerUserID(shn.UserID)
+		result = append(result, node)
 	}
 	rl.event(levelInfo, stageFilter, fmt.Sprintf("注入自建节点 %d 个", len(selfHostedNodes)), nil)
 	return result
@@ -769,8 +915,9 @@ func (a *Aggregator) mergePartialOnCancel(rl *runLog, fetched *fetchResult) {
 		}
 	}
 
+	owner := fetched.owner
 	a.mu.RLock()
-	oldPool := a.nodes
+	oldPool := a.pools[owner]
 	a.mu.RUnlock()
 	var oldOfFetched, rest []*subscription.Node
 	for _, n := range oldPool {
@@ -784,13 +931,18 @@ func (a *Aggregator) mergePartialOnCancel(rl *runLog, fetched *fetchResult) {
 	merged := subscription.MergePool(oldOfFetched, fetched.allNodes)
 	a.applyOverrides(merged)
 	newPool := append(merged, rest...)
+	for _, n := range newPool {
+		if n.UserID == 0 {
+			n.UserID = owner
+		}
+	}
 
 	a.mu.Lock()
-	a.nodes = newPool
+	a.pools[owner] = newPool
 	a.lastUpdate = time.Now()
 	a.mu.Unlock()
 
-	if err := a.st.SaveNodePool(newPool); err != nil {
+	if err := a.st.SaveNodePoolForUser(owner, newPool); err != nil {
 		a.logger.Warn("persist node pool failed", "error", err)
 	}
 

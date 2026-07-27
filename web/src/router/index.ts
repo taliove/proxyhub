@@ -15,6 +15,12 @@ const routes: RouteRecordRaw[] = [
     meta: { skipAuth: true }
   },
   {
+    // 首登强制改密与自助改密(ticket 04);要求已登录,但豁免 mustChangePassword 重定向
+    path: '/change-password',
+    name: 'ChangePassword',
+    component: () => import('@/views/ChangePassword.vue')
+  },
+  {
     path: '/',
     component: () => import('@/layout/index.vue'),
     children: [
@@ -81,6 +87,13 @@ const routes: RouteRecordRaw[] = [
         name: 'Settings',
         component: () => import('@/views/Settings.vue'),
         meta: { title: '系统设置', icon: 'Setting', group: 'config' }
+      },
+      {
+        // Admin-only: user management (ticket 05); hidden from nav for non-super-admin
+        path: 'admin/users',
+        name: 'AdminUsers',
+        component: () => import('@/views/admin/Users.vue'),
+        meta: { title: '用户管理', icon: 'User', group: 'config', requiresSuperAdmin: true }
       }
     ]
   },
@@ -102,6 +115,12 @@ router.beforeEach((to, _from, next) => {
     next()
   } else if (!authStore.isAuthenticated) {
     next('/login')
+  } else if (authStore.mustChangePassword && to.path !== '/change-password') {
+    // 首登强制改密(ticket 04):must_change_password 未清除前不许进业务页
+    next('/change-password')
+  } else if (to.meta.requiresSuperAdmin && !authStore.isSuperAdmin) {
+    // Non-super-admin users are bounced to home; admin APIs would 403 anyway
+    next('/')
   } else {
     next()
   }

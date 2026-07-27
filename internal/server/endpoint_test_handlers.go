@@ -21,8 +21,9 @@ import (
 // endpointDeliverableNodes 计算该订阅地址"此刻会下发的节点集合":
 // 池 → 全局过滤链 → 端点条件 → 名称标准化,与 /sub 生成链同源(所见即所得)。
 // 拉取验证、池快照、现场实测、后台预览四处共用这一个选择逻辑(ADR 0028 决策 1)。
+// 池与自建节点按端点属主分片(ticket 07;UserID 0 = 全局池)。
 func (s *Server) endpointDeliverableNodes(ep *store.Endpoint) []*subscription.Node {
-	nodes := s.filteredNodes(s.nodes.Nodes())
+	nodes := s.filteredNodes(s.nodes.NodesForUser(ep.UserID), ep.UserID)
 	nodes = s.applyConditions(nodes, ep)
 	return s.standardizeNodesForEndpoint(nodes, ep)
 }
@@ -53,13 +54,18 @@ type endpointTestResponse struct {
 
 // handleEndpointTest 订阅测试(拉取验证 + 池快照):走内部生成链,不发真实 HTTP、
 // 不记 pull_logs(ADR 0028 决策 1/2)。禁用态可测(决策 4),端点存在即可。
+// ticket 07: 校验属主,行属他人 404。
 func (s *Server) handleEndpointTest(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	ep, err := s.st.GetEndpointByID(id)
+	ep, err := s.st.GetEndpointByIDForUser(EffectiveUserID(scope), id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -161,13 +167,18 @@ func snapshotDeliverable(nodes []*subscription.Node) poolSnapshotView {
 // handleEndpointTestProbe 现场实测(ADR 0028 决策 3/5):立即返回 run 句柄,
 // 后台 goroutine 用 ProbeCore 对会下发节点抽样(full=true 全量)检活并写回池;
 // run 状态只存内存,重启即弃。禁用态可测(决策 4)。
+// ticket 07: 校验属主,行属他人 404。
 func (s *Server) handleEndpointTestProbe(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	ep, err := s.st.GetEndpointByID(id)
+	ep, err := s.st.GetEndpointByIDForUser(EffectiveUserID(scope), id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -212,10 +223,20 @@ func (s *Server) runEndpointProbe(runID string, nodes []*subscription.Node, full
 
 // handleGetEndpointTestProbe 轮询实测进度。run 只存内存且按端点隔离:
 // 不存在(含重启丢失、TTL 过期、属于其他端点)一律 404,前端据此提示重跑。
+// ticket 07: 校验属主,行属他人 404。
 func (s *Server) handleGetEndpointTestProbe(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	// 校验属主(ticket 07):行属他人同样 404,不暴露存在性。
+	if _, err := s.st.GetEndpointByIDForUser(EffectiveUserID(scope), id); err != nil {
+		http.NotFound(w, r)
 		return
 	}
 	run, ok := s.probeRuns.get(r.PathValue("runId"))

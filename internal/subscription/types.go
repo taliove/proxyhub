@@ -53,6 +53,10 @@ type Node struct {
 	// 元数据
 	Region string `json:"region"` // 地区：香港、日本、美国等
 	Source string `json:"source"` // 来源机场名称
+	// UserID 节点属主(ticket 07):机场节点=机场属主,自建节点=自建节点属主;
+	// 0 = 未归属(旧快照/单管理员合并前)。内存池按此分片,DB nodes 表不重复存
+	// (属主从 airports/self_hosted_nodes 推导,快照持久化时随池写入)。
+	UserID int64 `json:"user_id,omitempty"`
 
 	// DisplayName 订阅生成时计算的标准化展示名（见 ADR 0012）。
 	// 空表示未标准化，下发时回退用 Name（机场原名）。nodes 表不持久化此字段。

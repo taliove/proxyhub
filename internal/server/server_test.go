@@ -35,6 +35,23 @@ type fakeNodes struct {
 func (f *fakeNodes) Nodes() []*subscription.Node { return f.nodes }
 func (f *fakeNodes) LastUpdate() time.Time       { return time.Now() }
 
+// ticket 07 multi-tenant stubs: delegate to legacy single-user behavior.
+// NodesForUser 按节点 UserID 过滤:UserID=0(未归属/测试夹具)或与请求 userID 相同的保留;
+// userID<=0 视为全局视角,不过滤。其余 ForUser 桩仍委托旧单用户行为。
+func (f *fakeNodes) NodesForUser(userID int64) []*subscription.Node {
+	if userID <= 0 {
+		return f.nodes
+	}
+	out := make([]*subscription.Node, 0, len(f.nodes))
+	for _, n := range f.nodes {
+		if n.UserID == 0 || n.UserID == userID {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+func (f *fakeNodes) LastUpdateForUser(userID int64) time.Time       { return time.Now() }
+
 func (f *fakeNodes) StartRefreshJob(trigger string) (int64, string, bool, error) {
 	f.lastTrigger = trigger
 	if f.refreshErr != nil {
@@ -44,6 +61,18 @@ func (f *fakeNodes) StartRefreshJob(trigger string) (int64, string, bool, error)
 }
 
 func (f *fakeNodes) CancelRefresh(string) bool { return true }
+
+// ticket 07 multi-tenant stubs.
+func (f *fakeNodes) StartRefreshJobForUser(userID int64, trigger string) (int64, string, bool, error) {
+	return f.StartRefreshJob(trigger)
+}
+func (f *fakeNodes) StartAirportRefreshJobForUser(userID int64, trigger string, airportID int64) (int64, string, bool, error) {
+	return f.StartAirportRefreshJob(trigger, airportID)
+}
+func (f *fakeNodes) CancelRefreshForUser(userID int64, key string) bool { return true }
+func (f *fakeNodes) UpdateNodeTestResultForUser(userID int64, nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) bool {
+	return f.UpdateNodeTestResult(nodeKey, mode, available, latency, downMbps, upMbps, failReason, failDetail)
+}
 
 // StartAirportTestExclusive 测试 mock:默认直接在"临界区"内调 start
 // (fake 无并发,无 TOCTOU);testExclusiveErr 非空时模拟跨 kind 冲突。
@@ -89,6 +118,11 @@ func (f *fakeNodes) UpdateNodeTestResult(nodeKey, mode string, available bool, l
 // UpdateNodeIdentity 测试 mock：按 NodeKey 命中后替换节点对象(不可变语义),
 // 与真实 Aggregator 行为一致。name/region 为空表示不改该字段。
 func (f *fakeNodes) UpdateNodeIdentity(nodeKey, name, region string) bool {
+	return f.UpdateNodeIdentityForUser(0, nodeKey, name, region)
+}
+
+// UpdateNodeIdentityForUser ticket 07 多租户桩:与 UpdateNodeIdentity 同语义。
+func (f *fakeNodes) UpdateNodeIdentityForUser(userID int64, nodeKey, name, region string) bool {
 	for i, n := range f.nodes {
 		if n.NodeKey() != nodeKey {
 			continue
@@ -108,6 +142,11 @@ func (f *fakeNodes) UpdateNodeIdentity(nodeKey, name, region string) bool {
 
 // PurgeAirportNodes 测试 mock：剔除机场节点、保留自建节点，与真实 Aggregator 行为一致。
 func (f *fakeNodes) PurgeAirportNodes() (int, error) {
+	return f.PurgeAirportNodesForUser(0)
+}
+
+// PurgeAirportNodesForUser ticket 07 多租户桩:与 PurgeAirportNodes 同语义。
+func (f *fakeNodes) PurgeAirportNodesForUser(userID int64) (int, error) {
 	if f.purgeErr != nil {
 		return 0, f.purgeErr
 	}
@@ -329,7 +368,7 @@ func TestSubscription_TokenGating(t *testing.T) {
 	srv, st := newTestServer(t, nodes)
 	h := srv.Handler()
 
-	ep, err := st.CreateEndpoint("测试设备")
+	ep, err := st.CreateEndpointForUser(0, "测试设备")
 	if err != nil {
 		t.Fatalf("CreateEndpoint: %v", err)
 	}
@@ -584,7 +623,7 @@ func TestSubscription_OnlySelfHostedWhenPoolEmpty(t *testing.T) {
 		t.Fatalf("CreateSelfHostedNode: %v", err)
 	}
 
-	ep, err := st.CreateEndpoint("dev")
+	ep, err := st.CreateEndpointForUser(0, "dev")
 	if err != nil {
 		t.Fatalf("CreateEndpoint: %v", err)
 	}
@@ -606,7 +645,7 @@ func TestSubscription_OnlySelfHostedWhenPoolEmpty(t *testing.T) {
 func TestSubscription_EmptyPoolAndNoSelfHostedReturns503(t *testing.T) {
 	srv, st := newTestServer(t, nil)
 	h := srv.Handler()
-	ep, err := st.CreateEndpoint("dev")
+	ep, err := st.CreateEndpointForUser(0, "dev")
 	if err != nil {
 		t.Fatalf("CreateEndpoint: %v", err)
 	}

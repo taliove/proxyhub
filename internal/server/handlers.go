@@ -67,6 +67,9 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 保存配置
+	// users 表为准(handleLogin/verifyCredentials 只查 users);
+	// 此处同时写 settings KV,仅作为旧库升级时 MigrateAdminToSuperUser 的迁移来源
+	// 与灾难恢复/审计线索,新装库里迁移函数是 no-op。
 	settings := map[string]string{
 		"admin_user":      req.Username,
 		"admin_pass_hash": string(hashed),
@@ -77,6 +80,31 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("save settings failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+
+	// 同步创建超管用户(users 表):ticket 02 之后 handleLogin/handleMe
+	// 以 users 表为准,settings KV 仅作为 MigrateAdminToSuperUser 的迁移来源。
+	// 已存在同名用户(理论上不应发生,IsSystemInitialized 已挡)则跳过,
+	// 让启动时的迁移兜底,避免初始化流程因偶发数据状态而失败。
+	// 创建后立即把未归属历史数据(user_id=0)回填到该超管(ticket 07 Invariant B):
+	// setup 之前可能已有旧表结构下写入的行,不回填则属主校验全部 404。
+	createdUser := false
+	if _, err := s.st.GetUserByUsername(req.Username); errors.Is(err, store.ErrNotFound) {
+		if _, err := s.st.CreateUser(req.Username, string(hashed), store.RoleSuperAdmin, false); err != nil {
+			s.logger.Error("create super admin user failed", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		createdUser = true
+	} else if err != nil {
+		s.logger.Error("lookup user failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if createdUser {
+		if err := s.st.BackfillUserID(); err != nil {
+			s.logger.Warn("backfill user_id after setup failed", "error", err)
+		}
 	}
 
 	// 标记已初始化
@@ -91,9 +119,13 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-// handleListAirports 列出机场
+// handleListAirports 列出机场(ticket 07:按当前用户视角过滤)。
 func (s *Server) handleListAirports(w http.ResponseWriter, r *http.Request) {
-	airports, err := s.st.ListAirportsWithTestRuns(r.Context())
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	airports, err := s.st.ListAirportsWithTestRunsByUser(r.Context(), EffectiveUserID(scope))
 	if err != nil {
 		s.logger.Error("list airports failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -102,8 +134,12 @@ func (s *Server) handleListAirports(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(airports)
 }
 
-// handleCreateAirport 添加机场
+// handleCreateAirport 添加机场(ticket 07:归属当前有效用户)。
 func (s *Server) handleCreateAirport(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Name string `json:"name"`
 		URL  string `json:"url"`
@@ -114,7 +150,8 @@ func (s *Server) handleCreateAirport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	airport, err := s.st.CreateAirport(req.Name, req.URL)
+	effUID := EffectiveUserID(scope)
+	airport, err := s.st.CreateAirportForUser(effUID, req.Name, req.URL)
 	if err != nil {
 		s.logger.Error("create airport failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -154,8 +191,12 @@ func (s *Server) handleSuggestAbbr(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"abbr": subscription.GenerateAbbreviation(name)})
 }
 
-// handleToggleAirport 启用/禁用机场
+// handleToggleAirport 启用/禁用机场(ticket 07:校验属主,行属他人 404)。
 func (s *Server) handleToggleAirport(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -163,13 +204,14 @@ func (s *Server) handleToggleAirport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	airport, err := s.st.GetAirportByID(id)
+	effUID := EffectiveUserID(scope)
+	airport, err := s.st.GetAirportByIDForUser(effUID, id)
 	if err != nil {
 		http.Error(w, "airport not found", http.StatusNotFound)
 		return
 	}
 
-	if err := s.st.SetAirportEnabled(id, !airport.Enabled); err != nil {
+	if err := s.st.SetAirportEnabledForUser(effUID, id, !airport.Enabled); err != nil {
 		s.logger.Error("toggle airport failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -179,8 +221,12 @@ func (s *Server) handleToggleAirport(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-// handleDeleteAirport 删除机场
+// handleDeleteAirport 删除机场(ticket 07:校验属主,行属他人 404)。
 func (s *Server) handleDeleteAirport(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -188,7 +234,7 @@ func (s *Server) handleDeleteAirport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.st.DeleteAirport(id); err != nil {
+	if err := s.st.DeleteAirportForUser(EffectiveUserID(scope), id); err != nil {
 		s.logger.Error("delete airport failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -238,9 +284,14 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-// handleDashboardStats 仪表盘统计
+// handleDashboardStats 仪表盘统计(ticket 07:按当前用户视角过滤)。
 func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
-	nodes := s.nodes.Nodes()
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(scope)
+	nodes := s.nodes.NodesForUser(effUID)
 
 	// 统计可用节点
 	availableCount := 0
@@ -258,10 +309,10 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 统计订阅地址
-	endpoints, _ := s.st.ListEndpoints()
+	endpoints, _ := s.st.ListEndpointsByUser(effUID)
 
 	// 统计机场
-	airports, _ := s.st.ListAirports()
+	airports, _ := s.st.ListAirportsByUser(effUID)
 
 	lastUpdate := s.nodes.LastUpdate()
 	lastUpdateStr := "-"
@@ -310,8 +361,12 @@ func writeRefreshJobResponse(w http.ResponseWriter, jobID int64, key string, sta
 	})
 }
 
-// handleUpdateAirport 更新机场信息
+// handleUpdateAirport 更新机场信息(ticket 07:校验属主,行属他人 404)。
 func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -343,7 +398,12 @@ func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 		finalAbbr = subscription.NextFreeAbbr(base, used)
 	}
 
-	if err := s.st.UpdateAirport(id, req.Name, req.URL, finalAbbr); err != nil {
+	effUID := EffectiveUserID(scope)
+	if err := s.st.UpdateAirportForUser(effUID, id, req.Name, req.URL, finalAbbr); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
 		s.logger.Error("update airport failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -352,7 +412,7 @@ func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("airport updated", "id", id, "name", req.Name, "abbr", finalAbbr)
 
 	// Return updated airport with final abbr so frontend can display it
-	airport, err := s.st.GetAirportByID(id)
+	airport, err := s.st.GetAirportByIDForUser(effUID, id)
 	if err != nil {
 		s.logger.Warn("get updated airport failed", "error", err)
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
@@ -364,14 +424,19 @@ func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 // handleAirportRefresh POST /api/airports/{id}/refresh 发起单机场刷新任务
 // (只拉取入池,不含健康检查;秒级,用于刚加机场/换订阅 token 后快速可见)。
 // 与进行中的全量刷新冲突时返回 409;不同机场的单机场刷新可并行。
+// ticket 07: 校验属主,行属他人 404。
 func (s *Server) handleAirportRefresh(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || id <= 0 {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.st.GetAirportByID(id); err != nil {
+	if _, err := s.st.GetAirportByIDForUser(EffectiveUserID(scope), id); err != nil {
 		http.Error(w, "airport not found", http.StatusNotFound)
 		return
 	}

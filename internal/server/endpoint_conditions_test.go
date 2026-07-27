@@ -35,7 +35,7 @@ func setConditions(t *testing.T, srv *Server, id int64, raw string) {
 func TestSubscription_EmptyConditionsZeroRegression(t *testing.T) {
 	srv, st := newTestServer(t, condPool())
 	h := srv.Handler()
-	ep, _ := st.CreateEndpoint("all")
+	ep, _ := st.CreateEndpointForUser(1, "all")
 
 	out := fetchSub(t, h, ep)
 	for _, want := range []string{"香港A", "日本B", "美国C"} {
@@ -49,7 +49,7 @@ func TestSubscription_EmptyConditionsZeroRegression(t *testing.T) {
 func TestSubscription_ConditionsFilterByRegion(t *testing.T) {
 	srv, st := newTestServer(t, condPool())
 	h := srv.Handler()
-	ep, _ := st.CreateEndpoint("hk-only")
+	ep, _ := st.CreateEndpointForUser(1, "hk-only")
 	setConditions(t, srv, ep.ID, `{"regions":["HK"]}`)
 
 	out := fetchSub(t, h, ep)
@@ -72,7 +72,7 @@ func TestSubscription_ConditionsFilterByTag(t *testing.T) {
 	if err := st.ReplaceNodeTags("c.example.com:8388", []string{"nf-full"}); err != nil {
 		t.Fatalf("ReplaceNodeTags: %v", err)
 	}
-	ep, _ := st.CreateEndpoint("nf")
+	ep, _ := st.CreateEndpointForUser(1, "nf")
 	setConditions(t, srv, ep.ID, `{"tags":["nf-full"]}`)
 
 	out := fetchSub(t, h, ep)
@@ -89,7 +89,7 @@ func TestPreview_MatchesConditions(t *testing.T) {
 	srv, st := newTestServer(t, condPool())
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("jp")
+	ep, _ := st.CreateEndpointForUser(1, "jp")
 	setConditions(t, srv, ep.ID, `{"regions":["JP"]}`)
 
 	req := httptest.NewRequest("GET", "/api/endpoints/"+strconv.FormatInt(ep.ID, 10)+"/preview?format=clash", nil)
@@ -116,7 +116,7 @@ func TestUpdateEndpointConditionsAPI(t *testing.T) {
 	srv, st := newTestServer(t, condPool())
 	h := srv.Handler()
 	cookie := authCookie(t, h)
-	ep, _ := st.CreateEndpoint("cfg")
+	ep, _ := st.CreateEndpointForUser(1, "cfg")
 
 	body, _ := json.Marshal(map[string]any{"regions": []string{"HK"}, "tags": []string{"nf-full"}})
 	req := httptest.NewRequest("PUT", "/api/endpoints/"+strconv.FormatInt(ep.ID, 10)+"/conditions", bytes.NewReader(body))

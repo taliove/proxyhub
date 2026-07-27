@@ -32,6 +32,9 @@ type RefreshJobParams struct {
 	AirportID int64 `json:"airport_id,omitempty"`
 	// AirportName 单机场刷新的机场名(展示用,发起时尽力填充;空不影响执行)
 	AirportName string `json:"airport_name,omitempty"`
+	// UserID 发起者属主(ticket 07):任务按用户分片,刷新只聚合该用户名下机场;
+	// 0 = 全局全量(定时/启动刷新,聚合全部机场,结果按各机场属主自动分片)。
+	UserID int64 `json:"user_id,omitempty"`
 }
 
 // refreshJobKey 任务 key:全量 "all",单机场 "airport-<id>"。
@@ -73,7 +76,7 @@ func (k *refreshKind) runFull(ctx context.Context, p *RefreshJobParams, progress
 		// 刷新记录写不进去不阻断聚合,仅丢失本次日志
 		k.agg.logger.Warn("create refresh run failed, continuing without refresh log", "error", err)
 	}
-	k.agg.execute(ctx, rl, progress)
+	k.agg.executeForUser(ctx, rl, progress, p.UserID)
 	return ctx.Err()
 }
 
@@ -132,7 +135,7 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 	}
 
 	k.agg.mu.RLock()
-	poolSize := len(k.agg.nodes)
+	poolSize := len(k.agg.pools[k.agg.ownerUserID(airport.UserID)])
 	k.agg.mu.RUnlock()
 	rl.event(levelInfo, stageDone, fmt.Sprintf("单机场刷新完成:「%s」%d 个节点入池", airport.Name, len(sub.Nodes)),
 		map[string]any{"airport": airport.Name, "nodes": len(sub.Nodes)})
@@ -159,8 +162,8 @@ func (a *Aggregator) findRunningJobID(key string) int64 {
 // refreshConflict 机场级互斥检查:全量与任何进行中刷新互斥;单机场只与全量互斥。
 // 同 key 不算冲突(由 kind+key 单实例附加语义处理)。
 // 以 Manager 内存态(RunningKeys)为准:持久化失败退化的纯内存任务对 DB 查询是隐身的。
-func (a *Aggregator) refreshConflict(key string) (string, bool) {
-	for _, running := range a.refreshJobs.RunningKeys(refreshJobKindName) {
+func (a *Aggregator) refreshConflict(userID int64, key string) (string, bool) {
+	for _, running := range a.refreshJobs.RunningKeysFor(userID, refreshJobKindName) {
 		if running == key {
 			continue
 		}
@@ -175,17 +178,28 @@ func (a *Aggregator) refreshConflict(key string) (string, bool) {
 // 返回 jobs 行 id、任务 key、是否本次新启动(同 key 重复触发附加到进行中任务)。
 // 与进行中的单机场刷新冲突时返回 ErrRefreshConflict。
 func (a *Aggregator) StartRefreshJob(trigger string) (int64, string, bool, error) {
-	return a.startRefresh(trigger, 0)
+	return a.startRefresh(0, trigger, 0)
+}
+
+// StartRefreshJobForUser 以指定属主发起全量刷新(ticket 07):
+// 任务按 userID 分片,刷新只聚合该用户名下机场;userID=0 与 StartRefreshJob 等价。
+func (a *Aggregator) StartRefreshJobForUser(userID int64, trigger string) (int64, string, bool, error) {
+	return a.startRefresh(userID, trigger, 0)
 }
 
 // StartAirportRefreshJob 经 jobs 运行时发起单机场刷新(只拉取入池,不含健康检查)。
 // 与进行中的全量刷新或同机场刷新冲突时返回 ErrRefreshConflict;
 // 不同机场的单机场刷新可并行(拉取并行,池写串行)。
 func (a *Aggregator) StartAirportRefreshJob(trigger string, airportID int64) (int64, string, bool, error) {
+	return a.StartAirportRefreshJobForUser(0, trigger, airportID)
+}
+
+// StartAirportRefreshJobForUser 以指定属主发起单机场刷新(ticket 07)。
+func (a *Aggregator) StartAirportRefreshJobForUser(userID int64, trigger string, airportID int64) (int64, string, bool, error) {
 	if airportID <= 0 {
 		return 0, "", false, fmt.Errorf("invalid airport id %d", airportID)
 	}
-	return a.startRefresh(trigger, airportID)
+	return a.startRefresh(userID, trigger, airportID)
 }
 
 // startRefresh 发起刷新任务(全量 airportID=0 / 单机场)。
@@ -193,11 +207,11 @@ func (a *Aggregator) StartAirportRefreshJob(trigger string, airportID int64) (in
 // 否则两个并发触发(全量 + 单机场)可同时通过检查,破坏机场级互斥。
 // 跨 kind 互斥(issue 0025):同机场机场测试在跑同样 409——与
 // StartAirportTestExclusive 共用同一把 refreshStartMu,双向互斥无竞态窗口。
-func (a *Aggregator) startRefresh(trigger string, airportID int64) (int64, string, bool, error) {
+func (a *Aggregator) startRefresh(userID int64, trigger string, airportID int64) (int64, string, bool, error) {
 	key := refreshJobKey(airportID)
 	a.refreshStartMu.Lock()
 	defer a.refreshStartMu.Unlock()
-	if conflictKey, ok := a.refreshConflict(key); ok {
+	if conflictKey, ok := a.refreshConflict(userID, key); ok {
 		return 0, key, false, fmt.Errorf("%w: running key %s", ErrRefreshConflict, conflictKey)
 	}
 	if a.airportTestConflict != nil {
@@ -212,12 +226,12 @@ func (a *Aggregator) startRefresh(trigger string, airportID int64) (int64, strin
 			airportName = ap.Name
 		}
 	}
-	params, err := json.Marshal(RefreshJobParams{Trigger: trigger, AirportID: airportID, AirportName: airportName})
+	params, err := json.Marshal(RefreshJobParams{Trigger: trigger, AirportID: airportID, AirportName: airportName, UserID: userID})
 	if err != nil {
 		return 0, key, false, fmt.Errorf("marshal refresh params: %w", err)
 	}
-	// OpenIDForce:进行中附加(单实例),已收口则重开新一轮(再点一次就再跑一轮)
-	rowID, started, err := a.refreshJobs.OpenIDForce(refreshJobKindName, key, params)
+	// OpenIDForceFor:按属主分片(同 key 不同用户互不冲突);进行中附加,已收口重开
+	rowID, started, err := a.refreshJobs.OpenIDForceFor(userID, refreshJobKindName, key, params)
 	if err != nil {
 		return 0, key, false, err
 	}
@@ -227,6 +241,11 @@ func (a *Aggregator) startRefresh(trigger string, airportID int64) (int64, strin
 // CancelRefresh 取消指定 key 的刷新任务;无进行中任务返回 false。
 func (a *Aggregator) CancelRefresh(key string) bool {
 	return a.refreshJobs.Cancel(refreshJobKindName, key)
+}
+
+// CancelRefreshForUser 取消指定用户进行中刷新的任务 key(ticket 07)。
+func (a *Aggregator) CancelRefreshForUser(userID int64, key string) bool {
+	return a.refreshJobs.CancelFor(userID, refreshJobKindName, key)
 }
 
 // SetAirportTestConflictChecker 注入跨 kind 互斥的测试侧查询回调(issue 0025)。

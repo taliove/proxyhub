@@ -15,10 +15,14 @@ const (
 	defaultTTL = 5 * time.Minute
 )
 
-// jobID 任务身份:同一 kind 下按 key 单实例。
+// jobID 任务身份:同一 owner 内按 kind+key 单实例。
+// ownerUserID=0 为未归属桶(旧任务/启动期任务)。
+// 注意:ticket 07 的 Invariant B(单管理员,所有任务统一挂超管 owner)下,
+// 所有任务同一 owner,跨用户冲突天然不会发生;分片仅为后续多用户演进的接缝。
 type jobID struct {
-	kind string
-	key  string
+	ownerUserID int64
+	kind        string
+	key         string
 }
 
 // job 单个运行中/已收口的任务:自带 context、环形事件缓冲、订阅者列表。
@@ -200,21 +204,37 @@ func (m *Manager) Open(kind, key string, params json.RawMessage) (*Subscription,
 	return m.open(kind, key, params, false)
 }
 
+// OpenFor 带属主的 Open(ticket 07):userID 作为任务身份分片维度,
+// 不同用户的同 kind+key 任务互不冲突;userID=0 与旧调用等价。
+func (m *Manager) OpenFor(userID int64, kind, key string, params json.RawMessage) (*Subscription, error) {
+	return m.openFor(userID, kind, key, params, false)
+}
+
 // OpenForce 强制重开:已收口的旧任务丢弃重开(避免 TTL 窗口内附加旧结果);
 // 进行中的任务不打断,按 Open 语义附加。
 func (m *Manager) OpenForce(kind, key string, params json.RawMessage) (*Subscription, error) {
 	return m.open(kind, key, params, true)
 }
 
+// OpenForceFor 带属主的 OpenForce(ticket 07)。
+func (m *Manager) OpenForceFor(userID int64, kind, key string, params json.RawMessage) (*Subscription, error) {
+	return m.openFor(userID, kind, key, params, true)
+}
+
 // OpenIDForce 启动或附加(kind,key)任务:进行中的仍按附加,已收口的旧任务强制重开。
 // 返回持久化行 ID 与是否本次新启动;rowID=0 表示持久化失败退化为纯内存任务。
 // 适合"再点一次就再跑一轮"的触发语义(如刷新)。
 func (m *Manager) OpenIDForce(kind, key string, params json.RawMessage) (rowID int64, started bool, err error) {
-	return m.openID(kind, key, params, true)
+	return m.openID(0, kind, key, params, true)
 }
 
-func (m *Manager) openID(kind, key string, params json.RawMessage, force bool) (int64, bool, error) {
-	j, created, err := m.startOrAttach(kind, key, params, force)
+// OpenIDForceFor 带属主的 OpenIDForce(ticket 07)。
+func (m *Manager) OpenIDForceFor(userID int64, kind, key string, params json.RawMessage) (rowID int64, started bool, err error) {
+	return m.openID(userID, kind, key, params, true)
+}
+
+func (m *Manager) openID(userID int64, kind, key string, params json.RawMessage, force bool) (int64, bool, error) {
+	j, created, err := m.startOrAttach(userID, kind, key, params, force)
 	if err != nil {
 		return 0, false, err
 	}
@@ -222,7 +242,11 @@ func (m *Manager) openID(kind, key string, params json.RawMessage, force bool) (
 }
 
 func (m *Manager) open(kind, key string, params json.RawMessage, force bool) (*Subscription, error) {
-	j, _, err := m.startOrAttach(kind, key, params, force)
+	return m.openFor(0, kind, key, params, force)
+}
+
+func (m *Manager) openFor(userID int64, kind, key string, params json.RawMessage, force bool) (*Subscription, error) {
+	j, _, err := m.startOrAttach(userID, kind, key, params, force)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +256,7 @@ func (m *Manager) open(kind, key string, params json.RawMessage, force bool) (*S
 
 // startOrAttach 无任务(或已过期)则启动新任务,否则返回现有任务。
 // force 仅对已收口的旧任务生效:丢弃并重开。created 报告是否本次新启动。
-func (m *Manager) startOrAttach(kind, key string, params json.RawMessage, force bool) (*job, bool, error) {
+func (m *Manager) startOrAttach(userID int64, kind, key string, params json.RawMessage, force bool) (*job, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -243,7 +267,7 @@ func (m *Manager) startOrAttach(kind, key string, params json.RawMessage, force 
 
 	m.sweepLocked(m.now())
 
-	id := jobID{kind: kind, key: key}
+	id := jobID{ownerUserID: userID, kind: kind, key: key}
 	if j, ok := m.jobs[id]; ok {
 		if force && j.isDone() {
 			delete(m.jobs, id)
@@ -256,7 +280,7 @@ func (m *Manager) startOrAttach(kind, key string, params json.RawMessage, force 
 	// rowID=0 的任务不持久化生命周期,退化为纯内存任务)。
 	var rowID int64
 	if m.store != nil {
-		newID, err := m.store.Insert(kind, key, params)
+		newID, err := m.store.InsertForUser(userID, kind, key, params)
 		if err != nil {
 			m.onErr(fmt.Errorf("jobs: persist start: %w", err))
 		} else {
@@ -359,13 +383,18 @@ func (m *Manager) runJob(j *job, params json.RawMessage, cursor string) {
 // 绝不新启动。供订阅类端点使用:Open 语义是"无则启动",订阅不存在的任务会幻影启动
 // 一个 params 为空、立即失败的假任务并污染 jobs 表;Attach 则如实报错。
 func (m *Manager) Attach(kind, key string) (*Subscription, error) {
+	return m.AttachFor(0, kind, key)
+}
+
+// AttachFor 带属主的 Attach(ticket 07):只命中同 owner 的任务。
+func (m *Manager) AttachFor(userID int64, kind, key string) (*Subscription, error) {
 	m.mu.Lock()
 	if _, ok := m.kinds[kind]; !ok {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("jobs: unknown kind %q", kind)
 	}
 	m.sweepLocked(m.now())
-	j, ok := m.jobs[jobID{kind: kind, key: key}]
+	j, ok := m.jobs[jobID{ownerUserID: userID, kind: kind, key: key}]
 	m.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("jobs: no job %s/%s to attach", kind, key)
@@ -374,9 +403,10 @@ func (m *Manager) Attach(kind, key string) (*Subscription, error) {
 	return &Subscription{Replay: replay, Live: live, unsub: unsub}, nil
 }
 
-// RunningKeys 返回内存中进行中的指定 kind 任务的 key 列表。
+// RunningKeys 返回内存中进行中的指定 kind 任务的 key 列表(跨 owner 全量)。
 // 持久化是尽力而为(Insert 失败退化为纯内存任务),做跨 key 互斥判断时
 // 必须以内存态为准(DB 为辅),否则纯内存任务对互斥检查完全隐身。
+// 需要按用户分片的互斥判定用 RunningKeysFor(ticket 07)。
 func (m *Manager) RunningKeys(kind string) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -392,10 +422,32 @@ func (m *Manager) RunningKeys(kind string) []string {
 	return keys
 }
 
+// RunningKeysFor 返回指定 owner 进行中任务的 key 列表(ticket 07):
+// 任务互斥判定按用户分片,不同用户同 key 不冲突。
+func (m *Manager) RunningKeysFor(userID int64, kind string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var keys []string
+	for id, j := range m.jobs {
+		if id.kind != kind || id.ownerUserID != userID {
+			continue
+		}
+		if !j.isDone() {
+			keys = append(keys, id.key)
+		}
+	}
+	return keys
+}
+
 // Cancel 取消(kind,key)任务:无任务或已收口返回 false。
 func (m *Manager) Cancel(kind, key string) bool {
+	return m.CancelFor(0, kind, key)
+}
+
+// CancelFor 取消指定 owner 的(kind,key)任务(ticket 07)。
+func (m *Manager) CancelFor(userID int64, kind, key string) bool {
 	m.mu.Lock()
-	j, ok := m.jobs[jobID{kind: kind, key: key}]
+	j, ok := m.jobs[jobID{ownerUserID: userID, kind: kind, key: key}]
 	m.mu.Unlock()
 	if !ok {
 		return false

@@ -57,58 +57,8 @@
           基于池内已同步节点评分;拉取健康维度 N/A,权重按 5:3:1 重归一到其余维度。
         </el-alert>
 
-        <!-- 事实汇总(ticket 0045:label 列定宽 nowrap,地区覆盖格 span=2,
-             61+ 地区串只在内容格内换行,不再把 label 列压成竖排单字) -->
-        <el-descriptions
-          :column="2"
-          border
-          size="small"
-          label-width="90px"
-          class="report-block facts-block num"
-        >
-          <el-descriptions-item label="可用节点">
-            {{ completedResult.available_nodes }} / {{ completedResult.total_nodes }}
-          </el-descriptions-item>
-          <el-descriptions-item label="平均延迟">
-            {{ completedResult.mean_latency_ms.toFixed(0) }} ms(P95
-            {{ completedResult.p95_latency_ms.toFixed(0) }} ms)
-          </el-descriptions-item>
-          <el-descriptions-item label="地区覆盖" :span="2">
-            {{ completedResult.region_count }} 个地区
-            <span v-if="regionList" class="muted">({{ regionList }})</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="拉取健康">
-            <template v-if="completedResult.url_reachable">
-              HTTP {{ completedResult.http_status }},解析成功率
-              {{ (completedResult.parse_success_rate * 100).toFixed(1) }}%
-            </template>
-            <span v-else class="muted">N/A(URL 不可达)</span>
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <!-- 维度构成拆解:打开黑盒,直接给出各维度得分与权重 -->
-        <div class="report-subtitle">评分构成</div>
-        <el-descriptions :column="1" border size="small" class="report-block num">
-          <el-descriptions-item :label="`可用率(权重 ${weightLabel(weights.availability)})`">
-            {{ completedResult.availability_score.toFixed(1) }} 分
-          </el-descriptions-item>
-          <el-descriptions-item :label="`延迟表现(权重 ${weightLabel(weights.latency)})`">
-            {{ completedResult.latency_score.toFixed(1) }} 分
-          </el-descriptions-item>
-          <el-descriptions-item
-            :label="
-              weights.fetchHealth === null
-                ? '拉取健康(N/A,权重已重归一)'
-                : `拉取健康(权重 ${weightLabel(weights.fetchHealth)})`
-            "
-          >
-            <span v-if="weights.fetchHealth === null" class="muted">N/A</span>
-            <span v-else>{{ completedResult.fetch_health_score.toFixed(1) }} 分</span>
-          </el-descriptions-item>
-          <el-descriptions-item :label="`地区覆盖(权重 ${weightLabel(weights.region)})`">
-            {{ completedResult.region_score.toFixed(1) }} 分
-          </el-descriptions-item>
-        </el-descriptions>
+        <!-- 事实汇总 + 评分构成(抽出为 AirportTestSummary,与运行模式对话框完成态共用) -->
+        <AirportTestSummary :result="completedResult" class="report-block" />
 
         <!-- 抽样节点明细:每节点可用性/延迟;旧 run 未持久化明细则降级为汇总。
              max-height 定高滚动(ticket 0045,对齐端点抽屉下发节点表),表头固定 -->
@@ -156,13 +106,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import {
-  getScoreColor,
-  parseCompletedResult,
-  dimensionWeightsOf,
-  weightLabel,
-  type TestRun
-} from '@/composables/useAirportTest'
+import { getScoreColor, parseCompletedResult, type TestRun } from '@/composables/useAirportTest'
 import {
   scoreTone as scoreToneOf,
   scoreToneLabel as scoreToneLabelOf,
@@ -170,6 +114,7 @@ import {
 } from '@/views/airport-test-utils'
 import { regionDisplay } from '@/views/nodes/nodecells'
 import StatusDot from '@/components/StatusDot.vue'
+import AirportTestSummary from '@/components/AirportTestSummary.vue'
 import AirportTestTrend from '@/components/AirportTestTrend.vue'
 
 // 纯展示组件:数据由父级(详情抽屉)拉取并传入;重跑意图上抛,自身不发任何请求。
@@ -198,15 +143,6 @@ const completedResult = computed(() =>
 )
 
 const overallScore = computed(() => completedRun.value?.overall_score ?? 0)
-
-// 权重优先读 run 自带(评分同源落库),旧 run 回退硬编码
-const weights = computed(() => dimensionWeightsOf(completedResult.value))
-
-const regionList = computed(() => {
-  const dist = completedResult.value?.region_distribution
-  if (!dist) return ''
-  return Object.keys(dist).sort().join('/')
-})
 
 const sampledNodes = computed(() => completedResult.value?.sampled_nodes ?? [])
 
@@ -279,10 +215,6 @@ const relativeTime = (iso: string): string => testTimeRelative(iso)
 }
 .sample-dot {
   margin-right: var(--ph-space-1);
-}
-/* ticket 0045:label 列定宽不折行(配合 label-width),超长地区串只在内容格内换行 */
-.facts-block :deep(.el-descriptions__label) {
-  white-space: nowrap;
 }
 .num {
   font-variant-numeric: tabular-nums;

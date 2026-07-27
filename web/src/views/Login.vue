@@ -109,8 +109,19 @@ const handleLogin = async () => {
   if (!valid) return
   loading.value = true
   try {
-    await client.post('/login', form)
-    authStore.setAuth(form.username)
+    // Login response carries the user profile (ticket 02); role drives admin UI gating,
+    // must_change_password (ticket 04) routes the user to the forced password change.
+    const data = await client.post<
+      unknown,
+      { role?: string; user?: { role?: string; must_change_password?: boolean } }
+    >('/login', form)
+    const role = data?.user?.role ?? data?.role ?? ''
+    const mustChange = data?.user?.must_change_password ?? false
+    authStore.setAuth(form.username, role, mustChange)
+    if (mustChange) {
+      router.push('/change-password')
+      return
+    }
     ElMessage.success('登录成功')
     router.push('/')
   } catch {

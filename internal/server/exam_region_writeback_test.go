@@ -29,7 +29,7 @@ func TestOnExamComplete_WritebackRegionAirportNode(t *testing.T) {
 			},
 		}
 
-		s.onExamComplete("example.com:443", report, 0)
+		s.onExamComplete(0, "example.com:443", report, 0)
 
 		// Verify region was updated in NodeSource
 		nodes := s.nodes.Nodes()
@@ -58,7 +58,7 @@ func TestOnExamComplete_WritebackRegionAirportNode(t *testing.T) {
 			},
 		}
 
-		s.onExamComplete("example.com:443", report, 0)
+		s.onExamComplete(0, "example.com:443", report, 0)
 
 		nodes := s.nodes.Nodes()
 		if nodes[0].Region != "US" {
@@ -83,7 +83,7 @@ func TestOnExamComplete_WritebackRegionAirportNode(t *testing.T) {
 			},
 		}
 
-		s.onExamComplete("example.com:443", report, 0)
+		s.onExamComplete(0, "example.com:443", report, 0)
 
 		// Egress country (ground truth) should overwrite old region
 		nodes := s.nodes.Nodes()
@@ -103,7 +103,7 @@ func TestOnExamComplete_WritebackRegionAirportNode(t *testing.T) {
 
 		report := detection.ExamReport{} // No egress
 
-		s.onExamComplete("example.com:443", report, 0)
+		s.onExamComplete(0, "example.com:443", report, 0)
 
 		// Region should remain empty
 		nodes := s.nodes.Nodes()
@@ -142,7 +142,7 @@ func TestOnExamComplete_WritebackRegionSelfHostedNode(t *testing.T) {
 			},
 		}
 
-		s.onExamComplete("00000000-0000-0000-0000-000000000000.example.com:443", report, 0)
+		s.onExamComplete(0, "00000000-0000-0000-0000-000000000000.example.com:443", report, 0)
 
 		// Verify database was updated
 		nodes, err := st.ListAllSelfHostedNodes()
@@ -182,7 +182,7 @@ func TestOnExamComplete_WritebackRegionSelfHostedNode(t *testing.T) {
 			},
 		}
 
-		s.onExamComplete("00000000-0000-0000-0000-000000000000.example.com:443", report, 0)
+		s.onExamComplete(0, "00000000-0000-0000-0000-000000000000.example.com:443", report, 0)
 
 		nodes, err := st.ListAllSelfHostedNodes()
 		if err != nil {
@@ -218,7 +218,7 @@ func TestOnExamComplete_WritebackRegionSelfHostedNode(t *testing.T) {
 			},
 		}
 
-		s.onExamComplete("00000000-0000-0000-0000-000000000000.example.com:443", report, 0)
+		s.onExamComplete(0, "00000000-0000-0000-0000-000000000000.example.com:443", report, 0)
 
 		nodes, err := st.ListAllSelfHostedNodes()
 		if err != nil {

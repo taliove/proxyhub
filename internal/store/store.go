@@ -57,6 +57,9 @@ func (s *Store) migrate() error {
 CREATE TABLE IF NOT EXISTS endpoints (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
 	alias       TEXT NOT NULL,
+	-- path 必须全局唯一(不改 (user_id, path) 联合唯一):
+	-- /sub/{path} 是公开无用户上下文的入口,反查属主只能靠 path 唯一索引;
+	-- 且 path 是 16 字符随机 hex,碰撞概率可忽略。ticket 10 决策偏离原 ticket 文案。
 	path        TEXT NOT NULL UNIQUE,
 	token       TEXT NOT NULL,
 	enabled     INTEGER NOT NULL DEFAULT 1,
@@ -308,6 +311,39 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 用户账户表（017_users.sql,ticket 01 用户模型）
+	if err := s.applyMigrationFile("017_users.sql"); err != nil {
+		return err
+	}
+
+	// 用户资源配额表（018_user_quotas.sql,ticket 01 用户模型）
+	if err := s.applyMigrationFile("018_user_quotas.sql"); err != nil {
+		return err
+	}
+
+	// 每用户 Xray 实例表（020_user_xray_instances.sql,ticket 08）
+	if err := s.applyMigrationFile("020_user_xray_instances.sql"); err != nil {
+		return err
+	}
+
+	// 数据模型多租户化(ticket 06):user_id 列 + settings 拆分。
+	// 必须在 MigrateAdminToSuperUser 之前:migrateMultiTenant 创建 system_settings,
+	// GetSetting 读它;放在所有既有迁移之后,保证目标表都已存在;幂等。
+	if err := s.migrateMultiTenant(); err != nil {
+		return err
+	}
+
+	// 超管自动迁移:users 表为空且 settings.admin_user 存在时,迁移为 super_admin
+	if err := s.MigrateAdminToSuperUser(); err != nil {
+		return err
+	}
+
+	// 超管落位后回填:user_id=0 的历史行统一归属超管(ticket 06 expand)。
+	// 无超管(全新安装)时幂等为空操作,首位超管创建后由下次启动补齐。
+	if err := s.BackfillUserID(); err != nil {
+		return err
+	}
+
 	// 刷新任务化:refresh_runs 关联 jobs 任务 id(ticket 03,刷新迁入 jobs 运行时)
 	if err := s.addColumnIfMissing("refresh_runs", "job_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
@@ -524,6 +560,51 @@ CREATE TABLE IF NOT EXISTS speedtest_results (
 );
 
 CREATE INDEX IF NOT EXISTS idx_speedtest_results_node ON speedtest_results(node_key, id DESC);
+`
+	case "020_user_xray_instances.sql":
+		checkTable = "user_xray_instances"
+		migrationSQL = `
+CREATE TABLE IF NOT EXISTS user_xray_instances (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL UNIQUE,
+    port            INTEGER NOT NULL,
+    config_path     TEXT NOT NULL DEFAULT '',
+    pid             INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'stopped',
+    last_started_at TIMESTAMP,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_xray_instances_status ON user_xray_instances(status);
+CREATE INDEX IF NOT EXISTS idx_user_xray_instances_port ON user_xray_instances(port);
+`
+	case "017_users.sql":
+		checkTable = "users"
+		migrationSQL = `
+CREATE TABLE IF NOT EXISTS users (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    username             TEXT NOT NULL UNIQUE,
+    pass_hash            TEXT NOT NULL,
+    role                 TEXT NOT NULL,
+    must_change_password INTEGER NOT NULL DEFAULT 0,
+    disabled_at          TIMESTAMP,
+    created_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_login_at        TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+`
+	case "018_user_quotas.sql":
+		checkTable = "user_quotas"
+		migrationSQL = `
+CREATE TABLE IF NOT EXISTS user_quotas (
+    user_id          INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    max_airports     INTEGER NOT NULL DEFAULT 0,
+    max_endpoints    INTEGER NOT NULL DEFAULT 0,
+    xray_port_start  INTEGER NOT NULL DEFAULT 0,
+    xray_port_end    INTEGER NOT NULL DEFAULT 0
+);
 `
 	default:
 		return fmt.Errorf("unknown migration file: %s", filename)

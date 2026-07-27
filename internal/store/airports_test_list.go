@@ -18,9 +18,20 @@ type AirportWithTestRun struct {
 // Uses a LEFT JOIN with subquery to fetch the most recent test run per airport,
 // avoiding N+1 queries.
 func (s *Store) ListAirportsWithTestRuns(ctx context.Context) ([]*AirportWithTestRun, error) {
+	return s.listAirportsWithTestRuns(ctx, 0)
+}
+
+// ListAirportsWithTestRunsByUser lists the given user's airports with latest
+// test run info (ticket 07). Test run rows are joined per airport, so the
+// per-user filter on airports already scopes the joined runs.
+func (s *Store) ListAirportsWithTestRunsByUser(ctx context.Context, userID int64) ([]*AirportWithTestRun, error) {
+	return s.listAirportsWithTestRuns(ctx, userID)
+}
+
+func (s *Store) listAirportsWithTestRuns(ctx context.Context, userID int64) ([]*AirportWithTestRun, error) {
 	query := `
 		SELECT
-			a.id, a.name, a.url, a.abbr, a.enabled, a.created_at,
+			a.id, a.name, a.url, a.abbr, a.enabled, a.created_at, a.user_id,
 			atr.overall_score, atr.created_at, atr.status
 		FROM airports a
 		LEFT JOIN (
@@ -33,10 +44,15 @@ func (s *Store) ListAirportsWithTestRuns(ctx context.Context) ([]*AirportWithTes
 				LIMIT 1
 			)
 		) atr ON a.id = atr.airport_id
-		ORDER BY a.id DESC
 	`
+	args := []any{}
+	if userID > 0 {
+		query += ` WHERE a.user_id = ?`
+		args = append(args, userID)
+	}
+	query += ` ORDER BY a.id DESC`
 
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query airports with test runs: %w", err)
 	}
@@ -51,7 +67,7 @@ func (s *Store) ListAirportsWithTestRuns(ctx context.Context) ([]*AirportWithTes
 		var status sql.NullString
 
 		err := rows.Scan(
-			&awt.ID, &awt.Name, &awt.URL, &awt.Abbr, &enabled, &awt.CreatedAt,
+			&awt.ID, &awt.Name, &awt.URL, &awt.Abbr, &enabled, &awt.CreatedAt, &awt.UserID,
 			&score, &testAt, &status,
 		)
 		if err != nil {

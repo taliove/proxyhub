@@ -12,9 +12,14 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
-// handleListSelfNodes lists all self-hosted nodes (including disabled) for admin UI
+// handleListSelfNodes lists the current user's self-hosted nodes (including
+// disabled) for the admin UI. ticket 07: per-user filter via EffectiveUserID.
 func (s *Server) handleListSelfNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := s.st.ListAllSelfHostedNodes()
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	nodes, err := s.st.ListAllSelfHostedNodesByUser(EffectiveUserID(scope))
 	if err != nil {
 		s.logger.Error("list self nodes failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -46,8 +51,13 @@ func decodeSelfNode(r *http.Request) (*store.SelfHostedNode, error) {
 	return &n, nil
 }
 
-// handleCreateSelfNode creates a new self-hosted node (enabled by default)
+// handleCreateSelfNode creates a new self-hosted node (enabled by default,
+// owned by the effective user, ticket 07)
 func (s *Server) handleCreateSelfNode(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	n, err := decodeSelfNode(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -59,7 +69,7 @@ func (s *Server) handleCreateSelfNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.st.CreateSelfHostedNode(n); err != nil {
+	if err := s.st.CreateSelfHostedNodeForUser(EffectiveUserID(scope), n); err != nil {
 		s.logger.Error("create self node failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -68,8 +78,13 @@ func (s *Server) handleCreateSelfNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"success": true, "region_resolved": regionResolved})
 }
 
-// handleUpdateSelfNode updates an existing self-hosted node
+// handleUpdateSelfNode updates an existing self-hosted node (owner-checked,
+// ticket 07)
 func (s *Server) handleUpdateSelfNode(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -86,7 +101,7 @@ func (s *Server) handleUpdateSelfNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.st.UpdateSelfHostedNode(n); err != nil {
+	if err := s.st.UpdateSelfHostedNodeForUser(EffectiveUserID(scope), n); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
 			return
@@ -97,19 +112,27 @@ func (s *Server) handleUpdateSelfNode(w http.ResponseWriter, r *http.Request) {
 	}
 	// Sync memory pool so /nodes reflects the edited name/region immediately
 	// (ticket 47): no waiting for the next aggregation refresh.
-	s.syncSelfHostedNodeIdentity(n.ToNode().NodeKey(), n.Name, n.RegionCode)
+	s.syncSelfHostedNodeIdentityForUser(EffectiveUserID(scope), n.ToNode().NodeKey(), n.Name, n.RegionCode)
 	regionResolved := n.RegionCode != "" && n.RegionCode != "Unknown"
 	writeJSON(w, map[string]any{"success": true, "region_resolved": regionResolved})
 }
 
-// handleDeleteSelfNode deletes a self-hosted node
+// handleDeleteSelfNode deletes a self-hosted node (owner-checked, ticket 07)
 func (s *Server) handleDeleteSelfNode(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if err := s.st.DeleteSelfHostedNode(id); err != nil {
+	if err := s.st.DeleteSelfHostedNodeForUser(EffectiveUserID(scope), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
 		s.logger.Error("delete self node failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -117,8 +140,13 @@ func (s *Server) handleDeleteSelfNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"success": true})
 }
 
-// handleToggleSelfNode enables/disables a self-hosted node
+// handleToggleSelfNode enables/disables a self-hosted node (owner-checked,
+// ticket 07)
 func (s *Server) handleToggleSelfNode(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -131,7 +159,7 @@ func (s *Server) handleToggleSelfNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	if err := s.st.SetSelfHostedNodeEnabled(id, req.Enabled); err != nil {
+	if err := s.st.SetSelfHostedNodeEnabledForUser(EffectiveUserID(scope), id, req.Enabled); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
 			return

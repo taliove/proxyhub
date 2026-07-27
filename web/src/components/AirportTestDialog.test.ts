@@ -24,7 +24,11 @@ const ElDialogStub = defineComponent({
   setup(props, { slots }) {
     return () =>
       props.modelValue
-        ? h('div', { class: 'el-dialog-stub' }, [slots.default?.(), slots.footer?.()])
+        ? h('div', { class: 'el-dialog-stub' }, [
+            slots.header?.(),
+            slots.default?.(),
+            slots.footer?.()
+          ])
         : null
   }
 })
@@ -57,6 +61,22 @@ const ElProgressStub = defineComponent({
         { class: 'ElProgress-stub' },
         props.format ? String((props.format as () => string)()) : `${props.percentage}%`
       )
+  }
+})
+
+// el-steps/el-step 桩:渲染步骤 title+description(流水线可见性断言)
+const ElStepsStub = defineComponent({
+  name: 'ElSteps',
+  props: { active: { type: Number, default: 0 } },
+  setup(_, { slots }) {
+    return () => h('div', { class: 'ElSteps-stub' }, slots.default?.())
+  }
+})
+const ElStepStub = defineComponent({
+  name: 'ElStep',
+  props: { title: { type: String, default: '' }, description: { type: String, default: '' } },
+  setup(props) {
+    return () => h('div', { class: 'ElStep-stub' }, `${props.title} ${props.description}`)
   }
 })
 
@@ -161,6 +181,8 @@ const mountDialog = () =>
         'el-icon': SimpleSlotStub('ElIcon'),
         'el-progress': ElProgressStub,
         'el-divider': SimpleSlotStub('ElDivider'),
+        'el-steps': ElStepsStub,
+        'el-step': ElStepStub,
         StatusDot: SimpleSlotStub('StatusDot'),
         AirportTestDiagnostic: SimpleSlotStub('AirportTestDiagnostic')
       }
@@ -207,11 +229,14 @@ describe('AirportTestDialog(运行模式)', () => {
     await advancePoll()
 
     expect(wrapper.emitted('finished')).toBeTruthy()
-    // 完成态为 success alert,title 带口径(ticket 0044);报告归抽屉
-    // (completedRun 无 sampled_nodes,抽样兜底取 total_nodes=10)
+    // 完成态得分头 title 带口径(ticket 0044);抽样兜底取 total_nodes=10
     expect(wrapper.text()).toContain('实测完成(抽样,共检活 10 个节点)')
     expect(wrapper.text()).toContain('90.5')
-    expect(wrapper.text()).toContain('详情抽屉「最近测试」')
+    // 内嵌精简报告:事实汇总(可用节点 9/10)+ 评分构成(可用率 45 分)直接可见
+    expect(wrapper.text()).toContain('9 / 10')
+    expect(wrapper.text()).toContain('45.0 分')
+    // 完整历史趋势/抽样明细仍归抽屉(ticket 0037)
+    expect(wrapper.text()).toContain('机场详情抽屉「最近测试」')
   })
 
   it('全量运行完成:alert title 为全量口径(共检活 M 个节点)', async () => {
@@ -277,6 +302,29 @@ describe('AirportTestDialog(运行模式)', () => {
     expect(wrapper.text()).toContain('全量测试')
     expect(wrapper.text()).toContain('共 57 个节点')
     expect(wrapper.text()).not.toContain('本次抽测')
+  })
+
+  // 常驻三步流水线:开测即三步全占位,替代单一转圈圈;检活步描述带 checked/total
+  it('运行态常驻三步流水线,检活步描述带绝对计数', async () => {
+    vi.mocked(client.post).mockResolvedValue(jobHandle as never)
+    mockRunningChecking(12, 3)
+    const wrapper = mountDialog()
+
+    ;(wrapper.vm as unknown as { start: (a: Airport, full?: boolean) => void }).start(
+      airport,
+      false
+    )
+    await flushPromises()
+    await advancePoll()
+
+    // 三步标题全部常驻可见
+    expect(wrapper.text()).toContain('诊断订阅')
+    expect(wrapper.text()).toContain('检活节点')
+    expect(wrapper.text()).toContain('综合评分')
+    // 检活进行中:步骤描述带 checked/total
+    expect(wrapper.text()).toContain('3 / 12')
+    // 头部运行态标签
+    expect(wrapper.text()).toContain('检活中')
   })
 
   // 秒级完成是抽样浅测主场景:首次轮询即见 done,checkingProgress 从未赋值,

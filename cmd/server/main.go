@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/taliove/proxyhub/internal/server"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
+	"github.com/taliove/proxyhub/internal/xraymgr"
 )
 
 func main() {
@@ -93,6 +95,21 @@ func run(configPath string) error {
 	// HTTP 服务（SPA + API + 订阅端点）
 	srv := server.New(cfg, st, agg, WebFS, logger, detectionSvc, resolver)
 	srv.SetDetectionJobs(detectionJobs)
+
+	// 每用户 Xray 实例管理(ticket 08):工作目录落在数据库同级的 xray/ 下
+	// (开发 var/xray,生产 /var/lib/proxyhub/xray),Manager 内部负责 MkdirAll;
+	// 实例按需启动(用户面板/管理面 Start),此处只接线不拉起进程。
+	xrayMgr, err := xraymgr.New(xraymgr.Config{
+		Store:   st,
+		Nodes:   agg,
+		WorkDir: filepath.Join(filepath.Dir(cfg.Storage.Path), "..", "xray"),
+		Logger:  logger,
+	})
+	if err != nil {
+		return fmt.Errorf("初始化 xray 管理器: %w", err)
+	}
+	srv.SetXrayManager(xrayMgr)
+
 	srv.RecoverJobs()            // 重启恢复:遗留 running 体检任务标记 interrupted
 	go srv.StartExamSweeper(ctx) // 后台清扫过期(超过 TTL)的体检任务
 

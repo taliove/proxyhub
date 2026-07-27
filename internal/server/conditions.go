@@ -75,7 +75,12 @@ func (s *Server) collectNodeTags(nodes []*subscription.Node) (map[string][]strin
 
 // handleUpdateEndpointConditions 设置订阅地址的节点范围条件。请求体即 Conditions 对象。
 // 空条件落库为空串(表示全量);非法请求体 -> 400;端点不存在 -> 404。
+// ticket 07: 校验属主,行属他人 404。
 func (s *Server) handleUpdateEndpointConditions(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -97,7 +102,7 @@ func (s *Server) handleUpdateEndpointConditions(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	if err := s.st.UpdateEndpointConditions(id, raw); err != nil {
+	if err := s.st.UpdateEndpointConditionsForUser(EffectiveUserID(scope), id, raw); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
 			return
@@ -113,14 +118,19 @@ func (s *Server) handleUpdateEndpointConditions(w http.ResponseWriter, r *http.R
 // handlePreviewConditions 预览一组(未保存的)条件在当前节点池上的命中数,用于编辑时实时反馈。
 // total = 全局过滤链后的可下发节点数;count = 再套用条件后命中的节点数。
 // 返回 count + 前 N(20)个命中节点明细(名称/地区/延迟/带宽/来源/标签),便于条件配置时预览具体节点。
-// 走与 /sub 同一条链,保证所见即所得。
+// 走与 /sub 同一条链,保证所见即所得。ticket 07: 按当前用户视角的节点池。
 func (s *Server) handlePreviewConditions(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(scope)
 	var cond subfilter.Conditions
 	if err := json.NewDecoder(r.Body).Decode(&cond); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	filtered := s.filteredNodes(s.nodes.Nodes())
+	filtered := s.filteredNodes(s.nodes.NodesForUser(effUID), effUID)
 	matched := s.applyConditionsResolved(filtered, cond)
 
 	// 取前 20 个命中节点的明细(多于 20 时截断,避免返回体过大;count 保留真实命中数)

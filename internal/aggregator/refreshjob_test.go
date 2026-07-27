@@ -136,7 +136,7 @@ func TestStartRefreshJob_AirportLevelConflict(t *testing.T) {
 	if _, _, _, err := agg.StartRefreshJob(store.RefreshTriggerManual); err != nil {
 		t.Fatalf("StartRefreshJob() error = %v", err)
 	}
-	if _, _, _, err := agg.startRefresh(store.RefreshTriggerManual, airport.ID); !errors.Is(err, ErrRefreshConflict) {
+	if _, _, _, err := agg.startRefresh(0, store.RefreshTriggerManual, airport.ID); !errors.Is(err, ErrRefreshConflict) {
 		t.Errorf("single-airport during full: err = %v, want ErrRefreshConflict", err)
 	}
 	// 全量 vs 全量不算冲突(同 key 附加)

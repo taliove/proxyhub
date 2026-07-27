@@ -158,7 +158,7 @@ func TestStatsAPI_Global(t *testing.T) {
 	h := srv.Handler()
 	cookie := authCookie(t, h)
 
-	ep, _ := st.CreateEndpoint("dev")
+	ep, _ := st.CreateEndpointForUser(1, "dev")
 	st.RecordPull(store_PullRecord(ep.ID, "1.1.1.1"))
 	st.RecordPull(store_PullRecord(ep.ID, "2.2.2.2"))
 
@@ -184,7 +184,7 @@ func TestStatsAPI_Trend(t *testing.T) {
 	h := srv.Handler()
 	cookie := authCookie(t, h)
 
-	ep, _ := st.CreateEndpoint("dev")
+	ep, _ := st.CreateEndpointForUser(1, "dev")
 	st.RecordPull(store_PullRecord(ep.ID, "1.1.1.1"))
 
 	req := httptest.NewRequest("GET", "/api/stats/trend?days=7", nil)

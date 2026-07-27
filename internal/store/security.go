@@ -95,10 +95,12 @@ func (s *Store) BanIP(ip string, banDuration time.Duration, now time.Time) (time
 	return bannedUntil, nil
 }
 
-// GetSetting 读取设置项，不存在返回 ErrNotFound
+// GetSetting 读取全局设置项，不存在返回 ErrNotFound。
+// 数据模型多租户化(ticket 06)后读写落在 system_settings;遗留 settings 表仅
+// 作回滚备份保留,contract 阶段才删除。每用户覆盖走 GetUserSetting。
 func (s *Store) GetSetting(key string) (string, error) {
 	var value string
-	err := s.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
+	err := s.db.QueryRow(`SELECT value FROM system_settings WHERE key = ?`, key).Scan(&value)
 	if err != nil {
 		if isNoRows(err) {
 			return "", ErrNotFound
@@ -108,13 +110,13 @@ func (s *Store) GetSetting(key string) (string, error) {
 	return value, nil
 }
 
-// SetSetting 写入设置项
+// SetSetting 写入全局设置项(落 system_settings,见 GetSetting 注释)。
 func (s *Store) SetSetting(key, value string) error {
 	if key == "" {
 		return errors.New("key is required")
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO settings (key, value) VALUES (?, ?)
+		INSERT INTO system_settings (key, value) VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 		key, value)
 	if err != nil {
