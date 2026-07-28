@@ -45,9 +45,7 @@ describe('useTemplateVersions - diff preview', () => {
     })
 
     it('should handle preview error gracefully', async () => {
-      vi.mocked(templatesApi.getTemplateVersion).mockRejectedValue(
-        new Error('Network error')
-      )
+      vi.mocked(templatesApi.getTemplateVersion).mockRejectedValue(new Error('Network error'))
 
       const { previewVersion, previewingVersion } = useTemplateVersions()
       const onContentLoad = vi.fn()

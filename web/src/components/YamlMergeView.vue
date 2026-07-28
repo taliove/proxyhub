@@ -34,11 +34,7 @@ const mergeView = shallowRef<MergeView | null>(null)
 function createMergeView(original: string, modified: string) {
   if (!mergeViewEl.value) return
 
-  const extensions = [
-    basicSetup,
-    yaml(),
-    indentUnit.of('  ')
-  ]
+  const extensions = [basicSetup, yaml(), indentUnit.of('  ')]
 
   if (props.isDark) {
     extensions.push(oneDark)
