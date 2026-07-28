@@ -1,9 +1,10 @@
 // Package captcha issues and verifies the login image captcha that guards
 // POST /api/login once an IP has accumulated failed attempts.
 //
-// Design constraints (ADR-level decisions, see .scratch spec login-captcha):
+// Design constraints (see docs/adr/0032-login-hardening-mfa-captcha.md):
 //   - explicit charset without confusable glyphs (no 0/O/1/I/l);
-//   - challenges live in memory only, 5 minute TTL, single use;
+//   - challenges live in memory only, 5 minute TTL, single use: a submission
+//     consumes the challenge whether the answer was right or wrong;
 //   - per-IP issue throttle so the endpoint cannot be used as a CPU sink.
 //
 // Losing challenges on restart is accepted: the TTL is short and the user
@@ -152,10 +153,11 @@ func (s *Service) Issue(ip string) (Challenge, error) {
 	return Challenge{ID: id, ImageBase64: item.EncodeB64string()}, nil
 }
 
-// Verify checks answer against the challenge id. A correct answer consumes
-// the challenge atomically (single use, concurrency safe); a wrong answer
-// leaves it in place so a user can fix a typo on the same image.
-// Expired or unknown ids always fail.
+// Verify checks answer against the challenge id. Submitting consumes the
+// challenge atomically whether the answer was right or wrong (single use,
+// concurrency safe): keeping a wrong-answered challenge alive would hand an
+// attacker unlimited guesses against one image. A user who mistypes gets a
+// fresh image instead. Expired or unknown ids always fail.
 func (s *Service) Verify(id, answer string) bool {
 	if id == "" {
 		return false
@@ -169,15 +171,11 @@ func (s *Service) Verify(id, answer string) bool {
 	if !ok {
 		return false
 	}
-	if !now.Before(ch.expiresAt) {
-		delete(s.challenges, id)
-		return false
-	}
-	if !answerMatches(ch.answer, answer) {
-		return false
-	}
 	delete(s.challenges, id)
-	return true
+	if !now.Before(ch.expiresAt) {
+		return false
+	}
+	return answerMatches(ch.answer, answer)
 }
 
 // Pending reports how many live challenges are held. Used by tests and

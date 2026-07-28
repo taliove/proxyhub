@@ -17,8 +17,9 @@ import (
 )
 
 // stubCaptcha is a deterministic captcha seam for login tests: the only
-// accepted answer is stubGoodAnswer, and every id is consumed on success so
-// the single-use contract is observable from the handler layer.
+// accepted answer is stubGoodAnswer, and every submitted id is consumed
+// (right or wrong, like the real service) so the single-use contract is
+// observable from the handler layer.
 type stubCaptcha struct {
 	mu       sync.Mutex
 	issued   int
@@ -48,11 +49,8 @@ func (s *stubCaptcha) Verify(id, answer string) bool {
 	if id == "" || s.consumed[id] {
 		return false
 	}
-	if answer != stubGoodAnswer {
-		return false
-	}
 	s.consumed[id] = true
-	return true
+	return answer == stubGoodAnswer
 }
 
 // loginBody is the login request payload including the captcha fields.
@@ -442,33 +440,46 @@ func TestLogin_RealCaptchaRoundTrip(t *testing.T) {
 		NewAnswer: func() (string, error) { return known, nil },
 	})
 
-	req := httptest.NewRequest("GET", "/api/captcha", nil)
-	req.RemoteAddr = ip + ":3000"
-	issueRec := httptest.NewRecorder()
-	h.ServeHTTP(issueRec, req)
-	if issueRec.Code != http.StatusOK {
-		t.Fatalf("issue status = %d, want 200", issueRec.Code)
-	}
-	var issued struct {
-		ChallengeID string `json:"challenge_id"`
-	}
-	if err := json.Unmarshal(issueRec.Body.Bytes(), &issued); err != nil {
-		t.Fatalf("unmarshal issue: %v", err)
+	issue := func() string {
+		t.Helper()
+		req := httptest.NewRequest("GET", "/api/captcha", nil)
+		req.RemoteAddr = ip + ":3000"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("issue status = %d, want 200", rec.Code)
+		}
+		var issued struct {
+			ChallengeID string `json:"challenge_id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &issued); err != nil {
+			t.Fatalf("unmarshal issue: %v", err)
+		}
+		return issued.ChallengeID
 	}
 
-	// Wrong answer first: refused, and the challenge survives the typo.
+	// Wrong answer first: refused, and the challenge is burned by the attempt.
+	burned := issue()
 	bad := doLoginCaptcha(t, h, loginBody{
 		Username: "owner", Password: "a-very-strong-pass",
-		CaptchaID: issued.ChallengeID, CaptchaAnswer: "ZZZZZZ",
+		CaptchaID: burned, CaptchaAnswer: "ZZZZZZ",
 	}, ip)
 	if bad.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong answer status = %d, want 401", bad.Code)
 	}
+	retry := doLoginCaptcha(t, h, loginBody{
+		Username: "owner", Password: "a-very-strong-pass",
+		CaptchaID: burned, CaptchaAnswer: known,
+	}, ip)
+	if retry.Code != http.StatusUnauthorized {
+		t.Fatalf("retry on the burned challenge status = %d, want 401 (submit consumes it either way)", retry.Code)
+	}
 
-	// Lowercase on purpose: the accepted answer is case insensitive.
+	// A fresh challenge does let the user in. Lowercase on purpose: the
+	// accepted answer is case insensitive.
 	good := doLoginCaptcha(t, h, loginBody{
 		Username: "owner", Password: "a-very-strong-pass",
-		CaptchaID: issued.ChallengeID, CaptchaAnswer: strings.ToLower(known),
+		CaptchaID: issue(), CaptchaAnswer: strings.ToLower(known),
 	}, ip)
 	if good.Code != http.StatusOK {
 		t.Fatalf("solved captcha login status = %d, want 200 (body: %s)", good.Code, good.Body.String())

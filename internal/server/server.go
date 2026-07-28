@@ -964,19 +964,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "account disabled", http.StatusForbidden)
 			return
 		}
-		now := time.Now()
-		nowBanned, err := s.st.RecordLoginFailure(ip,
-			policy.BanThreshold, policy.BanDuration, now)
-		if err != nil {
-			s.logger.Error("record login failure failed", "error", err)
-		}
-		if nowBanned {
-			s.logger.Warn("ip banned after repeated failures", "ip", ip)
-			bannedUntil := now.Add(policy.BanDuration)
-			s.recordAudit("threshold_ban", ip, req.Username,
-				fmt.Sprintf("连续失败达阈值 %d，封禁至 %s",
-					policy.BanThreshold, bannedUntil.Format("2006-01-02 15:04:05")))
-		} else {
+		// 达阈值时 chargeLoginFailure 已写 threshold_ban，此处不再叠一条 login_failure。
+		if !s.chargeLoginFailure(ip, req.Username, policy, failureReasonPassword) {
 			s.recordAudit("login_failure", ip, req.Username, "")
 		}
 		// 这次失败可能刚好把该 IP 推过验证码阈值:告知前端下次要带码。

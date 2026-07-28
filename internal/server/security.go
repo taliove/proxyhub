@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -74,6 +75,42 @@ func (s *Server) loadSecurityPolicy() securityPolicy {
 		}
 	}
 	return policy
+}
+
+// failureReason labels which login stage produced a failure. It only shapes
+// the log lines; the accounting is identical for every stage on purpose, so
+// an attacker cannot pick a cheaper stage to brute force.
+type failureReason string
+
+const (
+	failureReasonPassword failureReason = "password"
+	failureReasonCaptcha  failureReason = "captcha"
+	failureReasonMFA      failureReason = "mfa"
+)
+
+// chargeLoginFailure books one failed login attempt from ip against the IP2Ban
+// counter and writes the threshold_ban audit row when this attempt is the one
+// that crosses the threshold. It reports whether the IP is now banned so the
+// caller can pick its own per-stage audit event (login_failure, captcha_failure,
+// mfa_failure) accordingly.
+//
+// Single implementation on purpose: password, captcha and MFA failures share
+// one counter and one threshold, so they must not drift apart.
+func (s *Server) chargeLoginFailure(ip, username string, policy securityPolicy, reason failureReason) bool {
+	now := time.Now()
+	nowBanned, err := s.st.RecordLoginFailure(ip, policy.BanThreshold, policy.BanDuration, now)
+	if err != nil {
+		s.logger.Error("record login failure failed", "ip", ip, "reason", string(reason), "error", err)
+	}
+	if !nowBanned {
+		return false
+	}
+	bannedUntil := now.Add(policy.BanDuration)
+	s.logger.Warn("ip banned after repeated failures", "ip", ip, "reason", string(reason))
+	s.recordAudit("threshold_ban", ip, username,
+		fmt.Sprintf("连续失败达阈值 %d，封禁至 %s",
+			policy.BanThreshold, bannedUntil.Format("2006-01-02 15:04:05")))
+	return true
 }
 
 // parsePositiveInt 解析正整数

@@ -2,9 +2,7 @@ package server
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/taliove/proxyhub/internal/captcha"
 )
@@ -15,8 +13,9 @@ type captchaService interface {
 	// Issue renders a fresh challenge for ip, or captcha.ErrRateLimited when
 	// the IP exhausted its per-window issue budget.
 	Issue(ip string) (captcha.Challenge, error)
-	// Verify reports whether answer solves challenge id, consuming the
-	// challenge on success (single use).
+	// Verify reports whether answer solves challenge id. Submitting consumes
+	// the challenge either way (single use), so a wrong answer forces the
+	// client to fetch a fresh one.
 	Verify(id, answer string) bool
 }
 
@@ -71,32 +70,27 @@ func (s *Server) loginFailCount(ip string) int {
 	return 0
 }
 
+// loopbackIPv4 is the exact literal the login carve-outs (ban, honeypot,
+// captcha) exempt. Deliberately narrower than isLoopbackAddr in
+// handlers_trusted_ips.go: see the comment on isLoopbackIP.
+const loopbackIPv4 = "127.0.0.1"
+
 // isLoopbackIP mirrors the existing "127.0.0.1 is exempt" convention used by
-// the ban and honeypot checks in handleLogin.
+// the ban and honeypot checks in handleLogin. Literal match by design; the
+// broader parse-based check lives in isLoopbackAddr (handlers_trusted_ips.go)
+// for the standing-grant decision.
 func isLoopbackIP(ip string) bool {
-	return ip == "127.0.0.1"
+	return ip == loopbackIPv4
 }
 
 // recordCaptchaFailure books a missing or wrong captcha answer on the same
 // counter as a wrong password, so brute force behind a captcha still walks
 // into IP2Ban, and writes the captcha_failure audit event.
 func (s *Server) recordCaptchaFailure(ip, username, challengeID string, policy securityPolicy) {
-	now := time.Now()
-	nowBanned, err := s.st.RecordLoginFailure(ip,
-		policy.BanThreshold, policy.BanDuration, now)
-	if err != nil {
-		s.logger.Error("record captcha failure failed", "ip", ip, "error", err)
-	}
 	detail := "验证码校验失败"
 	if challengeID == "" {
 		detail = "缺少验证码"
 	}
 	s.recordAudit("captcha_failure", ip, username, detail)
-	if nowBanned {
-		bannedUntil := now.Add(policy.BanDuration)
-		s.logger.Warn("ip banned after repeated captcha failures", "ip", ip)
-		s.recordAudit("threshold_ban", ip, username,
-			fmt.Sprintf("连续失败达阈值 %d，封禁至 %s",
-				policy.BanThreshold, bannedUntil.Format("2006-01-02 15:04:05")))
-	}
+	s.chargeLoginFailure(ip, username, policy, failureReasonCaptcha)
 }

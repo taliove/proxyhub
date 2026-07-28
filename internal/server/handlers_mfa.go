@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/taliove/proxyhub/internal/mfa"
 	"github.com/taliove/proxyhub/internal/store"
@@ -514,25 +513,13 @@ func (s *Server) verifyLoginSecondFactor(cfg *store.UserMFAConfig, code string) 
 func (s *Server) recordMFALoginFailure(pendingToken, ip, username string) {
 	alive := s.mfaPending.RecordFailure(pendingToken)
 
-	policy := s.loadSecurityPolicy()
-	now := time.Now()
-	nowBanned, err := s.st.RecordLoginFailure(ip, policy.BanThreshold, policy.BanDuration, now)
-	if err != nil {
-		s.logger.Error("record mfa failure failed", "ip", ip, "error", err)
-	}
-
 	detail := fmt.Sprintf("mfa verification failed, pending=%s", pendingTokenPrefix(pendingToken))
 	if !alive {
 		detail += ", pending session destroyed"
 	}
 	s.recordAudit("mfa_failure", ip, username, detail)
 
-	if nowBanned {
-		s.logger.Warn("ip banned after repeated mfa failures", "ip", ip)
-		s.recordAudit("threshold_ban", ip, username,
-			fmt.Sprintf("连续失败达阈值 %d，封禁至 %s",
-				policy.BanThreshold, now.Add(policy.BanDuration).Format("2006-01-02 15:04:05")))
-	}
+	s.chargeLoginFailure(ip, username, s.loadSecurityPolicy(), failureReasonMFA)
 }
 
 // pendingTokenPrefix renders the audit-safe fragment of a pending token.

@@ -70,9 +70,11 @@ func TestVerify_CaseInsensitiveAndTrimmed(t *testing.T) {
 	}
 }
 
-// TestVerify_WrongAnswerKeepsChallenge lets the user retry the same image
-// after a typo, while a correct answer consumes the challenge.
-func TestVerify_WrongAnswerKeepsChallenge(t *testing.T) {
+// TestVerify_WrongAnswerConsumesChallenge pins the one-shot contract: a
+// submission burns the challenge whether or not the answer was right, so a
+// wrong attempt cannot be retried against the same image. The client asks for
+// a fresh challenge instead.
+func TestVerify_WrongAnswerConsumesChallenge(t *testing.T) {
 	svc := newTestService(time.Now)
 	ch, _ := svc.Issue("1.2.3.4")
 	answer := svc.peekAnswer(ch.ID)
@@ -80,8 +82,11 @@ func TestVerify_WrongAnswerKeepsChallenge(t *testing.T) {
 	if svc.Verify(ch.ID, "WRONG1") {
 		t.Fatal("Verify() = true for wrong answer")
 	}
-	if !svc.Verify(ch.ID, answer) {
-		t.Error("Verify() = false after a wrong attempt; challenge must survive typos")
+	if svc.Verify(ch.ID, answer) {
+		t.Error("Verify() = true with the correct answer after a wrong attempt; the challenge must be consumed on submit")
+	}
+	if got := svc.Pending(); got != 0 {
+		t.Errorf("Pending() = %d after a wrong answer, want 0", got)
 	}
 }
 
