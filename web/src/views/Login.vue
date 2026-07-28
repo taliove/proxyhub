@@ -59,6 +59,16 @@
             ></template>
           </el-input>
         </el-form-item>
+        <!-- 验证码块:后端 401 带 captcha_required 后才出现,首屏零请求 -->
+        <el-form-item v-if="captchaVisible">
+          <CaptchaField
+            v-model="captchaAnswer"
+            :image-src="captchaImage"
+            :refreshing="captchaRefreshing"
+            @refresh="refreshCaptcha"
+            @submit="handleLogin"
+          />
+        </el-form-item>
         <el-button
           type="primary"
           native-type="submit"
@@ -84,7 +94,10 @@ import { useLayoutStore } from '@/stores/layout'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { User, Lock, Moon, Sunny } from '@element-plus/icons-vue'
 import Wordmark from '@/components/Wordmark.vue'
-import client from '@/api/client'
+import CaptchaField from '@/components/CaptchaField.vue'
+import { login } from '@/api/auth'
+import { useLoginCaptcha } from '@/composables/useLoginCaptcha'
+import { captchaRequiredFromError, loginErrorMessage } from './login-utils'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -93,6 +106,16 @@ const { isDark } = storeToRefs(layout)
 
 const loading = ref(false)
 const formRef = ref<FormInstance>()
+
+// 验证码状态机(ticket 04):首屏休眠,后端 401 带 captcha_required 才激活。
+const captcha = useLoginCaptcha()
+const {
+  answer: captchaAnswer,
+  imageSrc: captchaImage,
+  refreshing: captchaRefreshing,
+  visible: captchaVisible,
+  fetchChallenge: refreshCaptcha
+} = captcha
 
 const form = reactive({
   username: '',
@@ -107,14 +130,17 @@ const rules: FormRules = {
 const handleLogin = async () => {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
+  // 验证码已出现时答案必填:空答案提交只会白白累加该 IP 的失败计数(可能自封)
+  if (captchaVisible.value && captchaAnswer.value.trim() === '') {
+    ElMessage.warning('请输入验证码')
+    return
+  }
   loading.value = true
   try {
     // Login response carries the user profile (ticket 02); role drives admin UI gating,
     // must_change_password (ticket 04) routes the user to the forced password change.
-    const data = await client.post<
-      unknown,
-      { role?: string; user?: { role?: string; must_change_password?: boolean } }
-    >('/login', form)
+    // captcha.payload() 在休眠期返回空对象,正常登录路径的请求体与从前完全一致。
+    const data = await login({ ...form, ...captcha.payload() })
     const role = data?.user?.role ?? data?.role ?? ''
     const mustChange = data?.user?.must_change_password ?? false
     authStore.setAuth(form.username, role, mustChange)
@@ -124,8 +150,11 @@ const handleLogin = async () => {
     }
     ElMessage.success('登录成功')
     router.push('/')
-  } catch {
-    // 错误由 axios 拦截器统一提示
+  } catch (err) {
+    // 登录失败自成一体:请求已 skipAuthRedirect + skipErrorToast(见 api/auth.ts),
+    // 由本页提示,并在后端仍要求验证码时换一张新图、清空旧答案。
+    ElMessage.error(loginErrorMessage(err))
+    await captcha.handleFailure(captchaRequiredFromError(err))
   } finally {
     loading.value = false
   }
