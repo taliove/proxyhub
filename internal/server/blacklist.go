@@ -77,6 +77,10 @@ func (g *pullBlacklistGuard) name() string { return "pull_blacklist" }
 // outage for every user, which is a worse failure than briefly serving a banned
 // source that the very next request will catch.
 func (g *pullBlacklistGuard) check(gr subGuardRequest) subGuardVerdict {
+	// 仅本地直连豁免;转发来的 127.0.0.1 可能是伪造的,照常查规则。
+	if gr.directLoopback {
+		return allowPull()
+	}
 	denied, err := g.st.IsDenied(gr.ip, store.IPRuleScopeSub)
 	if err != nil {
 		g.logger.Error("pull blacklist lookup failed", "ip", gr.ip, "error", err)
@@ -117,8 +121,8 @@ func newPullEscalator(st *store.Store, logger *slog.Logger, policy *cachedEscala
 // Loopback never escalates: it is the operator's escape hatch (SSH tunnel,
 // localhost admin), and behind an untrusted reverse proxy every request looks
 // like 127.0.0.1, so escalating it could lock an operator out of their own box
-// on a misconfiguration. store.IsDenied refuses to match loopback for the same
-// reason; skipping it here means no useless row is written either.
+// on a misconfiguration. Server callers likewise skip the deny check for
+// direct loopback before consulting store.IsDenied.
 //
 // Errors are logged and swallowed: escalation is a hardening bonus on top of
 // the rate limit, and failing it must not change the answer the client already

@@ -36,11 +36,15 @@ type subGuard interface {
 // subGuardRequest is everything a guard is allowed to look at. It carries the
 // resolved endpoint and the already-normalised client IP so guards cannot
 // disagree about which address a request came from (clientIP only trusts
-// X-Forwarded-For behind a loopback peer).
+// forwarding headers from trusted proxy peers).
 type subGuardRequest struct {
 	req *http.Request
 	ep  *store.Endpoint
 	ip  string
+	// directLoopback marks a header-less loopback connection - the only
+	// source allowed to skip IP-based defences. A forwarded 127.0.0.1 is
+	// caller-controlled and must never count.
+	directLoopback bool
 }
 
 // subGuardVerdict is a guard's answer for one request.
@@ -130,7 +134,7 @@ func (s *Server) newSubGuardChain() []subGuard {
 // client response. A blocked request gets exactly one response written here and
 // the caller returns immediately.
 func (s *Server) runSubGuards(w http.ResponseWriter, r *http.Request, ep *store.Endpoint) bool {
-	gr := subGuardRequest{req: r, ep: ep, ip: clientIP(r)}
+	gr := subGuardRequest{req: r, ep: ep, ip: s.clientIP(r), directLoopback: isDirectLoopback(r)}
 
 	for _, g := range s.subGuards {
 		verdict := g.check(gr)

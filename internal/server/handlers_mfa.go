@@ -157,7 +157,7 @@ func (s *Server) confirmTOTPSecret(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 
-	s.recordAudit("mfa_enrolled", clientIP(r), user.Username,
+	s.recordAudit("mfa_enrolled", s.clientIP(r), user.Username,
 		fmt.Sprintf("TOTP 已启用，签发 %d 个恢复码", len(plaintext)),
 		r.UserAgent())
 
@@ -216,7 +216,7 @@ func (s *Server) handleMFARegenerateRecovery(w http.ResponseWriter, r *http.Requ
 	}
 
 	if !s.verifySecondFactor(cfg, req.Code) {
-		s.recordAudit("mfa_failure", clientIP(r), user.Username,
+		s.recordAudit("mfa_failure", s.clientIP(r), user.Username,
 			"恢复码重新生成确认失败",
 			r.UserAgent())
 		writeJSONStatus(w, http.StatusBadRequest, map[string]any{
@@ -243,7 +243,7 @@ func (s *Server) handleMFARegenerateRecovery(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	s.recordAudit("mfa_recovery_regenerated", clientIP(r), user.Username,
+	s.recordAudit("mfa_recovery_regenerated", s.clientIP(r), user.Username,
 		fmt.Sprintf("签发 %d 个恢复码，旧批次已失效", len(plaintext)),
 		r.UserAgent())
 	writeJSON(w, map[string]any{
@@ -309,7 +309,7 @@ func (s *Server) handleAdminResetMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.recordAudit("mfa_reset", clientIP(r), user.Username,
+	s.recordAudit("mfa_reset", s.clientIP(r), user.Username,
 		fmt.Sprintf("超管重置用户 id=%d 的 MFA", id),
 		r.UserAgent())
 	writeJSON(w, map[string]any{
@@ -370,7 +370,7 @@ func encodeStoredRecoveryHashes(hashes []string) (string, error) {
 // passwords), so an attacker cannot buy unlimited attempts by re-running the
 // password stage.
 func (s *Server) handleLoginMFA(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 
 	var req struct {
 		PendingToken string `json:"mfa_pending_token"`

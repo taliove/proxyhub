@@ -350,7 +350,14 @@ write_caddy_fragment() {
 ${domain} {
 	@proxyhub path /${site_path} /${site_path}/*
 	handle @proxyhub {
-		reverse_proxy ${PROXYHUB_LISTEN_ADDR}
+		# Replace (not append) forwarding headers: ProxyHub trusts XFF from its
+		# loopback peer, so a caller-supplied X-Forwarded-For must never survive
+		# the proxy hop - otherwise IP2Ban / honeypot / captcha / blacklist can
+		# all be bypassed by spoofing 127.0.0.1.
+		reverse_proxy ${PROXYHUB_LISTEN_ADDR} {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Real-IP {remote_host}
+		}
 	}
 
 	handle {

@@ -312,10 +312,12 @@ func (s *Store) PromoteIPAccessRule(id int64) (*IPAccessRule, error) {
 // IsDenied reports whether ip is currently denied inside scope. Both exact
 // addresses and CIDR blocks are consulted; expired rules never match.
 //
-// Loopback is never denied. The SSH-tunnel/localhost path is the operator's
-// escape hatch: a bad rule (or an auto-escalation misfire behind an untrusted
-// reverse proxy, where every request looks like 127.0.0.1) must not be able to
-// lock the operator out of their own box.
+// The loopback escape hatch lives at the HTTP caller layer
+// (isDirectLoopback in internal/server), not here: the store only sees a bare
+// address string and cannot tell a real local connection from a forged
+// X-Forwarded-For: 127.0.0.1. Deny rules therefore match loopback like any
+// other address; server callers skip the check for direct loopback before
+// calling this.
 //
 // A malformed ip is not denied: the caller has no better information than the
 // address it was handed, and failing open here only costs a request that other
@@ -333,9 +335,6 @@ func (s *Store) isDeniedAt(ip, scope string, now time.Time) (bool, error) {
 	}
 	addr := net.ParseIP(strings.TrimSpace(ip))
 	if addr == nil {
-		return false, nil
-	}
-	if addr.IsLoopback() {
 		return false, nil
 	}
 	rules, err := s.loadIPRuleCache()

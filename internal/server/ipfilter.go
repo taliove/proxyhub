@@ -15,8 +15,9 @@ import (
 // non-existent host, so this runs before the router (inside sitePathMiddleware)
 // and never branches per path.
 //
-// Loopback is intentionally not special-cased here: store.IsDenied already
-// exempts it, keeping the escape-hatch rule in one place.
+// Loopback exemption lives at this caller, not in the store: only a direct
+// loopback connection (no forwarding headers) skips the deny list. A forwarded
+// 127.0.0.1 can be forged by the caller and must never bypass anything.
 //
 // The middleware fails open. A deny list is defense in depth (authentication,
 // rate limiting and the pull guard chain all still run), so a SQLite hiccup
@@ -24,7 +25,11 @@ import (
 // the operator's own way back in.
 func (s *Server) ipFilterMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := clientIP(r)
+		if isDirectLoopback(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ip := s.clientIP(r)
 		denied, err := s.st.IsDenied(ip, store.IPRuleScopeGlobal)
 		if err != nil {
 			s.logger.Warn("global ip deny check failed, allowing request",

@@ -200,9 +200,12 @@ func TestIPRuleMatch_PermanentRuleNeverExpires(t *testing.T) {
 	}
 }
 
-// TestIPRuleMatch_LoopbackNeverDenied verifies the escape hatch: no rule, not
-// even an exact loopback rule or an all-covering block, locks out localhost.
-func TestIPRuleMatch_LoopbackNeverDenied(t *testing.T) {
+// TestIPRuleMatch_LoopbackDeniedLikeAnyAddress pins the post-C1 semantics:
+// the store no longer special-cases loopback. The escape hatch moved to the
+// HTTP caller layer (isDirectLoopback in internal/server), because the store
+// cannot distinguish a real local connection from a forged
+// X-Forwarded-For: 127.0.0.1. Rules match loopback like any other address.
+func TestIPRuleMatch_LoopbackDeniedLikeAnyAddress(t *testing.T) {
 	s := newIPRuleStore(t)
 	for _, target := range []string{"127.0.0.1", "127.0.0.0/8", "0.0.0.0/0", "::1"} {
 		if _, err := s.AddIPAccessRule(target, IPRuleScopeGlobal, IPRuleSourceManual, "", 0); err != nil {
@@ -211,7 +214,7 @@ func TestIPRuleMatch_LoopbackNeverDenied(t *testing.T) {
 	}
 
 	for _, ip := range []string{"127.0.0.1", "127.0.0.53", "::1"} {
-		assertDenied(t, s, ip, IPRuleScopeGlobal, false)
+		assertDenied(t, s, ip, IPRuleScopeGlobal, true)
 	}
 	// The 0.0.0.0/0 rule must still catch a real remote address.
 	assertDenied(t, s, "203.0.113.7", IPRuleScopeGlobal, true)

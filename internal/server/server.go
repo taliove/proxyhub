@@ -828,15 +828,19 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-// clientIP 提取客户端 IP。仅当对端是受信反代(loopback)时才采信
+// clientIP 提取客户端 IP。仅当对端是受信反代时才采信
 // X-Forwarded-For / X-Real-IP;否则直连客户端可伪造 XFF 永久豁免
 // IP2Ban 与蜜罐判定(go-reviewer M5)。
-func clientIP(r *http.Request) string {
+//
+// 受信对端默认取 loopback(Caddy 拓扑,见 scripts/install/lib.sh);运营商可通过
+// server.trusted_proxies 显式声明受信 CIDR 列表(置空列表 = 不信任任何对端,
+// 直连暴露部署必须如此,否则 XFF 完全由调用方伪造)。
+func (s *Server) clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+	if ip := net.ParseIP(host); ip != nil && s.trustsProxyPeer(ip) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
 			return strings.TrimSpace(parts[0])
@@ -846,6 +850,68 @@ func clientIP(r *http.Request) string {
 		}
 	}
 	return host
+}
+
+// trustsProxyPeer 判定对端是否为受信反代。trusted_proxies 未配置(nil)时
+// 沿用 loopback 惯例;配置后(哪怕为空列表)以配置为准。
+func (s *Server) trustsProxyPeer(peer net.IP) bool {
+	if s.cfg == nil || s.cfg.Server.TrustedProxies == nil {
+		return peer.IsLoopback()
+	}
+	for _, cidr := range s.cfg.Server.TrustedProxies {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(cidr))
+		if err != nil {
+			// 容忍单 IP 写法(不带掩码)
+			if ip := net.ParseIP(strings.TrimSpace(cidr)); ip != nil && ip.Equal(peer) {
+				return true
+			}
+			continue
+		}
+		if network.Contains(peer) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDirectLoopback 判定请求是否来自无转发头的本地直连。只有这种请求才允许
+// 享受 loopback 豁免(IP2Ban / 蜜罐 / 验证码 / 黑名单逃生口);经转发头得来的
+// 127.0.0.1(XFF 可被调用方伪造)一律不得豁免任何东西。
+func isDirectLoopback(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return false
+	}
+	return r.Header.Get("X-Forwarded-For") == "" && r.Header.Get("X-Real-IP") == ""
+}
+
+// setupCallerAllowed 判定 /api/setup 调用方是否可信(首次推送安全审查 C2):
+//  1. 本地直连(无转发头的 loopback)——本地开发、回环绑定的 Docker 部署;
+//  2. 经受信反代解析出的本地客户端(Caddy 已净化转发头,loopback 即本机);
+//  3. 出示 server.setup_token(常数时间比较)——远程 bootstrap 的显式凭证。
+func (s *Server) setupCallerAllowed(r *http.Request) bool {
+	if isDirectLoopback(r) {
+		return true
+	}
+	if ip := net.ParseIP(s.clientIP(r)); ip != nil && ip.IsLoopback() {
+		return true
+	}
+	token := ""
+	if s.cfg != nil {
+		token = s.cfg.Server.SetupToken
+	}
+	if token == "" {
+		return false
+	}
+	provided := r.Header.Get("X-Setup-Token")
+	if provided == "" {
+		provided = r.URL.Query().Get("setup_token")
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1
 }
 
 // handleSubscription 订阅拉取端点：/sub/{path}?token=xxx&format=clash|v2ray
@@ -929,10 +995,11 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 
 // handleLogin 管理后台登录（受 IP2Ban 保护）
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 
-	// 127.0.0.1 永不封禁（本地开发）
-	if ip != "127.0.0.1" {
+	// 本地直连(无转发头)永不封禁;转发来的 127.0.0.1 可能是伪造的,不豁免。
+	directLoopback := isDirectLoopback(r)
+	if !directLoopback {
 		banned, err := s.st.IsBanned(ip, time.Now())
 		if err != nil {
 			s.logger.Error("check ban failed", "error", err)
@@ -961,8 +1028,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// 蜜罐检测：任何针对高敏感用户名（admin/root 等）的尝试，立即封禁 IP。
 	// 合法账号在初始化时已禁止使用这些名字，因此命中必为攻击。
-	// 127.0.0.1 豁免（本地开发）
-	if ip != "127.0.0.1" && isHoneypotUsername(req.Username) {
+	// 仅本地直连豁免;转发来的 127.0.0.1 可能是伪造的,不豁免。
+	if !directLoopback && isHoneypotUsername(req.Username) {
 		bannedUntil, err := s.st.BanIP(ip, policy.BanDuration, time.Now())
 		if err != nil {
 			s.logger.Error("honeypot ban failed", "error", err)
@@ -977,8 +1044,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// 验证码闸门(蜜罐之后、验密之前):该 IP 的历史失败次数越过阈值即必须带码。
 	// 先验码不验密——爆破者在拿到人机验证前根本触不到 bcrypt。
-	// loopback 豁免,沿用封禁/蜜罐的既有惯例。
-	captchaNeeded := s.captchaRequiredForIP(ip, policy.CaptchaTriggerThreshold)
+	// 仅本地直连豁免,沿用封禁/蜜罐的同一惯例。
+	captchaNeeded := s.captchaRequiredForIP(r, ip, policy.CaptchaTriggerThreshold)
 	if captchaNeeded && !s.captcha.Verify(req.CaptchaID, req.CaptchaAnswer) {
 		// 验证码缺失或答错与密码错同口径计入 IP2Ban 失败计数。
 		s.recordCaptchaFailure(ip, req.Username, req.CaptchaID, r.UserAgent(), policy)
@@ -1004,7 +1071,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		// 这次失败可能刚好把该 IP 推过验证码阈值:告知前端下次要带码。
 		// 已在验证码闸门内的请求同样带标记,前端据此换一张新图。
-		if captchaNeeded || s.captchaRequiredForIP(ip, policy.CaptchaTriggerThreshold) {
+		if captchaNeeded || s.captchaRequiredForIP(r, ip, policy.CaptchaTriggerThreshold) {
 			writeJSONStatus(w, http.StatusUnauthorized, map[string]any{
 				"error":            "invalid credentials",
 				"captcha_required": true,

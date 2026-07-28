@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/taliove/proxyhub/internal/config"
 	"github.com/taliove/proxyhub/internal/store"
 )
 
@@ -218,7 +219,8 @@ func TestAdminRoutes_GatedByPasswordChange(t *testing.T) {
 }
 
 // TestClientIP_TrustedProxyOnly (M5): X-Forwarded-For / X-Real-IP are honored
-// only when the peer is a loopback reverse proxy; direct clients cannot spoof.
+// only when the peer is a trusted reverse proxy (loopback by default, or the
+// CIDRs declared in server.trusted_proxies); direct clients cannot spoof.
 func TestClientIP_TrustedProxyOnly(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -233,6 +235,7 @@ func TestClientIP_TrustedProxyOnly(t *testing.T) {
 		{"direct client cannot spoof xri", "9.9.9.9:1234", "", "127.0.0.1", "9.9.9.9"},
 		{"no headers uses remote addr", "9.9.9.9:1234", "", "", "9.9.9.9"},
 	}
+	srv := &Server{cfg: &config.Config{}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/", nil)
@@ -243,8 +246,74 @@ func TestClientIP_TrustedProxyOnly(t *testing.T) {
 			if tc.xri != "" {
 				req.Header.Set("X-Real-IP", tc.xri)
 			}
-			if got := clientIP(req); got != tc.want {
+			if got := srv.clientIP(req); got != tc.want {
 				t.Errorf("clientIP = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClientIP_ConfiguredTrustedProxies: once server.trusted_proxies is set it
+// replaces the loopback default - including the empty list, which trusts no
+// peer at all (the directly-exposed deployment posture).
+func TestClientIP_ConfiguredTrustedProxies(t *testing.T) {
+	cases := []struct {
+		name     string
+		proxies  []string
+		peer     string
+		xff      string
+		want     string
+	}{
+		{"declared cidr is trusted", []string{"10.0.0.0/8"}, "10.1.2.3:80", "1.2.3.4", "1.2.3.4"},
+		{"loopback no longer trusted once configured", []string{"10.0.0.0/8"}, "127.0.0.1:80", "1.2.3.4", "127.0.0.1"},
+		{"single ip without mask", []string{"10.9.9.9"}, "10.9.9.9:80", "1.2.3.4", "1.2.3.4"},
+		{"empty list trusts nobody", []string{}, "127.0.0.1:80", "1.2.3.4", "127.0.0.1"},
+		{"garbage entry is skipped", []string{"not-a-cidr", "10.0.0.0/8"}, "10.1.2.3:80", "1.2.3.4", "1.2.3.4"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &Server{cfg: &config.Config{}}
+			srv.cfg.Server.TrustedProxies = tc.proxies
+			req := httptest.NewRequest("GET", "/", nil)
+			req.RemoteAddr = tc.peer
+			req.Header.Set("X-Forwarded-For", tc.xff)
+			if got := srv.clientIP(req); got != tc.want {
+				t.Errorf("clientIP = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsDirectLoopback: only a header-less loopback connection counts as a
+// direct local client. A forwarded 127.0.0.1 (caller-controlled) must never
+// qualify for any loopback exemption.
+func TestIsDirectLoopback(t *testing.T) {
+	cases := []struct {
+		name       string
+		remoteAddr string
+		xff        string
+		xri        string
+		want       bool
+	}{
+		{"plain loopback", "127.0.0.1:8080", "", "", true},
+		{"ipv6 loopback", "[::1]:8080", "", "", true},
+		{"loopback with xff is not direct", "127.0.0.1:8080", "127.0.0.1", "", false},
+		{"loopback with xri is not direct", "127.0.0.1:8080", "", "9.9.9.9", false},
+		{"remote peer", "9.9.9.9:1234", "", "", false},
+		{"unparsable peer", "garbage", "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			req.RemoteAddr = tc.remoteAddr
+			if tc.xff != "" {
+				req.Header.Set("X-Forwarded-For", tc.xff)
+			}
+			if tc.xri != "" {
+				req.Header.Set("X-Real-IP", tc.xri)
+			}
+			if got := isDirectLoopback(req); got != tc.want {
+				t.Errorf("isDirectLoopback = %v, want %v", got, tc.want)
 			}
 		})
 	}

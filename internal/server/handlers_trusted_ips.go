@@ -183,7 +183,7 @@ func (s *Server) handleTrustMyIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := strings.TrimSpace(req.IP)
-	current := clientIP(r)
+	current := s.clientIP(r)
 	if ip == "" {
 		ip = current
 	}
@@ -252,7 +252,7 @@ func (s *Server) handleRevokeMyTrustedIP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit("trusted_ip_revoked", clientIP(r), user.Username,
+	s.recordAudit("trusted_ip_revoked", s.clientIP(r), user.Username,
 		fmt.Sprintf("撤销对 %s 的信任", ip),
 		r.UserAgent())
 	writeJSON(w, map[string]any{"ok": true, "ip": ip})
@@ -289,7 +289,7 @@ func (s *Server) handleSetMyAutoTrust(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit("trusted_ip_auto_toggle", clientIP(r), user.Username,
+	s.recordAudit("trusted_ip_auto_toggle", s.clientIP(r), user.Username,
 		fmt.Sprintf("%s=%s", autoTrustIPSettingKey, value),
 		r.UserAgent())
 	writeJSON(w, map[string]any{"ok": true, "auto_trust_ip": *req.Enabled})
@@ -322,7 +322,7 @@ func (s *Server) handleAdminClearTrustedIPs(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit("trusted_ip_cleared", clientIP(r), user.Username,
+	s.recordAudit("trusted_ip_cleared", s.clientIP(r), user.Username,
 		fmt.Sprintf("超管清除用户 id=%d 的 %d 个受信 IP", id, removed),
 		r.UserAgent())
 	writeJSON(w, map[string]any{

@@ -27,7 +27,7 @@ func (s *Server) handleIssueCaptcha(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "captcha unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	ch, err := s.captcha.Issue(ip)
 	if err != nil {
 		if errors.Is(err, captcha.ErrRateLimited) {
@@ -43,11 +43,12 @@ func (s *Server) handleIssueCaptcha(w http.ResponseWriter, r *http.Request) {
 }
 
 // captchaRequiredForIP reports whether the login attempt from ip must carry a
-// captcha answer. Loopback is exempt (same carve-out as ban and honeypot).
+// captcha answer. Direct loopback (no forwarding headers) is exempt; a
+// forwarded 127.0.0.1 can be forged and is never exempt.
 // The decision is driven by banned_ips.fail_count for the IP; an absent row
 // counts as 0, so threshold 0 means "captcha always on".
-func (s *Server) captchaRequiredForIP(ip string, threshold int) bool {
-	if s.captcha == nil || isLoopbackIP(ip) {
+func (s *Server) captchaRequiredForIP(r *http.Request, ip string, threshold int) bool {
+	if s.captcha == nil || isDirectLoopback(r) {
 		return false
 	}
 	return s.loginFailCount(ip) >= threshold
@@ -68,19 +69,6 @@ func (s *Server) loginFailCount(ip string) int {
 		}
 	}
 	return 0
-}
-
-// loopbackIPv4 is the exact literal the login carve-outs (ban, honeypot,
-// captcha) exempt. Deliberately narrower than isLoopbackAddr in
-// handlers_trusted_ips.go: see the comment on isLoopbackIP.
-const loopbackIPv4 = "127.0.0.1"
-
-// isLoopbackIP mirrors the existing "127.0.0.1 is exempt" convention used by
-// the ban and honeypot checks in handleLogin. Literal match by design; the
-// broader parse-based check lives in isLoopbackAddr (handlers_trusted_ips.go)
-// for the standing-grant decision.
-func isLoopbackIP(ip string) bool {
-	return ip == loopbackIPv4
 }
 
 // recordCaptchaFailure books a missing or wrong captcha answer on the same

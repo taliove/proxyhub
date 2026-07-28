@@ -170,7 +170,7 @@ func (s *Server) handleBanIP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record audit event with user agent
-	s.recordAudit("ip_banned", clientIP(r), "",
+	s.recordAudit("ip_banned", s.clientIP(r), "",
 		detail+"，封禁至 "+bannedUntil.Format("2006-01-02 15:04:05"),
 		r.UserAgent())
 

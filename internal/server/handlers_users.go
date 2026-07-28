@@ -163,7 +163,7 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.recordAudit("admin_create_user", clientIP(r), req.Username,
+	s.recordAudit("admin_create_user", s.clientIP(r), req.Username,
 		fmt.Sprintf("创建用户 id=%d role=%s", user.ID, user.Role),
 		r.UserAgent())
 
@@ -278,7 +278,7 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.recordAudit("admin_update_user", clientIP(r), strconv.FormatInt(id, 10),
+	s.recordAudit("admin_update_user", s.clientIP(r), strconv.FormatInt(id, 10),
 		fmt.Sprintf("更新用户 id=%d", id),
 		r.UserAgent())
 
@@ -324,7 +324,7 @@ func (s *Server) handleAdminDisableUser(w http.ResponseWriter, r *http.Request) 
 	}
 	// 吊销该用户全部存活会话:禁用即切断,不留 12h TTL 残余访问。
 	s.sessions.DestroyForUser(id)
-	s.recordAudit("admin_disable_user", clientIP(r), strconv.FormatInt(id, 10),
+	s.recordAudit("admin_disable_user", s.clientIP(r), strconv.FormatInt(id, 10),
 		fmt.Sprintf("禁用用户 id=%d", id),
 		r.UserAgent())
 	writeJSON(w, map[string]bool{"ok": true, "disabled": true})
@@ -346,7 +346,7 @@ func (s *Server) handleAdminEnableUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.recordAudit("admin_enable_user", clientIP(r), strconv.FormatInt(id, 10),
+	s.recordAudit("admin_enable_user", s.clientIP(r), strconv.FormatInt(id, 10),
 		fmt.Sprintf("启用用户 id=%d", id),
 		r.UserAgent())
 	writeJSON(w, map[string]bool{"ok": true, "disabled": false})
@@ -403,7 +403,7 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sessions.DestroyForUser(id)
 
-	s.recordAudit("admin_delete_user", clientIP(r), user.Username,
+	s.recordAudit("admin_delete_user", s.clientIP(r), user.Username,
 		fmt.Sprintf("删除用户 id=%d role=%s", id, user.Role),
 		r.UserAgent())
 	writeJSON(w, map[string]bool{"ok": true})
@@ -455,7 +455,7 @@ func (s *Server) handleAdminResetPassword(w http.ResponseWriter, r *http.Request
 	// 凭证轮换后吊销该用户全部会话:被窃会话不得继续有效。
 	s.sessions.DestroyForUser(id)
 
-	s.recordAudit("admin_reset_password", clientIP(r), user.Username,
+	s.recordAudit("admin_reset_password", s.clientIP(r), user.Username,
 		fmt.Sprintf("重置用户 id=%d 的密码", id),
 		r.UserAgent())
 	writeJSON(w, map[string]any{

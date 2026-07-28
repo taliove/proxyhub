@@ -22,7 +22,7 @@ import (
 func (s *Server) recordPullStatus(r *http.Request, endpointID int64, status string) {
 	if err := s.st.RecordPull(store.PullRecord{
 		EndpointID: endpointID,
-		IP:         clientIP(r),
+		IP:         s.clientIP(r),
 		UserAgent:  r.Header.Get("User-Agent"),
 		Status:     status,
 	}); err != nil {

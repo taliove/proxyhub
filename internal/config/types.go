@@ -18,6 +18,10 @@ type StorageConfig struct {
 type ServerConfig struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
+	// TrustedProxies 声明受信反代的对端 CIDR(或单 IP)。只有这些对端携带的
+	// X-Forwarded-For / X-Real-IP 才会被采信。未设置(缺省)沿用 loopback
+	// 惯例(Caddy 拓扑);显式置为空列表表示不信任任何对端(直连暴露部署)。
+	TrustedProxies []string `yaml:"trusted_proxies"`
 }
 
 type HealthCheckConfig struct {

@@ -112,7 +112,7 @@ func (s *Server) handleAdminSwitchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.recordAudit("admin_switch_user", clientIP(r), target.Username,
+	s.recordAudit("admin_switch_user", s.clientIP(r), target.Username,
 		"超管进入用户空间", r.UserAgent())
 
 	view, verr := s.resolveUserView(req.UserID)
@@ -144,7 +144,7 @@ func (s *Server) handleAdminExitSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if scope.ActingUserID > 0 {
-		s.recordAudit("admin_exit_switch", clientIP(r), "", "超管退出用户空间", r.UserAgent())
+		s.recordAudit("admin_exit_switch", s.clientIP(r), "", "超管退出用户空间", r.UserAgent())
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }

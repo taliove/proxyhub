@@ -118,7 +118,7 @@ func (s *Server) handleCreateIPRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.recordAudit("ip_rule_added", clientIP(r), "",
+	s.recordAudit("ip_rule_added", s.clientIP(r), "",
 		fmt.Sprintf("新增%s规则 %s，%s%s",
 			ipRuleScopeLabel(rule.Scope), rule.IPOrCIDR, windowLabel, ipRuleCommentSuffix(rule.Comment)),
 		r.UserAgent())
@@ -150,7 +150,7 @@ func (s *Server) handleDeleteIPRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.recordAudit("ip_rule_deleted", clientIP(r), "",
+	s.recordAudit("ip_rule_deleted", s.clientIP(r), "",
 		fmt.Sprintf("删除%s规则 %s", ipRuleScopeLabel(rule.Scope), rule.IPOrCIDR),
 		r.UserAgent())
 
@@ -171,7 +171,7 @@ func (s *Server) handlePromoteIPRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.recordAudit("ip_rule_promoted", clientIP(r), "",
+	s.recordAudit("ip_rule_promoted", s.clientIP(r), "",
 		fmt.Sprintf("规则 %s 由拉取黑名单升级为整站拒止%s",
 			rule.IPOrCIDR, ipRuleCommentSuffix(rule.Comment)),
 		r.UserAgent())
