@@ -19,9 +19,11 @@ func loginAs(t *testing.T, srv *Server, h http.Handler, username, password, role
 	if err != nil {
 		t.Fatalf("GenerateFromPassword: %v", err)
 	}
-	if _, err := srv.st.CreateUser(username, string(hash), role, false); err != nil {
+	user, err := srv.st.CreateUser(username, string(hash), role, false)
+	if err != nil {
 		t.Fatalf("CreateUser(%s): %v", username, err)
 	}
+	markMFAEnrolled(t, srv.st, user.ID)
 	w := doLogin(t, h, username, password, "9.9.9.20")
 	if w.Code != http.StatusOK {
 		t.Fatalf("login %s status = %d (body: %s)", username, w.Code, w.Body.String())
@@ -206,9 +208,13 @@ func TestChangeMyPassword_MustChangeFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateFromPassword: %v", err)
 	}
-	if _, err := st.CreateUser("rookie", string(hash), store.RoleUser, true); err != nil {
+	rookieUser, err := st.CreateUser("rookie", string(hash), store.RoleUser, true)
+	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
+	// 本测试的主题是强改密门,不是 MFA 门:先把 MFA 置为已绑定,否则改密通过后
+	// 业务路由仍会被 requireMFAEnrolled 挡住,断言测的就不是改密了。
+	markMFAEnrolled(t, st, rookieUser.ID)
 	w := doLogin(t, h, "rookie", "init-pass-1", "9.9.9.21")
 	if w.Code != http.StatusOK {
 		t.Fatalf("login status = %d (body: %s)", w.Code, w.Body.String())

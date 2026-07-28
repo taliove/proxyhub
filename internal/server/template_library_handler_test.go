@@ -14,6 +14,7 @@ import (
 // touching the login path (hash content is irrelevant here).
 func templateLibrarySession(t *testing.T, srv *Server, userID int64, role string) *http.Cookie {
 	t.Helper()
+	markMFAEnrolled(t, srv.st, userID)
 	token, err := srv.sessions.CreateWithPayload(SessionPayload{UserID: userID, Role: role})
 	if err != nil {
 		t.Fatalf("create session: %v", err)

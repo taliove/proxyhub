@@ -14,6 +14,7 @@ import (
 // loginCookie 只登录（不 setup），用于已初始化的场景。
 func loginCookie(t *testing.T, h http.Handler, user, pass, ip string) *http.Cookie {
 	t.Helper()
+	markAllMFAEnrolled(t, testStore(t))
 	w := doLogin(t, h, user, pass, ip)
 	for _, c := range w.Result().Cookies() {
 		if c.Name == "session" {

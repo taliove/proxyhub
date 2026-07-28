@@ -20,6 +20,7 @@ import (
 // cannot use it to test ordinary-user rejection.
 func adminSession(t *testing.T, srv *Server, userID int64) *http.Cookie {
 	t.Helper()
+	markMFAEnrolled(t, srv.st, userID)
 	token, err := srv.sessions.CreateWithPayload(SessionPayload{
 		UserID: userID,
 		Role:   store.RoleSuperAdmin,
@@ -34,6 +35,7 @@ func adminSession(t *testing.T, srv *Server, userID int64) *http.Cookie {
 // assert that the admin surface rejects non-super-admin callers with 403.
 func memberSession(t *testing.T, srv *Server, userID int64) *http.Cookie {
 	t.Helper()
+	markMFAEnrolled(t, srv.st, userID)
 	token, err := srv.sessions.CreateWithPayload(SessionPayload{
 		UserID: userID,
 		Role:   store.RoleUser,

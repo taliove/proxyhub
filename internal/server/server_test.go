@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -191,7 +192,42 @@ func newTestServer(t *testing.T, nodes []*subscription.Node) (*Server, *store.St
 	)
 
 	srv := New(cfg, st, fakeNodeSource, emptyFS, logger, detectionService, geo)
+	registerTestStore(t, st)
 	return srv, st
+}
+
+// testStores lets handler-only fixtures (which receive an http.Handler but not
+// the Store) reach the store of the server built for the current test. Needed
+// because MFA enrollment is mandatory: a fixture that only has a cookie still
+// has to mark the account enrolled. Keyed by test name, cleaned up with the
+// test.
+var (
+	testStoresMu sync.Mutex
+	testStores   = map[string]*store.Store{}
+)
+
+func registerTestStore(t *testing.T, st *store.Store) {
+	t.Helper()
+	testStoresMu.Lock()
+	testStores[t.Name()] = st
+	testStoresMu.Unlock()
+	t.Cleanup(func() {
+		testStoresMu.Lock()
+		delete(testStores, t.Name())
+		testStoresMu.Unlock()
+	})
+}
+
+// testStore returns the store registered by newTestServer for this test.
+func testStore(t *testing.T) *store.Store {
+	t.Helper()
+	testStoresMu.Lock()
+	defer testStoresMu.Unlock()
+	st, ok := testStores[t.Name()]
+	if !ok {
+		t.Fatalf("no store registered for %s (was the server built by newTestServer?)", t.Name())
+	}
+	return st
 }
 
 // doSetup 走一遍初始化向导
@@ -428,10 +464,40 @@ func TestSubscription_RecordsPull(t *testing.T) {
 	}
 }
 
+// markMFAEnrolled 把账号直接置为"已绑定 MFA"态,让会话通过 requireMFAEnrolled。
+// MFA 是全员强制的(ticket 05),未绑定会话进不了任何业务路由;绝大多数测试
+// 关心的不是绑定流程,所以在夹具里跳过两段式 enroll,直接写库。
+// 绑定/强制本身的行为由 mfa_test.go 与 middleware_test.go 走真实 HTTP 覆盖。
+func markMFAEnrolled(t *testing.T, st *store.Store, userID int64) {
+	t.Helper()
+	secret := "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+	enabled := true
+	if err := st.UpdateUser(userID, store.UserUpdate{
+		TOTPSecret:  &secret,
+		TOTPEnabled: &enabled,
+	}); err != nil {
+		t.Fatalf("mark user %d mfa-enrolled: %v", userID, err)
+	}
+}
+
+// markAllMFAEnrolled 把当前库里所有账号置为已绑定态。夹具常在 doSetup 之后
+// 只拿到 cookie、拿不到 user id,这里按库遍历,免得每个 helper 各自查一遍。
+func markAllMFAEnrolled(t *testing.T, st *store.Store) {
+	t.Helper()
+	users, err := st.ListUsers()
+	if err != nil {
+		t.Fatalf("list users for mfa fixture: %v", err)
+	}
+	for _, u := range users {
+		markMFAEnrolled(t, st, u.ID)
+	}
+}
+
 // authCookie 走一遍初始化 + 登录，返回可用于后台接口的 session cookie
 func authCookie(t *testing.T, h http.Handler) *http.Cookie {
 	t.Helper()
 	doSetup(t, h, "owner", "a-very-strong-pass")
+	markAllMFAEnrolled(t, testStore(t))
 	w := doLogin(t, h, "owner", "a-very-strong-pass", "9.9.9.9")
 	for _, c := range w.Result().Cookies() {
 		if c.Name == "session" {

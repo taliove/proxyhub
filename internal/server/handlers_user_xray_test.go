@@ -70,6 +70,10 @@ func newXrayStubManager(t *testing.T, srv *Server, st *store.Store) *xraymgr.Man
 // method routing run exactly as in production.
 func serveXrayHTTP(t *testing.T, srv *Server, method, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
+	// Legacy (payload-free) sessions resolve to the first super admin; mark the
+	// whole seeded set enrolled so the mandatory MFA gate is not what these
+	// tests end up measuring.
+	markAllMFAEnrolled(t, srv.st)
 	token, err := srv.sessions.Create()
 	if err != nil {
 		t.Fatalf("create session: %v", err)

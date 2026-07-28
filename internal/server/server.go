@@ -532,21 +532,28 @@ func (s *Server) Handler() http.Handler {
 	// 登录验证码签发:无认证(登录页尚无会话),滥用由 per-IP 签发节流兜底
 	mux.HandleFunc("GET /api/captcha", s.handleIssueCaptcha)
 
-	// 订阅地址管理(业务路由统一走 requirePasswordChanged,首登强改密拦截)
+	// 订阅地址管理(业务路由统一走 requirePasswordChanged,首登强改密拦截;
+	// 再串 requireMFAEnrolled,未绑定 MFA 的会话同样进不了业务面)。
+	// 顺序即优先级:改密先于绑定 MFA(两者都欠时前端先跳改密页)。
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
-		return s.requireAuth(s.requirePasswordChanged(h))
+		return s.requireAuth(s.requirePasswordChanged(s.requireMFAEnrolled(h)))
 	}
 	// 超管专属路由链:requireAuth + requirePasswordChanged + requireAdmin。普通用户 403;
 	// 首登未改密的超管同样先 403 去改密(改密入口 /api/me/password 已豁免,无锁死)。
 	// 提前声明:安全审计/批量解锁检测等超管面在路由表前段即引用。
 	adminGuard := func(h http.HandlerFunc) http.HandlerFunc {
-		return s.requireAuth(s.requirePasswordChanged(s.requireAdmin(h)))
+		return s.requireAuth(s.requirePasswordChanged(s.requireMFAEnrolled(s.requireAdmin(h))))
 	}
 	// 首登强改密的豁免面:must_change_password 会话被挡在业务路由外,但
 	// 读自身状态、改自己密码、登出必须可达,否则改密接口把自己锁死。
 	mux.HandleFunc("POST /api/logout", s.requireAuth(s.handleLogout))
 	mux.HandleFunc("GET /api/me", s.requireAuth(s.handleMe))
 	mux.HandleFunc("POST /api/me/password", s.requireAuth(s.handleChangeMyPassword))
+	// MFA 自助面(ticket 05):enroll 是强制绑定的唯一出口,必须豁免 MFA 门
+	// (见 mfaExemptPaths),否则未绑定用户无路可走;恢复码重新生成属于已绑定
+	// 用户的日常操作,走完整 guard 链。
+	mux.HandleFunc("POST /api/me/mfa/enroll", s.requireAuth(s.requirePasswordChanged(s.handleMFAEnroll)))
+	mux.HandleFunc("POST /api/me/mfa/regenerate-recovery", guard(s.handleMFARegenerateRecovery))
 	mux.HandleFunc("GET /api/endpoints", guard(s.handleListEndpoints))
 	mux.HandleFunc("POST /api/endpoints", guard(s.handleCreateEndpoint))
 	mux.HandleFunc("POST /api/endpoints/{id}/toggle", guard(s.handleToggleEndpoint))
@@ -714,6 +721,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/users/{id}/enable", adminGuard(s.handleAdminEnableUser))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", adminGuard(s.handleAdminDeleteUser))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-password", adminGuard(s.handleAdminResetPassword))
+	mux.HandleFunc("POST /api/admin/users/{id}/reset-mfa", adminGuard(s.handleAdminResetMFA))
 
 	// 安全审计(登录/封禁事件流水 + 当前封禁 IP 管理):超管专属。
 	// 含写操作(解封 IP),普通用户可达即越权。
@@ -1001,8 +1009,23 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			"username":             user.Username,
 			"role":                 user.Role,
 			"must_change_password": user.MustChangePassword,
+			"must_enroll_mfa":      s.mustEnrollMFA(user.ID),
 		},
 	})
+}
+
+// mustEnrollMFA 报告该用户是否还欠一次 MFA 绑定(totp_enabled=0)。
+// 前端据此在登录后直接跳绑定页,不必先撞一次 403。
+// 读库失败时返回 false:此处只是提示位,真正的强制在 requireMFAEnrolled,
+// 猜错不会放过任何请求。
+func (s *Server) mustEnrollMFA(userID int64) bool {
+	cfg, err := s.st.GetUserMFAConfig(userID)
+	if err != nil {
+		s.logger.Warn("load mfa config for must_enroll_mfa failed",
+			"user_id", userID, "error", err)
+		return false
+	}
+	return !cfg.Enabled
 }
 
 // errAccountDisabled 表示凭据匹配但账号已被禁用(disabled_at 非空)。
@@ -1151,6 +1174,9 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"username":             user.Username,
 		"role":                 user.Role,
 		"must_change_password": user.MustChangePassword,
+		// 绑定义务永远看登录者本人,不随 impersonate 视角走:超管替被视角
+		// 用户"完成绑定"没有意义,自己欠的绑定也不能靠切视角躲过。
+		"must_enroll_mfa": s.mustEnrollMFA(scope.UserID),
 	}
 	// 配额是可选附属:无记录视为"未配置",不视为错误
 	if quota, qerr := s.st.GetUserQuota(effectiveID); qerr == nil {

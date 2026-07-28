@@ -16,6 +16,7 @@ import (
 func authedCookie(t *testing.T, h http.Handler) *http.Cookie {
 	t.Helper()
 	doSetup(t, h, "realuser", "password123456")
+	markAllMFAEnrolled(t, testStore(t))
 	w := doLogin(t, h, "realuser", "password123456", "10.0.0.2:1000")
 	cookies := w.Result().Cookies()
 	if len(cookies) == 0 {
