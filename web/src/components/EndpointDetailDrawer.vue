@@ -107,6 +107,12 @@
         <EndpointTestSection v-if="visible" :endpoint="endpoint" />
       </div>
 
+      <!-- 地域白名单段:三档开关 + 国家多选 + 省份区(降级警告形态) -->
+      <div class="drawer-block">
+        <div class="drawer-section-title">地域白名单</div>
+        <EndpointGeoConfigSection :endpoint="endpoint" @saved="emit('template-changed')" />
+      </div>
+
       <!-- 拉取统计段:真实客户端拉取明细(吸收原统计抽屉) -->
       <div class="drawer-block">
         <div class="drawer-section-title">拉取统计</div>
@@ -153,6 +159,7 @@ import { updateEndpointTemplate } from '@/api/endpoints'
 import StatusDot from '@/components/StatusDot.vue'
 import IPStatsTable from '@/components/IPStatsTable.vue'
 import EndpointTestSection from '@/components/EndpointTestSection.vue'
+import EndpointGeoConfigSection from '@/components/EndpointGeoConfigSection.vue'
 import { hasConditions } from '@/utils/conditions'
 import { nameModeLabel, nameModeTag } from '@/utils/namemode'
 import { useTemplateList } from '@/composables/useTemplateList'
@@ -267,6 +274,7 @@ const copyUrl = async () => {
     ElMessage.error(`复制失败: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
+
 </script>
 
 <style scoped>
