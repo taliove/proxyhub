@@ -73,3 +73,41 @@ func TestSetup_WrongTokenRejected(t *testing.T) {
 		t.Fatalf("remote setup with wrong token: status = %d, want 403", w.Code)
 	}
 }
+
+// TestSetup_ForwardedLoopbackRejected (M-1): a proxy-resolved loopback client
+// must NOT pass the gate. trusted_proxies lets an operator declare arbitrary
+// proxies, and an append-style proxy lets any caller forge
+// X-Forwarded-For: 127.0.0.1 into a loopback resolution - the gate only
+// accepts direct connections or the token.
+func TestSetup_ForwardedLoopbackRejected(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+
+	body, _ := json.Marshal(map[string]any{"username": "owner", "password": "a-very-strong-pass"})
+	req := httptest.NewRequest("POST", "/api/setup", bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:5000" // loopback peer (trusted proxy position)
+	req.Header.Set("X-Forwarded-For", "127.0.0.1")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("setup via forwarded loopback: status = %d, want 403", w.Code)
+	}
+}
+
+// TestSetup_TokenInQueryRejected (M-2): the setup token is only accepted via
+// the X-Setup-Token header - query-string credentials land in proxy access
+// logs and Referer headers.
+func TestSetup_TokenInQueryRejected(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	srv.cfg.Server.SetupToken = "bootstrap-token-123"
+	h := srv.Handler()
+
+	body, _ := json.Marshal(map[string]any{"username": "owner", "password": "a-very-strong-pass"})
+	req := httptest.NewRequest("POST", "/api/setup?setup_token=bootstrap-token-123", bytes.NewReader(body))
+	req.RemoteAddr = "203.0.113.9:5000"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("remote setup with query token: status = %d, want 403", w.Code)
+	}
+}

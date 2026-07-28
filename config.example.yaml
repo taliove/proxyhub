@@ -5,6 +5,9 @@ server:
   # X-Forwarded-For / X-Real-IP 才会被采信。缺省 = 只信 loopback(Caddy 拓扑)。
   # 直连暴露部署(无反代)必须显式置空,否则调用方可伪造 XFF 绕过 IP 防线:
   # trusted_proxies: []
+  # 警告:声明的代理必须【替换】而非追加转发头(如安装器生成的 Caddy 片段)。
+  # 追加式代理(nginx 默认 $proxy_add_x_forwarded_for)会让调用方伪造的 XFF
+  # 前缀活到 ProxyHub,等于把客户端 IP 判定权交给调用方。
   # setup_token: 允许非本地调用方执行 POST /api/setup(首次初始化);
   # 本地直连(无转发头的 loopback)永远不需要。也可用环境变量
   # PROXYHUB_SETUP_TOKEN 注入(优先于本配置)。

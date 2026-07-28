@@ -42,8 +42,10 @@ ProxyHub 的 IP 防线（IP2Ban、蜜罐、登录验证码、IP 黑名单、订�
 
 首次初始化等于接管管理员账号，因此 `/api/setup` 只接受两类调用方：
 
-1. 本地调用方（loopback 直连，或经受信反代解析出的本机客户端）;
-2. 出示 `server.setup_token`（或环境变量 `PROXYHUB_SETUP_TOKEN`）的调用方，经 `X-Setup-Token` 头常数时间比对。
+1. 本地直连（无转发头的 loopback);
+2. 出示 `server.setup_token`（或环境变量 `PROXYHUB_SETUP_TOKEN`）的调用方，经 `X-Setup-Token` 头常数时间比对（不接受 query 参数——URL 会进代理 access log 与 Referer)。
+
+注意闸门**不**接受"经代理解析出的本机客户端":`trusted_proxies` 允许声明任意受信代理，而追加式代理（如 nginx 默认）会让伪造的 `X-Forwarded-For: 127.0.0.1` 解析成本机。合法的远程初始化一律走 setup token。
 
 安装器的一键部署走 `proxyhub init` CLI 初始化（密码经 stdin 管道，不进 argv/日志），不依赖该 HTTP 端点。Docker 部署必须把端口绑回环（`-p 127.0.0.1:8080:8080`)；把未初始化实例直接暴露到网络，等价于把管理员账号交给最先到达的人。
 - 自动证书续期（避免人为失误）

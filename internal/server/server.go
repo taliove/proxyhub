@@ -891,13 +891,15 @@ func isDirectLoopback(r *http.Request) bool {
 
 // setupCallerAllowed 判定 /api/setup 调用方是否可信(首次推送安全审查 C2):
 //  1. 本地直连(无转发头的 loopback)——本地开发、回环绑定的 Docker 部署;
-//  2. 经受信反代解析出的本地客户端(Caddy 已净化转发头,loopback 即本机);
-//  3. 出示 server.setup_token(常数时间比较)——远程 bootstrap 的显式凭证。
+//  2. 出示 server.setup_token(常数时间比较,仅经 X-Setup-Token 头)——
+//     远程 bootstrap 的显式凭证。
+//
+// 不接受"经代理解析出 loopback"的调用方:trusted_proxies 允许运营商声明
+// 任意受信代理,而追加式代理(nginx 默认)会让伪造的 XFF: 127.0.0.1 解析成
+// 本机——闸门不能以代理的头卫生为前提。token 已覆盖合法的远程初始化场景。
+// token 不走 query 参数:URL 会进 Caddy access log 与 Referer(规则 G)。
 func (s *Server) setupCallerAllowed(r *http.Request) bool {
 	if isDirectLoopback(r) {
-		return true
-	}
-	if ip := net.ParseIP(s.clientIP(r)); ip != nil && ip.IsLoopback() {
 		return true
 	}
 	token := ""
@@ -908,9 +910,6 @@ func (s *Server) setupCallerAllowed(r *http.Request) bool {
 		return false
 	}
 	provided := r.Header.Get("X-Setup-Token")
-	if provided == "" {
-		provided = r.URL.Query().Get("setup_token")
-	}
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1
 }
 
