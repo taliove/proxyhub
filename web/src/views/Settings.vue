@@ -204,6 +204,11 @@
         <el-tab-pane label="检测目标配置">
           <DetectionTargets />
         </el-tab-pane>
+
+        <!-- 受信 IP(ticket 10):登录者本人的受信列表/推荐/自动信任开关 -->
+        <el-tab-pane label="受信 IP">
+          <TrustedIPList />
+        </el-tab-pane>
       </el-tabs>
     </el-card>
   </div>
@@ -223,6 +228,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import RegionWhitelist from '@/components/RegionWhitelist.vue'
 import DirectEgressSettings from '@/components/DirectEgressSettings.vue'
 import DetectionTargets from '@/components/DetectionTargets.vue'
+import TrustedIPList from '@/components/TrustedIPList.vue'
 
 const authStore = useAuthStore()
 

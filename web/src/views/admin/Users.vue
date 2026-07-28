@@ -60,6 +60,9 @@
               </el-button>
               <el-button v-else link type="warning" @click="onDisable(row)">禁用</el-button>
               <el-button link type="primary" @click="onResetPassword(row)">重置密码</el-button>
+              <el-button link type="warning" @click="onClearTrustedIPs(row)">
+                清空受信 IP
+              </el-button>
               <el-button link type="danger" @click="onDelete(row)">删除</el-button>
             </template>
             <span v-else class="muted">-</span>
@@ -163,6 +166,7 @@ import {
   resetUserPassword,
   switchUser
 } from '@/api/users'
+import { clearUserTrustedIPs } from '@/api/trusted-ips'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -315,6 +319,19 @@ async function onResetPassword(row: AdminUser) {
   const res = await resetUserPassword(row.id)
   passwordResult.value = res.password
   passwordResultVisible.value = true
+}
+
+// onClearTrustedIPs wipes every trusted-IP grant of the target (ticket 10),
+// forcing a full MFA challenge from every address on the next login. Used when
+// a user's device or network is believed compromised.
+async function onClearTrustedIPs(row: AdminUser) {
+  await ElMessageBox.confirm(
+    `确定清空用户「${row.username}」的受信 IP 吗?清空后该用户所有地址下次登录都需要重新完成 MFA 验证。`,
+    '清空受信 IP 确认',
+    { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消' }
+  )
+  const res = await clearUserTrustedIPs(row.id)
+  ElMessage.success(`已清空 ${res.removed} 条受信 IP`)
 }
 
 // onEnterSpace switches the admin into the target user's space (ticket 09).

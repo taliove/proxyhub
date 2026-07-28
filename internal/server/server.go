@@ -561,6 +561,13 @@ func (s *Server) Handler() http.Handler {
 	// 用户的日常操作,走完整 guard 链。
 	mux.HandleFunc("POST /api/me/mfa/enroll", s.requireAuth(s.requirePasswordChanged(s.handleMFAEnroll)))
 	mux.HandleFunc("POST /api/me/mfa/regenerate-recovery", guard(s.handleMFARegenerateRecovery))
+	// 受信 IP 自助面(ticket 10):列表/采纳推荐/撤销/自动信任开关。
+	// 一律作用于"登录者本人"(scope.UserID),不随超管 impersonate 视角漂移;
+	// 清空他人信任列表是超管专属路由(见下方 admin 段)。
+	mux.HandleFunc("GET /api/me/trusted-ips", guard(s.handleListMyTrustedIPs))
+	mux.HandleFunc("POST /api/me/trusted-ips", guard(s.handleTrustMyIP))
+	mux.HandleFunc("DELETE /api/me/trusted-ips/{ip}", guard(s.handleRevokeMyTrustedIP))
+	mux.HandleFunc("PUT /api/me/trusted-ips/auto", guard(s.handleSetMyAutoTrust))
 	mux.HandleFunc("GET /api/endpoints", guard(s.handleListEndpoints))
 	mux.HandleFunc("POST /api/endpoints", guard(s.handleCreateEndpoint))
 	mux.HandleFunc("POST /api/endpoints/{id}/toggle", guard(s.handleToggleEndpoint))
@@ -729,6 +736,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/admin/users/{id}", adminGuard(s.handleAdminDeleteUser))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-password", adminGuard(s.handleAdminResetPassword))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-mfa", adminGuard(s.handleAdminResetMFA))
+	// 清空目标用户受信 IP(ticket 10):设备/网络疑似失陷时逼回完整 MFA 挑战。
+	mux.HandleFunc("POST /api/admin/users/{id}/trusted-ips/clear", adminGuard(s.handleAdminClearTrustedIPs))
 
 	// 安全审计(登录/封禁事件流水 + 当前封禁 IP 管理):超管专属。
 	// 含写操作(解封 IP),普通用户可达即越权。

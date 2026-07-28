@@ -326,6 +326,26 @@ describe('admin/Users', () => {
     expect(client.delete).toHaveBeenCalledWith('/admin/users/2')
   })
 
+  // Ticket 10: the operator escape hatch for a compromised device/network -
+  // clearing the target's trusted IPs forces a full MFA challenge everywhere.
+  it('clears trusted IPs after confirmation and reports how many were removed', async () => {
+    vi.mocked(client.post).mockResolvedValue({
+      ok: true,
+      removed: 2,
+      username: 'alice'
+    } as never)
+    const wrapper = mountView()
+    await flushPromises()
+
+    const clearBtn = wrapper.findAll('button').find((b) => b.text() === '清空受信 IP')
+    expect(clearBtn).toBeTruthy()
+    await clearBtn!.trigger('click')
+    await flushPromises()
+
+    expect(client.post).toHaveBeenCalledWith('/admin/users/2/trusted-ips/clear', {})
+    expect(ElMessage.success).toHaveBeenCalledWith('已清空 2 条受信 IP')
+  })
+
   it('resets password after confirmation and shows the new password dialog', async () => {
     vi.mocked(client.post).mockResolvedValue({
       ok: true,

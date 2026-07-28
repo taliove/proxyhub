@@ -455,6 +455,11 @@ func (s *Server) handleLoginMFA(w http.ResponseWriter, r *http.Request) {
 			s.recordAudit("trusted_ip_added", ip, user.Username,
 				fmt.Sprintf("trusted for %d days after mfa login", int(store.TrustedIPTTL.Hours()/24)))
 		}
+	} else {
+		// Auto trust (ticket 10): only when the user did not already ask for it
+		// explicitly above, and only when auto_trust_ip is on for the account and
+		// this address has already cleared the recommendation threshold.
+		s.maybeAutoTrustLoginIP(user, ip)
 	}
 
 	// "mfa=totp" / "mfa=recovery" is the marker
