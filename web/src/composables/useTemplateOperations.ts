@@ -7,6 +7,7 @@ import {
   createTemplate,
   deleteTemplate,
   setDefaultTemplate,
+  resetTemplate,
   type Template
 } from '@/api/templates'
 import { extractErrorDetail } from '@/utils/errors'
@@ -127,6 +128,20 @@ export function useTemplateOperations() {
     }
   }
 
+  // Reset a template to embedded default
+  async function reset(name: string): Promise<boolean> {
+    errorMsg.value = ''
+    try {
+      await resetTemplate(name)
+      ElMessage.success(`已将「${name}」重设为默认模板`)
+      return true
+    } catch (e) {
+      const detail = extractErrorDetail(e)
+      errorMsg.value = detail || '重设默认失败'
+      return false
+    }
+  }
+
   return {
     templates,
     loading,
@@ -134,6 +149,7 @@ export function useTemplateOperations() {
     loadTemplates,
     create,
     remove,
-    setDefault
+    setDefault,
+    reset
   }
 }

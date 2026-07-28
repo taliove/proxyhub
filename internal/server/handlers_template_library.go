@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/taliove/proxyhub/internal/generator"
 	"github.com/taliove/proxyhub/internal/store"
 	"gopkg.in/yaml.v3"
 )
@@ -297,4 +298,43 @@ func (s *Server) handleSetDefaultTemplate(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, map[string]bool{"success": true})
+}
+
+// handleResetTemplateLibrary resets a library template to the embedded default content.
+// Creates a new version with the default content, preserving version history.
+// POST /api/templates/{name}/reset
+func (s *Server) handleResetTemplateLibrary(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "template name is required", http.StatusBadRequest)
+		return
+	}
+
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	userID := EffectiveUserID(scope)
+	if userID == 0 {
+		http.Error(w, "global scope cannot reset user templates", http.StatusBadRequest)
+		return
+	}
+
+	// Get embedded default template content
+	defaultContent := generator.DefaultTemplate()
+
+	// Use normal update path to create a new version
+	if err := s.st.UpdateTemplate(userID, name, defaultContent); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "template not found", http.StatusNotFound)
+			return
+		}
+		s.logger.Error("reset template failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]string{
+		"message": "template reset to default successfully",
+	})
 }

@@ -80,12 +80,30 @@ export function useTemplateSelection() {
     errorMsg.value = ''
   }
 
+  // Reload current template (useful after reset)
+  async function reloadTemplate(name: string): Promise<Template | null> {
+    loading.value = true
+    errorMsg.value = ''
+    try {
+      const fullTmpl = await getTemplate(name)
+      selectedTemplate.value = fullTmpl
+      return fullTmpl
+    } catch (e) {
+      const detail = extractErrorDetail(e)
+      errorMsg.value = detail || '重新加载模板失败'
+      return null
+    } finally {
+      loading.value = false
+    }
+  }
+
   return {
     selectedTemplate,
     originalContent,
     loading,
     errorMsg,
     selectTemplate,
+    reloadTemplate,
     reset
   }
 }

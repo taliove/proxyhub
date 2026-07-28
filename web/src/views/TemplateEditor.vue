@@ -14,6 +14,9 @@
       >
         设为默认
       </el-button>
+      <el-button :disabled="!selectedTemplate || autosaving" @click="handleReset">
+        重设默认
+      </el-button>
       <el-dropdown
         :disabled="!selectedTemplate"
         trigger="click"
@@ -136,6 +139,7 @@
 import { ref, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ArrowDown } from '@element-plus/icons-vue'
+import { ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import TemplateList from '@/components/TemplateList.vue'
 import YamlEditor from '@/components/YamlEditor.vue'
@@ -297,6 +301,38 @@ async function handleSetDefault() {
     await loadTemplates()
     const updated = templates.value.find((t) => t.name === selectedTemplate.value?.name)
     if (updated) selectedTemplate.value = { ...selectedTemplate.value, is_default: true }
+  }
+  autosaving.value = false
+}
+
+async function handleReset() {
+  if (!selectedTemplate.value) return
+
+  const confirmed = await ElMessageBox.confirm(
+    '将覆盖当前内容并恢复为平台内嵌默认模板，此操作不可撤销（但会保留在版本历史中）。是否继续？',
+    '重设默认模板',
+    {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }
+  ).catch(() => false)
+
+  if (!confirmed) return
+
+  autosaving.value = true
+  const templateName = selectedTemplate.value.name
+  const success = await templateOps.reset(templateName)
+  if (success) {
+    // Reload template content
+    const updated = await selection.reloadTemplate(templateName)
+    if (updated) {
+      originalContent.value = updated.content ?? ''
+      editorContent.value = updated.content ?? ''
+      editorRef.value?.setValue(updated.content ?? '')
+      // Reload version list
+      await versionHistory.loadVersions(templateName)
+    }
   }
   autosaving.value = false
 }

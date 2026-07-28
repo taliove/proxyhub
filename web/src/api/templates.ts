@@ -62,6 +62,11 @@ export function setDefaultTemplate(name: string): Promise<{ success: boolean }> 
   return client.put<unknown, { success: boolean }>(`/templates/${encodeURIComponent(name)}/default`)
 }
 
+// Reset a template to embedded default
+export function resetTemplate(name: string): Promise<{ message: string }> {
+  return client.post<unknown, { message: string }>(`/templates/${encodeURIComponent(name)}/reset`)
+}
+
 // Template version history
 export interface TemplateVersion {
   version: number
