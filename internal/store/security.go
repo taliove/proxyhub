@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -11,11 +12,21 @@ func isNoRows(err error) bool {
 	return errors.Is(err, sql.ErrNoRows)
 }
 
-// IsBanned 检查 IP 是否处于封禁期
+// bannedUntilTimeLayout is the on-disk layout for banned_ips timestamps: UTC
+// "2006-01-02 15:04:05", the only shape SQLite's own datetime() can parse
+// (ADR 0010). Binding a time.Time directly would let the modernc driver
+// serialise it via time.Time.String(), monotonic-clock suffix included, which
+// datetime() reads as NULL.
+const bannedUntilTimeLayout = "2006-01-02 15:04:05"
+
+// IsBanned 检查 IP 是否处于封禁期。
+// banned_until 按裸文本读出后自行解析，兼容新格式与旧的 Go String 格式
+// （见 parseBannedUntil）。无法解析的值按"未封禁"处理并告警，避免脏数据把
+// 管理员永久锁在门外。
 func (s *Store) IsBanned(ip string, now time.Time) (bool, error) {
-	var bannedUntil sql.NullTime
+	var bannedUntil sql.NullString
 	err := s.db.QueryRow(
-		`SELECT banned_until FROM banned_ips WHERE ip = ?`, ip,
+		`SELECT CAST(banned_until AS TEXT) FROM banned_ips WHERE ip = ?`, ip,
 	).Scan(&bannedUntil)
 	if err != nil {
 		if isNoRows(err) {
@@ -23,7 +34,16 @@ func (s *Store) IsBanned(ip string, now time.Time) (bool, error) {
 		}
 		return false, fmt.Errorf("query ban: %w", err)
 	}
-	return bannedUntil.Valid && bannedUntil.Time.After(now), nil
+	if !bannedUntil.Valid || bannedUntil.String == "" {
+		return false, nil
+	}
+	until, ok := parseBannedUntil(bannedUntil.String)
+	if !ok {
+		slog.Warn("banned_ips: unparsable banned_until, treating ip as not banned",
+			"ip", ip, "value", bannedUntil.String)
+		return false, nil
+	}
+	return until.After(now), nil
 }
 
 // RecordLoginFailure 记录一次登录失败。
@@ -39,10 +59,11 @@ func (s *Store) RecordLoginFailure(ip string, threshold int, banDuration time.Du
 	}
 	defer tx.Rollback()
 
+	nowStr := now.UTC().Format(bannedUntilTimeLayout)
 	_, err = tx.Exec(`
 		INSERT INTO banned_ips (ip, fail_count, updated_at) VALUES (?, 1, ?)
 		ON CONFLICT(ip) DO UPDATE SET fail_count = fail_count + 1, updated_at = ?`,
-		ip, now, now)
+		ip, nowStr, nowStr)
 	if err != nil {
 		return false, fmt.Errorf("record failure: %w", err)
 	}
@@ -54,7 +75,7 @@ func (s *Store) RecordLoginFailure(ip string, threshold int, banDuration time.Du
 
 	banned := failCount >= threshold
 	if banned {
-		bannedUntil := now.Add(banDuration)
+		bannedUntil := now.Add(banDuration).UTC().Format(bannedUntilTimeLayout)
 		if _, err := tx.Exec(
 			`UPDATE banned_ips SET banned_until = ?, fail_count = 0 WHERE ip = ?`,
 			bannedUntil, ip); err != nil {
@@ -88,7 +109,7 @@ func (s *Store) BanIP(ip string, banDuration time.Duration, now time.Time) (time
 		INSERT INTO banned_ips (ip, fail_count, banned_until, updated_at)
 		VALUES (?, 0, ?, ?)
 		ON CONFLICT(ip) DO UPDATE SET banned_until = excluded.banned_until, updated_at = excluded.updated_at`,
-		ip, bannedUntil, now)
+		ip, bannedUntil.UTC().Format(bannedUntilTimeLayout), now.UTC().Format(bannedUntilTimeLayout))
 	if err != nil {
 		return time.Time{}, fmt.Errorf("ban ip: %w", err)
 	}

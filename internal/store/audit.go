@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -121,9 +122,10 @@ type BannedIP struct {
 	BannedUntil time.Time `json:"banned_until"` // 零值表示未封禁（只有失败计数）
 }
 
-// ListBannedIPs 列出所有 banned_ips 表中的记录（含封禁中 + 失败计数未达阈值的）
+// ListBannedIPs 列出所有 banned_ips 表中的记录（含封禁中 + 失败计数未达阈值的）。
+// banned_until 走 parseBannedUntil，兼容新 UTC 字符串格式与旧 Go String 格式。
 func (s *Store) ListBannedIPs() ([]*BannedIP, error) {
-	rows, err := s.db.Query(`SELECT ip, fail_count, banned_until FROM banned_ips ORDER BY updated_at DESC`)
+	rows, err := s.db.Query(`SELECT ip, fail_count, CAST(banned_until AS TEXT) FROM banned_ips ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query banned ips: %w", err)
 	}
@@ -137,7 +139,12 @@ func (s *Store) ListBannedIPs() ([]*BannedIP, error) {
 			return nil, fmt.Errorf("scan banned ip: %w", err)
 		}
 		if bannedUntilStr.Valid && bannedUntilStr.String != "" {
-			b.BannedUntil = parseSQLiteTime(bannedUntilStr.String)
+			if until, ok := parseBannedUntil(bannedUntilStr.String); ok {
+				b.BannedUntil = until
+			} else {
+				slog.Warn("banned_ips: unparsable banned_until, reporting as not banned",
+					"ip", b.IP, "value", bannedUntilStr.String)
+			}
 		}
 		banned = append(banned, &b)
 	}
