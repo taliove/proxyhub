@@ -28,7 +28,11 @@ export function useTemplateAutosave() {
   }
 
   // Trigger autosave with validation gate
-  async function triggerAutosave(templateName: string, content: string) {
+  async function triggerAutosave(
+    templateName: string,
+    content: string,
+    onSaved?: (savedContent: string) => void
+  ) {
     validationError.value = ''
 
     const validation = validateYaml(content)
@@ -41,6 +45,9 @@ export function useTemplateAutosave() {
     try {
       await updateTemplate(templateName, { content })
       lastSavedAt.value = new Date().toISOString()
+      if (onSaved) {
+        onSaved(content)
+      }
       return true
     } catch (e) {
       const detail = extractErrorDetail(e)
@@ -55,7 +62,8 @@ export function useTemplateAutosave() {
   function setupAutosave(
     contentRef: { value: string },
     templateNameGetter: () => string | null,
-    canAutosave: () => boolean
+    canAutosave: () => boolean,
+    onSaved?: (savedContent: string) => void
   ) {
     watch(
       () => contentRef.value,
@@ -68,10 +76,12 @@ export function useTemplateAutosave() {
           clearTimeout(autosaveTimer)
         }
 
+        // Capture snapshot of content at the time autosave is scheduled
+        const contentSnapshot = newContent
         autosaveTimer = setTimeout(() => {
           const templateName = templateNameGetter()
           if (templateName) {
-            triggerAutosave(templateName, newContent)
+            triggerAutosave(templateName, contentSnapshot, onSaved)
           }
         }, AUTOSAVE_DEBOUNCE_MS)
       }

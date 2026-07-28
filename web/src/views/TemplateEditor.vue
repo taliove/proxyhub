@@ -179,7 +179,11 @@ function formatTime(isoString: string): string {
 autosave.setupAutosave(
   editorContent,
   () => selectedTemplate.value?.name ?? null,
-  () => previewingVersion.value === null
+  () => previewingVersion.value === null,
+  (savedContent) => {
+    // Sync baseline on successful autosave
+    originalContent.value = savedContent
+  }
 )
 
 // Handle history dropdown commands
