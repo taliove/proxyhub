@@ -8,7 +8,7 @@ require (
 	github.com/miekg/dns v1.1.72
 	github.com/mojocn/base64Captcha v1.3.8
 	github.com/mozillazg/go-pinyin v0.21.0
-	github.com/oschwald/maxminddb-golang v1.12.0
+	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/pquerna/otp v1.5.0
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sync v0.22.0
