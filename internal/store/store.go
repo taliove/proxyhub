@@ -79,7 +79,6 @@ CREATE TABLE IF NOT EXISTS pull_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_pull_logs_endpoint ON pull_logs(endpoint_id);
 CREATE INDEX IF NOT EXISTS idx_pull_logs_ip ON pull_logs(ip);
-CREATE INDEX IF NOT EXISTS idx_pull_logs_endpoint_status ON pull_logs(endpoint_id, status);
 
 CREATE TABLE IF NOT EXISTS ip_geo (
 	ip          TEXT PRIMARY KEY,
