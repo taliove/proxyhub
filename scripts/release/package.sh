@@ -47,6 +47,15 @@ SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null ||
 [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]] || fail "SOURCE_DATE_EPOCH must be a non-negative integer"
 OUTPUT_DIR="${OUTPUT_DIR:-$repo_root/dist/release}"
 
+# Build timestamp embedded via -X main.buildTime. Derived from
+# SOURCE_DATE_EPOCH (not wall clock) so release builds stay reproducible.
+# GNU date uses -d @epoch, BSD date uses -r epoch.
+if date --version >/dev/null 2>&1; then
+  BUILD_TIME="$(date -u -d "@$SOURCE_DATE_EPOCH" '+%Y-%m-%d_%H:%M:%S')"
+else
+  BUILD_TIME="$(date -u -r "$SOURCE_DATE_EPOCH" '+%Y-%m-%d_%H:%M:%S')"
+fi
+
 # Release targets: linux is what we ship; darwin/windows are dev/manual.
 TARGETS="${TARGETS:-linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64}"
 
@@ -71,7 +80,8 @@ build_binary() { # os arch output
   local os="$1" arch="$2" out="$3"
   log "building $os/$arch"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-    go build -trimpath -buildvcs=false -ldflags "-s -w" \
+    go build -trimpath -buildvcs=false \
+    -ldflags "-s -w -X main.version=$VERSION -X main.buildTime=$BUILD_TIME" \
     -o "$out" ./cmd/server || return 1
 }
 

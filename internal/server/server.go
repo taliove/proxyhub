@@ -124,6 +124,10 @@ type Server struct {
 	// guard does not read the DB on every /sub request. Invalidated on
 	// settings save.
 	pullRateThreshold *cachedThreshold
+	// version/buildTime are the build-stamped release identity, wired via
+	// SetVersion by main and self-reported by /api/status. Empty in tests.
+	version   string
+	buildTime string
 }
 
 // New 创建 HTTP 服务
@@ -799,7 +803,18 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]bool{"initialized": initialized})
+	writeJSON(w, map[string]any{
+		"initialized": initialized,
+		"version":     s.version,
+		"build_time":  s.buildTime,
+	})
+}
+
+// SetVersion injects the build-stamped release identity (see -ldflags -X in
+// Makefile and scripts/release/package.sh) for /api/status self-reporting.
+func (s *Server) SetVersion(version, buildTime string) {
+	s.version = version
+	s.buildTime = buildTime
 }
 
 // handleSPA 提供内嵌的 Vue 单页应用，支持前端路由的 history 模式回退

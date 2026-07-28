@@ -20,7 +20,17 @@ COPY . .
 # 覆盖为前端构建产物（含 index.html + assets）
 COPY --from=frontend-builder /app/cmd/server/web ./cmd/server/web
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -ldflags "-s -w" -o proxyhub ./cmd/server
+ARG VERSION=dev
+# Build timestamp derived from SOURCE_DATE_EPOCH (reproducible, same contract
+# as scripts/release/package.sh); empty means no buildTime stamp (local builds).
+ARG SOURCE_DATE_EPOCH=""
+RUN BUILD_TIME=""; \
+    if [ -n "$SOURCE_DATE_EPOCH" ]; then \
+      BUILD_TIME="$(date -u -d "@$SOURCE_DATE_EPOCH" '+%Y-%m-%d_%H:%M:%S')"; \
+    fi; \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false \
+    -ldflags "-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
+    -o proxyhub ./cmd/server
 
 # 阶段 3: 最终镜像
 FROM alpine:latest

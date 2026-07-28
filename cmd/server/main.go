@@ -56,6 +56,9 @@ func runSubcommand(name string, args []string) (handled bool, err error) {
 		return true, runStateFingerprint(args)
 	case "reset-mfa":
 		return true, runResetMFA(args, os.Stdout)
+	case "version", "--version", "-v":
+		fmt.Fprintln(os.Stdout, versionString())
+		return true, nil
 	default:
 		return false, nil
 	}
@@ -112,6 +115,7 @@ func run(configPath string) error {
 	// HTTP 服务（SPA + API + 订阅端点）
 	srv := server.New(cfg, st, agg, WebFS, logger, detectionSvc, resolver)
 	srv.SetDetectionJobs(detectionJobs)
+	srv.SetVersion(version, buildTime)
 
 	// 每用户 Xray 实例管理(ticket 08):工作目录落在数据库同级的 xray/ 下
 	// (开发 var/xray,生产 /var/lib/proxyhub/xray),Manager 内部负责 MkdirAll;

@@ -30,11 +30,20 @@
         </el-menu-item>
       </template>
     </el-menu>
+
+    <!-- 版本自报(/api/status):接口不可用时静默降级不渲染,不影响导航 -->
+    <div
+      v-if="!collapsed && versionText"
+      class="ph-sidebar__version"
+      :title="buildTime || undefined"
+    >
+      {{ versionText }}
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   IconDashboard,
@@ -51,6 +60,7 @@ import {
 } from '@tabler/icons-vue'
 import BrandMark from '@/components/BrandMark.vue'
 import Wordmark from '@/components/Wordmark.vue'
+import { getStatus } from '@/api/status'
 import { getMenuSections } from '../nav'
 
 // 导航图标:route meta.icon 名(EP 旧名)→ Tabler 组件(2px 描边,存在感强一档)
@@ -78,6 +88,23 @@ const activePath = computed(() => route.path)
 
 // 分组菜单从路由表派生(单一来源见 nav.ts)
 const sections = computed(() => getMenuSections(router))
+
+// 版本自报:release 构建显示 vX.Y.Z,本地 dev 构建原样显示 dev
+const version = ref('')
+const buildTime = ref('')
+const versionText = computed(() =>
+  version.value === '' || version.value === 'dev' ? version.value : `v${version.value}`
+)
+onMounted(async () => {
+  try {
+    const s = await getStatus()
+    version.value = s.version ?? ''
+    buildTime.value = s.build_time ?? ''
+  } catch {
+    version.value = ''
+    buildTime.value = ''
+  }
+})
 </script>
 
 <style scoped>
@@ -176,5 +203,15 @@ const sections = computed(() => getMenuSections(router))
   background: color-mix(in srgb, var(--ph-primary) 12%, transparent);
   color: var(--ph-primary);
   font-weight: 600;
+}
+
+/* 版本自报:钉在侧栏底部,小号弱色,与组标签同族 */
+.ph-sidebar__version {
+  flex-shrink: 0;
+  padding: var(--ph-space-3) var(--ph-space-4);
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-placeholder);
+  border-top: 1px solid var(--ph-border-light);
+  white-space: nowrap;
 }
 </style>

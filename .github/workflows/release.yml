@@ -172,6 +172,7 @@ jobs:
           [[ "$PRERELEASE" == "true" ]] || tags="$tags"$'\n'"$name:latest"
           {
             echo "name=$name"
+            echo "epoch=$(git log -1 --format=%ct)"
             echo "tags<<EOF"
             echo "$tags"
             echo "EOF"
@@ -198,6 +199,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.image.outputs.tags }}
+          build-args: |
+            VERSION=${{ needs.validate.outputs.version }}
+            SOURCE_DATE_EPOCH=${{ steps.image.outputs.epoch }}
 
       - name: Attest build provenance of image
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
