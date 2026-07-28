@@ -429,6 +429,59 @@ func TestAirportTestCoordinatorWiring(t *testing.T) {
 	waitAirportTestRun(t, st, int64(resp["jobId"].(float64)))
 }
 
+// 安全回归:机场订阅 URL 是凭证,禁止落 jobs.params_json,禁止经任务中心 API 回显。
+// params 只携带 airport_id/name/full;URL 由 job Run 按 id 从 store 解析。
+func TestHandleAirportTest_ParamsExcludeURL(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	release := make(chan struct{})
+	close(release)
+	mockSub := gatedSubscriptionServer(t, release)
+	const token = "SECRET-SUB-TOKEN-9f8e7d6c"
+	airport, _ := st.CreateAirport("TokenAirport", mockSub.URL+"/"+token)
+	replaceAirportTestRuntime(t, srv, st, noopHealthChecker{}, &fakePoolOps{})
+
+	code, resp := postAirportTest(t, srv, airport.ID, "")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	jobID := int64(resp["jobId"].(float64))
+	waitAirportTestRun(t, st, jobID) // 等收口,避免 TempDir 清理竞态
+
+	// (a) 持久化的 params_json 不含 URL/凭证
+	rec, err := st.Jobs().Get(jobID)
+	if err != nil || rec == nil {
+		t.Fatalf("get job %d: %v", jobID, err)
+	}
+	if strings.Contains(string(rec.Params), token) || strings.Contains(string(rec.Params), mockSub.URL) {
+		t.Errorf("persisted params leak airport URL: %s", rec.Params)
+	}
+	var p map[string]any
+	if err := json.Unmarshal(rec.Params, &p); err != nil {
+		t.Fatalf("parse params: %v", err)
+	}
+	if _, ok := p["airport_url"]; ok {
+		t.Errorf("params contain airport_url key: %s", rec.Params)
+	}
+	if p["airport_id"] == nil {
+		t.Error("params missing airport_id (job Run resolves URL by id)")
+	}
+
+	// (c) 任务中心 API 不回显 URL
+	wList := httptest.NewRecorder()
+	srv.handleListJobs(wList, httptest.NewRequest(http.MethodGet, "/api/jobs", nil))
+	if strings.Contains(wList.Body.String(), token) {
+		t.Errorf("GET /api/jobs leaks airport URL: %s", wList.Body.String())
+	}
+
+	reqDetail := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs/%d", jobID), nil)
+	reqDetail.SetPathValue("id", fmt.Sprintf("%d", jobID))
+	wDetail := httptest.NewRecorder()
+	srv.handleGetJobDetail(wDetail, reqDetail)
+	if strings.Contains(wDetail.Body.String(), token) {
+		t.Errorf("GET /api/jobs/{id} leaks airport URL: %s", wDetail.Body.String())
+	}
+}
+
 func TestHandleAirportTest_NotFound(t *testing.T) {
 	srv, _ := newTestServer(t, nil)
 

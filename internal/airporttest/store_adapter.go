@@ -2,6 +2,8 @@ package airporttest
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/taliove/proxyhub/internal/store"
 )
@@ -14,6 +16,19 @@ type StoreAdapter struct {
 // NewStoreAdapter creates a new store adapter.
 func NewStoreAdapter(s *store.Store) *StoreAdapter {
 	return &StoreAdapter{s: s}
+}
+
+// GetAirportURL 按 airport_id 现读订阅 URL(凭证不落 params_json);
+// 机场已删(store.ErrNotFound)映射为 ErrAirportGone,不暴露底层细节。
+func (a *StoreAdapter) GetAirportURL(_ context.Context, airportID int64) (string, error) {
+	airport, err := a.s.GetAirportByID(airportID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return "", ErrAirportGone
+		}
+		return "", fmt.Errorf("query airport: %w", err)
+	}
+	return airport.URL, nil
 }
 
 // CreateTestRun persists a test run.

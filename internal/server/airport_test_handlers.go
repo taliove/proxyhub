@@ -40,10 +40,11 @@ func (s *Server) handleAirportTest(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&body)
 	}
 
+	// 安全:订阅 URL 是凭证,不落 params_json(jobs 表持久化 + 任务中心 API 回显);
+	// URL 由 job Run 按 airport_id 从 store 现读(见 airporttest.JobParams)。
 	params, err := json.Marshal(airporttest.JobParams{
 		AirportID:   airport.ID,
 		AirportName: airport.Name,
-		AirportURL:  airport.URL,
 		Full:        body.Full,
 	})
 	if err != nil {

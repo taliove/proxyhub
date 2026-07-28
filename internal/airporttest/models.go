@@ -85,6 +85,9 @@ type Store interface {
 	CreateTestRun(ctx context.Context, run *TestRun) (int64, error)
 	GetTestRun(ctx context.Context, airportID, runID int64) (*TestRun, error)
 	UpdateTestRun(ctx context.Context, run *TestRun) error
+	// GetAirportURL 按 airport_id 解析订阅 URL(凭证不落 params_json,
+	// Run 时才从 store 读取);机场已删返回 ErrAirportGone。
+	GetAirportURL(ctx context.Context, airportID int64) (string, error)
 }
 
 // NewOrchestrator creates a new test orchestrator.

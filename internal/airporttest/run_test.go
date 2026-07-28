@@ -56,7 +56,11 @@ type FakeStore struct {
 	mu        sync.Mutex
 	Runs      map[int64]*TestRun
 	NextRunID int64
-	t         *testing.T
+	// AirportURL/AirportURLErr 预置 GetAirportURL 返回(任务化后 URL 不再落 params,
+	// 由 Run 按 airport_id 经 store 解析);URLErr 非 nil 模拟机场已删/库错误。
+	AirportURL    string
+	AirportURLErr error
+	t             *testing.T
 }
 
 func NewFakeStore(t *testing.T) *FakeStore {
@@ -92,6 +96,11 @@ func (s *FakeStore) UpdateTestRun(ctx context.Context, run *TestRun) error {
 	defer s.mu.Unlock()
 	s.Runs[run.ID] = run
 	return nil
+}
+
+// GetAirportURL 返回预置的机场订阅 URL(任务化后 URL 按 id 解析,不落 params)。
+func (s *FakeStore) GetAirportURL(ctx context.Context, airportID int64) (string, error) {
+	return s.AirportURL, s.AirportURLErr
 }
 
 // RunCount 并发安全地读已建行数(任务化取消测试轮询用)。

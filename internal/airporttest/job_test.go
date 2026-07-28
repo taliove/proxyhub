@@ -59,7 +59,7 @@ func TestJobKind_RunCompletes(t *testing.T) {
 
 	var cursors []string
 	err := kind.Run(context.Background(),
-		jobParams(t, JobParams{AirportID: 7, AirportName: "TestAirport", AirportURL: "https://example.com/sub", Full: true}),
+		jobParams(t, JobParams{AirportID: 7, AirportName: "TestAirport", Full: true}),
 		"", nil, func(c string) { cursors = append(cursors, c) })
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -100,7 +100,7 @@ func TestJobKind_RunFailedMapsToError(t *testing.T) {
 		func(string) int64 { return 0 })
 
 	err := kind.Run(context.Background(),
-		jobParams(t, JobParams{AirportID: 1, AirportName: "TestAirport", AirportURL: "https://example.com/sub"}),
+		jobParams(t, JobParams{AirportID: 1, AirportName: "TestAirport"}),
 		"", nil, nil)
 	if err == nil {
 		t.Fatal("Run() = nil, want error for failed run")
@@ -150,7 +150,7 @@ func TestJobKind_RunCancelled(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- kind.Run(ctx,
-			jobParams(t, JobParams{AirportID: 1, AirportName: "TestAirport", AirportURL: "https://example.com/sub", Full: true}),
+			jobParams(t, JobParams{AirportID: 1, AirportName: "TestAirport", Full: true}),
 			"", nil, nil)
 	}()
 
@@ -207,7 +207,7 @@ func TestJobKind_CancelDuringFetchNoRun(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- kind.Run(ctx,
-			jobParams(t, JobParams{AirportID: 1, AirportName: "A", AirportURL: "https://example.com/sub"}),
+			jobParams(t, JobParams{AirportID: 1, AirportName: "A"}),
 			"", nil, nil)
 	}()
 	time.Sleep(20 * time.Millisecond)
@@ -218,6 +218,62 @@ func TestJobKind_CancelDuringFetchNoRun(t *testing.T) {
 	}
 	if st.RunCount() != 0 {
 		t.Errorf("runs created = %d, want 0 (cancelled before row creation)", st.RunCount())
+	}
+}
+
+// 安全回归:订阅 URL 是凭证,不落 params_json;Run 按 airport_id 经 store 解析 URL。
+func TestJobKind_RunResolvesURLFromStore(t *testing.T) {
+	st := NewFakeStore(t)
+	st.AirportURL = "https://example.com/sub/STORE-TOKEN-9f8e7d"
+	orch := NewOrchestrator(st, &FakeHealthChecker{}, &FakePoolWriter{})
+	var gotURL string
+	kind := NewJobKind(orch, st,
+		func(_ context.Context, _, url string) (*DiagnosticResult, []*subscription.Node) {
+			gotURL = url
+			return &DiagnosticResult{HTTPStatus: 200, NodeCount: 2}, testNodes(2)
+		},
+		func(string) int64 { return 0 })
+
+	// params 不含 airport_url;URL 必须由 Run 从 store 解析
+	err := kind.Run(context.Background(),
+		json.RawMessage(`{"airport_id":7,"airport_name":"TestAirport","full":true}`),
+		"", nil, nil)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if gotURL != st.AirportURL {
+		t.Errorf("fetch url = %q, want store-resolved %q", gotURL, st.AirportURL)
+	}
+}
+
+// 入队后机场被删除:Run 以明确的非凭证错误收口(ErrAirportGone),
+// 不发起拉取、不建行(jobs 行 failed)。
+func TestJobKind_RunFailsWhenAirportDeleted(t *testing.T) {
+	st := NewFakeStore(t)
+	st.AirportURLErr = ErrAirportGone
+	orch := NewOrchestrator(st, &FakeHealthChecker{}, &FakePoolWriter{})
+	fetchCalled := false
+	kind := NewJobKind(orch, st,
+		func(context.Context, string, string) (*DiagnosticResult, []*subscription.Node) {
+			fetchCalled = true
+			return &DiagnosticResult{}, nil
+		},
+		func(string) int64 { return 0 })
+
+	err := kind.Run(context.Background(),
+		json.RawMessage(`{"airport_id":7,"airport_name":"TestAirport"}`),
+		"", nil, nil)
+	if err == nil {
+		t.Fatal("Run() = nil, want error for deleted airport")
+	}
+	if !errors.Is(err, ErrAirportGone) {
+		t.Errorf("Run() error = %v, want wrapping ErrAirportGone", err)
+	}
+	if fetchCalled {
+		t.Error("fetch called, want no fetch when airport is gone")
+	}
+	if st.RunCount() != 0 {
+		t.Errorf("runs created = %d, want 0", st.RunCount())
 	}
 }
 

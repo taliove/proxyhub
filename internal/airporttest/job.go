@@ -3,6 +3,7 @@ package airporttest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,12 +19,17 @@ func JobKey(airportID int64) string {
 }
 
 // JobParams 机场测试任务启动参数(params_json)。
+// 安全:订阅 URL 是凭证,不落 params_json(任务中心 API 会原样回显);
+// Run 按 AirportID 经 store 解析 URL(见 GetAirportURL)。
 type JobParams struct {
 	AirportID   int64  `json:"airport_id"`
 	AirportName string `json:"airport_name"`
-	AirportURL  string `json:"airport_url"`
 	Full        bool   `json:"full"`
 }
+
+// ErrAirportGone 任务执行时机场已被删除(入队后删除):Run 以该错误收口,
+// 消息不含任何凭证。
+var ErrAirportGone = errors.New("airport no longer exists")
 
 // jobCursor 进度游标(jobs.cursor 持久化,任务中心/前端轮询 /api/jobs/{id} 消费)。
 // 主进度源;run 行 sample_params 为镜像(决策:cursor 为主,run 列照旧写)。
@@ -89,7 +95,17 @@ func (k *JobKind) Run(ctx context.Context, params json.RawMessage, _ string, _ f
 
 	reportProgress(progress, jobCursor{Phase: string(StatusDiagnosing)})
 
-	diag, nodes := k.fetch(ctx, p.AirportName, p.AirportURL)
+	// 订阅 URL 是凭证,不经 params 传递:按 airport_id 从 store 现读。
+	// 机场在入队后被删除 → ErrAirportGone 收口(jobs 行 failed,无 run 产出)。
+	url, err := k.store.GetAirportURL(ctx, p.AirportID)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return fmt.Errorf("airport test: resolve subscription for airport %d: %w", p.AirportID, err)
+	}
+
+	diag, nodes := k.fetch(ctx, p.AirportName, url)
 	// 拉取期间被取消:尚未建行,直接以取消收口(jobs 行 cancelled,无 run 产出)
 	if err := ctx.Err(); err != nil {
 		return err
