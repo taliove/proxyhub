@@ -119,6 +119,9 @@
         :image-size="60"
       />
     </el-card>
+
+    <!-- IP 规则(整站拒止 / 拉取黑名单) -->
+    <IPRuleList />
   </div>
 </template>
 
@@ -128,6 +131,7 @@ import { ElMessage } from 'element-plus'
 import client from '@/api/client'
 import PageHeader from '@/components/PageHeader.vue'
 import AuditDetailDrawer from './AuditDetailDrawer.vue'
+import IPRuleList from './IPRuleList.vue'
 import {
   EVENT_FILTER_OPTIONS,
   detailText,
