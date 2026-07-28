@@ -242,6 +242,9 @@ _assert_ok env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; write_caddy_frag
 CADDY="$TEST_ROOT/etc/caddy/conf.d/proxyhub.caddy"
 _assert_file_contains "$CADDY" "example.com {"
 _assert_file_contains "$CADDY" "reverse_proxy 127.0.0.1:8080"
+# C1 防线依赖替换语义:转发头必须被代理整体替换,调用方伪造的 XFF 才活不过代理跳。
+_assert_file_contains "$CADDY" "header_up X-Forwarded-For {remote_host}"
+_assert_file_contains "$CADDY" "header_up X-Real-IP {remote_host}"
 _assert_file_contains "$CADDY" "path /$SITE /$SITE/*"
 _assert_file_contains "$CADDY" "respond 404"
 
