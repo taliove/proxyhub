@@ -40,6 +40,14 @@ type securityPolicy struct {
 	// (pull-guard ticket 04,设置键 pull_rate_limit_per_hour)。
 	// 0 表示关闭限频。
 	PullRateLimitPerHour int
+	// PullBlacklistEscalationCount 自动升级阈值(pull-guard ticket 05,设置键
+	// pull_blacklist_escalation_count):同一 IP 在 1 小时窗口内累计
+	// rate_limited 次数达此值,即自动写入 scope=sub 黑名单规则。
+	// 必须为正数 —— 0 会让第一次超限就封禁,不作为"关闭"语义。
+	PullBlacklistEscalationCount int
+	// PullBlacklistDuration 自动黑名单规则时长(设置键 pull_blacklist_duration)。
+	// 必须为正 —— 0 在规则表里是"永久",自动判定不该产生永久封禁。
+	PullBlacklistDuration time.Duration
 }
 
 const (
@@ -52,10 +60,12 @@ const (
 // loadSecurityPolicy 从设置读取 IP2Ban 策略，缺省时用默认值
 func (s *Server) loadSecurityPolicy() securityPolicy {
 	policy := securityPolicy{
-		BanThreshold:            defaultBanThreshold,
-		BanDuration:             defaultBanDuration,
-		CaptchaTriggerThreshold: defaultCaptchaTriggerThreshold,
-		PullRateLimitPerHour:    defaultPullRateLimitPerHour,
+		BanThreshold:                 defaultBanThreshold,
+		BanDuration:                  defaultBanDuration,
+		CaptchaTriggerThreshold:      defaultCaptchaTriggerThreshold,
+		PullRateLimitPerHour:         defaultPullRateLimitPerHour,
+		PullBlacklistEscalationCount: defaultPullBlacklistEscalationCount,
+		PullBlacklistDuration:        defaultPullBlacklistDuration,
 	}
 
 	settings, err := s.st.GetSystemSettings()
@@ -84,6 +94,18 @@ func (s *Server) loadSecurityPolicy() securityPolicy {
 	if v := settings["pull_rate_limit_per_hour"]; v != "" {
 		if n, err := parseNonNegativeInt(v); err == nil {
 			policy.PullRateLimitPerHour = n
+		}
+	}
+	// 自动升级阈值与时长(ticket 05)只接受正值:两者的 0 都不是"关闭",
+	// 而是"立刻封禁 / 永久封禁",解析失败或非正一律保留默认。
+	if v := settings["pull_blacklist_escalation_count"]; v != "" {
+		if n, err := parsePositiveInt(v); err == nil {
+			policy.PullBlacklistEscalationCount = n
+		}
+	}
+	if v := settings["pull_blacklist_duration"]; v != "" {
+		if d, err := time.ParseDuration(strings.TrimSpace(v)); err == nil && d > 0 {
+			policy.PullBlacklistDuration = d
 		}
 	}
 	return policy

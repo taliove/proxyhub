@@ -352,6 +352,8 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		// 不做 nil 判空:New 必然初始化,漏初始化应当在第一个用例就 panic,
 		// 而不是退化成"阈值永远读旧值"的静默错误。
 		s.pullRateThreshold.invalidate()
+		// 同理让自动升级阈值/时长立即生效(pull-guard ticket 05)。
+		s.pullEscalation().invalidate()
 		s.logger.Info("settings saved (global)")
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 		return
