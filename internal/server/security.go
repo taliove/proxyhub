@@ -27,22 +27,29 @@ func isHoneypotUsername(username string) bool {
 	return honeypotUsernames[strings.ToLower(strings.TrimSpace(username))]
 }
 
-// securityPolicy 从数据库设置解析出的 IP2Ban 策略
+// securityPolicy 从数据库设置解析出的 IP2Ban 与验证码策略
 type securityPolicy struct {
 	BanThreshold int
 	BanDuration  time.Duration
+	// CaptchaTriggerThreshold 触发登录验证码所需的历史失败次数:
+	// banned_ips.fail_count >= 阈值即要求验证码(无记录视为 0)。
+	// 0 表示常驻要求验证码。
+	CaptchaTriggerThreshold int
 }
 
 const (
 	defaultBanThreshold = 5
 	defaultBanDuration  = time.Hour
+	// defaultCaptchaTriggerThreshold 默认一次失败即上验证码
+	defaultCaptchaTriggerThreshold = 1
 )
 
 // loadSecurityPolicy 从设置读取 IP2Ban 策略，缺省时用默认值
 func (s *Server) loadSecurityPolicy() securityPolicy {
 	policy := securityPolicy{
-		BanThreshold: defaultBanThreshold,
-		BanDuration:  defaultBanDuration,
+		BanThreshold:            defaultBanThreshold,
+		BanDuration:             defaultBanDuration,
+		CaptchaTriggerThreshold: defaultCaptchaTriggerThreshold,
 	}
 
 	settings, err := s.st.GetSystemSettings()
@@ -60,6 +67,12 @@ func (s *Server) loadSecurityPolicy() securityPolicy {
 			policy.BanDuration = d
 		}
 	}
+	// 验证码阈值允许 0(常驻要求),因此用 parseNonNegativeInt 而非 parsePositiveInt。
+	if v := settings["captcha_trigger_threshold"]; v != "" {
+		if n, err := parseNonNegativeInt(v); err == nil {
+			policy.CaptchaTriggerThreshold = n
+		}
+	}
 	return policy
 }
 
@@ -70,6 +83,18 @@ func parsePositiveInt(s string) (int, error) {
 		return 0, err
 	}
 	if n <= 0 {
+		return 0, strconv.ErrRange
+	}
+	return n, nil
+}
+
+// parseNonNegativeInt 解析非负整数(0 是合法值)
+func parseNonNegativeInt(s string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 0, err
+	}
+	if n < 0 {
 		return 0, strconv.ErrRange
 	}
 	return n, nil

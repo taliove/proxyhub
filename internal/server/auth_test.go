@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,8 +103,19 @@ func TestLogin_UnknownUser(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", w.Code)
 	}
-	if body := w.Body.String(); body != "invalid credentials\n" {
-		t.Errorf("body = %q, want generic 'invalid credentials'", body)
+	// 验证码上线后失败体是 JSON(带 captcha_required 提示前端出图),
+	// 但错误文案必须仍是通用的 invalid credentials,不得泄露"用户不存在"。
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal %q: %v", w.Body.String(), err)
+	}
+	if resp.Error != "invalid credentials" {
+		t.Errorf("error = %q, want generic 'invalid credentials'", resp.Error)
+	}
+	if strings.Contains(strings.ToLower(w.Body.String()), "nobody") {
+		t.Errorf("body leaks the attempted username: %q", w.Body.String())
 	}
 }
 

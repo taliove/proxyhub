@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/taliove/proxyhub/internal/airporttest"
+	"github.com/taliove/proxyhub/internal/captcha"
 	"github.com/taliove/proxyhub/internal/config"
 	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/filter"
@@ -107,6 +108,9 @@ type Server struct {
 	// SetXrayManager by main; nil in tests that don't exercise the Xray
 	// surface. Handlers must nil-check before use.
 	xrayMgr *xraymgr.Manager
+	// captcha issues and verifies the login captcha (GET /api/captcha +
+	// the handleLogin gate). Tests swap in a deterministic stub.
+	captcha captchaService
 }
 
 // New 创建 HTTP 服务
@@ -122,6 +126,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		geo:              geo,
 		lookupHost:       net.LookupHost,
 		countryLookup:    geoip.LookupCountry,
+		captcha:          captcha.NewService(captcha.Options{}),
 	}
 
 	// 体检任务管理器:runner 复用 detectionService.ExamStream(逻辑零改动),
@@ -524,6 +529,8 @@ func (s *Server) Handler() http.Handler {
 
 	// 认证
 	mux.HandleFunc("POST /api/login", s.handleLogin)
+	// 登录验证码签发:无认证(登录页尚无会话),滥用由 per-IP 签发节流兜底
+	mux.HandleFunc("GET /api/captcha", s.handleIssueCaptcha)
 
 	// 订阅地址管理(业务路由统一走 requirePasswordChanged,首登强改密拦截)
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
@@ -884,6 +891,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		// 验证码字段:仅在该 IP 已越过 captcha_trigger_threshold 时必需。
+		CaptchaID     string `json:"captcha_id"`
+		CaptchaAnswer string `json:"captcha_answer"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -904,6 +914,20 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.recordAudit("honeypot_ban", ip, req.Username,
 			fmt.Sprintf("蜜罐命中，封禁至 %s", bannedUntil.Format("2006-01-02 15:04:05")))
 		http.Error(w, "too many failed attempts, try later", http.StatusForbidden)
+		return
+	}
+
+	// 验证码闸门(蜜罐之后、验密之前):该 IP 的历史失败次数越过阈值即必须带码。
+	// 先验码不验密——爆破者在拿到人机验证前根本触不到 bcrypt。
+	// loopback 豁免,沿用封禁/蜜罐的既有惯例。
+	captchaNeeded := s.captchaRequiredForIP(ip, policy.CaptchaTriggerThreshold)
+	if captchaNeeded && !s.captcha.Verify(req.CaptchaID, req.CaptchaAnswer) {
+		// 验证码缺失或答错与密码错同口径计入 IP2Ban 失败计数。
+		s.recordCaptchaFailure(ip, req.Username, req.CaptchaID, policy)
+		writeJSONStatus(w, http.StatusUnauthorized, map[string]any{
+			"error":            "captcha required",
+			"captcha_required": true,
+		})
 		return
 	}
 
@@ -930,6 +954,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 					policy.BanThreshold, bannedUntil.Format("2006-01-02 15:04:05")))
 		} else {
 			s.recordAudit("login_failure", ip, req.Username, "")
+		}
+		// 这次失败可能刚好把该 IP 推过验证码阈值:告知前端下次要带码。
+		// 已在验证码闸门内的请求同样带标记,前端据此换一张新图。
+		if captchaNeeded || s.captchaRequiredForIP(ip, policy.CaptchaTriggerThreshold) {
+			writeJSONStatus(w, http.StatusUnauthorized, map[string]any{
+				"error":            "invalid credentials",
+				"captcha_required": true,
+			})
+			return
 		}
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
