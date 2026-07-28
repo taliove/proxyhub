@@ -739,8 +739,8 @@ func (s *Server) Handler() http.Handler {
 
 	// 每用户 Xray 实例(ticket 08):用户读自己的实例;超管读/重启任意用户实例
 	mux.HandleFunc("GET /api/me/xray", guard(s.handleGetMyXray))
-	mux.HandleFunc("GET /api/admin/users/{id}/xray", guard(s.handleGetUserXray))
-	mux.HandleFunc("POST /api/admin/users/{id}/xray/restart", guard(s.handleRestartUserXray))
+	mux.HandleFunc("GET /api/admin/users/{id}/xray", adminGuard(s.handleGetUserXray))
+	mux.HandleFunc("POST /api/admin/users/{id}/xray/restart", adminGuard(s.handleRestartUserXray))
 
 	// 用户管理(ticket 03,超管专属):列表/创建/详情/修改/启停/删除/重置密码。
 	// 走 requireAuth + requirePasswordChanged + requireAdmin 链(adminGuard 见路由表前段)。
