@@ -743,6 +743,7 @@ func (s *Server) Handler() http.Handler {
 	// 含写操作(解封 IP),普通用户可达即越权。
 	mux.HandleFunc("GET /api/audit/events", adminGuard(s.handleAuditEvents))
 	mux.HandleFunc("GET /api/audit/banned", adminGuard(s.handleBannedIPs))
+	mux.HandleFunc("POST /api/audit/ban", adminGuard(s.handleBanIP))
 	mux.HandleFunc("POST /api/audit/unban", adminGuard(s.handleUnbanIP))
 
 	// 超管视角切换(ticket 09):进入/退出用户空间,查询当前生效视角。
@@ -936,7 +937,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Warn("honeypot username hit, ip banned", "ip", ip, "username", req.Username)
 		s.recordAudit("honeypot_ban", ip, req.Username,
-			fmt.Sprintf("蜜罐命中，封禁至 %s", bannedUntil.Format("2006-01-02 15:04:05")))
+			fmt.Sprintf("蜜罐命中，封禁至 %s", bannedUntil.Format("2006-01-02 15:04:05")),
+			r.UserAgent())
 		http.Error(w, "too many failed attempts, try later", http.StatusForbidden)
 		return
 	}
@@ -947,7 +949,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	captchaNeeded := s.captchaRequiredForIP(ip, policy.CaptchaTriggerThreshold)
 	if captchaNeeded && !s.captcha.Verify(req.CaptchaID, req.CaptchaAnswer) {
 		// 验证码缺失或答错与密码错同口径计入 IP2Ban 失败计数。
-		s.recordCaptchaFailure(ip, req.Username, req.CaptchaID, policy)
+		s.recordCaptchaFailure(ip, req.Username, req.CaptchaID, r.UserAgent(), policy)
 		writeJSONStatus(w, http.StatusUnauthorized, map[string]any{
 			"error":            "captcha required",
 			"captcha_required": true,
@@ -960,13 +962,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(verr, errAccountDisabled) {
 			// 已禁用账号:不再计入 IP 失败阈值(凭据本身是对的,只是账号被关),
 			// 直接 403,让管理员排障时区分"密码错"与"账号被禁用"。
-			s.recordAudit("login_disabled", ip, req.Username, "")
+			s.recordAudit("login_disabled", ip, req.Username, "", r.UserAgent())
 			http.Error(w, "account disabled", http.StatusForbidden)
 			return
 		}
 		// 达阈值时 chargeLoginFailure 已写 threshold_ban，此处不再叠一条 login_failure。
-		if !s.chargeLoginFailure(ip, req.Username, policy, failureReasonPassword) {
-			s.recordAudit("login_failure", ip, req.Username, "")
+		if !s.chargeLoginFailure(ip, req.Username, r.UserAgent(), policy, failureReasonPassword) {
+			s.recordAudit("login_failure", ip, req.Username, "", r.UserAgent())
 		}
 		// 这次失败可能刚好把该 IP 推过验证码阈值:告知前端下次要带码。
 		// 已在验证码闸门内的请求同样带标记,前端据此换一张新图。
@@ -1006,7 +1008,7 @@ func (s *Server) completeLogin(w http.ResponseWriter, r *http.Request, user *sto
 
 	// Branch one: nothing bound yet.
 	if !cfg.Enabled {
-		s.issueLoginSession(w, user, ip, "")
+		s.issueLoginSession(w, user, ip, "", r.UserAgent())
 		return
 	}
 
@@ -1029,7 +1031,7 @@ func (s *Server) completeLogin(w http.ResponseWriter, r *http.Request, user *sto
 		// recommendation engine counts only real second-factor successes
 		// (store.GetTrustRecommendationCount matches detail LIKE '%mfa=%'),
 		// so a skip must not recommend itself.
-		s.issueLoginSession(w, user, ip, "mfa_skipped=trusted_ip")
+		s.issueLoginSession(w, user, ip, "mfa_skipped=trusted_ip", r.UserAgent())
 		return
 	}
 
@@ -1054,9 +1056,9 @@ func (s *Server) completeLogin(w http.ResponseWriter, r *http.Request, user *sto
 // records login_success (mfaDetail carries the second-factor marker, empty for
 // accounts that owe enrollment), refreshes last_login_at and sets the session
 // cookie. Shared by handleLogin's non-challenge branches and handleLoginMFA.
-func (s *Server) issueLoginSession(w http.ResponseWriter, user *store.User, ip, mfaDetail string) {
+func (s *Server) issueLoginSession(w http.ResponseWriter, user *store.User, ip, mfaDetail, userAgent string) {
 	s.st.ResetLoginFailures(ip)
-	s.recordAudit("login_success", ip, user.Username, mfaDetail)
+	s.recordAudit("login_success", ip, user.Username, mfaDetail, userAgent)
 	now := time.Now()
 	if err := s.st.UpdateUser(user.ID, store.UserUpdate{LastLoginAt: &now}); err != nil {
 		// 登录动作本身已经成功,只记录日志不打断

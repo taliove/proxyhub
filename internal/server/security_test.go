@@ -24,7 +24,7 @@ func TestChargeLoginFailure_SharedCounterAcrossStages(t *testing.T) {
 	// the third regardless of which stage produced it.
 	stages := []failureReason{failureReasonPassword, failureReasonCaptcha, failureReasonMFA}
 	for i, reason := range stages {
-		banned := srv.chargeLoginFailure(ip, "owner", policy, reason)
+		banned := srv.chargeLoginFailure(ip, "owner", "", policy, reason)
 		wantBanned := i == len(stages)-1
 		if banned != wantBanned {
 			t.Fatalf("charge #%d (%s) banned = %v, want %v", i+1, reason, banned, wantBanned)
@@ -59,7 +59,7 @@ func TestChargeLoginFailure_BelowThresholdWritesNoBanAudit(t *testing.T) {
 	policy := srv.loadSecurityPolicy() // default threshold 5
 	const ip = "198.51.100.8"
 
-	if srv.chargeLoginFailure(ip, "owner", policy, failureReasonPassword) {
+	if srv.chargeLoginFailure(ip, "owner", "", policy, failureReasonPassword) {
 		t.Fatal("chargeLoginFailure() = true on the first failure, want false")
 	}
 	if got := failCountFor(t, st, ip); got != 1 {

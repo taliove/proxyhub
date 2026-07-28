@@ -8,10 +8,10 @@ import (
 func TestAuditLogs_RecordAndList(t *testing.T) {
 	st := newTestStore(t)
 
-	if err := st.RecordAuditEvent("login_success", "1.1.1.1", "admin", ""); err != nil {
+	if err := st.RecordAuditEvent("login_success", "1.1.1.1", "admin", "", ""); err != nil {
 		t.Fatalf("RecordAuditEvent() error = %v", err)
 	}
-	if err := st.RecordAuditEvent("login_failure", "2.2.2.2", "attacker", ""); err != nil {
+	if err := st.RecordAuditEvent("login_failure", "2.2.2.2", "attacker", "", ""); err != nil {
 		t.Fatalf("RecordAuditEvent() error = %v", err)
 	}
 
@@ -33,9 +33,9 @@ func TestAuditLogs_RecordAndList(t *testing.T) {
 
 func TestAuditLogs_FilterByEventType(t *testing.T) {
 	st := newTestStore(t)
-	st.RecordAuditEvent("login_success", "1.1.1.1", "admin", "")
-	st.RecordAuditEvent("login_failure", "2.2.2.2", "bad", "")
-	st.RecordAuditEvent("honeypot_ban", "3.3.3.3", "root", "banned")
+	st.RecordAuditEvent("login_success", "1.1.1.1", "admin", "", "")
+	st.RecordAuditEvent("login_failure", "2.2.2.2", "bad", "", "")
+	st.RecordAuditEvent("honeypot_ban", "3.3.3.3", "root", "banned", "")
 
 	events, total, _ := st.ListAuditEvents(AuditFilter{EventTypes: []string{"login_failure", "honeypot_ban"}}, 50, 0)
 	if total != 2 {
@@ -50,8 +50,8 @@ func TestAuditLogs_FilterByEventType(t *testing.T) {
 
 func TestAuditLogs_FilterByIP(t *testing.T) {
 	st := newTestStore(t)
-	st.RecordAuditEvent("login_failure", "1.1.1.1", "a", "")
-	st.RecordAuditEvent("login_failure", "2.2.2.2", "b", "")
+	st.RecordAuditEvent("login_failure", "1.1.1.1", "a", "", "")
+	st.RecordAuditEvent("login_failure", "2.2.2.2", "b", "", "")
 
 	events, total, _ := st.ListAuditEvents(AuditFilter{IP: "1.1.1.1"}, 50, 0)
 	if total != 1 || events[0].IP != "1.1.1.1" {
@@ -64,7 +64,7 @@ func TestAuditLogs_FilterByTimeRange(t *testing.T) {
 	// 手动插入一条明确的旧记录 + 一条新记录（CURRENT_TIMESTAMP）
 	st.db.Exec(`INSERT INTO audit_logs (event_type, ip, username, created_at) VALUES (?, ?, ?, ?)`,
 		"old", "1.1.1.1", "u", "2020-01-01 00:00:00")
-	st.RecordAuditEvent("new", "2.2.2.2", "u", "")
+	st.RecordAuditEvent("new", "2.2.2.2", "u", "", "")
 
 	// Since 2021 → 只应看到 new
 	_, total, _ := st.ListAuditEvents(AuditFilter{Since: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)}, 50, 0)
@@ -82,7 +82,7 @@ func TestAuditLogs_FilterByTimeRange(t *testing.T) {
 func TestAuditLogs_Pagination(t *testing.T) {
 	st := newTestStore(t)
 	for i := 0; i < 5; i++ {
-		st.RecordAuditEvent("login_failure", "1.1.1.1", "a", "")
+		st.RecordAuditEvent("login_failure", "1.1.1.1", "a", "", "")
 	}
 
 	events, total, _ := st.ListAuditEvents(AuditFilter{}, 2, 0)
@@ -101,7 +101,7 @@ func TestAuditLogs_Prune(t *testing.T) {
 	// 插入两条：一条明确是"旧"的（用手动时间），一条是"新"的（CURRENT_TIMESTAMP）
 	st.db.Exec(`INSERT INTO audit_logs (event_type, ip, username, created_at) VALUES (?, ?, ?, ?)`,
 		"old", "1.1.1.1", "u", "2020-01-01T00:00:00Z")
-	st.RecordAuditEvent("new", "2.2.2.2", "u", "")
+	st.RecordAuditEvent("new", "2.2.2.2", "u", "", "")
 
 	// 删除 2021 年之前的，应该只删 old
 	cutoff := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)

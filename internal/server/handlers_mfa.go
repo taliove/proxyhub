@@ -158,7 +158,8 @@ func (s *Server) confirmTOTPSecret(w http.ResponseWriter, r *http.Request, user 
 	}
 
 	s.recordAudit("mfa_enrolled", clientIP(r), user.Username,
-		fmt.Sprintf("totp enabled, %d recovery codes issued", len(plaintext)))
+		fmt.Sprintf("TOTP 已启用，签发 %d 个恢复码", len(plaintext)),
+		r.UserAgent())
 
 	// The plaintext codes exist here and nowhere else, ever again.
 	writeJSON(w, map[string]any{
@@ -216,7 +217,8 @@ func (s *Server) handleMFARegenerateRecovery(w http.ResponseWriter, r *http.Requ
 
 	if !s.verifySecondFactor(cfg, req.Code) {
 		s.recordAudit("mfa_failure", clientIP(r), user.Username,
-			"recovery code regeneration confirmation failed")
+			"恢复码重新生成确认失败",
+			r.UserAgent())
 		writeJSONStatus(w, http.StatusBadRequest, map[string]any{
 			"error": "invalid confirmation code",
 		})
@@ -242,7 +244,8 @@ func (s *Server) handleMFARegenerateRecovery(w http.ResponseWriter, r *http.Requ
 	}
 
 	s.recordAudit("mfa_recovery_regenerated", clientIP(r), user.Username,
-		fmt.Sprintf("%d recovery codes issued, previous batch invalidated", len(plaintext)))
+		fmt.Sprintf("签发 %d 个恢复码，旧批次已失效", len(plaintext)),
+		r.UserAgent())
 	writeJSON(w, map[string]any{
 		"ok":             true,
 		"recovery_codes": plaintext,
@@ -307,7 +310,8 @@ func (s *Server) handleAdminResetMFA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.recordAudit("mfa_reset", clientIP(r), user.Username,
-		fmt.Sprintf("mfa reset for user id=%d by super admin", id))
+		fmt.Sprintf("超管重置用户 id=%d 的 MFA", id),
+		r.UserAgent())
 	writeJSON(w, map[string]any{
 		"ok":       true,
 		"user_id":  id,
@@ -412,7 +416,7 @@ func (s *Server) handleLoginMFA(w http.ResponseWriter, r *http.Request) {
 	// was open, and the password stage's verdict must not outlive that.
 	if user.Disabled() {
 		s.mfaPending.Destroy(req.PendingToken)
-		s.recordAudit("login_disabled", ip, user.Username, "account disabled during mfa challenge")
+		s.recordAudit("login_disabled", ip, user.Username, "MFA 挑战期间账号被禁用", r.UserAgent())
 		http.Error(w, "account disabled", http.StatusForbidden)
 		return
 	}
@@ -433,7 +437,7 @@ func (s *Server) handleLoginMFA(w http.ResponseWriter, r *http.Request) {
 
 	method, ok := s.verifyLoginSecondFactor(cfg, req.Code)
 	if !ok {
-		s.recordMFALoginFailure(req.PendingToken, ip, user.Username)
+		s.recordMFALoginFailure(req.PendingToken, ip, user.Username, r.UserAgent())
 		http.Error(w, "invalid verification code", http.StatusUnauthorized)
 		return
 	}
@@ -452,18 +456,19 @@ func (s *Server) handleLoginMFA(w http.ResponseWriter, r *http.Request) {
 			s.logger.Warn("trust login ip failed", "user_id", user.ID, "ip", ip, "error", err)
 		} else {
 			s.recordAudit("trusted_ip_added", ip, user.Username,
-				fmt.Sprintf("trusted for %d days after mfa login", int(store.TrustedIPTTL.Hours()/24)))
+				fmt.Sprintf("MFA 登录后信任 %d 天", int(store.TrustedIPTTL.Hours()/24)),
+				r.UserAgent())
 		}
 	} else {
 		// Auto trust (ticket 10): only when the user did not already ask for it
 		// explicitly above, and only when auto_trust_ip is on for the account and
 		// this address has already cleared the recommendation threshold.
-		s.maybeAutoTrustLoginIP(user, ip)
+		s.maybeAutoTrustLoginIP(user, ip, r.UserAgent())
 	}
 
 	// "mfa=totp" / "mfa=recovery" is the marker
 	// store.GetTrustRecommendationCount counts (detail LIKE '%mfa=%').
-	s.issueLoginSession(w, user, ip, "mfa="+method)
+	s.issueLoginSession(w, user, ip, "mfa="+method, r.UserAgent())
 }
 
 // verifyLoginSecondFactor checks code against the account's TOTP secret first
@@ -510,16 +515,16 @@ func (s *Server) verifyLoginSecondFactor(cfg *store.UserMFAConfig, code string) 
 // mfa_failure audit row. The detail carries only the first 8 characters of the
 // pending token so failures can be correlated without persisting a live
 // credential.
-func (s *Server) recordMFALoginFailure(pendingToken, ip, username string) {
+func (s *Server) recordMFALoginFailure(pendingToken, ip, username, userAgent string) {
 	alive := s.mfaPending.RecordFailure(pendingToken)
 
-	detail := fmt.Sprintf("mfa verification failed, pending=%s", pendingTokenPrefix(pendingToken))
+	detail := fmt.Sprintf("MFA 验证失败，pending=%s", pendingTokenPrefix(pendingToken))
 	if !alive {
-		detail += ", pending session destroyed"
+		detail += "，pending 会话已销毁"
 	}
-	s.recordAudit("mfa_failure", ip, username, detail)
+	s.recordAudit("mfa_failure", ip, username, detail, userAgent)
 
-	s.chargeLoginFailure(ip, username, s.loadSecurityPolicy(), failureReasonMFA)
+	s.chargeLoginFailure(ip, username, userAgent, s.loadSecurityPolicy(), failureReasonMFA)
 }
 
 // pendingTokenPrefix renders the audit-safe fragment of a pending token.

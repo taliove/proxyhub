@@ -72,7 +72,7 @@ func decodeTrustedIPs(t *testing.T, rec *httptest.ResponseRecorder) trustedIPsRe
 func seedMFALogins(t *testing.T, st *store.Store, username, ip string, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		if err := st.RecordAuditEvent("login_success", ip, username, "mfa=totp"); err != nil {
+		if err := st.RecordAuditEvent("login_success", ip, username, "mfa=totp", ""); err != nil {
 			t.Fatalf("RecordAuditEvent: %v", err)
 		}
 	}
@@ -184,7 +184,7 @@ func TestTrustedIPs_RecommendationAtThreshold(t *testing.T) {
 	seedMFALogins(t, st, "alice", familiar, trustRecommendationThreshold)
 	seedMFALogins(t, st, "alice", occasional, trustRecommendationThreshold-1)
 	// Trusted-IP logins must not feed the engine back into itself.
-	if err := st.RecordAuditEvent("login_success", "203.0.113.22", "alice", "mfa_skipped=trusted_ip"); err != nil {
+	if err := st.RecordAuditEvent("login_success", "203.0.113.22", "alice", "mfa_skipped=trusted_ip", ""); err != nil {
 		t.Fatalf("RecordAuditEvent: %v", err)
 	}
 

@@ -86,11 +86,11 @@ func isLoopbackIP(ip string) bool {
 // recordCaptchaFailure books a missing or wrong captcha answer on the same
 // counter as a wrong password, so brute force behind a captcha still walks
 // into IP2Ban, and writes the captcha_failure audit event.
-func (s *Server) recordCaptchaFailure(ip, username, challengeID string, policy securityPolicy) {
+func (s *Server) recordCaptchaFailure(ip, username, challengeID, userAgent string, policy securityPolicy) {
 	detail := "验证码校验失败"
 	if challengeID == "" {
 		detail = "缺少验证码"
 	}
-	s.recordAudit("captcha_failure", ip, username, detail)
-	s.chargeLoginFailure(ip, username, policy, failureReasonCaptcha)
+	s.recordAudit("captcha_failure", ip, username, detail, userAgent)
+	s.chargeLoginFailure(ip, username, userAgent, policy, failureReasonCaptcha)
 }

@@ -219,7 +219,8 @@ func (s *Server) handleTrustMyIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAudit("trusted_ip_added", current, user.Username,
-		fmt.Sprintf("trusted %s for %d days from recommendation list", ip, trustedIPTTLDays()))
+		fmt.Sprintf("从推荐列表信任 %s 共 %d 天", ip, trustedIPTTLDays()),
+		r.UserAgent())
 	writeJSON(w, map[string]any{"ok": true, "ip": ip})
 }
 
@@ -252,7 +253,8 @@ func (s *Server) handleRevokeMyTrustedIP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.recordAudit("trusted_ip_revoked", clientIP(r), user.Username,
-		fmt.Sprintf("revoked trust for %s", ip))
+		fmt.Sprintf("撤销对 %s 的信任", ip),
+		r.UserAgent())
 	writeJSON(w, map[string]any{"ok": true, "ip": ip})
 }
 
@@ -288,7 +290,8 @@ func (s *Server) handleSetMyAutoTrust(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAudit("trusted_ip_auto_toggle", clientIP(r), user.Username,
-		fmt.Sprintf("%s=%s", autoTrustIPSettingKey, value))
+		fmt.Sprintf("%s=%s", autoTrustIPSettingKey, value),
+		r.UserAgent())
 	writeJSON(w, map[string]any{"ok": true, "auto_trust_ip": *req.Enabled})
 }
 
@@ -320,7 +323,8 @@ func (s *Server) handleAdminClearTrustedIPs(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.recordAudit("trusted_ip_cleared", clientIP(r), user.Username,
-		fmt.Sprintf("cleared %d trusted ip(s) for user id=%d by super admin", removed, id))
+		fmt.Sprintf("超管清除用户 id=%d 的 %d 个受信 IP", id, removed),
+		r.UserAgent())
 	writeJSON(w, map[string]any{
 		"ok":       true,
 		"user_id":  id,
@@ -349,7 +353,7 @@ func (s *Server) autoTrustEnabled(userID int64) bool {
 // address has already cleared the recommendation threshold, the grant is
 // written without asking. Every failure path is a no-op: the login already
 // succeeded, and the worst case is one more challenge next time.
-func (s *Server) maybeAutoTrustLoginIP(user *store.User, ip string) {
+func (s *Server) maybeAutoTrustLoginIP(user *store.User, ip, userAgent string) {
 	if user == nil || strings.TrimSpace(ip) == "" {
 		return
 	}
@@ -380,7 +384,8 @@ func (s *Server) maybeAutoTrustLoginIP(user *store.User, ip string) {
 		return
 	}
 	s.recordAudit("trusted_ip_added", ip, user.Username,
-		fmt.Sprintf("auto trusted after %d mfa logins, valid %d days", count, trustedIPTTLDays()))
+		fmt.Sprintf("%d 次 MFA 登录后自动信任，有效期 %d 天", count, trustedIPTTLDays()),
+		userAgent)
 }
 
 // trustedIPTTLDays renders the grant window in days for audit details.

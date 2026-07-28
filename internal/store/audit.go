@@ -14,6 +14,7 @@ type AuditEvent struct {
 	IP        string    `json:"ip"`
 	Username  string    `json:"username"`
 	Detail    string    `json:"detail"`
+	UserAgent string    `json:"user_agent"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -27,11 +28,11 @@ type AuditFilter struct {
 // RecordAuditEvent 记录一条审计事件。
 // created_at 显式写入 UTC "2006-01-02 15:04:05" 格式，保证与 SQLite datetime() 兼容
 // （modernc 驱动的 CURRENT_TIMESTAMP 会写成 RFC3339 的 "T...Z" 形式，datetime() 无法解析）。
-func (s *Store) RecordAuditEvent(eventType, ip, username, detail string) error {
+func (s *Store) RecordAuditEvent(eventType, ip, username, detail, userAgent string) error {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	_, err := s.db.Exec(
-		`INSERT INTO audit_logs (event_type, ip, username, detail, created_at) VALUES (?, ?, ?, ?, ?)`,
-		eventType, ip, username, detail, now)
+		`INSERT INTO audit_logs (event_type, ip, username, detail, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		eventType, ip, username, detail, userAgent, now)
 	if err != nil {
 		return fmt.Errorf("insert audit log: %w", err)
 	}
@@ -76,7 +77,7 @@ func (s *Store) ListAuditEvents(filter AuditFilter, limit, offset int) ([]*Audit
 	}
 
 	// 分页查询
-	query := fmt.Sprintf(`SELECT id, event_type, ip, username, detail, created_at
+	query := fmt.Sprintf(`SELECT id, event_type, ip, username, detail, user_agent, created_at
 		FROM audit_logs %s ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, where)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -90,10 +91,12 @@ func (s *Store) ListAuditEvents(filter AuditFilter, limit, offset int) ([]*Audit
 		var e AuditEvent
 		var createdAt string
 		var detail sql.NullString // detail 可空
-		if err := rows.Scan(&e.ID, &e.EventType, &e.IP, &e.Username, &detail, &createdAt); err != nil {
+		var userAgent sql.NullString // user_agent 可空（兼容旧记录）
+		if err := rows.Scan(&e.ID, &e.EventType, &e.IP, &e.Username, &detail, &userAgent, &createdAt); err != nil {
 			return nil, 0, fmt.Errorf("scan audit event: %w", err)
 		}
 		e.Detail = detail.String
+		e.UserAgent = userAgent.String
 		e.CreatedAt = parseSQLiteTime(createdAt)
 		events = append(events, &e)
 	}

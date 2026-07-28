@@ -96,7 +96,7 @@ const (
 //
 // Single implementation on purpose: password, captcha and MFA failures share
 // one counter and one threshold, so they must not drift apart.
-func (s *Server) chargeLoginFailure(ip, username string, policy securityPolicy, reason failureReason) bool {
+func (s *Server) chargeLoginFailure(ip, username, userAgent string, policy securityPolicy, reason failureReason) bool {
 	now := time.Now()
 	nowBanned, err := s.st.RecordLoginFailure(ip, policy.BanThreshold, policy.BanDuration, now)
 	if err != nil {
@@ -109,7 +109,8 @@ func (s *Server) chargeLoginFailure(ip, username string, policy securityPolicy, 
 	s.logger.Warn("ip banned after repeated failures", "ip", ip, "reason", string(reason))
 	s.recordAudit("threshold_ban", ip, username,
 		fmt.Sprintf("连续失败达阈值 %d，封禁至 %s",
-			policy.BanThreshold, bannedUntil.Format("2006-01-02 15:04:05")))
+			policy.BanThreshold, bannedUntil.Format("2006-01-02 15:04:05")),
+		userAgent)
 	return true
 }
 

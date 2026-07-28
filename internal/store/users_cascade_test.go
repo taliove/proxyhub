@@ -32,7 +32,7 @@ func TestDeleteUserCascade_RemovesPerUserRows(t *testing.T) {
 	}
 
 	// Audit row pre-delete: must survive the cascade.
-	if err := st.RecordAuditEvent("login_success", "1.2.3.4", "owner", ""); err != nil {
+	if err := st.RecordAuditEvent("login_success", "1.2.3.4", "owner", "", ""); err != nil {
 		t.Fatalf("RecordAuditEvent: %v", err)
 	}
 
@@ -79,7 +79,7 @@ func TestDeleteUserCascade_PreservesAuditLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	if err := st.RecordAuditEvent("login_success", "1.2.3.4", "audit-target", ""); err != nil {
+	if err := st.RecordAuditEvent("login_success", "1.2.3.4", "audit-target", "", ""); err != nil {
 		t.Fatalf("RecordAuditEvent: %v", err)
 	}
 

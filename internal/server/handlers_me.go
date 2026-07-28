@@ -102,7 +102,7 @@ func (s *Server) handleChangeMyPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s.recordAudit("password_change", clientIP(r), user.Username, "")
+	s.recordAudit("password_change", clientIP(r), user.Username, "", r.UserAgent())
 
 	// 吊销该用户全部会话(不止当前这条):凭证轮换后被窃会话不得继续有效。
 	// 前端 axios 拦截器见 401 自动跳登录页。

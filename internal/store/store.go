@@ -397,6 +397,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 审计增强:audit_logs 加 user_agent 列(登录加固批次审计增强)
+	if err := s.addColumnIfMissing("audit_logs", "user_agent", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+
 	// 初始化地区识别规则表
 	return s.InitRegionRules()
 }
