@@ -39,6 +39,11 @@ func DefaultDirectEgressConfig() DirectEgressConfig {
 	}
 }
 
+// BindStrictPlatform 报告当前平台的网卡绑定语义:true = 绑定失败即构造报错
+// (macOS);false = 降级为仅 DoH 并 warn 日志(Linux/其他,语义见 bind_*.go)。
+// 跨包(如 healthcheck)需要按平台语义分支时经此读取,不各自判断 GOOS。
+func BindStrictPlatform() bool { return bindStrictPlatform }
+
 // socketControl 平台相关的套接字绑定函数(net.Dialer.Control / net.ListenConfig.Control)。
 // nil 表示不绑定(平台不支持或已按平台语义降级)。
 type socketControl func(network, address string, c syscall.RawConn) error

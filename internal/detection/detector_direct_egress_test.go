@@ -54,9 +54,10 @@ func TestTCPQuickCheck_NoProvider(t *testing.T) {
 	}
 }
 
-// TestTCPQuickCheck_DirectEgressStrictError 拨号器装配失败(网卡不存在):
-// 快筛报错且经失败原因通道可见,不静默退化为系统拨号。
-func TestTCPQuickCheck_DirectEgressStrictError(t *testing.T) {
+// TestTCPQuickCheck_DirectEgressBadInterface 网卡不存在时按平台语义分流:
+// 严格平台(macOS)快筛报错且经失败原因通道可见,不静默退化为系统拨号;
+// 尽力平台(Linux/其他)降级为仅 DoH,快筛照常成功。
+func TestTCPQuickCheck_DirectEgressBadInterface(t *testing.T) {
 	dohURL := dohFixture(t, nil)
 	port := tcpEchoListener(t)
 
@@ -67,6 +68,12 @@ func TestTCPQuickCheck_DirectEgressStrictError(t *testing.T) {
 
 	node := &subscription.Node{Name: "n", Server: "example.com", Port: port}
 	err := d.tcpQuickCheckErr(context.Background(), node)
+	if !bindStrictPlatform {
+		if err != nil {
+			t.Fatalf("tcpQuickCheckErr() error = %v, want nil under DoH-only degrade", err)
+		}
+		return
+	}
 	if err == nil {
 		t.Fatal("tcpQuickCheckErr() expected strict error, got nil")
 	}
@@ -78,9 +85,10 @@ func TestTCPQuickCheck_DirectEgressStrictError(t *testing.T) {
 	}
 }
 
-// TestTestNode_RealModeDirectEgressStrict real 模式快筛段同样走直连拨号器:
-// 装配失败时 testReal 报 TCP 错误而非悄悄用系统拨号成功。
-func TestTestNode_RealModeDirectEgressStrict(t *testing.T) {
+// TestTestNode_RealModeDirectEgressBadInterface real 模式快筛段同样走直连拨号器:
+// 严格平台装配失败时 testReal 报 TCP 错误而非悄悄用系统拨号成功;
+// 尽力平台降级为仅 DoH,快筛成功,失败点后移到 adapter 构造(空 Type 不支持)。
+func TestTestNode_RealModeDirectEgressBadInterface(t *testing.T) {
 	dohURL := dohFixture(t, nil)
 	port := tcpEchoListener(t)
 
@@ -92,7 +100,13 @@ func TestTestNode_RealModeDirectEgressStrict(t *testing.T) {
 	node := &subscription.Node{Name: "n", Server: "example.com", Port: port}
 	res := d.TestNode(context.Background(), node, "real")
 	if res.Available {
-		t.Fatal("TestNode(real) Available = true, want false under strict egress failure")
+		t.Fatal("TestNode(real) Available = true, want false (empty node type is never usable)")
+	}
+	if !bindStrictPlatform {
+		if !strings.Contains(res.Error, "unsupported type") {
+			t.Errorf("Error = %q, want unsupported-type from adapter stage (egress degraded to DoH ok)", res.Error)
+		}
+		return
 	}
 	if !strings.Contains(res.Error, "TCP connection failed") {
 		t.Errorf("Error = %q, want TCP connection failed prefix", res.Error)
@@ -122,8 +136,9 @@ func TestNewProxyAdapter_DirectEgressInjected(t *testing.T) {
 	}
 }
 
-// TestNewProxyAdapter_DirectEgressError 装配失败经 adapter 构造路径透出错误。
-func TestNewProxyAdapter_DirectEgressError(t *testing.T) {
+// TestNewProxyAdapter_DirectEgressBadInterface 网卡不存在时按平台语义分流:
+// 严格平台经 adapter 构造路径透出装配错误;尽力平台降级为仅 DoH,装配照常成功。
+func TestNewProxyAdapter_DirectEgressBadInterface(t *testing.T) {
 	d := NewDetector(1, 3*time.Second, 3*time.Second)
 	d.SetDirectEgressConfigProvider(func() DirectEgressConfig {
 		return DirectEgressConfig{Enabled: true, DoHURL: "http://127.0.0.1:1", Interface: "noexist0"}
@@ -133,7 +148,14 @@ func TestNewProxyAdapter_DirectEgressError(t *testing.T) {
 		Name: "n", Type: "ss", Server: "example.com", Port: 8388,
 		Cipher: "aes-128-gcm", Password: "00000000-0000-0000-0000-000000000000",
 	}
-	if _, err := d.newProxyAdapter(node); err == nil {
+	_, err := d.newProxyAdapter(node)
+	if !bindStrictPlatform {
+		if err != nil {
+			t.Fatalf("newProxyAdapter() error = %v, want nil under DoH-only degrade", err)
+		}
+		return
+	}
+	if err == nil {
 		t.Fatal("newProxyAdapter() expected strict error, got nil")
 	} else if !strings.Contains(fmt.Sprint(err), "direct egress") {
 		t.Errorf("error = %v, want direct-egress wrapped", err)

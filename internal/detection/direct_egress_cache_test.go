@@ -100,22 +100,33 @@ func TestDirectDialerCache_RebuildOnConfigChange(t *testing.T) {
 	// 回到 cfg1 仍重建(缓存只记最新),不再展开断言;核心语义是"变才重建"。
 }
 
-// TestDirectDialerCache_CachesError 装配失败同样记忆化:同配置重复调用
-// 直接返回缓存的错误(同配置必同错,不重复探测失败路径)。
-func TestDirectDialerCache_CachesError(t *testing.T) {
+// TestDirectDialerCache_CachesResult 装配结果(无论成败)同样记忆化:
+// 严格平台下同配置重复调用直接返回缓存的错误(同配置必同错,不重复探测
+// 失败路径);尽力平台下降级装配成功,重复调用返回同一拨号器实例。
+func TestDirectDialerCache_CachesResult(t *testing.T) {
 	dohURL := dohFixture(t, nil)
 	cfg := DirectEgressConfig{Enabled: true, DoHURL: dohURL, Interface: "noexist0"}
 
 	var cache DirectDialerCache
-	if _, err := cache.Get(cfg); err == nil {
+	d1, err1 := cache.Get(cfg)
+	d2, err2 := cache.Get(cfg)
+	if !bindStrictPlatform {
+		if err1 != nil || err2 != nil {
+			t.Fatalf("Get() errors = %v, %v, want nil under DoH-only degrade", err1, err2)
+		}
+		if d1 == nil || d1 != d2 {
+			t.Error("Get() want same memoized dialer instance for identical config")
+		}
+		return
+	}
+	if err1 == nil {
 		t.Fatal("Get() expected error for nonexistent interface, got nil")
 	}
-	d, err := cache.Get(cfg)
-	if err == nil {
+	if err2 == nil {
 		t.Fatal("Get() expected cached error, got nil")
 	}
-	if d != nil {
-		t.Errorf("Get() dialer = %v, want nil on cached error", d)
+	if d2 != nil {
+		t.Errorf("Get() dialer = %v, want nil on cached error", d2)
 	}
 }
 

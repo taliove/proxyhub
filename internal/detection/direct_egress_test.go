@@ -196,14 +196,24 @@ func TestDirectDialer_DoHNXDOMAIN(t *testing.T) {
 	}
 }
 
-func TestNewDirectDialer_BadInterface_StrictError(t *testing.T) {
+func TestNewDirectDialer_BadInterface(t *testing.T) {
 	dohURL := dohFixture(t, nil)
-	// 网卡名不存在:任何平台都必须构造期报错(严格,不退化)。
-	_, err := NewDirectDialer(DirectEgressConfig{
+	d, err := NewDirectDialer(DirectEgressConfig{
 		Enabled:   true,
 		DoHURL:    dohURL,
 		Interface: "noexist0",
 	}, nil)
+	if !bindStrictPlatform {
+		// Linux/其他尽力语义:绑定不可用降级为仅 DoH(warn 日志),构造不报错。
+		if err != nil {
+			t.Fatalf("NewDirectDialer() error = %v, want nil under DoH-only degrade", err)
+		}
+		if d == nil {
+			t.Fatal("NewDirectDialer() dialer = nil under degrade")
+		}
+		return
+	}
+	// 严格平台(macOS):网卡名不存在必须构造期报错(不退化)。
 	if err == nil {
 		t.Fatal("NewDirectDialer() expected error for nonexistent interface, got nil")
 	}

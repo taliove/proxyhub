@@ -137,9 +137,10 @@ func TestCheck_NoProvider(t *testing.T) {
 	}
 }
 
-// TestCheck_DirectEgressStrictError 拨号器装配失败(网卡不存在,严格模式):
-// 报错原样上抛到 Result.Error,节点判不可用,绝不静默退化为系统拨号假性可用。
-func TestCheck_DirectEgressStrictError(t *testing.T) {
+// TestCheck_DirectEgressBadInterface 网卡不存在时按平台语义分流:
+// 严格平台(macOS)报错原样上抛到 Result.Error,节点判不可用,绝不静默退化
+// 为系统拨号假性可用;尽力平台(Linux/其他)降级为仅 DoH,检查照常通过。
+func TestCheck_DirectEgressBadInterface(t *testing.T) {
 	dohURL := dohFixture(t)
 	port := tcpListener(t)
 
@@ -150,6 +151,12 @@ func TestCheck_DirectEgressStrictError(t *testing.T) {
 
 	node := &subscription.Node{Name: "n", Server: "example.com", Port: port}
 	result := checker.Check(context.Background(), node)
+	if !detection.BindStrictPlatform() {
+		if !result.Available {
+			t.Fatalf("Available = false, want true under DoH-only degrade (error: %v)", result.Error)
+		}
+		return
+	}
 	if result.Available {
 		t.Fatal("Available = true, want false under strict egress failure (no fake-available fallback)")
 	}
