@@ -4,7 +4,10 @@
 // 后端口径(internal/server 的 recordAudit 调用):
 //   - login_success / login_failure / honeypot_ban / threshold_ban 为既有事件
 //   - captcha_failure(handlers_captcha.go)、mfa_enrolled / mfa_failure / mfa_reset
-//     (handlers_mfa.go)为登录加固新增事件
+//     / mfa_recovery_regenerated(handlers_mfa.go)为登录加固新增事件
+//   - trusted_ip_added / trusted_ip_revoked / trusted_ip_cleared /
+//     trusted_ip_auto_toggle(handlers_trusted_ips.go,trusted_ip_added 也由
+//     handlers_mfa.go 的自动信任路径写)为受信 IP 事件
 //   - login_success 的 detail 携带二段标记:
 //       mfa=totp / mfa=recovery      真实过了第二因子
 //       mfa_skipped=trusted_ip       受信 IP 免验(后端刻意不写成 mfa=,
@@ -29,6 +32,14 @@ const EVENT_META: Record<string, EventMeta> = {
   mfa_enrolled: { label: 'MFA 绑定', tag: 'success' },
   // 重置会摘掉用户的第二因子,是安全等级下调的管理动作,按危险色提示。
   mfa_reset: { label: 'MFA 重置', tag: 'danger' },
+  // 重新生成恢复码作废上一批,是用户自助的安全维护动作(非降级),用中性色。
+  mfa_recovery_regenerated: { label: '恢复码重新生成', tag: 'info' },
+  // 受信 IP 事件:添加 = 给某地址开免验豁免(降低验证强度,warning);
+  // 撤销/清空 = 收回豁免(提升强度,中性 info);自动信任开关是配置变更(info)。
+  trusted_ip_added: { label: '受信 IP 添加', tag: 'warning' },
+  trusted_ip_revoked: { label: '受信 IP 撤销', tag: 'info' },
+  trusted_ip_cleared: { label: '受信 IP 清空', tag: 'info' },
+  trusted_ip_auto_toggle: { label: '受信 IP 自动信任开关', tag: 'info' },
   honeypot_ban: { label: '蜜罐封禁', tag: 'danger' },
   threshold_ban: { label: '阈值封禁', tag: 'danger' }
 }

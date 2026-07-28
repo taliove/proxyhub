@@ -25,6 +25,10 @@ export const TENANT_SETTINGS_KEYS = [
 export const ADMIN_SETTINGS_KEYS = [
   'ban_threshold',
   'ban_duration',
+  // 验证码触发次数(见 internal/server/security.go loadSecurityPolicy):
+  // 0 = 每次登录都要验证码,N = 该 IP 失败 N 次后才要。后端允许 0,所以是
+  // parseNonNegativeInt 而非正整数。
+  'captcha_trigger_threshold',
   'feishu_webhook',
   'min_available_nodes',
   'fetch_concurrency',

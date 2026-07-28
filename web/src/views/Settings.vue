@@ -12,6 +12,20 @@
             <el-form-item label="封禁时长">
               <el-input v-model="settings.ban_duration" placeholder="1h" />
             </el-form-item>
+            <el-form-item label="验证码触发次数">
+              <el-input-number
+                v-model="settings.captcha_trigger_threshold"
+                :min="0"
+                :max="CAPTCHA_TRIGGER_THRESHOLD_MAX"
+                :step="1"
+                :precision="0"
+              />
+              <span class="hint">
+                同一 IP 登录失败达到该次数后,登录表单开始要求图形验证码。0 = 每次登录都要求(最严),1
+                = 一次失败即要求(默认)。取值范围 0-{{ CAPTCHA_TRIGGER_THRESHOLD_MAX }}
+                的整数。
+              </span>
+            </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="saveSettings">保存</el-button>
             </el-form-item>
@@ -205,9 +219,14 @@
           <DetectionTargets />
         </el-tab-pane>
 
-        <!-- 受信 IP(ticket 10):登录者本人的受信列表/推荐/自动信任开关 -->
-        <el-tab-pane label="受信 IP">
+        <!-- 两步验证:登录者本人的受信 IP(ticket 10)+ 恢复码维护。
+             两者都作用于"登录者本人",不随超管 impersonate 视角漂移。 -->
+        <el-tab-pane label="两步验证">
+          <h4 class="mfa-section-title">受信 IP</h4>
           <TrustedIPList />
+
+          <h4 class="mfa-section-title">恢复码</h4>
+          <RecoveryCodeRegenerate />
         </el-tab-pane>
       </el-tabs>
     </el-card>
@@ -229,6 +248,12 @@ import RegionWhitelist from '@/components/RegionWhitelist.vue'
 import DirectEgressSettings from '@/components/DirectEgressSettings.vue'
 import DetectionTargets from '@/components/DetectionTargets.vue'
 import TrustedIPList from '@/components/TrustedIPList.vue'
+import RecoveryCodeRegenerate from '@/components/RecoveryCodeRegenerate.vue'
+import {
+  CAPTCHA_TRIGGER_THRESHOLD_DEFAULT,
+  CAPTCHA_TRIGGER_THRESHOLD_MAX,
+  validateCaptchaTriggerThreshold
+} from './settings-utils'
 
 const authStore = useAuthStore()
 
@@ -274,6 +299,8 @@ const pickKeys = (src: Record<string, string>, keys: readonly string[]) =>
 const settings = ref<Record<string, string | number>>({
   ban_threshold: 5,
   ban_duration: '1h',
+  // 验证码触发次数(el-input-number 数字;保存时统一序列化为字符串)
+  captcha_trigger_threshold: CAPTCHA_TRIGGER_THRESHOLD_DEFAULT,
   feishu_webhook: '',
   min_available_nodes: 10,
   // 订阅设置:字符串取值以匹配后端 map[string]string 契约
@@ -303,6 +330,15 @@ onMounted(async () => {
 })
 
 const saveSettings = async () => {
+  // 输入校验先行:后端对非法阈值是静默回落默认值,不挡住的话用户会看到
+  // "保存成功" 而实际生效的是别的值(仅超管视角提交该键,故只在超管时校验)。
+  if (authStore.isSuperAdmin) {
+    const err = validateCaptchaTriggerThreshold(settings.value.captcha_trigger_threshold)
+    if (err) {
+      ElMessage.error(err)
+      return
+    }
+  }
   // 统一序列化为字符串,兼容 el-input-number(数字)与 el-switch(字符串)取值。
   // 超管写全局默认(主表单全键);普通用户只写租户级键(落本人 user_settings),
   // 超管专属键即使夹带也会被后端忽略,但这里直接不发,语义更干净。
@@ -342,6 +378,14 @@ const saveSettings = async () => {
 }
 .target-actions {
   margin-top: var(--ph-space-4);
+}
+.mfa-section-title {
+  margin: var(--ph-space-5) 0 var(--ph-space-3);
+  font-size: var(--ph-text-base);
+  color: var(--ph-text-primary);
+}
+.mfa-section-title:first-child {
+  margin-top: 0;
 }
 .tenant-badge {
   display: inline-flex;

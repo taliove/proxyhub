@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, inject, provide, toRef, type Ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { AdminUser } from '@/api/users'
 import Users from './Users.vue'
 import client from '@/api/client'
@@ -344,6 +344,40 @@ describe('admin/Users', () => {
 
     expect(client.post).toHaveBeenCalledWith('/admin/users/2/trusted-ips/clear', {})
     expect(ElMessage.success).toHaveBeenCalledWith('已清空 2 条受信 IP')
+  })
+
+  // 重置 MFA:用户同时丢了认证器与恢复码时的运维出口,确认文案必须说清
+  // "解绑 + 作废恢复码 + 下次登录重新绑定" 三件事。
+  it('resets MFA after confirmation, spelling out the consequences', async () => {
+    vi.mocked(client.post).mockResolvedValue({
+      ok: true,
+      user_id: 2,
+      username: 'alice'
+    } as never)
+    const wrapper = mountView()
+    await flushPromises()
+
+    const resetMFABtn = wrapper.findAll('button').find((b) => b.text() === '重置 MFA')
+    expect(resetMFABtn).toBeTruthy()
+    await resetMFABtn!.trigger('click')
+    await flushPromises()
+
+    const [confirmText] = vi.mocked(ElMessageBox.confirm).mock.calls[0] as [string, string]
+    expect(confirmText).toContain('alice')
+    expect(confirmText).toContain('TOTP')
+    expect(confirmText).toContain('恢复码')
+    expect(confirmText).toContain('重新绑定')
+    expect(client.post).toHaveBeenCalledWith('/admin/users/2/reset-mfa', {})
+    expect(ElMessage.success).toHaveBeenCalledWith(expect.stringContaining('已重置'))
+  })
+
+  it('offers reset-MFA only on non-super-admin rows', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    // 两行(admin + alice)只应出现一个「重置 MFA」:超管行整列是占位符。
+    const buttons = wrapper.findAll('button').filter((b) => b.text() === '重置 MFA')
+    expect(buttons).toHaveLength(1)
   })
 
   it('resets password after confirmation and shows the new password dialog', async () => {

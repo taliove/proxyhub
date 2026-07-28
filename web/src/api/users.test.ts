@@ -10,7 +10,8 @@ import {
   disableUser,
   enableUser,
   deleteUser,
-  resetUserPassword
+  resetUserPassword,
+  resetUserMFA
 } from '@/api/users'
 
 vi.mock('@/api/client')
@@ -77,6 +78,17 @@ describe('admin users API', () => {
     vi.mocked(client.delete).mockResolvedValue({} as never)
     await deleteUser(7)
     expect(client.delete).toHaveBeenCalledWith('/admin/users/7')
+  })
+
+  it('resetUserMFA posts to /admin/users/{id}/reset-mfa', async () => {
+    vi.mocked(client.post).mockResolvedValue({
+      ok: true,
+      user_id: 7,
+      username: 'alice'
+    } as never)
+    const res = await resetUserMFA(7)
+    expect(client.post).toHaveBeenCalledWith('/admin/users/7/reset-mfa', {})
+    expect(res.username).toBe('alice')
   })
 
   it('resetUserPassword posts and returns the new password', async () => {

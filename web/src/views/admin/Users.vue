@@ -48,7 +48,7 @@
         <!-- Row actions are hidden for super_admin: the system must always keep
              at least one manageable admin account. Disabled users cannot be
              entered (server returns 409), so the enter-space action is hidden too. -->
-        <el-table-column label="操作" width="340">
+        <el-table-column label="操作" width="420">
           <template #default="{ row }">
             <template v-if="row.role !== 'super_admin'">
               <el-button v-if="!row.disabled" link type="primary" @click="onEnterSpace(row)">
@@ -63,6 +63,7 @@
               <el-button link type="warning" @click="onClearTrustedIPs(row)">
                 清空受信 IP
               </el-button>
+              <el-button link type="warning" @click="onResetMFA(row)">重置 MFA</el-button>
               <el-button link type="danger" @click="onDelete(row)">删除</el-button>
             </template>
             <span v-else class="muted">-</span>
@@ -150,26 +151,12 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
-import { useAuthStore } from '@/stores/auth'
 import { copyPassword, generatePassword, toastCreateUserError } from '@/utils/useradmin'
 import type { AdminUser } from '@/api/users'
-import {
-  listUsers,
-  createUser,
-  updateUser,
-  disableUser,
-  enableUser,
-  deleteUser,
-  resetUserPassword,
-  switchUser
-} from '@/api/users'
-import { clearUserTrustedIPs } from '@/api/trusted-ips'
-
-const router = useRouter()
-const authStore = useAuthStore()
+import { listUsers, createUser, updateUser } from '@/api/users'
+import { useUserActions } from './useUserActions'
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -177,8 +164,19 @@ const users = ref<AdminUser[]>([])
 
 const createVisible = ref(false)
 const editVisible = ref(false)
-const passwordResultVisible = ref(false)
-const passwordResult = ref('')
+
+// 行内动作(确认框 + 接口 + 提示)集中在 useUserActions;列表刷新由本视图提供。
+const {
+  passwordResult,
+  passwordResultVisible,
+  onDisable,
+  onEnable,
+  onDelete,
+  onResetPassword,
+  onClearTrustedIPs,
+  onResetMFA,
+  onEnterSpace
+} = useUserActions(() => load())
 
 // createForm holds the create-dialog state; password is auto-generated.
 const createForm = ref({
@@ -280,74 +278,6 @@ async function submitEdit() {
   } finally {
     submitting.value = false
   }
-}
-
-async function onDisable(row: AdminUser) {
-  await ElMessageBox.confirm(
-    `确定禁用用户「${row.username}」吗?禁用后该用户无法登录,已建资源保留。`,
-    '禁用确认',
-    { type: 'warning', confirmButtonText: '禁用', cancelButtonText: '取消' }
-  )
-  await disableUser(row.id)
-  ElMessage.success('已禁用')
-  await load()
-}
-
-async function onEnable(row: AdminUser) {
-  await enableUser(row.id)
-  ElMessage.success('已启用')
-  await load()
-}
-
-async function onDelete(row: AdminUser) {
-  await ElMessageBox.confirm(
-    `确定删除用户「${row.username}」吗?该用户的机场、节点、订阅地址将一并删除,不可恢复。`,
-    '删除确认',
-    { type: 'error', confirmButtonText: '删除', cancelButtonText: '取消' }
-  )
-  await deleteUser(row.id)
-  ElMessage.success('已删除')
-  await load()
-}
-
-async function onResetPassword(row: AdminUser) {
-  await ElMessageBox.confirm(
-    `确定重置用户「${row.username}」的密码吗?重置后旧密码立即失效,用户需用新密码登录并改密。`,
-    '重置密码确认',
-    { type: 'warning', confirmButtonText: '重置', cancelButtonText: '取消' }
-  )
-  const res = await resetUserPassword(row.id)
-  passwordResult.value = res.password
-  passwordResultVisible.value = true
-}
-
-// onClearTrustedIPs wipes every trusted-IP grant of the target (ticket 10),
-// forcing a full MFA challenge from every address on the next login. Used when
-// a user's device or network is believed compromised.
-async function onClearTrustedIPs(row: AdminUser) {
-  await ElMessageBox.confirm(
-    `确定清空用户「${row.username}」的受信 IP 吗?清空后该用户所有地址下次登录都需要重新完成 MFA 验证。`,
-    '清空受信 IP 确认',
-    { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消' }
-  )
-  const res = await clearUserTrustedIPs(row.id)
-  ElMessage.success(`已清空 ${res.removed} 条受信 IP`)
-}
-
-// onEnterSpace switches the admin into the target user's space (ticket 09).
-// The server persists acting_user_id on the session; we mirror it in the
-// auth store so the navbar shows the banner, then reload so every view
-// re-fetches under the impersonated identity.
-async function onEnterSpace(row: AdminUser) {
-  await ElMessageBox.confirm(
-    `确定进入用户「${row.username}」的空间吗?之后所有页面将以该用户身份展示与操作。`,
-    '进入用户空间',
-    { type: 'warning', confirmButtonText: '进入', cancelButtonText: '取消' }
-  )
-  await switchUser(row.id)
-  authStore.setActingUser({ id: row.id, username: row.username })
-  ElMessage.success(`已进入「${row.username}」的空间`)
-  router.push('/').then(() => router.go(0))
 }
 
 onMounted(load)

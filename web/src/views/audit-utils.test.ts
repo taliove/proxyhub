@@ -25,9 +25,19 @@ describe('eventLabel / eventTag', () => {
     expect(eventLabel('threshold_ban')).toBe('阈值封禁')
   })
 
+  // 受信 IP 与恢复码事件后端已在写(handlers_trusted_ips.go / handlers_mfa.go),
+  // 补录后不应再落到原样回显的兜底分支。
+  it('labels the trusted-IP and recovery-code events in Chinese', () => {
+    expect(eventLabel('trusted_ip_added')).toBe('受信 IP 添加')
+    expect(eventLabel('trusted_ip_revoked')).toBe('受信 IP 撤销')
+    expect(eventLabel('trusted_ip_cleared')).toBe('受信 IP 清空')
+    expect(eventLabel('trusted_ip_auto_toggle')).toBe('受信 IP 自动信任开关')
+    expect(eventLabel('mfa_recovery_regenerated')).toBe('恢复码重新生成')
+  })
+
   it('falls back to the raw type so future backend events still render', () => {
-    expect(eventLabel('trusted_ip_added')).toBe('trusted_ip_added')
-    expect(eventTag('trusted_ip_added')).toBe('info')
+    expect(eventLabel('some_future_event')).toBe('some_future_event')
+    expect(eventTag('some_future_event')).toBe('info')
   })
 
   it('colors success / warning / danger by severity', () => {
@@ -37,6 +47,13 @@ describe('eventLabel / eventTag', () => {
     expect(eventTag('mfa_failure')).toBe('warning')
     expect(eventTag('mfa_reset')).toBe('danger')
     expect(eventTag('threshold_ban')).toBe('danger')
+    // 添加受信 IP = 给某地址开 MFA 免验豁免,值得注意但不是事故 -> warning;
+    // 撤销/清空/开关是收回豁免或配置变更,中性 -> info。
+    expect(eventTag('trusted_ip_added')).toBe('warning')
+    expect(eventTag('trusted_ip_revoked')).toBe('info')
+    expect(eventTag('trusted_ip_cleared')).toBe('info')
+    expect(eventTag('trusted_ip_auto_toggle')).toBe('info')
+    expect(eventTag('mfa_recovery_regenerated')).toBe('info')
   })
 })
 
@@ -51,6 +68,11 @@ describe('EVENT_FILTER_OPTIONS', () => {
         'mfa_failure',
         'mfa_enrolled',
         'mfa_reset',
+        'mfa_recovery_regenerated',
+        'trusted_ip_added',
+        'trusted_ip_revoked',
+        'trusted_ip_cleared',
+        'trusted_ip_auto_toggle',
         'honeypot_ban',
         'threshold_ban'
       ])

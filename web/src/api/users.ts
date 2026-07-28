@@ -102,6 +102,23 @@ export function resetUserPassword(id: number): Promise<ResetPasswordResponse> {
   return client.post<unknown, ResetPasswordResponse>(`/admin/users/${id}/reset-password`)
 }
 
+// ResetMFAResponse mirrors POST /api/admin/users/{id}/reset-mfa
+// (handlers_mfa.go handleAdminResetMFA).
+export interface ResetMFAResponse {
+  ok: boolean
+  user_id: number
+  username: string
+}
+
+// resetUserMFA clears the target's TOTP binding and recovery codes, sending the
+// account back to the never-enrolled state; requireMFAEnrolled then forces a
+// fresh enrollment on the next request. This is the operator escape hatch for a
+// user who lost both the authenticator and the recovery codes. Sessions are
+// deliberately kept alive server-side so the user can re-enroll in place.
+export function resetUserMFA(id: number): Promise<ResetMFAResponse> {
+  return client.post<unknown, ResetMFAResponse>(`/admin/users/${id}/reset-mfa`, {})
+}
+
 // CurrentViewResponse mirrors GET /api/admin/current-view: the effective
 // UserScope plus the profile being viewed (self when acting=false, the
 // impersonated user when acting=true).

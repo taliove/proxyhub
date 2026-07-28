@@ -50,3 +50,22 @@ export function confirmMFAEnroll(totpCode: string): Promise<MFAEnrollConfirm> {
     { skipErrorToast: true }
   )
 }
+
+// regenerateRecoveryCodes replaces the caller's whole recovery-code batch
+// (POST /api/me/mfa/regenerate-recovery, handlers_mfa.go).
+//
+// code is a MANDATORY second-factor confirmation - either a current TOTP or an
+// unused recovery code. The backend rejects an empty one with 400: without it a
+// hijacked session could mint fresh long-lived credentials and silently
+// invalidate the codes the real owner is holding.
+//
+// The previous batch is invalidated wholesale, and the returned plaintext is
+// the only copy that will ever exist (the server keeps digests only).
+// skipErrorToast: the caller localizes the sentinel English errors itself.
+export function regenerateRecoveryCodes(code: string): Promise<MFAEnrollConfirm> {
+  return client.post<unknown, MFAEnrollConfirm>(
+    '/me/mfa/regenerate-recovery',
+    { code },
+    { skipErrorToast: true }
+  )
+}
