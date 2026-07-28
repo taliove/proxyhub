@@ -143,9 +143,16 @@ const handleLogin = async () => {
     const data = await login({ ...form, ...captcha.payload() })
     const role = data?.user?.role ?? data?.role ?? ''
     const mustChange = data?.user?.must_change_password ?? false
-    authStore.setAuth(form.username, role, mustChange)
+    const mustEnroll = data?.user?.must_enroll_mfa ?? false
+    authStore.setAuth(form.username, role, mustChange, mustEnroll)
     if (mustChange) {
       router.push('/change-password')
+      return
+    }
+    // 未绑定 MFA(ticket 08):直接送去绑定页,不必先撞一次 403。
+    // 顺序与守卫一致:改密优先,后端 requirePasswordChanged 包着绑定接口。
+    if (mustEnroll) {
+      router.push('/mfa/enroll')
       return
     }
     ElMessage.success('登录成功')

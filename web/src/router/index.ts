@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { resolveRedirect } from './guard'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -19,6 +20,13 @@ const routes: RouteRecordRaw[] = [
     path: '/change-password',
     name: 'ChangePassword',
     component: () => import('@/views/ChangePassword.vue')
+  },
+  {
+    // MFA 强制绑定(ticket 08);要求已登录,但豁免 mustEnrollMFA 重定向。
+    // 后端对 /api/me/mfa/enroll 同样豁免 requireMFAEnrolled,两边保持一致。
+    path: '/mfa/enroll',
+    name: 'MFAEnroll',
+    component: () => import('@/views/MFAEnroll.vue')
   },
   {
     path: '/',
@@ -112,19 +120,23 @@ const router = createRouter({
 router.beforeEach((to, _from, next) => {
   const authStore = useAuthStore()
 
-  if (to.meta.skipAuth) {
-    next()
-  } else if (!authStore.isAuthenticated) {
-    next('/login')
-  } else if (authStore.mustChangePassword && to.path !== '/change-password') {
-    // 首登强制改密(ticket 04):must_change_password 未清除前不许进业务页
-    next('/change-password')
-  } else if (to.meta.requiresSuperAdmin && !authStore.isSuperAdmin) {
-    // Non-super-admin users are bounced to home; admin APIs would 403 anyway
-    next('/')
-  } else {
-    next()
-  }
+  // 规则本体在 guard.ts(纯函数,可单测);这里只做 store -> 规则的适配。
+  const redirect = resolveRedirect(
+    {
+      path: to.path,
+      skipAuth: to.meta.skipAuth as boolean | undefined,
+      requiresSuperAdmin: to.meta.requiresSuperAdmin as boolean | undefined
+    },
+    {
+      isAuthenticated: authStore.isAuthenticated,
+      mustChangePassword: authStore.mustChangePassword,
+      mustEnrollMFA: authStore.mustEnrollMFA,
+      isSuperAdmin: authStore.isSuperAdmin
+    }
+  )
+
+  if (redirect) next(redirect)
+  else next()
 })
 
 export default router

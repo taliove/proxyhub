@@ -26,10 +26,12 @@ export interface LoginPayload {
 }
 
 // LoginUser is the profile carried by a successful login response. role drives
-// admin UI gating; must_change_password routes to the forced change screen.
+// admin UI gating; must_change_password routes to the forced change screen and
+// must_enroll_mfa (ticket 08) to the forced authenticator binding screen.
 export interface LoginUser {
   role?: string
   must_change_password?: boolean
+  must_enroll_mfa?: boolean
 }
 
 // LoginResponse tolerates both the nested user payload (current backend) and a

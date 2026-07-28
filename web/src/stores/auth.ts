@@ -3,11 +3,13 @@ import { computed, ref } from 'vue'
 import client from '@/api/client'
 
 // MeResponse mirrors GET /api/me payload (ticket 02): role drives admin UI gating,
-// must_change_password drives the forced first-login password-change flow (ticket 04).
+// must_change_password drives the forced first-login password-change flow (ticket 04),
+// must_enroll_mfa drives the forced authenticator binding flow (ticket 08).
 interface MeResponse {
   username: string
   role?: string
   must_change_password?: boolean
+  must_enroll_mfa?: boolean
   acting?: boolean
 }
 
@@ -26,6 +28,12 @@ export const useAuthStore = defineStore('auth', () => {
   // mustChangePassword comes from login/me; when true the router guard forces
   // the user onto /change-password before any business page.
   const mustChangePassword = ref(false)
+  // mustEnrollMFA comes from login/me (ticket 08); when true the router guard
+  // forces the user onto /mfa/enroll. Password change outranks it: the backend
+  // exempts the enrollment endpoint from requireMFAEnrolled but still wraps it
+  // in requirePasswordChanged, so binding before changing the password would
+  // dead-end on a 403.
+  const mustEnrollMFA = ref(false)
   // actingUser holds the impersonation target while a super admin is inside
   // another user's space; the navbar shows "viewing as X" with an exit button.
   const actingUser = ref<ActingUser | null>(null)
@@ -33,11 +41,12 @@ export const useAuthStore = defineStore('auth', () => {
   // isSuperAdmin gates the admin-only routes and nav entries.
   const isSuperAdmin = computed(() => role.value === 'super_admin')
 
-  function setAuth(user: string, userRole = '', mustChange = false) {
+  function setAuth(user: string, userRole = '', mustChange = false, mustEnroll = false) {
     isAuthenticated.value = true
     username.value = user
     role.value = userRole
     mustChangePassword.value = mustChange
+    mustEnrollMFA.value = mustEnroll
   }
 
   function setActingUser(target: ActingUser | null) {
@@ -49,6 +58,7 @@ export const useAuthStore = defineStore('auth', () => {
     username.value = ''
     role.value = ''
     mustChangePassword.value = false
+    mustEnrollMFA.value = false
     actingUser.value = null
   }
 
@@ -59,13 +69,25 @@ export const useAuthStore = defineStore('auth', () => {
     mustChangePassword.value = false
   }
 
+  // clearMustEnrollMFA flips the flag after a confirmed enrollment so the guard
+  // stops redirecting. Unlike the password change the session stays valid, so
+  // this is what actually releases the user into the app.
+  function clearMustEnrollMFA() {
+    mustEnrollMFA.value = false
+  }
+
   // restore 用服务器端会话 cookie 恢复登录态（刷新页面后调用）
   async function restore(): Promise<boolean> {
     try {
       const data = await client.get<unknown, MeResponse>('/me', {
         skipAuthRedirect: true
       })
-      setAuth(data.username, data.role ?? '', data.must_change_password ?? false)
+      setAuth(
+        data.username,
+        data.role ?? '',
+        data.must_change_password ?? false,
+        data.must_enroll_mfa ?? false
+      )
       return true
     } catch {
       clearAuth()
@@ -78,12 +100,14 @@ export const useAuthStore = defineStore('auth', () => {
     username,
     role,
     mustChangePassword,
+    mustEnrollMFA,
     isSuperAdmin,
     actingUser,
     setAuth,
     setActingUser,
     clearAuth,
     clearMustChangePassword,
+    clearMustEnrollMFA,
     restore
   }
 })

@@ -214,4 +214,28 @@ describe('Login 验证码', () => {
 
     expect(routerPush).toHaveBeenCalledWith('/change-password')
   })
+
+  it('must_enroll_mfa 登录成功直接跳绑定页(ticket 08)', async () => {
+    vi.mocked(login).mockResolvedValue({
+      user: { role: 'user', must_change_password: false, must_enroll_mfa: true }
+    })
+    const wrapper = mountView()
+    await fillCredentials(wrapper)
+    await submit(wrapper)
+
+    expect(routerPush).toHaveBeenCalledWith('/mfa/enroll')
+    expect(routerPush).not.toHaveBeenCalledWith('/')
+  })
+
+  it('改密优先于绑定:两个标志都在时先去改密页', async () => {
+    vi.mocked(login).mockResolvedValue({
+      user: { role: 'user', must_change_password: true, must_enroll_mfa: true }
+    })
+    const wrapper = mountView()
+    await fillCredentials(wrapper)
+    await submit(wrapper)
+
+    expect(routerPush).toHaveBeenCalledWith('/change-password')
+    expect(routerPush).not.toHaveBeenCalledWith('/mfa/enroll')
+  })
 })

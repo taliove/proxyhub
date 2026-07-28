@@ -80,3 +80,34 @@ describe('api client interceptor', () => {
     expect(ElMessage.error).not.toHaveBeenCalled()
   })
 })
+
+// 403 + must_enroll_mfa 跳绑定页(ticket 08),与 must_change_password 同构。
+// window.location 在 jsdom 里不可直接赋值,这里换成可写的桩对象。
+describe('403 must_enroll_mfa redirect', () => {
+  let loc: { pathname: string; href: string }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    loc = { pathname: '/nodes', href: '' }
+    Object.defineProperty(window, 'location', { value: loc, writable: true, configurable: true })
+  })
+
+  it('redirects a business-page 403 to the enrollment page', async () => {
+    await expect(captured.onErr!(makeError(403, { must_enroll_mfa: true }))).rejects.toBeTruthy()
+    expect(loc.href).toBe('/mfa/enroll')
+    // 跳转已是反馈,不再叠一层 toast
+    expect(ElMessage.error).not.toHaveBeenCalled()
+  })
+
+  it('does not redirect when already on the enrollment page (no loop)', async () => {
+    loc.pathname = '/mfa/enroll'
+    await expect(captured.onErr!(makeError(403, { must_enroll_mfa: true }))).rejects.toBeTruthy()
+    expect(loc.href).toBe('')
+  })
+
+  it('leaves an ordinary 403 alone', async () => {
+    await expect(captured.onErr!(makeError(403, { error: 'forbidden' }))).rejects.toBeTruthy()
+    expect(loc.href).toBe('')
+    expect(ElMessage.error).toHaveBeenCalledWith('forbidden')
+  })
+})

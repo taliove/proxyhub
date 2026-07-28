@@ -33,6 +33,14 @@ client.interceptors.response.use(
       if (!window.location.pathname.startsWith('/change-password')) {
         window.location.href = '/change-password'
       }
+    } else if (status === 403 && body?.must_enroll_mfa === true) {
+      // 强制 MFA 绑定(ticket 08):业务请求被 requireMFAEnrolled 拦截时跳绑定页。
+      // 后端豁免了绑定接口本身,所以正常绑定流程不会走到这里;这条兜的是
+      // "会话里 must_enroll_mfa 是旧的" 之类的漂移。已在绑定页时不再跳转,
+      // 避免绑定接口自身报错(如验证码错)时死循环。
+      if (!window.location.pathname.startsWith('/mfa/enroll')) {
+        window.location.href = '/mfa/enroll'
+      }
     } else if (status !== 409 && !error.config?.skipErrorToast) {
       // 后端错误字段不统一:多数处理器写 {message},用户管理面写 {error}。
       ElMessage.error(body?.message || body?.error || '请求失败')
