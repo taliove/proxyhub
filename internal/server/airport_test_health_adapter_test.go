@@ -106,9 +106,10 @@ func TestHealthCheckAdapter_DirectEgressEnabled(t *testing.T) {
 	}
 }
 
-// TestHealthCheckAdapter_DirectEgressStrictError 装配失败(网卡不存在):
-// 抽样检活报错透出到 HealthCheckResult.Error,不假性可用。
-func TestHealthCheckAdapter_DirectEgressStrictError(t *testing.T) {
+// TestHealthCheckAdapter_DirectEgressBadInterface 网卡不存在时按平台语义分流:
+// 严格平台(macOS)报错透出到 HealthCheckResult.Error,不假性可用;
+// 尽力平台(Linux/其他)降级为仅 DoH,抽样检活照常可用。
+func TestHealthCheckAdapter_DirectEgressBadInterface(t *testing.T) {
 	dohURL := adapterDoHFixture(t)
 	port := adapterTCPListener(t)
 
@@ -122,6 +123,12 @@ func TestHealthCheckAdapter_DirectEgressStrictError(t *testing.T) {
 	results := adapter.CheckAll(context.Background(), nodes)
 	if len(results) != 1 {
 		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if !detection.BindStrictPlatform() {
+		if !results[0].Available {
+			t.Fatalf("Available = false, want true under DoH-only degrade (error: %v)", results[0].Error)
+		}
+		return
 	}
 	if results[0].Available {
 		t.Fatal("Available = true, want false under strict egress failure")
