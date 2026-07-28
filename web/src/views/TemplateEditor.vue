@@ -103,14 +103,22 @@
           <div v-if="!selectedTemplate" class="editor-placeholder">
             请从左侧选择一个模板进行编辑，或新建模板
           </div>
-          <!-- v-show 而非 v-if:编辑器组件必须始终挂载,才能正确初始化;
-               v-if 会在首次选中后才插入 DOM,导致编辑器无法初始化。 -->
+          <!-- v-show: editors must stay mounted for initialization -->
           <YamlEditor
-            v-show="selectedTemplate"
+            v-show="selectedTemplate && previewingVersion === null"
             ref="editorRef"
             v-model="editorContent"
             :is-dark="isDark"
             class="editor"
+          />
+          <!-- Diff view: left = historical, right = current -->
+          <YamlMergeView
+            v-show="selectedTemplate && previewingVersion !== null"
+            :original-content="previewContent"
+            :modified-content="editorContent"
+            :is-dark="isDark"
+            class="editor"
+            @update:modified-content="editorContent = $event"
           />
         </div>
       </div>
@@ -143,6 +151,7 @@ import { ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import TemplateList from '@/components/TemplateList.vue'
 import YamlEditor from '@/components/YamlEditor.vue'
+import YamlMergeView from '@/components/YamlMergeView.vue'
 import { useLayoutStore } from '@/stores/layout'
 import { useTemplateAutosave } from '@/composables/useTemplateAutosave'
 import { useTemplateVersions } from '@/composables/useTemplateVersions'
@@ -155,6 +164,7 @@ const { isDark } = storeToRefs(layout)
 
 const editorRef = ref<InstanceType<typeof YamlEditor> | null>(null)
 const editorContent = ref('')
+const previewContent = ref('')
 const placeholder = '{{nodes}}'
 const dialogVisible = ref(false)
 const createForm = ref({ name: '' })
@@ -163,13 +173,10 @@ const creating = ref(false)
 // Composables
 const templateOps = useTemplateOperations()
 const { templates } = templateOps
-
 const selection = useTemplateSelection()
 const { selectedTemplate, originalContent, loading, errorMsg } = selection
-
 const autosave = useTemplateAutosave()
 const { autosaving, validationError, lastSavedAt } = autosave
-
 const versionHistory = useTemplateVersions()
 const { versions, versionsLoading, previewingVersion, currentVersion, restoring } = versionHistory
 
@@ -194,26 +201,26 @@ autosave.setupAutosave(
 async function handleVersionCommand(command: { action: string; version: number }) {
   if (command.action === 'preview' && selectedTemplate.value) {
     await versionHistory.previewVersion(selectedTemplate.value.name, command.version, (content) => {
-      editorContent.value = content
-      editorRef.value?.setValue(content)
+      previewContent.value = content
       validationError.value = ''
     })
   }
 }
-
 // Exit preview mode
 function handleExitPreview() {
   versionHistory.exitPreview(originalContent.value, (content) => {
     editorContent.value = content
     editorRef.value?.setValue(content)
+    previewContent.value = ''
     validationError.value = ''
   })
 }
-
 // Restore a version
 async function handleRestoreVersion() {
   if (previewingVersion.value === null || !selectedTemplate.value) return
-  const contentToRestore = editorRef.value?.getValue() ?? ''
+  // Restore = persist the previewed historical version as a new save,
+  // not the current editor pane (see CONTEXT.md "Rollback").
+  const contentToRestore = previewContent.value
   const templateName = selectedTemplate.value.name
   await versionHistory.restoreVersion(
     templateName,
@@ -221,6 +228,9 @@ async function handleRestoreVersion() {
     contentToRestore,
     async () => {
       originalContent.value = contentToRestore
+      editorContent.value = contentToRestore
+      editorRef.value?.setValue(contentToRestore)
+      previewContent.value = ''
       await versionHistory.loadVersions(templateName)
     },
     async (content) => {
@@ -229,14 +239,11 @@ async function handleRestoreVersion() {
     }
   )
 }
-
-// Load versions when dropdown opens
 function onHistoryDropdownVisibleChange(visible: boolean) {
   if (visible && selectedTemplate.value) {
     versionHistory.loadVersions(selectedTemplate.value.name)
   }
 }
-
 async function loadTemplates() {
   const tmplList = await templateOps.loadTemplates()
   if (tmplList.length > 0 && !selectedTemplate.value) {
@@ -244,7 +251,6 @@ async function loadTemplates() {
     await selectTemplate(defaultTmpl)
   }
 }
-
 async function selectTemplate(tmpl: Template) {
   await selection.selectTemplate(
     tmpl,
@@ -261,7 +267,6 @@ async function selectTemplate(tmpl: Template) {
     () => versionHistory.loadVersions(tmpl.name)
   )
 }
-
 async function handleCreate() {
   creating.value = true
   const success = await templateOps.create(createForm.value.name.trim(), templates.value, () => {
@@ -275,7 +280,6 @@ async function handleCreate() {
   }
   creating.value = false
 }
-
 async function handleDelete() {
   if (!selectedTemplate.value) return
   const refCount =
@@ -292,7 +296,6 @@ async function handleDelete() {
   }
   autosaving.value = false
 }
-
 async function handleSetDefault() {
   if (!selectedTemplate.value || selectedTemplate.value.is_default) return
   autosaving.value = true
