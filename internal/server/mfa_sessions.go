@@ -73,6 +73,21 @@ func (m *MFAPendingManager) Consume(token, ip string) (MFAPendingSession, bool) 
 	return m.consumeAt(token, ip, time.Now())
 }
 
+// Peek resolves token for ip without redeeming it. The second-factor handler
+// needs the session before it knows whether the submitted code is right: a
+// wrong code must charge the failure budget (RecordFailure) rather than burn
+// the handoff, so validity and redemption are two steps. Redemption stays
+// one-shot via Consume, which is what makes concurrent submissions of the same
+// token produce exactly one session.
+func (m *MFAPendingManager) Peek(token, ip string) (MFAPendingSession, bool) {
+	if token == "" {
+		return MFAPendingSession{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lookupLocked(token, ip, time.Now())
+}
+
 // consumeAt is Consume with an explicit clock (tests, and any caller that
 // needs a fixed reference time).
 func (m *MFAPendingManager) consumeAt(token, ip string, now time.Time) (MFAPendingSession, bool) {
@@ -83,6 +98,18 @@ func (m *MFAPendingManager) consumeAt(token, ip string, now time.Time) (MFAPendi
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	p, ok := m.lookupLocked(token, ip, now)
+	if !ok {
+		return MFAPendingSession{}, false
+	}
+	delete(m.pending, token)
+	return p, true
+}
+
+// lookupLocked resolves token for ip at now. Expiry drops the entry; an IP
+// mismatch leaves it in place so the legitimate client on the original address
+// can still complete login. Callers must hold the mutex.
+func (m *MFAPendingManager) lookupLocked(token, ip string, now time.Time) (MFAPendingSession, bool) {
 	p, ok := m.pending[token]
 	if !ok {
 		return MFAPendingSession{}, false
@@ -94,8 +121,6 @@ func (m *MFAPendingManager) consumeAt(token, ip string, now time.Time) (MFAPendi
 	if p.IP != ip {
 		return MFAPendingSession{}, false
 	}
-
-	delete(m.pending, token)
 	return p, true
 }
 

@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pquerna/otp/totp"
+
 	"github.com/taliove/proxyhub/internal/config"
 	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/geoip"
@@ -464,13 +466,18 @@ func TestSubscription_RecordsPull(t *testing.T) {
 	}
 }
 
+// fixtureTOTPSecret is the shared secret markMFAEnrolled writes, so fixtures
+// that have to clear the second login stage can produce a valid code for it
+// (see doLoginEnrolled).
+const fixtureTOTPSecret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+
 // markMFAEnrolled 把账号直接置为"已绑定 MFA"态,让会话通过 requireMFAEnrolled。
 // MFA 是全员强制的(ticket 05),未绑定会话进不了任何业务路由;绝大多数测试
 // 关心的不是绑定流程,所以在夹具里跳过两段式 enroll,直接写库。
 // 绑定/强制本身的行为由 mfa_test.go 与 middleware_test.go 走真实 HTTP 覆盖。
 func markMFAEnrolled(t *testing.T, st *store.Store, userID int64) {
 	t.Helper()
-	secret := "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+	secret := fixtureTOTPSecret
 	enabled := true
 	if err := st.UpdateUser(userID, store.UserUpdate{
 		TOTPSecret:  &secret,
@@ -478,6 +485,39 @@ func markMFAEnrolled(t *testing.T, st *store.Store, userID int64) {
 	}); err != nil {
 		t.Fatalf("mark user %d mfa-enrolled: %v", userID, err)
 	}
+}
+
+// doLoginEnrolled 登录并在需要时替夹具走完第二段 MFA(ticket 06)。
+// 已绑定账号从陌生 IP 登录只拿到 mfa_pending token,夹具需要的是 session
+// cookie,所以这里用 markMFAEnrolled 写入的固定密钥算一个 TOTP 码换正式会话。
+// 返回第二段(或直通时第一段)的响应,形状与 doLogin 成功时一致。
+// 只给"想要一个可用会话"的夹具用;判定分流本身由 auth_test.go/mfa_test.go
+// 直接调 doLogin 覆盖。
+func doLoginEnrolled(t *testing.T, h http.Handler, username, password, ip string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := doLogin(t, h, username, password, ip)
+	var stage1 struct {
+		MFARequired  bool   `json:"mfa_required"`
+		PendingToken string `json:"mfa_pending_token"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &stage1); err != nil || !stage1.MFARequired {
+		return w
+	}
+
+	code, err := totp.GenerateCode(fixtureTOTPSecret, time.Now())
+	if err != nil {
+		t.Fatalf("GenerateCode for fixture secret: %v", err)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"mfa_pending_token": stage1.PendingToken,
+		"code":              code,
+	})
+	req := httptest.NewRequest("POST", "/api/login/mfa", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = ip + ":2000"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
 }
 
 // markAllMFAEnrolled 把当前库里所有账号置为已绑定态。夹具常在 doSetup 之后
@@ -498,7 +538,7 @@ func authCookie(t *testing.T, h http.Handler) *http.Cookie {
 	t.Helper()
 	doSetup(t, h, "owner", "a-very-strong-pass")
 	markAllMFAEnrolled(t, testStore(t))
-	w := doLogin(t, h, "owner", "a-very-strong-pass", "9.9.9.9")
+	w := doLoginEnrolled(t, h, "owner", "a-very-strong-pass", "9.9.9.9")
 	for _, c := range w.Result().Cookies() {
 		if c.Name == "session" {
 			return c

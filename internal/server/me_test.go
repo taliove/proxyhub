@@ -24,7 +24,7 @@ func loginAs(t *testing.T, srv *Server, h http.Handler, username, password, role
 		t.Fatalf("CreateUser(%s): %v", username, err)
 	}
 	markMFAEnrolled(t, srv.st, user.ID)
-	w := doLogin(t, h, username, password, "9.9.9.20")
+	w := doLoginEnrolled(t, h, username, password, "9.9.9.20")
 	if w.Code != http.StatusOK {
 		t.Fatalf("login %s status = %d (body: %s)", username, w.Code, w.Body.String())
 	}
@@ -215,7 +215,7 @@ func TestChangeMyPassword_MustChangeFlow(t *testing.T) {
 	// 本测试的主题是强改密门,不是 MFA 门:先把 MFA 置为已绑定,否则改密通过后
 	// 业务路由仍会被 requireMFAEnrolled 挡住,断言测的就不是改密了。
 	markMFAEnrolled(t, st, rookieUser.ID)
-	w := doLogin(t, h, "rookie", "init-pass-1", "9.9.9.21")
+	w := doLoginEnrolled(t, h, "rookie", "init-pass-1", "9.9.9.21")
 	if w.Code != http.StatusOK {
 		t.Fatalf("login status = %d (body: %s)", w.Code, w.Body.String())
 	}
@@ -260,7 +260,7 @@ func TestChangeMyPassword_MustChangeFlow(t *testing.T) {
 	}
 
 	// 重新登录拿到会话,完成改密。
-	w = doLogin(t, h, "rookie", "init-pass-1", "9.9.9.21")
+	w = doLoginEnrolled(t, h, "rookie", "init-pass-1", "9.9.9.21")
 	for _, c := range w.Result().Cookies() {
 		if c.Name == "session" {
 			cookie = c
@@ -285,7 +285,7 @@ func TestChangeMyPassword_MustChangeFlow(t *testing.T) {
 	}
 
 	// 新密码登录后业务路由放行。
-	w = doLogin(t, h, "rookie", "new-pass-123", "9.9.9.21")
+	w = doLoginEnrolled(t, h, "rookie", "new-pass-123", "9.9.9.21")
 	if w.Code != http.StatusOK {
 		t.Fatalf("re-login with new password status = %d", w.Code)
 	}

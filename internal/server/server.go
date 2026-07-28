@@ -111,6 +111,9 @@ type Server struct {
 	// captcha issues and verifies the login captcha (GET /api/captcha +
 	// the handleLogin gate). Tests swap in a deterministic stub.
 	captcha captchaService
+	// mfaPending carries the handoff between the password stage of login and
+	// POST /api/login/mfa. Memory-only by design (5 minute TTL).
+	mfaPending *MFAPendingManager
 }
 
 // New 创建 HTTP 服务
@@ -127,6 +130,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		lookupHost:       net.LookupHost,
 		countryLookup:    geoip.LookupCountry,
 		captcha:          captcha.NewService(captcha.Options{}),
+		mfaPending:       NewMFAPendingManager(),
 	}
 
 	// 体检任务管理器:runner 复用 detectionService.ExamStream(逻辑零改动),
@@ -529,6 +533,9 @@ func (s *Server) Handler() http.Handler {
 
 	// 认证
 	mux.HandleFunc("POST /api/login", s.handleLogin)
+	// 登录第二段(ticket 06):无认证——此时还没有会话,凭据是 mfa_pending token
+	// 本身(TTL 5min + 绑定 IP + 5 次失败销毁)。
+	mux.HandleFunc("POST /api/login/mfa", s.handleLoginMFA)
 	// 登录验证码签发:无认证(登录页尚无会话),滥用由 per-IP 签发节流兜底
 	mux.HandleFunc("GET /api/captcha", s.handleIssueCaptcha)
 
@@ -976,9 +983,82 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 登录成功：清空失败计数，更新 last_login_at,发放携带身份载荷的会话
+	// 密码通过。三分流(ticket 06,顺序是硬约束):
+	//   ① 未绑定 authenticator -> 直接发会话(载荷带 must_enroll_mfa),没有
+	//      第二因子可挑战;绑定检查必须先于受信判定,否则一条陈旧的受信记录
+	//      会把"该绑定却没绑定"的账号一路放过。
+	//   ② 已绑定 + 该 (user, ip) 有活跃受信记录 -> 直接发会话,顺带续期。
+	//   ③ 已绑定 + 未受信 -> 只发 mfa_pending,等第二段换会话。
+	s.completeLogin(w, r, user, ip)
+}
+
+// completeLogin runs the post-password half of handleLogin: the three-way MFA
+// branch described above.
+func (s *Server) completeLogin(w http.ResponseWriter, r *http.Request, user *store.User, ip string) {
+	cfg, err := s.st.GetUserMFAConfig(user.ID)
+	if err != nil {
+		// Fail closed on the branch decision itself: guessing "unenrolled"
+		// here would hand out a full session to an account that owes a second
+		// factor. The password was right, so this is a server fault, not a
+		// credential one.
+		s.logger.Error("load mfa config for login failed", "user_id", user.ID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Branch one: nothing bound yet.
+	if !cfg.Enabled {
+		s.issueLoginSession(w, user, ip, "")
+		return
+	}
+
+	// Branch two: this address already proved a second factor recently.
+	trusted, err := s.st.IsTrustedIP(user.ID, ip)
+	if err != nil {
+		// A trust lookup failure must not be a free pass; degrade to the
+		// challenge, which is the safe side of this decision.
+		s.logger.Warn("trusted ip lookup failed, falling back to mfa challenge",
+			"user_id", user.ID, "ip", ip, "error", err)
+		trusted = false
+	}
+	if trusted {
+		// Slide the 30 day window forward. TouchTrustedIP writes at most once
+		// per TrustedIPRenewInterval, so this is usually a pure read.
+		if _, err := s.st.TouchTrustedIP(user.ID, ip); err != nil {
+			s.logger.Warn("renew trusted ip failed", "user_id", user.ID, "ip", ip, "error", err)
+		}
+		// mfa_skipped=trusted_ip, deliberately NOT "mfa=": the trust
+		// recommendation engine counts only real second-factor successes
+		// (store.GetTrustRecommendationCount matches detail LIKE '%mfa=%'),
+		// so a skip must not recommend itself.
+		s.issueLoginSession(w, user, ip, "mfa_skipped=trusted_ip")
+		return
+	}
+
+	// Branch three: hand off to the second stage.
+	token, err := s.mfaPending.Create(user.ID, ip)
+	if err != nil {
+		s.logger.Error("create mfa pending session failed", "user_id", user.ID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// The IP failure counter is deliberately left alone: the login is not
+	// complete, and clearing it here would let an attacker who guessed a
+	// password reset their own ban budget at will.
+	writeJSON(w, map[string]any{
+		"ok":                false,
+		"mfa_required":      true,
+		"mfa_pending_token": token,
+	})
+}
+
+// issueLoginSession books a completed login: clears the IP failure counter,
+// records login_success (mfaDetail carries the second-factor marker, empty for
+// accounts that owe enrollment), refreshes last_login_at and sets the session
+// cookie. Shared by handleLogin's non-challenge branches and handleLoginMFA.
+func (s *Server) issueLoginSession(w http.ResponseWriter, user *store.User, ip, mfaDetail string) {
 	s.st.ResetLoginFailures(ip)
-	s.recordAudit("login_success", ip, req.Username, "")
+	s.recordAudit("login_success", ip, user.Username, mfaDetail)
 	now := time.Now()
 	if err := s.st.UpdateUser(user.ID, store.UserUpdate{LastLoginAt: &now}); err != nil {
 		// 登录动作本身已经成功,只记录日志不打断

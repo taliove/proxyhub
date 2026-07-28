@@ -414,3 +414,386 @@ func TestMe_ReportsMustEnrollMFA(t *testing.T) {
 		t.Error("/api/me must_enroll_mfa = true after enrollment, want false")
 	}
 }
+
+// Second login stage: POST /api/login/mfa (login hardening ticket 06).
+
+// loginStageOne runs the password stage for an enrolled account and returns the
+// pending token it hands out. Fails the test if the response is not a challenge.
+func loginStageOne(t *testing.T, h http.Handler, username, password, ip string) string {
+	t.Helper()
+	w := doLogin(t, h, username, password, ip)
+	if w.Code != http.StatusOK {
+		t.Fatalf("password stage status = %d (body: %s)", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK           bool   `json:"ok"`
+		MFARequired  bool   `json:"mfa_required"`
+		PendingToken string `json:"mfa_pending_token"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode password stage: %v", err)
+	}
+	if resp.OK || !resp.MFARequired || resp.PendingToken == "" {
+		t.Fatalf("password stage did not issue a challenge: %s", w.Body.String())
+	}
+	return resp.PendingToken
+}
+
+// postLoginMFA submits the second stage from ip.
+func postLoginMFA(t *testing.T, h http.Handler, body, ip string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/login/mfa", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = ip + ":2000"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// enrolledLoginFixture sets up a system with one enrolled account whose TOTP
+// secret and recovery codes are known, returning the secret and the codes.
+func enrolledLoginFixture(t *testing.T, srv *Server, h http.Handler) (secret string, codes []string) {
+	t.Helper()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+	cookie, _ := unenrolledSession(t, srv, h, "rookie", "init-pass-1", store.RoleUser)
+	return enrollMFA(t, h, cookie)
+}
+
+// TestLoginMFA_TOTPCompletesLogin the happy path: a current TOTP code turns the
+// pending token into a real session, clears the IP failure counter and books
+// login_success with an mfa=totp marker.
+func TestLoginMFA_TOTPCompletesLogin(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	secret, _ := enrolledLoginFixture(t, srv, h)
+
+	const ip = "9.9.9.50"
+	token := loginStageOne(t, h, "rookie", "init-pass-1", ip)
+
+	rec := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":%q}`,
+		token, currentTOTP(t, secret)), ip)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		OK   bool `json:"ok"`
+		User struct {
+			Username string `json:"username"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.OK || resp.User.Username != "rookie" {
+		t.Errorf("response = %s, want ok with the rookie payload", rec.Body.String())
+	}
+	if sessionCookieOf(rec) == nil {
+		t.Fatal("no session cookie after a successful second factor")
+	}
+	if detail := latestAuditDetail(t, st, "login_success"); !strings.Contains(detail, "mfa=totp") {
+		t.Errorf("login_success detail = %q, want it to carry mfa=totp", detail)
+	}
+	if n := failCountFor(t, st, ip); n != 0 {
+		t.Errorf("fail_count = %d after a successful login, want 0", n)
+	}
+	// The pending token is one-shot: replaying it must not mint a session.
+	replay := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":%q}`,
+		token, currentTOTP(t, secret)), ip)
+	if replay.Code != http.StatusUnauthorized {
+		t.Errorf("replay status = %d, want 401", replay.Code)
+	}
+}
+
+// TestLoginMFA_RecoveryCodeCompletesLoginAndBurns a recovery code is the
+// fallback factor: it works exactly once and is marked mfa=recovery.
+func TestLoginMFA_RecoveryCodeCompletesLoginAndBurns(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	_, codes := enrolledLoginFixture(t, srv, h)
+
+	const ip = "9.9.9.51"
+	token := loginStageOne(t, h, "rookie", "init-pass-1", ip)
+	rec := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":%q}`, token, codes[0]), ip)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if sessionCookieOf(rec) == nil {
+		t.Fatal("no session cookie after recovery-code login")
+	}
+	if detail := latestAuditDetail(t, st, "login_success"); !strings.Contains(detail, "mfa=recovery") {
+		t.Errorf("login_success detail = %q, want it to carry mfa=recovery", detail)
+	}
+
+	// The used code is burned: a fresh pending token plus the same code fails.
+	token2 := loginStageOne(t, h, "rookie", "init-pass-1", ip)
+	again := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":%q}`, token2, codes[0]), ip)
+	if again.Code != http.StatusUnauthorized {
+		t.Fatalf("reused recovery code status = %d, want 401 (body: %s)", again.Code, again.Body.String())
+	}
+	// That refusal charged the IP counter (same budget as a wrong password),
+	// which is exactly what puts the address behind the captcha wall. Clear it
+	// so the next password stage measures the recovery batch, not the captcha.
+	if err := st.ResetLoginFailures(ip); err != nil {
+		t.Fatalf("ResetLoginFailures: %v", err)
+	}
+	// A different, untouched code from the same batch still works.
+	token3 := loginStageOne(t, h, "rookie", "init-pass-1", ip)
+	next := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":%q}`, token3, codes[1]), ip)
+	if next.Code != http.StatusOK {
+		t.Errorf("second recovery code status = %d, want 200 (body: %s)", next.Code, next.Body.String())
+	}
+}
+
+// TestLoginMFA_WrongCodeIsAuditedAndCounted a wrong code is a 401 that books
+// mfa_failure (detail carrying the token prefix) and charges the IP counter, so
+// grinding codes walks into IP2Ban.
+func TestLoginMFA_WrongCodeIsAuditedAndCounted(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	enrolledLoginFixture(t, srv, h)
+
+	const ip = "9.9.9.52"
+	token := loginStageOne(t, h, "rookie", "init-pass-1", ip)
+	rec := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":"000000"}`, token), ip)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if sessionCookieOf(rec) != nil {
+		t.Error("wrong second factor handed out a session cookie")
+	}
+	detail := latestAuditDetail(t, st, "mfa_failure")
+	if !strings.Contains(detail, token[:8]) {
+		t.Errorf("mfa_failure detail = %q, want the pending token prefix %q", detail, token[:8])
+	}
+	if strings.Contains(detail, token) {
+		t.Error("mfa_failure detail leaks the full pending token")
+	}
+	if n := failCountFor(t, st, ip); n != 1 {
+		t.Errorf("fail_count = %d after one wrong code, want 1", n)
+	}
+}
+
+// TestLoginMFA_FailureBudgetDestroysPendingAndBansIP the pending session
+// tolerates mfaPendingMaxFailures wrong codes; the same attempts drive the IP
+// past the ban threshold (setup seeds 3), so the address ends up banned.
+func TestLoginMFA_FailureBudgetDestroysPendingAndBansIP(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	secret, _ := enrolledLoginFixture(t, srv, h)
+
+	const ip = "9.9.9.53"
+	token := loginStageOne(t, h, "rookie", "init-pass-1", ip)
+	for i := 0; i < mfaPendingMaxFailures; i++ {
+		rec := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":"000000"}`, token), ip)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d, want 401", i+1, rec.Code)
+		}
+	}
+	if srv.mfaPending.Len() != 0 {
+		t.Errorf("pending sessions = %d after the budget was spent, want 0", srv.mfaPending.Len())
+	}
+	// Even the right code cannot revive a destroyed pending session.
+	rec := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":%q}`,
+		token, currentTOTP(t, secret)), ip)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d after budget exhaustion, want 401", rec.Code)
+	}
+
+	banned, err := st.IsBanned(ip, time.Now())
+	if err != nil {
+		t.Fatalf("IsBanned: %v", err)
+	}
+	if !banned {
+		t.Error("repeated MFA failures did not drive the IP into IP2Ban")
+	}
+}
+
+// TestLoginMFA_RejectsForeignIPAndUnknownToken the pending token is bound to
+// the address that earned it, and an unknown token is simply a 401.
+func TestLoginMFA_RejectsForeignIPAndUnknownToken(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+	secret, _ := enrolledLoginFixture(t, srv, h)
+
+	const ip = "9.9.9.54"
+	token := loginStageOne(t, h, "rookie", "init-pass-1", ip)
+
+	code := currentTOTP(t, secret)
+	if rec := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":%q}`,
+		token, code), "9.9.9.99"); rec.Code != http.StatusUnauthorized {
+		t.Errorf("foreign-IP submission status = %d, want 401", rec.Code)
+	}
+	if rec := postLoginMFA(t, h,
+		`{"mfa_pending_token":"deadbeef","code":"000000"}`, ip); rec.Code != http.StatusUnauthorized {
+		t.Errorf("unknown token status = %d, want 401", rec.Code)
+	}
+	// The legitimate client on the original address can still finish: a
+	// foreign attempt must not spend the budget or destroy the session.
+	if rec := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":%q}`,
+		token, currentTOTP(t, secret)), ip); rec.Code != http.StatusOK {
+		t.Errorf("original client status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLoginMFA_TrustIPSkipsNextChallenge trust_ip=true records the grant, and
+// the next login from that address goes straight through.
+func TestLoginMFA_TrustIPSkipsNextChallenge(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	secret, _ := enrolledLoginFixture(t, srv, h)
+
+	const ip = "9.9.9.55"
+	token := loginStageOne(t, h, "rookie", "init-pass-1", ip)
+	rec := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":%q,"trust_ip":true}`,
+		token, currentTOTP(t, secret)), ip)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	rookie, err := st.GetUserByUsername("rookie")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	trusted, err := st.IsTrustedIP(rookie.ID, ip)
+	if err != nil {
+		t.Fatalf("IsTrustedIP: %v", err)
+	}
+	if !trusted {
+		t.Fatal("trust_ip=true did not record a trust grant")
+	}
+
+	// Next login from the same address skips the challenge entirely.
+	w := doLogin(t, h, "rookie", "init-pass-1", ip)
+	if mfaRequiredFlag(t, w) {
+		t.Error("trusted address was challenged again")
+	}
+	if sessionCookieOf(w) == nil {
+		t.Error("no session cookie on the trusted follow-up login")
+	}
+}
+
+// TestLoginMFA_WithoutTrustIPDoesNotGrant the checkbox is opt-in: omitting it
+// leaves the address untrusted, so the next login is challenged again.
+func TestLoginMFA_WithoutTrustIPDoesNotGrant(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	secret, _ := enrolledLoginFixture(t, srv, h)
+
+	const ip = "9.9.9.56"
+	token := loginStageOne(t, h, "rookie", "init-pass-1", ip)
+	if rec := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q,"code":%q}`,
+		token, currentTOTP(t, secret)), ip); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	rookie, err := st.GetUserByUsername("rookie")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	trusted, err := st.IsTrustedIP(rookie.ID, ip)
+	if err != nil {
+		t.Fatalf("IsTrustedIP: %v", err)
+	}
+	if trusted {
+		t.Error("a login without trust_ip recorded a trust grant")
+	}
+	if !mfaRequiredFlag(t, doLogin(t, h, "rookie", "init-pass-1", ip)) {
+		t.Error("second login was not challenged despite no trust grant")
+	}
+}
+
+// TestLoginMFA_MalformedRequests the endpoint is unauthenticated, so its input
+// validation is the only boundary. The token is resolved before the code is
+// looked at, so anything carrying an unusable token is a 401 regardless of what
+// else is missing; only a caller holding a live token gets the "code required"
+// 400. An unparseable body never reaches either check.
+func TestLoginMFA_MalformedRequests(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+	enrolledLoginFixture(t, srv, h)
+
+	const ip = "9.9.9.57"
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"not json", "not-json", http.StatusBadRequest},
+		{"missing token", `{"code":"000000"}`, http.StatusUnauthorized},
+		{"unknown token without code", `{"mfa_pending_token":"deadbeef"}`, http.StatusUnauthorized},
+		{"empty body", `{}`, http.StatusUnauthorized},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := postLoginMFA(t, h, c.body, ip)
+			if rec.Code != c.want {
+				t.Errorf("status = %d, want %d (body: %s)", rec.Code, c.want, rec.Body.String())
+			}
+			if sessionCookieOf(rec) != nil {
+				t.Error("malformed second-stage request handed out a session")
+			}
+		})
+	}
+
+	// A live token with no code is the one 400: it is a client bug, not an
+	// attempt, so it must not charge the failure budget either.
+	token := loginStageOne(t, h, "rookie", "init-pass-1", ip)
+	rec := postLoginMFA(t, h, fmt.Sprintf(`{"mfa_pending_token":%q}`, token), ip)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("live token without code status = %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if srv.mfaPending.Len() != 1 {
+		t.Errorf("pending sessions = %d, want 1: a missing code must not spend the handoff", srv.mfaPending.Len())
+	}
+}
+
+// TestLoginMFA_TrustedLoginRenewalIsRateLimited a trusted-IP login renews the
+// grant through TouchTrustedIP, which only writes once per
+// TrustedIPRenewInterval. A fresh grant must therefore come out untouched -
+// this is what distinguishes a renewal from a blind re-grant (AddTrustedIP
+// would move last_used_at on every login). Renewal of an aged row is covered
+// in the store package, which owns the clock.
+func TestLoginMFA_TrustedLoginRenewalIsRateLimited(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+	markAllMFAEnrolled(t, st)
+
+	owner, err := st.GetUserByUsername("owner")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	const ip = "9.9.9.58"
+	if err := st.AddTrustedIP(owner.ID, ip); err != nil {
+		t.Fatalf("AddTrustedIP: %v", err)
+	}
+	before := trustedGrantFor(t, st, owner.ID, ip)
+
+	if w := doLogin(t, h, "owner", "a-very-strong-pass", ip); mfaRequiredFlag(t, w) {
+		t.Fatalf("trusted login was challenged (body: %s)", w.Body.String())
+	}
+
+	after := trustedGrantFor(t, st, owner.ID, ip)
+	// Within the renewal interval the row must not be rewritten (write
+	// reduction is the point of TouchTrustedIP's guard).
+	if !after.LastUsedAt.Equal(before.LastUsedAt) {
+		t.Errorf("last_used_at moved from %v to %v inside the renewal interval",
+			before.LastUsedAt, after.LastUsedAt)
+	}
+}
+
+// trustedGrantFor returns the single trust grant for (user, ip).
+func trustedGrantFor(t *testing.T, st *store.Store, userID int64, ip string) *store.TrustedIP {
+	t.Helper()
+	grants, err := st.ListTrustedIPs(userID)
+	if err != nil {
+		t.Fatalf("ListTrustedIPs: %v", err)
+	}
+	for _, g := range grants {
+		if g.IP == ip {
+			return g
+		}
+	}
+	t.Fatalf("no trust grant for %s", ip)
+	return nil
+}

@@ -275,6 +275,66 @@ func TestMFAPendingLazyCleanupOnCreate(t *testing.T) {
 	}
 }
 
+// TestMFAPendingPeekIsNonDestructive Peek is what lets a wrong code charge the
+// failure budget instead of burning the handoff: it must resolve the session
+// without redeeming it, while keeping Consume's one-shot contract intact.
+func TestMFAPendingPeekIsNonDestructive(t *testing.T) {
+	m := NewMFAPendingManager()
+	token, err := m.Create(31, "203.0.113.50")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		p, ok := m.Peek(token, "203.0.113.50")
+		if !ok {
+			t.Fatalf("Peek %d rejected a live token", i+1)
+		}
+		if p.UserID != 31 {
+			t.Fatalf("UserID = %d, want 31", p.UserID)
+		}
+		if m.Len() != 1 {
+			t.Fatalf("Len = %d after Peek, want 1", m.Len())
+		}
+	}
+
+	// Same rejections as Consume, minus the redemption.
+	if _, ok := m.Peek(token, "198.51.100.1"); ok {
+		t.Error("Peek accepted a foreign IP")
+	}
+	if _, ok := m.Peek("", "203.0.113.50"); ok {
+		t.Error("Peek accepted an empty token")
+	}
+	if _, ok := m.Peek("deadbeef", "203.0.113.50"); ok {
+		t.Error("Peek accepted an unknown token")
+	}
+
+	if _, ok := m.Consume(token, "203.0.113.50"); !ok {
+		t.Fatal("Consume rejected a token that Peek had resolved")
+	}
+	if _, ok := m.Peek(token, "203.0.113.50"); ok {
+		t.Error("Peek resolved a consumed token")
+	}
+}
+
+// TestMFAPendingPeekDropsExpired an expired entry is not merely refused, it is
+// dropped, so a stale token cannot keep occupying the map through Peek alone.
+func TestMFAPendingPeekDropsExpired(t *testing.T) {
+	m := NewMFAPendingManager()
+	token, err := m.Create(32, "203.0.113.51")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m.expireForTest(token)
+
+	if _, ok := m.Peek(token, "203.0.113.51"); ok {
+		t.Fatal("Peek accepted an expired token")
+	}
+	if m.Len() != 0 {
+		t.Fatalf("Len = %d, want 0 (expired entry should be dropped)", m.Len())
+	}
+}
+
 // expireForTest backdates a pending entry so cleanup paths treat it as stale.
 func (m *MFAPendingManager) expireForTest(token string) {
 	m.mu.Lock()

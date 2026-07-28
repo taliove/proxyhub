@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/taliove/proxyhub/internal/mfa"
 	"github.com/taliove/proxyhub/internal/store"
@@ -349,4 +350,191 @@ func encodeStoredRecoveryHashes(hashes []string) (string, error) {
 		return "", fmt.Errorf("encode stored recovery hashes: %w", err)
 	}
 	return string(buf), nil
+}
+
+// Second login stage (login hardening ticket 06).
+//
+// handleLoginMFA serves POST /api/login/mfa. It is unauthenticated because no
+// session exists yet: the credential is the mfa_pending token handed out by the
+// password stage, which is bound to one user, one source address, a 5 minute
+// TTL and a budget of mfaPendingMaxFailures wrong codes.
+//
+// Request: {mfa_pending_token, code, trust_ip?}. The code is tried as a TOTP
+// first and as a recovery code second, so a user who fat-fingers a TOTP does
+// not silently burn a recovery code. Every failure charges both the pending
+// budget (which caps grinding against one handoff) and the per-IP login failure
+// counter (which walks the address into IP2Ban at the same threshold as wrong
+// passwords), so an attacker cannot buy unlimited attempts by re-running the
+// password stage.
+func (s *Server) handleLoginMFA(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+
+	var req struct {
+		PendingToken string `json:"mfa_pending_token"`
+		Code         string `json:"code"`
+		TrustIP      bool   `json:"trust_ip"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve the handoff before looking at the code. Peek rather than Consume:
+	// a wrong code must spend budget, not destroy a legitimate handoff.
+	// Expired, unknown, foreign-IP and budget-exhausted tokens are all one
+	// undifferentiated 401 - telling them apart would map out the state for an
+	// attacker holding a stolen token.
+	pending, ok := s.mfaPending.Peek(req.PendingToken, ip)
+	if !ok {
+		http.Error(w, "invalid or expired verification session", http.StatusUnauthorized)
+		return
+	}
+	if strings.TrimSpace(req.Code) == "" {
+		// Not an attempt: no budget charged, no counter moved.
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{
+			"error": "verification code is required",
+		})
+		return
+	}
+
+	user, err := s.st.GetUserByID(pending.UserID)
+	if err != nil {
+		s.mfaPending.Destroy(req.PendingToken)
+		if errors.Is(err, store.ErrNotFound) {
+			// The account disappeared between the two stages.
+			http.Error(w, "invalid or expired verification session", http.StatusUnauthorized)
+			return
+		}
+		s.logger.Error("load user for mfa login failed", "user_id", pending.UserID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// Re-check the account state: it may have been disabled while the handoff
+	// was open, and the password stage's verdict must not outlive that.
+	if user.Disabled() {
+		s.mfaPending.Destroy(req.PendingToken)
+		s.recordAudit("login_disabled", ip, user.Username, "account disabled during mfa challenge")
+		http.Error(w, "account disabled", http.StatusForbidden)
+		return
+	}
+
+	cfg, err := s.st.GetUserMFAConfig(pending.UserID)
+	if err != nil {
+		s.logger.Error("load mfa config for login failed", "user_id", pending.UserID, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if !cfg.Enabled {
+		// MFA was reset (admin or CLI) while the handoff was open: there is
+		// nothing left to verify, so the handoff is void and the user restarts.
+		s.mfaPending.Destroy(req.PendingToken)
+		http.Error(w, "invalid or expired verification session", http.StatusUnauthorized)
+		return
+	}
+
+	method, ok := s.verifyLoginSecondFactor(cfg, req.Code)
+	if !ok {
+		s.recordMFALoginFailure(req.PendingToken, ip, user.Username)
+		http.Error(w, "invalid verification code", http.StatusUnauthorized)
+		return
+	}
+
+	// Redeem the handoff. One-shot: concurrent submissions of the same token
+	// yield exactly one session, and a replay after success is a plain 401.
+	if _, ok := s.mfaPending.Consume(req.PendingToken, ip); !ok {
+		http.Error(w, "invalid or expired verification session", http.StatusUnauthorized)
+		return
+	}
+
+	if req.TrustIP {
+		if err := s.st.AddTrustedIP(user.ID, ip); err != nil {
+			// The login itself succeeded; losing the convenience grant only
+			// costs the user another challenge next time.
+			s.logger.Warn("trust login ip failed", "user_id", user.ID, "ip", ip, "error", err)
+		} else {
+			s.recordAudit("trusted_ip_added", ip, user.Username,
+				fmt.Sprintf("trusted for %d days after mfa login", int(store.TrustedIPTTL.Hours()/24)))
+		}
+	}
+
+	// "mfa=totp" / "mfa=recovery" is the marker
+	// store.GetTrustRecommendationCount counts (detail LIKE '%mfa=%').
+	s.issueLoginSession(w, user, ip, "mfa="+method)
+}
+
+// verifyLoginSecondFactor checks code against the account's TOTP secret first
+// and its recovery codes second, returning which factor matched ("totp" or
+// "recovery"). A matching recovery code is consumed here: unlike the
+// regeneration path, nothing replaces the batch afterwards, so a code that let
+// someone in must never let anyone in twice.
+func (s *Server) verifyLoginSecondFactor(cfg *store.UserMFAConfig, code string) (method string, ok bool) {
+	if mfa.VerifyTOTP(cfg.TOTPSecret, code) {
+		return "totp", true
+	}
+
+	encoded, err := encodeStoredRecoveryHashes(cfg.RecoveryCodesHash)
+	if err != nil {
+		s.logger.Error("encode recovery hashes failed", "user_id", cfg.UserID, "error", err)
+		return "", false
+	}
+	remaining, matched, err := mfa.VerifyRecoveryCode(encoded, code)
+	if err != nil {
+		s.logger.Error("verify recovery code failed", "user_id", cfg.UserID, "error", err)
+		return "", false
+	}
+	if !matched {
+		return "", false
+	}
+
+	hashes, err := decodeStoredRecoveryHashes(remaining)
+	if err != nil {
+		s.logger.Error("decode remaining recovery hashes failed", "user_id", cfg.UserID, "error", err)
+		return "", false
+	}
+	if err := s.st.UpdateUser(cfg.UserID, store.UserUpdate{RecoveryCodesHash: &hashes}); err != nil {
+		// Refuse the login rather than let a code stay usable: a recovery code
+		// that cannot be burned is a replayable credential.
+		s.logger.Error("burn recovery code failed", "user_id", cfg.UserID, "error", err)
+		return "", false
+	}
+	return "recovery", true
+}
+
+// recordMFALoginFailure books one wrong second factor: it charges the pending
+// budget (destroying the handoff on exhaustion), charges the per-IP login
+// failure counter on the same threshold as a wrong password, and writes the
+// mfa_failure audit row. The detail carries only the first 8 characters of the
+// pending token so failures can be correlated without persisting a live
+// credential.
+func (s *Server) recordMFALoginFailure(pendingToken, ip, username string) {
+	alive := s.mfaPending.RecordFailure(pendingToken)
+
+	policy := s.loadSecurityPolicy()
+	now := time.Now()
+	nowBanned, err := s.st.RecordLoginFailure(ip, policy.BanThreshold, policy.BanDuration, now)
+	if err != nil {
+		s.logger.Error("record mfa failure failed", "ip", ip, "error", err)
+	}
+
+	detail := fmt.Sprintf("mfa verification failed, pending=%s", pendingTokenPrefix(pendingToken))
+	if !alive {
+		detail += ", pending session destroyed"
+	}
+	s.recordAudit("mfa_failure", ip, username, detail)
+
+	if nowBanned {
+		s.logger.Warn("ip banned after repeated mfa failures", "ip", ip)
+		s.recordAudit("threshold_ban", ip, username,
+			fmt.Sprintf("连续失败达阈值 %d，封禁至 %s",
+				policy.BanThreshold, now.Add(policy.BanDuration).Format("2006-01-02 15:04:05")))
+	}
+}
+
+// pendingTokenPrefix renders the audit-safe fragment of a pending token.
+func pendingTokenPrefix(token string) string {
+	const prefixLen = 8
+	if len(token) <= prefixLen {
+		return token
+	}
+	return token[:prefixLen]
 }

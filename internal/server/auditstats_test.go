@@ -15,7 +15,7 @@ import (
 func loginCookie(t *testing.T, h http.Handler, user, pass, ip string) *http.Cookie {
 	t.Helper()
 	markAllMFAEnrolled(t, testStore(t))
-	w := doLogin(t, h, user, pass, ip)
+	w := doLoginEnrolled(t, h, user, pass, ip)
 	for _, c := range w.Result().Cookies() {
 		if c.Name == "session" {
 			return c

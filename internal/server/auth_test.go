@@ -282,3 +282,315 @@ func TestLogin_InvalidJSON(t *testing.T) {
 		t.Errorf("status = %d, want 400 for malformed body", w.Code)
 	}
 }
+
+// Second-factor branch of handleLogin (login hardening ticket 06). The password
+// stage has three outcomes once the credentials check out, and their order is
+// load bearing: the enrollment check runs before the trusted-IP check, so an
+// account that never bound an authenticator can never be waved through by a
+// stale trust grant.
+
+// TestLogin_UnenrolledGetsSessionWithEnrollFlag branch one: no authenticator
+// bound means a full session plus must_enroll_mfa, never an MFA challenge -
+// there is nothing to challenge with yet.
+func TestLogin_UnenrolledGetsSessionWithEnrollFlag(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+
+	w := doLogin(t, h, "owner", "a-very-strong-pass", "9.9.9.40")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK          bool `json:"ok"`
+		MFARequired bool `json:"mfa_required"`
+		User        struct {
+			MustEnrollMFA bool `json:"must_enroll_mfa"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.OK || resp.MFARequired {
+		t.Errorf("ok=%v mfa_required=%v, want ok=true mfa_required=false", resp.OK, resp.MFARequired)
+	}
+	if !resp.User.MustEnrollMFA {
+		t.Error("user.must_enroll_mfa = false, want true for an unenrolled account")
+	}
+	if sessionCookieOf(w) == nil {
+		t.Error("no session cookie: an unenrolled account must still get a session to reach enrollment")
+	}
+}
+
+// TestLogin_EnrolledUntrustedIPGetsPending branch three: bound authenticator on
+// an unknown address stops at stage one with a pending token and no session.
+func TestLogin_EnrolledUntrustedIPGetsPending(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+	markAllMFAEnrolled(t, st)
+
+	w := doLogin(t, h, "owner", "a-very-strong-pass", "9.9.9.41")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK           bool   `json:"ok"`
+		MFARequired  bool   `json:"mfa_required"`
+		PendingToken string `json:"mfa_pending_token"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.OK {
+		t.Error("ok = true, want false: the login is not complete yet")
+	}
+	if !resp.MFARequired {
+		t.Error("mfa_required = false, want true")
+	}
+	if resp.PendingToken == "" {
+		t.Error("mfa_pending_token is empty")
+	}
+	if c := sessionCookieOf(w); c != nil {
+		t.Error("session cookie issued before the second factor was verified")
+	}
+	// No login_success may be booked at stage one.
+	if n := auditEventCount(t, st, "login_success"); n != 0 {
+		t.Errorf("login_success count = %d, want 0 at the password stage", n)
+	}
+}
+
+// TestLogin_TrustedIPSkipsSecondFactor branch two: a live trust grant for this
+// (user, ip) short-circuits the challenge, records the skip in the audit trail
+// and slides the grant's window forward.
+func TestLogin_TrustedIPSkipsSecondFactor(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+	markAllMFAEnrolled(t, st)
+
+	owner, err := st.GetUserByUsername("owner")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	const ip = "9.9.9.42"
+	if err := st.AddTrustedIP(owner.ID, ip); err != nil {
+		t.Fatalf("AddTrustedIP: %v", err)
+	}
+
+	w := doLogin(t, h, "owner", "a-very-strong-pass", ip)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK          bool `json:"ok"`
+		MFARequired bool `json:"mfa_required"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.OK || resp.MFARequired {
+		t.Fatalf("ok=%v mfa_required=%v, want ok=true mfa_required=false", resp.OK, resp.MFARequired)
+	}
+	if sessionCookieOf(w) == nil {
+		t.Fatal("no session cookie for a trusted-IP login")
+	}
+
+	detail := latestAuditDetail(t, st, "login_success")
+	if !strings.Contains(detail, "mfa_skipped=trusted_ip") {
+		t.Errorf("login_success detail = %q, want it to carry mfa_skipped=trusted_ip", detail)
+	}
+	// The skip marker must not feed the trust recommendation engine, which
+	// only counts real second-factor successes (detail LIKE '%mfa=%').
+	count, err := st.GetTrustRecommendationCount("owner", ip)
+	if err != nil {
+		t.Fatalf("GetTrustRecommendationCount: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("recommendation count = %d, want 0: a trusted-IP skip must not recommend itself", count)
+	}
+}
+
+// TestLogin_TrustedIPIsolatedPerUser a grant belongs to one account: another
+// user logging in from the same address still faces the challenge.
+func TestLogin_TrustedIPIsolatedPerUser(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("member-pass-12ch"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword: %v", err)
+	}
+	if _, err := st.CreateUser("member1", string(hash), store.RoleUser, false); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	markAllMFAEnrolled(t, st)
+
+	owner, err := st.GetUserByUsername("owner")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	const ip = "9.9.9.43"
+	if err := st.AddTrustedIP(owner.ID, ip); err != nil {
+		t.Fatalf("AddTrustedIP: %v", err)
+	}
+
+	if mfaRequiredFlag(t, doLogin(t, h, "owner", "a-very-strong-pass", ip)) {
+		t.Error("owner was challenged from its own trusted IP")
+	}
+	if !mfaRequiredFlag(t, doLogin(t, h, "member1", "member-pass-12ch", ip)) {
+		t.Error("member1 skipped the second factor on another user's trust grant")
+	}
+}
+
+// TestLogin_ExpiredTrustGrantChallengesAgain an expired grant is not trust:
+// the 30 day window closing puts the address back behind the second factor.
+func TestLogin_ExpiredTrustGrantChallengesAgain(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+	markAllMFAEnrolled(t, st)
+
+	owner, err := st.GetUserByUsername("owner")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	const ip = "9.9.9.44"
+	if err := st.AddTrustedIP(owner.ID, ip); err != nil {
+		t.Fatalf("AddTrustedIP: %v", err)
+	}
+	// Revoking is the observable equivalent from the handler's point of view:
+	// IsTrustedIP reports false either way (grant expiry itself is covered in
+	// the store package, which owns the clock).
+	if err := st.RevokeTrustedIP(owner.ID, ip); err != nil {
+		t.Fatalf("RevokeTrustedIP: %v", err)
+	}
+
+	if !mfaRequiredFlag(t, doLogin(t, h, "owner", "a-very-strong-pass", ip)) {
+		t.Error("revoked trust grant still skipped the second factor")
+	}
+}
+
+// TestLogin_LoopbackIsNotAutoTrusted loopback is carved out of the ban,
+// honeypot and captcha gates, but not out of MFA: a local address still has to
+// prove a second factor, otherwise anything running on the host (or reaching it
+// through a misconfigured reverse proxy) would be a free pass.
+func TestLogin_LoopbackIsNotAutoTrusted(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+	markAllMFAEnrolled(t, st)
+
+	w := doLogin(t, h, "owner", "a-very-strong-pass", "127.0.0.1")
+	if !mfaRequiredFlag(t, w) {
+		t.Errorf("loopback login skipped the second factor (body: %s)", w.Body.String())
+	}
+	if sessionCookieOf(w) != nil {
+		t.Error("loopback login handed out a session before the second factor")
+	}
+}
+
+// sessionCookieOf returns the session cookie set by a response, or nil.
+func sessionCookieOf(w *httptest.ResponseRecorder) *http.Cookie {
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "session" {
+			return c
+		}
+	}
+	return nil
+}
+
+// mfaRequiredFlag reads the mfa_required flag off a login response.
+func mfaRequiredFlag(t *testing.T, w *httptest.ResponseRecorder) bool {
+	t.Helper()
+	var resp struct {
+		MFARequired bool `json:"mfa_required"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		return false
+	}
+	return resp.MFARequired
+}
+
+// latestAuditDetail returns the detail of the most recent audit row of the
+// given type (ListAuditEvents orders newest first).
+func latestAuditDetail(t *testing.T, st *store.Store, eventType string) string {
+	t.Helper()
+	events, _, err := st.ListAuditEvents(store.AuditFilter{EventTypes: []string{eventType}}, 50, 0)
+	if err != nil {
+		t.Fatalf("ListAuditEvents: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatalf("no %s audit event recorded", eventType)
+	}
+	return events[0].Detail
+}
+
+// TestLogin_CaptchaGateStillRunsBeforePassword the MFA branch is downstream of
+// the captcha gate: a wrong captcha is refused before the password is even
+// checked, so it can never produce a pending token.
+func TestLogin_CaptchaGateRunsBeforeMFABranch(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	stub := newStubCaptcha()
+	srv.captcha = stub
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+	markAllMFAEnrolled(t, st)
+	if err := st.SaveSystemSettings(map[string]string{"captcha_trigger_threshold": "0"}); err != nil {
+		t.Fatalf("SaveSystemSettings: %v", err)
+	}
+
+	// Right password, missing captcha -> 401 at the captcha gate, no pending.
+	w := doLoginCaptcha(t, h, loginBody{Username: "owner", Password: "a-very-strong-pass"}, "9.9.9.45")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 from the captcha gate (body: %s)", w.Code, w.Body.String())
+	}
+	if mfaRequiredFlag(t, w) {
+		t.Error("captcha gate emitted an mfa_required response")
+	}
+	if srv.mfaPending.Len() != 0 {
+		t.Errorf("pending sessions = %d, want 0: the captcha gate must run first", srv.mfaPending.Len())
+	}
+
+	// With a solved captcha the request reaches the MFA branch.
+	w = doLoginCaptcha(t, h, loginBody{
+		Username:      "owner",
+		Password:      "a-very-strong-pass",
+		CaptchaID:     "stub-challenge",
+		CaptchaAnswer: stubGoodAnswer,
+	}, "9.9.9.45")
+	if !mfaRequiredFlag(t, w) {
+		t.Errorf("solved captcha did not reach the MFA branch (status %d, body %s)", w.Code, w.Body.String())
+	}
+}
+
+// TestLogin_DisabledAccountNeverReachesMFA a disabled account is rejected by
+// verifyCredentials, upstream of the branch, so it cannot obtain a pending
+// token to grind codes against.
+func TestLogin_DisabledAccountNeverReachesMFA(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("member-pass-12ch"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword: %v", err)
+	}
+	member, err := st.CreateUser("member1", string(hash), store.RoleUser, false)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	markAllMFAEnrolled(t, st)
+	if err := st.DisableUser(member.ID, time.Now()); err != nil {
+		t.Fatalf("DisableUser: %v", err)
+	}
+
+	w := doLogin(t, h, "member1", "member-pass-12ch", "9.9.9.46")
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a disabled account", w.Code)
+	}
+	if srv.mfaPending.Len() != 0 {
+		t.Errorf("pending sessions = %d, want 0 for a disabled account", srv.mfaPending.Len())
+	}
+}
