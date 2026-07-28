@@ -1,5 +1,5 @@
 #!/bin/sh
-# Commit message gates (CLAUDE.md §4): conventional format + pure ASCII.
+# Commit message gates (AGENTS.md §4): conventional format + pure ASCII.
 msg_file=$1
 subject=$(head -n 1 "$msg_file")
 

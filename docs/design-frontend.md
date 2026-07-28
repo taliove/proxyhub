@@ -235,7 +235,7 @@ views/<page>/
    - `vue/no-static-inline-styles` — 禁止静态内联 `style`,既有 116 处清零是 Phase 2 各页验收的一部分;动态绑定 `:style` 不在禁列,但应优先用 class。
    - `max-lines`(400 行)— 与"view 超 400 行必拆"对齐。
    - 阶段内以 **warn** 起步,不阻塞既有代码合入。
-3. **入口**:`make lint-frontend` 为唯一 lint 入口(对齐 CLAUDE.md §5 的 make 入口基本法),并入 `make check` 聚合。
+3. **入口**:`make lint-frontend` 为唯一 lint 入口(对齐 AGENTS.md §5 的 make 入口基本法),并入 `make check` 聚合。
 4. **warn → error 收网条件**:Phase 2 全部页面整改完成、存量告警清零后,上述两条规则升为 error(Phase 3),此后新增违规直接阻塞 `make check`。
 
 ## 落地阶段

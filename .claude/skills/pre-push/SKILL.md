@@ -1,6 +1,6 @@
 ---
 name: pre-push
-description: 推送到任何远端前的最终门禁(全量测试、全历史泄密扫描、仓库体检、security-reviewer 语义安全审查)
+description: 推送到任何远端前的最终门禁(全量测试、全历史泄密扫描、仓库体检、Check agent 语义安全审查)
 ---
 
 # 推送前检查(pre-push)
@@ -16,7 +16,7 @@ make check   # vet + Go 测试 + shell 套件
 make build   # 验证完整构建(前端 + 后端)可用
 ```
 
-必须全绿。既有失败 3 处已被 `make test` 显式隔离;如需看它们的真实状态跑 `make test-all`(预期红,属 backlog 待定项,不算门禁失败)。
+必须全绿,无隔离名单(AGENTS.md §6);失败先定位原因再决定修代码还是修断言。
 
 ## 2. 全历史泄密扫描(不是只扫工作区)
 
@@ -46,12 +46,12 @@ git rev-list --all | while read c; do git ls-tree -r --name-only $c; done | sort
 git ls-files
 ```
 
-对照 CLAUDE.md §1/§2 逐类过一遍:无过程文档、无死备份、无运行时产物、无依赖目录。
+对照 AGENTS.md §1/§2 逐类过一遍:无过程文档、无死备份、无运行时产物、无依赖目录。
 文档只应有:术语表/ADR/设计/运维。
 
-## 5. 语义安全审查(security-reviewer)
+## 5. 语义安全审查(Check agent)
 
-机械扫描抓不住的攻击面问题,由独立上下文的 `security-reviewer` agent 兜底。推送前必须 dispatch 它审查本次推送的增量:
+机械扫描抓不住的攻击面问题,由独立上下文的 `check` agent(push 模式)兜底。推送前必须 dispatch 它审查本次推送的增量:
 
 - 基线:`git merge-base origin/<目标分支> HEAD`;首次推送(无 upstream)退化为以空树为基线的全量审查
 - 视角:这段历史推出去后,公开世界里谁能利用什么——日志/错误泄节点凭证、无鉴权新端点、订阅地址可枚举、管理面绑非回环、TLS 红线、前端 token 外泄

@@ -8,7 +8,7 @@ import (
 )
 
 // condNodes 固定节点池:覆盖机场/地区/标签/名称的不同组合。
-// fixture 一律 example.com + 全零 UUID(见 CLAUDE.md 安全红线)。
+// fixture 一律 example.com + 全零 UUID(见 AGENTS.md 安全红线)。
 func condNodes() []*subscription.Node {
 	return []*subscription.Node{
 		{Name: "HK-01", Region: "HK", Source: "极速机场", Server: "a.example.com", Port: 443},

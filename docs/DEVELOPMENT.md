@@ -2,7 +2,7 @@
 
 本文是 ProxyHub 开发者上手指南,帮助你 5 分钟跑起开发环境。
 
-> **权威规则在 [CLAUDE.md](../CLAUDE.md)**:目录布局、构建入口、测试门槛、安全红线等工程宪法以 CLAUDE.md 为准。本文只做入口,与 CLAUDE.md 冲突时以 CLAUDE.md 为准。
+> **权威规则在 [AGENTS.md](../AGENTS.md)**:目录布局、构建入口、测试门槛、安全红线等工程宪法以 AGENTS.md 为准。本文只做入口,与 AGENTS.md 冲突时以 AGENTS.md 为准。
 
 ## 前置要求
 
@@ -62,11 +62,11 @@ dist/            编译产物(gitignored)
 var/             本地运行态(gitignored):data/ 数据库、log/ 日志
 ```
 
-完整目录范式与"写文件先想归属"铁律见 CLAUDE.md §2。
+完整目录范式与"写文件先想归属"铁律见 AGENTS.md §2。
 
 ## 深入阅读
 
-- **[CLAUDE.md](../CLAUDE.md)** — 工程宪法(必读)
+- **[AGENTS.md](../AGENTS.md)** — 工程宪法(必读)
 - **[CONTEXT.md](../CONTEXT.md)** — 领域术语表(机场/订阅地址/节点/聚合/刷新)
 - **[架构决策记录](adr/)** — 为什么这么设计
 - **[生产部署指南](DEPLOY.md)** — 运维视角的部署流程

@@ -1,11 +1,11 @@
 ---
-name: dev-workflow
-description: ProxyHub 日常开发统一范式——编译、运行、测试、文件归属(CLAUDE.md §2 目录基本法的执行流程)
+name: backend
+description: ProxyHub Go 后端开发范式——改 internal//cmd/ 代码、文件归属、构建与测试纪律时执行(AGENTS.md §2 目录基本法与 §5 make 入口的执行流程)
 ---
 
-# 日常开发范式(dev-workflow)
+# 后端开发范式(backend)
 
-一切日常开发动作按本流程执行。目录归属的最终依据是 `CLAUDE.md` §2,本文件是操作层。
+目录归属的最终依据是 `AGENTS.md` §2,构建/测试入口的最终依据是 §5,本 skill 是操作层。
 
 ## 1. 写文件之前:先定归属
 
@@ -18,7 +18,7 @@ description: ProxyHub 日常开发统一范式——编译、运行、测试、�
 | 编译产物 | `dist/`(make 已保证) | 根目录 `go build` 裸跑(会生成 `./proxyhub`、`./server`) |
 | 运行态(数据库/日志) | `var/data`、`var/log`(代码默认路径必须落这里,写入方负责 `MkdirAll`) | 任何写到仓库根的默认路径 |
 | 测试临时数据 | `.test/`(集成)/ `t.TempDir()`(单元) | 提交 `.test/` 内容 |
-| 文档 | 按 `CLAUDE.md` §3:术语/ADR/设计/运维 | 过程产物(计划/总结/验证报告) |
+| 文档 | 按 `AGENTS.md` §3:术语/ADR/设计/运维 | 过程产物(计划/总结/验证报告) |
 
 口诀:**根目录只放入口与控制文件;产物进 dist,运行态进 var,测试临时进 .test/testdata。**
 
@@ -27,47 +27,27 @@ description: ProxyHub 日常开发统一范式——编译、运行、测试、�
 ```bash
 make build          # 完整构建:前端 npm build → 后端 go build -o dist/proxyhub
 make build-backend  # 只改了 Go
-make build-frontend # 只改了 web/(注意:go:embed,改前端后必须 make build 才会进二进制)
 ```
 
 **禁止任何形式的裸 `go build`**——裸 `go build ./cmd/server`(无 `-o`)会把 `server` 二进制掉在根目录(历史事故);裸 `go test -c` 会掉 `*.test`。产生文件的动作只经 make。
 
-## 3. 运行与调试
-
-```bash
-make restart        # 重启服务(停旧启新,幂等;日志 var/log/proxyhub.log,pid 同目录)
-make start          # 后台启动(已在运行会提示,不会起第二个实例)
-make stop           # 停止
-make status         # 状态
-tail -f var/log/proxyhub.log
-make dev-frontend   # 前端热更新开发(vite dev server,HMR,代理 /api 与 /sub 到 8080)
-make dev-backend    # 后端开发(config.example.yaml,storage 指向 var/data/data.db)
-```
-
-运行生命周期只有 make 一个入口(`start.sh` 已退役删除,勿再引用)。
-
-两条开发回路,按目的选:
-- **迭代回路**(边改边看):后端一个实例(`make start`)+ `make dev-frontend`,前端改动 HMR 秒级生效,不用 build 不用重启;改后端则 `make restart`。
-- **验证回路**(验收嵌入产物):`make build && make restart`——go:embed 决定了 dev server 验证不了最终二进制里的前端,这一步不可省。
-
-重启验证:`curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/` 返回 200;日志(`var/log/`)无新增 ERROR。
-
-## 4. 测试(唯一入口:make)
+## 3. 测试(唯一入口:make)
 
 ```bash
 make test         # Go 全量
 make test-shell   # 安装/运维脚本六套件
-make lint-frontend # 前端 ESLint + Prettier(改前端必跑,warn 不阻塞,格式不贴合会失败)
 make check        # 签入前聚合:vet + test + test-shell + lint-frontend
 ```
-
-前端开发循环:改前端 → `make lint-frontend` → `make build` → `make restart`(或走迭代回路免 build,见 §3)。
 
 唯一豁免:定向调试允许 `go test ./internal/<pkg>/ -run <TestName>`(纯读操作,不落盘)。
 
 - 新功能先写测试(TDD):同包 `_test.go`,fixture 必须合成值(`example.com` + 全零 UUID)
-- 既有失败 3 处已被 `make test` 显式隔离(Makefile 有清单);`make test-all` 跑全量时它们红是预期,别"修",也别扩大隔离名单
+- 测试套件保持全绿,**无隔离名单**(AGENTS.md §6);发现失败先定位原因,再决定修代码还是修断言,不许用 `-skip` 掩盖回归
 - 集成测试产生的数据只能落在 `.test/`
+
+## 4. 数据库相关改动
+
+涉及 schema/迁移/数据路径时,同时执行 `database` skill。
 
 ## 5. 提交之前
 

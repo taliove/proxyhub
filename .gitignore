@@ -70,21 +70,13 @@ cmd/server/server
 # Added by code-review-graph
 .code-review-graph/
 
-# code-review-graph local tooling (machine-specific / duplicates of CLAUDE.md)
-AGENTS.md
-CODEBUDDY.md
-GEMINI.md
-QODER.md
-.cursorrules
-.windsurfrules
-opencode.jsonc
-.codebuddy/
-.gemini/
-.kiro/
-.qoder/
-.vscode/
+# code-review-graph tooling artifacts (tool-managed, regenerable)
 .github/code-review-graph.instruction.md
-.claude/skills/debug-issue/
-.claude/skills/explore-codebase/
-.claude/skills/refactor-safely/
-.claude/skills/review-changes/
+
+# Editor-local config
+.vscode/
+
+# AI tool mirrors were removed 2026-07-28 (GEMINI.md / CODEBUDDY.md /
+# .cursorrules / .windsurfrules / .codebuddy/ / .gemini/ / .kiro/ / .qoder/).
+# AGENTS.md is the single master and IS tracked; do not recreate mirrors
+# or re-add ignore entries that hide them. See AGENTS.md header.

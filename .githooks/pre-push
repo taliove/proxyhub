@@ -1,5 +1,5 @@
 #!/bin/sh
-# Full mechanical gate before pushing (CLAUDE.md §6).
+# Full mechanical gate before pushing (AGENTS.md §6).
 # Repo-health and full-history audit steps stay in .claude/skills/pre-push.
 set -e
 make check
