@@ -20,6 +20,11 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config file: %w", err)
 	}
 
+	// 环境变量覆盖:容器部署不便改 yaml,setup token 走注入。
+	if v := os.Getenv("PROXYHUB_SETUP_TOKEN"); v != "" {
+		cfg.Server.SetupToken = v
+	}
+
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}

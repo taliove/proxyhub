@@ -232,7 +232,8 @@ func testStore(t *testing.T) *store.Store {
 	return st
 }
 
-// doSetup 走一遍初始化向导
+// doSetup 走一遍初始化向导。/api/setup 只接受本地直连(或 setup token),
+// 测试从 loopback 直连发出,与真实本地部署一致。
 func doSetup(t *testing.T, h http.Handler, username, password string) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{
@@ -241,7 +242,7 @@ func doSetup(t *testing.T, h http.Handler, username, password string) *httptest.
 		"security": map[string]any{"ban_threshold": 3, "ban_duration": "1h"},
 	})
 	req := httptest.NewRequest("POST", "/api/setup", bytes.NewReader(body))
-	req.RemoteAddr = "10.0.0.1:1000"
+	req.RemoteAddr = "127.0.0.1:1000"
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	return w

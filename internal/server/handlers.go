@@ -16,6 +16,15 @@ import (
 
 // handleSetup 系统初始化
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	// 初始化等于接管管理员账号,必须先过调用方闸门:
+	// 本地直连(无转发头的 loopback)或经受信反代解析出的本地客户端可信;
+	// 其余调用方必须出示 server.setup_token(PROXYHUB_SETUP_TOKEN)。
+	// 否则直接暴露 0.0.0.0 的部署里,先到者即可抢走管理员账号。
+	if !s.setupCallerAllowed(r) {
+		http.Error(w, "setup requires a local connection or a valid setup token", http.StatusForbidden)
+		return
+	}
+
 	// 检查是否已初始化
 	initialized, _ := s.st.IsSystemInitialized()
 	if initialized {

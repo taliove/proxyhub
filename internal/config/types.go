@@ -22,6 +22,10 @@ type ServerConfig struct {
 	// X-Forwarded-For / X-Real-IP 才会被采信。未设置(缺省)沿用 loopback
 	// 惯例(Caddy 拓扑);显式置为空列表表示不信任任何对端(直连暴露部署)。
 	TrustedProxies []string `yaml:"trusted_proxies"`
+	// SetupToken 允许非本地直连的调用方执行 POST /api/setup(首次初始化)。
+	// 本地直连(无转发头的 loopback)永远不需要 token。也可经环境变量
+	// PROXYHUB_SETUP_TOKEN 注入(优先级高于配置文件)。
+	SetupToken string `yaml:"setup_token"`
 }
 
 type HealthCheckConfig struct {
