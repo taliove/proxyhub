@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/taliove/proxyhub/internal/subscription"
 )
@@ -161,11 +162,13 @@ func TestExamJobManager_CompleteSavesHistory(t *testing.T) {
 	var mu sync.Mutex
 	var savedKey string
 	var savedReport ExamReport
+	completed := make(chan struct{}, 1)
 	onComplete := func(userID int64, k string, r ExamReport) {
 		mu.Lock()
 		savedKey = k
 		savedReport = r
 		mu.Unlock()
+		completed <- struct{}{}
 	}
 
 	se := newScriptedExam()
@@ -179,6 +182,14 @@ func TestExamJobManager_CompleteSavesHistory(t *testing.T) {
 	se.events <- ExamEvent{Phase: "done"}
 	close(se.events)
 	drainExam(s)
+
+	// onComplete 由 jobs 管理器在 finalize 后经独立 goroutine 触发,与 SSE drain
+	// 无先后保证;必须等回调到达再断言(旧实现直接断言,CI 高负载下 flake)。
+	select {
+	case <-completed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("onComplete not called within 5s after job completion")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()

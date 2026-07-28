@@ -59,15 +59,17 @@ func TestMeasureBaselineUplink_Timeout(t *testing.T) {
 }
 
 // TestMeasureBaselineUplink_InsufficientData 测试上行数据不足:应返回错误。
+// 确定性构造:slice 为负 -> durationReader 首次 Read 即 EOF(deadline 已过),
+// 上传恒为 0 字节,不依赖墙钟时序(旧实现用 10ms/20ms 窗口,快机器上会上传够数据而 flake)。
 func TestMeasureBaselineUplink_InsufficientData(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
 	client := &http.Client{}
-	slice := 10 * time.Millisecond // 极短,上传不够
-	hard := 20 * time.Millisecond
+	slice := -time.Millisecond // deadline 已过:数据源立即 EOF,上传恒 0 字节
+	hard := 5 * time.Second
 
 	_, err := measureBaselineUplink(context.Background(), client, srv.URL, slice, hard)
 	if err == nil {
