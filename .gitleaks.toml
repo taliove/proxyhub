@@ -3,7 +3,7 @@ title = "ProxyHub repository secret scanning policy"
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "Xray pin metadata contains only public release asset names and SHA-256 checksums"
 condition = "AND"
 regexTarget = "line"
@@ -13,4 +13,15 @@ paths = [
 ]
 regexes = [
   '''^XRAY_LINUX_(AMD64|ARM64)_SHA256=[0-9a-f]{64}$''',
+]
+
+[[allowlists]]
+description = "Site path validation test fixture, a deliberate random string, not a credential"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''(^|/)internal/sitepath/sitepath_test\.go$''',
+]
+regexes = [
+  '''X9k-Qm_2Tz7pLw4Nc8Vb''',
 ]
