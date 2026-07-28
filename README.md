@@ -87,12 +87,15 @@ bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/instal
 
 ```bash
 docker run -d \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
   -v ./data:/data \
   --name proxyhub \
   taliove/proxyhub:latest
 ```
 
+> 端口必须绑回环(`127.0.0.1:8080:8080`):新装实例的 `/api/setup` 未鉴权,
+> 直接暴露到网络等于把管理员账号交给最先到达的人。确需远程初始化时,
+> 设置 `PROXYHUB_SETUP_TOKEN` 并在初始化请求头携带 `X-Setup-Token`。
 > Docker 部署仅适合本地开发。生产环境请使用一键安装器(自动配置 HTTPS)。
 
 ## 常见问题

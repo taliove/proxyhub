@@ -28,6 +28,24 @@ ProxyHub 不实现 TLS。所有 HTTPS 流量由 Caddy 终止，Caddy 自动管�
 
 **防护目标**:
 - 强制加密传输（订阅地址包含敏感节点信息）
+
+### X-Forwarded-For 信任模型
+
+ProxyHub 的 IP 防线（IP2Ban、蜜罐、登录验证码、IP 黑名单、订阅拉取限频）全部以"客户端 IP"为键，因此转发头的可信性是整套防线的前提：
+
+- **只信受信对端**:仅当 TCP 对端是受信反代时才采信 `X-Forwarded-For` / `X-Real-IP`（缺省 = loopback 对端，即 Caddy 拓扑；可用 `server.trusted_proxies` 显式声明 CIDR，直连暴露部署必须显式置空 `trusted_proxies: []`）。
+- **Caddy 替换而非追加**：安装器生成的 Caddy 片段用 `header_up X-Forwarded-For {remote_host}` 整体替换转发头，调用方自带的 XFF 前缀活不过代理跳。
+- **豁免只看直连**:所有 loopback 豁免（登录免封、蜜罐豁免、验证码豁免、黑名单逃生口）只对"无转发头的 loopback 直连"生效。转发来的 `127.0.0.1` 是调用方可伪造的值，一律不豁免。
+- **禁止伪造即禁止枚举**:伪造 XFF 不能把调用方变成"另一个 IP"之外的任何东西；它既骗不过封禁（封的是解析后的有效 IP），也骗不过黑名单（黑名单检查在豁免判定之后照常执行）。
+
+### `/api/setup` 初始化闸门
+
+首次初始化等于接管管理员账号，因此 `/api/setup` 只接受两类调用方：
+
+1. 本地调用方（loopback 直连，或经受信反代解析出的本机客户端）;
+2. 出示 `server.setup_token`（或环境变量 `PROXYHUB_SETUP_TOKEN`）的调用方，经 `X-Setup-Token` 头常数时间比对。
+
+安装器的一键部署走 `proxyhub init` CLI 初始化（密码经 stdin 管道，不进 argv/日志），不依赖该 HTTP 端点。Docker 部署必须把端口绑回环（`-p 127.0.0.1:8080:8080`)；把未初始化实例直接暴露到网络，等价于把管理员账号交给最先到达的人。
 - 自动证书续期（避免人为失误）
 - HTTP/2 和现代 TLS 协议支持
 
@@ -322,6 +340,8 @@ ProxyHub 拉取机场订阅和健康检查时，**强制验证 TLS 证书**。�
 **假设前提**:
 - 系统 CA 证书库是最新的（`ca-certificates` 包）
 - 机场订阅 URL 使用有效 HTTPS 证书
+
+**边界说明（`skip-cert-verify` 透传）**:上述红线约束的是 ProxyHub 自己的出站连接（拉订阅、健康检查）。有一种情况生成给终端客户端的订阅配置会带 `skip-cert-verify: true`：机场自己的分享链接里带 `insecure=1` 时，该参数被如实透传到 trojan/anytls 节点配置。这是机场侧参数对终端客户端的忠实传递，不是 ProxyHub 关闭自己的验证——ProxyHub 拉取该机场订阅时仍然完整验证 TLS。是否信任带 `insecure=1` 的机场属于运营决策；如不接受，应拒绝接入该机场而不是由 ProxyHub 静默改写其参数。
 
 ### DNS 隐私
 
