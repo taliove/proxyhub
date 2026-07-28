@@ -274,7 +274,6 @@ const copyUrl = async () => {
     ElMessage.error(`复制失败: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
-
 </script>
 
 <style scoped>

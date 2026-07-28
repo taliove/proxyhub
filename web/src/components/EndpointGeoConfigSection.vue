@@ -72,12 +72,7 @@ import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 import type { Endpoint } from '@/types'
 import { updateEndpointGeoConfig } from '@/api/endpoints'
-import {
-  COUNTRY_OPTIONS,
-  geoModeDesc,
-  joinGeoList,
-  parseGeoList
-} from '@/utils/geoconfig'
+import { COUNTRY_OPTIONS, geoModeDesc, joinGeoList, parseGeoList } from '@/utils/geoconfig'
 
 const props = defineProps<{
   endpoint: Endpoint

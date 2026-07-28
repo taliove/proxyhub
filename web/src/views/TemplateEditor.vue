@@ -17,36 +17,15 @@
       <el-button :disabled="!selectedTemplate || autosaving" @click="handleReset">
         重设默认
       </el-button>
-      <el-dropdown
+      <TemplateHistoryDropdown
         :disabled="!selectedTemplate"
-        trigger="click"
+        :versions="versions"
+        :versions-loading="versionsLoading"
+        :previewing-version="previewingVersion"
+        :current-version="currentVersion"
         @command="handleVersionCommand"
         @visible-change="onHistoryDropdownVisibleChange"
-      >
-        <el-button :disabled="!selectedTemplate">
-          历史
-          <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-        </el-button>
-        <template #dropdown>
-          <el-dropdown-menu v-loading="versionsLoading">
-            <el-dropdown-item v-if="versions.length === 0" disabled>暂无历史版本</el-dropdown-item>
-            <el-dropdown-item
-              v-for="ver in versions"
-              :key="ver.version"
-              :command="{ action: 'preview', version: ver.version }"
-              :disabled="previewingVersion === ver.version"
-            >
-              <div class="version-item">
-                <span>版本 {{ ver.version }}</span>
-                <span class="version-time">{{ formatTime(ver.created_at) }}</span>
-                <el-tag v-if="ver.version === currentVersion" type="success" size="small"
-                  >当前</el-tag
-                >
-              </div>
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+      />
       <div class="autosave-status">
         <span v-if="autosaving" class="status-saving">保存中…</span>
         <span v-else-if="validationError" class="status-error" :title="validationError">
@@ -146,17 +125,18 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ArrowDown } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import TemplateList from '@/components/TemplateList.vue'
 import YamlEditor from '@/components/YamlEditor.vue'
 import YamlMergeView from '@/components/YamlMergeView.vue'
+import TemplateHistoryDropdown from '@/components/TemplateHistoryDropdown.vue'
 import { useLayoutStore } from '@/stores/layout'
 import { useTemplateAutosave } from '@/composables/useTemplateAutosave'
 import { useTemplateVersions } from '@/composables/useTemplateVersions'
 import { useTemplateOperations } from '@/composables/useTemplateOperations'
 import { useTemplateSelection } from '@/composables/useTemplateSelection'
+import { useTemplateVersionPreview } from '@/composables/useTemplateVersionPreview'
 import type { Template } from '@/api/templates'
 
 const layout = useLayoutStore()
@@ -197,53 +177,22 @@ autosave.setupAutosave(
   }
 )
 
-// Handle history dropdown commands
-async function handleVersionCommand(command: { action: string; version: number }) {
-  if (command.action === 'preview' && selectedTemplate.value) {
-    await versionHistory.previewVersion(selectedTemplate.value.name, command.version, (content) => {
-      previewContent.value = content
-      validationError.value = ''
-    })
-  }
-}
-// Exit preview mode
-function handleExitPreview() {
-  versionHistory.exitPreview(originalContent.value, (content) => {
-    editorContent.value = content
-    editorRef.value?.setValue(content)
-    previewContent.value = ''
-    validationError.value = ''
-  })
-}
-// Restore a version
-async function handleRestoreVersion() {
-  if (previewingVersion.value === null || !selectedTemplate.value) return
-  // Restore = persist the previewed historical version as a new save,
-  // not the current editor pane (see CONTEXT.md "Rollback").
-  const contentToRestore = previewContent.value
-  const templateName = selectedTemplate.value.name
-  await versionHistory.restoreVersion(
-    templateName,
-    previewingVersion.value,
-    contentToRestore,
-    async () => {
-      originalContent.value = contentToRestore
-      editorContent.value = contentToRestore
-      editorRef.value?.setValue(contentToRestore)
-      previewContent.value = ''
-      await versionHistory.loadVersions(templateName)
-    },
-    async (content) => {
-      const result = await autosave.triggerAutosave(templateName, content)
-      return result ?? false
-    }
-  )
-}
-function onHistoryDropdownVisibleChange(visible: boolean) {
-  if (visible && selectedTemplate.value) {
-    versionHistory.loadVersions(selectedTemplate.value.name)
-  }
-}
+const {
+  handleVersionCommand,
+  handleExitPreview,
+  handleRestoreVersion,
+  onHistoryDropdownVisibleChange
+} = useTemplateVersionPreview({
+  versionHistory,
+  autosave,
+  selectedTemplate,
+  originalContent,
+  editorContent,
+  previewContent,
+  editorRef,
+  validationError
+})
+
 async function loadTemplates() {
   const tmplList = await templateOps.loadTemplates()
   if (tmplList.length > 0 && !selectedTemplate.value) {
@@ -372,19 +321,6 @@ onMounted(async () => {
 
 .exit-preview-btn {
   margin-left: var(--ph-space-1);
-}
-
-.version-item {
-  display: flex;
-  align-items: center;
-  gap: var(--ph-space-2);
-  min-width: 200px;
-}
-
-.version-time {
-  font-size: var(--ph-text-xs);
-  color: var(--ph-text-secondary);
-  margin-left: auto;
 }
 
 .autosave-status {
