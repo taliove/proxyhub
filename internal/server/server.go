@@ -114,6 +114,16 @@ type Server struct {
 	// mfaPending carries the handoff between the password stage of login and
 	// POST /api/login/mfa. Memory-only by design (5 minute TTL).
 	mfaPending *MFAPendingManager
+	// subGuards is the ordered /sub pull guard chain (pull-guard ticket 04).
+	// Runs only after path+token+enabled validation; see subguard.go.
+	subGuards []subGuard
+	// pullRateLimit is the in-memory sliding window backing the rate limit
+	// guard. Memory-only: counters reset on restart by design.
+	pullRateLimit *pullRateLimiter
+	// pullRateThreshold caches the pull_rate_limit_per_hour setting so the
+	// guard does not read the DB on every /sub request. Invalidated on
+	// settings save.
+	pullRateThreshold *cachedThreshold
 }
 
 // New 创建 HTTP 服务
@@ -131,7 +141,12 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, 
 		countryLookup:    geoip.LookupCountry,
 		captcha:          captcha.NewService(captcha.Options{}),
 		mfaPending:       NewMFAPendingManager(),
+		pullRateLimit:    newPullRateLimiter(),
 	}
+	s.pullRateThreshold = newCachedThreshold(pullRateThresholdTTL, s.pullRateLimitPerHour)
+	// Guard chain is built after the limiter and the threshold cache exist;
+	// order is defined in newSubGuardChain (pull-guard ticket 04).
+	s.subGuards = s.newSubGuardChain()
 
 	// 体检任务管理器:runner 复用 detectionService.ExamStream(逻辑零改动),
 	// 自然完成回调把落历史从 handler 搬进任务生命周期(与连接无关)。
@@ -771,7 +786,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /", s.handleSPA)
 
 	// Site Path 边界：配置后仅 /<site-path>/ 下可达，其余一律 404；未配置则透传
-	return s.sitePathMiddleware(mux)
+	// 整站拒止(拉取防护 ticket 03)：命中 scope=global 规则的来源一律 404，回环永远放行
+	return s.sitePathMiddleware(s.ipFilterMiddleware(mux))
 }
 
 // handleStatus 返回系统是否已初始化（前端据此决定进入向导还是登录）
@@ -854,6 +870,13 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	if !ep.Enabled {
 		s.recordPullStatus(r, ep.ID, store.PullStatusDisabled)
 		http.NotFound(w, r)
+		return
+	}
+
+	// 防护链(pull-guard ticket 04):只有走到这里的请求(path+token 正确、地址启用)
+	// 才进入守卫判定 —— 无效 token 永远只得统一 404,守卫响应(429/403)不会
+	// 泄漏给不持有效 token 的调用方。链内留痕与响应由 runSubGuards 统一负责。
+	if !s.runSubGuards(w, r, ep) {
 		return
 	}
 

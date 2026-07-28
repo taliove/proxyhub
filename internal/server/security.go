@@ -36,6 +36,10 @@ type securityPolicy struct {
 	// banned_ips.fail_count >= 阈值即要求验证码(无记录视为 0)。
 	// 0 表示常驻要求验证码。
 	CaptchaTriggerThreshold int
+	// PullRateLimitPerHour 单 IP × 单订阅地址每小时允许的拉取次数
+	// (pull-guard ticket 04,设置键 pull_rate_limit_per_hour)。
+	// 0 表示关闭限频。
+	PullRateLimitPerHour int
 }
 
 const (
@@ -51,6 +55,7 @@ func (s *Server) loadSecurityPolicy() securityPolicy {
 		BanThreshold:            defaultBanThreshold,
 		BanDuration:             defaultBanDuration,
 		CaptchaTriggerThreshold: defaultCaptchaTriggerThreshold,
+		PullRateLimitPerHour:    defaultPullRateLimitPerHour,
 	}
 
 	settings, err := s.st.GetSystemSettings()
@@ -72,6 +77,13 @@ func (s *Server) loadSecurityPolicy() securityPolicy {
 	if v := settings["captcha_trigger_threshold"]; v != "" {
 		if n, err := parseNonNegativeInt(v); err == nil {
 			policy.CaptchaTriggerThreshold = n
+		}
+	}
+	// 拉取限频阈值允许 0(= 关闭限频),同样走 parseNonNegativeInt;
+	// 解析失败(空值/负数/非数字)一律保留默认,不静默关闭防护。
+	if v := settings["pull_rate_limit_per_hour"]; v != "" {
+		if n, err := parseNonNegativeInt(v); err == nil {
+			policy.PullRateLimitPerHour = n
 		}
 	}
 	return policy

@@ -348,6 +348,10 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		// 让缓存的防护阈值立即生效,不等 TTL(pull-guard ticket 04)。
+		// 不做 nil 判空:New 必然初始化,漏初始化应当在第一个用例就 panic,
+		// 而不是退化成"阈值永远读旧值"的静默错误。
+		s.pullRateThreshold.invalidate()
 		s.logger.Info("settings saved (global)")
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 		return
