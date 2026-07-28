@@ -50,6 +50,8 @@ func main() {
 // 调用方按服务启动继续处理。
 func runSubcommand(name string, args []string) (handled bool, err error) {
 	switch name {
+	case "init":
+		return true, runInit(args, os.Stdin, os.Stdout)
 	case "state-fingerprint":
 		return true, runStateFingerprint(args)
 	case "reset-mfa":
