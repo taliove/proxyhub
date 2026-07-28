@@ -589,6 +589,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/endpoints/{id}/name-config", guard(s.handleUpdateEndpointNameConfig))
 	mux.HandleFunc("PUT /api/endpoints/{id}/template", guard(s.handleUpdateEndpointTemplate))
 	mux.HandleFunc("PUT /api/endpoints/{id}/conditions", guard(s.handleUpdateEndpointConditions))
+	mux.HandleFunc("PUT /api/endpoints/{id}/geo-config", guard(s.handleUpdateEndpointGeoConfig))
 	mux.HandleFunc("POST /api/endpoints/preview-conditions", guard(s.handlePreviewConditions))
 	mux.HandleFunc("DELETE /api/endpoints/{id}", guard(s.handleDeleteEndpoint))
 	mux.HandleFunc("GET /api/endpoints/{id}/stats", guard(s.handleEndpointStats))
@@ -1422,6 +1423,56 @@ func (s *Server) handleUpdateEndpointNameConfig(w http.ResponseWriter, r *http.R
 		}
 		// 非法 name_mode 等参数错误回 400,其余 500
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleUpdateEndpointGeoConfig sets the per-address geo allowlist (pull-guard
+// ticket 07). PUT /api/endpoints/{id}/geo-config with
+// {geo_mode, geo_countries, geo_provinces}.
+//
+// Every field is optional in the wire sense but not in the stored sense: this is
+// a full replace of the three columns, so an omitted geo_countries clears the
+// country list. That is deliberate - a partial-update variant would need a
+// three-way "absent vs empty vs set" encoding for a surface where "empty means
+// do not judge" is already load bearing. The read side (GET /api/endpoints)
+// carries the current values, so a client always has the full triple to send
+// back. An unknown geo_mode is a 400; the geo columns are the only ones this
+// route touches, so a client that never calls it keeps the inert off default.
+func (s *Server) handleUpdateEndpointGeoConfig(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		GeoMode      string `json:"geo_mode"`
+		GeoCountries string `json:"geo_countries"`
+		GeoProvinces string `json:"geo_provinces"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if !store.IsValidGeoMode(req.GeoMode) {
+		http.Error(w, "invalid geo_mode", http.StatusBadRequest)
+		return
+	}
+
+	err = s.st.UpdateEndpointGeoConfigForUser(
+		EffectiveUserID(scope), id, req.GeoMode, req.GeoCountries, req.GeoProvinces)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})

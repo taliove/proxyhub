@@ -43,6 +43,13 @@ type Endpoint struct {
 	// TemplateName 指定订阅地址使用的模板名称(ticket endpoint-template-02)。
 	// 空串=跟随用户默认模板,按四级回退链解析。软引用:名称不存在时回退,不报错。
 	TemplateName string `json:"template_name"`
+
+	// 地域白名单(pull-guard ticket 07,语义见 endpoint_geo.go):
+	// GeoMode off(默认)/observe/enforce;GeoCountries/GeoProvinces 逗号分隔,
+	// 空=该维度不判(所以 enforce + 双空列表仍然全放行)。
+	GeoMode      string `json:"geo_mode"`
+	GeoCountries string `json:"geo_countries"`
+	GeoProvinces string `json:"geo_provinces"`
 }
 
 // URL 返回订阅地址的相对路径
@@ -60,7 +67,7 @@ func randomHex(bytes int) (string, error) {
 }
 
 // endpointColumns 查询列表共用的列清单(ticket 07 起带 user_id,读取侧三处保持一致)。
-const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name`
+const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name, geo_mode, geo_countries, geo_provinces`
 
 // CreateEndpoint 创建订阅地址（随机 Path + Token）。
 // 未指定属主(旧调用/直接库调用)时归一到首个 super_admin(ticket 07 Invariant B);
@@ -332,7 +339,8 @@ func scanEndpointFrom(r rowScanner) (*Endpoint, error) {
 	var ep Endpoint
 	var enabled int
 	if err := r.Scan(&ep.ID, &ep.Alias, &ep.Path, &ep.Token, &enabled, &ep.CreatedAt,
-		&ep.NameMode, &ep.NameTemplate, &ep.Conditions, &ep.UserID, &ep.TemplateName); err != nil {
+		&ep.NameMode, &ep.NameTemplate, &ep.Conditions, &ep.UserID, &ep.TemplateName,
+		&ep.GeoMode, &ep.GeoCountries, &ep.GeoProvinces); err != nil {
 		return nil, err
 	}
 	ep.Enabled = enabled != 0

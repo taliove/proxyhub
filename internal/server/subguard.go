@@ -97,8 +97,29 @@ func blockPull(status string, respond func(w http.ResponseWriter)) subGuardVerdi
 // recording the status and writing the response stays here, so a guard cannot
 // forget to leave a trace or accidentally answer twice.
 func (s *Server) newSubGuardChain() []subGuard {
+	blacklist := newPullBlacklistGuard(s.st, s.logger, s.pullEscalation())
 	return []subGuard{
-		newRateLimitGuard(s.pullRateLimit, s.pullRateThreshold.get),
+		// ticket 05: the blacklist is always first. An already banned source must
+		// not consume (nor be credited with) rate limiter quota, and answering it
+		// here also stops the escalation chain from re-counting a source it has
+		// already dealt with. The lookup is served from the store's in-memory rule
+		// cache, so being first costs no query.
+		blacklist,
+		// ticket 07: geo runs ahead of the rate limit so a client pulling from a
+		// disallowed location is recorded as geo_blocked rather than having that
+		// reason masked by a rate_limited status once it starts hammering. It
+		// costs no query - the geo columns ride on the endpoint row the chain
+		// already has, and the lookup is an in-memory walk of the embedded
+		// database - so putting it first does not open an amplification path.
+		newGeoAllowlistGuard(s.countryLookup, nil),
+		// ticket 05 wraps ticket 04's guard: a rate_limited verdict also feeds the
+		// escalation chain, which auto-blacklists a source that keeps hammering.
+		// The wrapper reports the inner guard's name, so the chain still reads as
+		// "rate_limit" in logs.
+		newEscalatingGuard(
+			newRateLimitGuard(s.pullRateLimit, s.pullRateThreshold.get),
+			blacklist.escalator,
+		),
 	}
 }
 

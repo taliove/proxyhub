@@ -63,7 +63,13 @@ CREATE TABLE IF NOT EXISTS endpoints (
 	path        TEXT NOT NULL UNIQUE,
 	token       TEXT NOT NULL,
 	enabled     INTEGER NOT NULL DEFAULT 1,
-	created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	-- 地域白名单(pull-guard ticket 07):geo_mode off/observe/enforce,
+	-- geo_countries/geo_provinces 逗号分隔,空=该维度不判。语义见 endpoint_geo.go。
+	-- 新库由本 schema 建出;既有库靠 migrateEndpointGeo 幂等补列(同 pull_logs.status 双路径)。
+	geo_mode      TEXT NOT NULL DEFAULT 'off',
+	geo_countries TEXT NOT NULL DEFAULT '',
+	geo_provinces TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS pull_logs (
@@ -412,9 +418,22 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 自动升级链计数索引(拉取防护 ticket 05):(ip, status, pulled_at) 让
+	// "某 IP 最近 1 小时 rate_limited 行数" 走索引搜索而非全表扫描 —— 该查询
+	// 跑在 /sub 热路径上被拒的那一侧,正是攻击者能控制的请求。
+	if err := s.migratePullLogEscalationIndex(); err != nil {
+		return err
+	}
+
 	// 统一 IP 规则表(拉取防护 ticket 02):ip_access_rules 承载整站拒止(scope=global)
 	// 与拉取黑名单(scope=sub),expires_at 为空表示永久。
 	if err := s.EnsureIPAccessRulesSchema(); err != nil {
+		return err
+	}
+
+	// 订阅地址地域白名单(拉取防护 ticket 07):endpoints 补 geo_mode/geo_countries/
+	// geo_provinces 三列,默认 off + 双空列表 = 存量订阅行为不变。
+	if err := s.migrateEndpointGeo(); err != nil {
 		return err
 	}
 

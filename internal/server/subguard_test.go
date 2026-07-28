@@ -203,14 +203,33 @@ func TestSubGuards_NilResponderFallsBackTo404(t *testing.T) {
 	}
 }
 
-// TestSubGuardChain_DefaultRegistration the shipped chain contains the rate
-// limit guard, so a fresh server enforces the pull limit without extra wiring.
+// TestSubGuardChain_DefaultRegistration the shipped chain carries the guards a
+// fresh server must enforce without extra wiring, in the order that decides
+// which reason a blocked pull is recorded under. geo sits ahead of the rate
+// limit so a pull from a disallowed location is recorded as geo_blocked instead
+// of having that reason masked by rate_limited once the client starts hammering.
 func TestSubGuardChain_DefaultRegistration(t *testing.T) {
 	srv, _ := newTestServer(t, nil)
-	if len(srv.subGuards) == 0 {
-		t.Fatal("default guard chain is empty")
+	names := make([]string, 0, len(srv.subGuards))
+	for _, g := range srv.subGuards {
+		names = append(names, g.name())
 	}
-	if got := srv.subGuards[0].name(); got != "rate_limit" {
-		t.Errorf("first guard = %q, want rate_limit", got)
+	for _, want := range []string{"geo_allowlist", "rate_limit"} {
+		if indexOfGuard(names, want) < 0 {
+			t.Errorf("guard %q missing from the default chain %v", want, names)
+		}
 	}
+	if geo, rate := indexOfGuard(names, "geo_allowlist"), indexOfGuard(names, "rate_limit"); geo >= 0 && rate >= 0 && geo > rate {
+		t.Errorf("chain order = %v, want geo_allowlist before rate_limit", names)
+	}
+}
+
+// indexOfGuard returns the position of name in names, or -1.
+func indexOfGuard(names []string, name string) int {
+	for i, n := range names {
+		if n == name {
+			return i
+		}
+	}
+	return -1
 }
