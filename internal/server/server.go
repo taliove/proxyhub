@@ -746,6 +746,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/audit/ban", adminGuard(s.handleBanIP))
 	mux.HandleFunc("POST /api/audit/unban", adminGuard(s.handleUnbanIP))
 
+	// IP 访问规则(拉取防护 ticket 02):整站拒止与拉取黑名单的统一管理面。
+	mux.HandleFunc("GET /api/admin/ip-rules", adminGuard(s.handleListIPRules))
+	mux.HandleFunc("POST /api/admin/ip-rules", adminGuard(s.handleCreateIPRule))
+	mux.HandleFunc("DELETE /api/admin/ip-rules/{id}", adminGuard(s.handleDeleteIPRule))
+	mux.HandleFunc("POST /api/admin/ip-rules/{id}/promote", adminGuard(s.handlePromoteIPRule))
+
 	// 超管视角切换(ticket 09):进入/退出用户空间,查询当前生效视角。
 	// 持久化在 session 上;之后所有请求经 requireAuth 自动套用 acting target。
 	mux.HandleFunc("POST /api/admin/switch-user", adminGuard(s.handleAdminSwitchUser))
@@ -828,8 +834,11 @@ func clientIP(r *http.Request) string {
 func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 
+	// 校验段的每个早退都留痕(pull-guard ticket 01):对外一律 404,内部记原因。
 	ep, err := s.st.GetEndpointByPath(path)
 	if err != nil {
+		// path 未知:没有可归属的订阅地址,记全局桶(endpoint_id=0)。
+		s.recordPullStatus(r, 0, store.PullStatusBadToken)
 		http.NotFound(w, r)
 		return
 	}
@@ -837,11 +846,13 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	// Token 校验（常数时间比较，防时序攻击）
 	token := r.URL.Query().Get("token")
 	if subtle.ConstantTimeCompare([]byte(token), []byte(ep.Token)) != 1 {
+		s.recordPullStatus(r, ep.ID, store.PullStatusBadToken)
 		http.NotFound(w, r) // 故意返回 404 而不是 403，不暴露端点存在
 		return
 	}
 
 	if !ep.Enabled {
+		s.recordPullStatus(r, ep.ID, store.PullStatusDisabled)
 		http.NotFound(w, r)
 		return
 	}
@@ -881,14 +892,10 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 记录拉取统计
-	if err := s.st.RecordPull(store.PullRecord{
-		EndpointID: ep.ID,
-		IP:         clientIP(r),
-		UserAgent:  r.Header.Get("User-Agent"),
-	}); err != nil {
-		s.logger.Warn("record pull failed", "error", err)
-	}
+	// 记录拉取统计:内容已生成成功,本次为真实下发。
+	// 池空(503)与生成失败(500)两个出口不留痕——那是服务端自身状态,
+	// 不是客户端可归因的拉取结果,也没有对应的 status 取值。
+	s.recordPullStatus(r, ep.ID, store.PullStatusOK)
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Profile-Update-Interval", "1") // 建议客户端每小时更新

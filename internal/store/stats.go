@@ -10,16 +10,26 @@ type PullRecord struct {
 	EndpointID int64
 	IP         string
 	UserAgent  string
+	// Status 本次拉取的结果(pull-guard ticket 01);空串按 PullStatusOK 记录,
+	// 让 ticket 之前的调用点(只在成功下发后记录)语义不变。
+	Status string
 }
 
-// RecordPull 记录一次订阅拉取
+// RecordPull 记录一次订阅拉取(含被拦请求:状态见 pull_status.go)
 func (s *Store) RecordPull(rec PullRecord) error {
 	if rec.IP == "" {
 		return fmt.Errorf("ip is required")
 	}
+	status := rec.Status
+	if status == "" {
+		status = PullStatusOK
+	}
+	if !IsValidPullStatus(status) {
+		return fmt.Errorf("%w: unknown pull status %q", ErrInvalidInput, rec.Status)
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO pull_logs (endpoint_id, ip, user_agent) VALUES (?, ?, ?)`,
-		rec.EndpointID, rec.IP, rec.UserAgent,
+		`INSERT INTO pull_logs (endpoint_id, ip, user_agent, status) VALUES (?, ?, ?, ?)`,
+		rec.EndpointID, rec.IP, rec.UserAgent, status,
 	)
 	if err != nil {
 		return fmt.Errorf("insert pull log: %w", err)
@@ -27,9 +37,11 @@ func (s *Store) RecordPull(rec PullRecord) error {
 	return nil
 }
 
-// IPStat 按 IP 聚合的拉取统计
+// IPStat 按 IP + 拉取状态聚合的拉取统计。
+// 同一 IP 的成功拉取与被拦尝试是不同的行(Status 区分),前端据此展示明细。
 type IPStat struct {
 	IP       string    `json:"ip"`
+	Status   string    `json:"status"`
 	Count    int       `json:"count"`
 	LastPull time.Time `json:"last_pull"`
 	Country  string    `json:"country"`
@@ -38,16 +50,16 @@ type IPStat struct {
 	ISP      string    `json:"isp"`
 }
 
-// EndpointStats 某个订阅地址的统计（按 IP 分组，附带地理信息）
+// EndpointStats 某个订阅地址的统计（按 IP + 状态分组，附带地理信息）
 func (s *Store) EndpointStats(endpointID int64) ([]*IPStat, error) {
 	rows, err := s.db.Query(`
-		SELECT p.ip, COUNT(*) AS cnt, MAX(p.pulled_at) AS last_pull,
+		SELECT p.ip, p.status, COUNT(*) AS cnt, MAX(p.pulled_at) AS last_pull,
 		       COALESCE(g.country, ''), COALESCE(g.region, ''),
 		       COALESCE(g.city, ''), COALESCE(g.isp, '')
 		FROM pull_logs p
 		LEFT JOIN ip_geo g ON g.ip = p.ip
 		WHERE p.endpoint_id = ?
-		GROUP BY p.ip
+		GROUP BY p.ip, p.status
 		ORDER BY cnt DESC`, endpointID)
 	if err != nil {
 		return nil, fmt.Errorf("query endpoint stats: %w", err)
@@ -58,7 +70,7 @@ func (s *Store) EndpointStats(endpointID int64) ([]*IPStat, error) {
 	for rows.Next() {
 		var st IPStat
 		var lastPull string
-		if err := rows.Scan(&st.IP, &st.Count, &lastPull,
+		if err := rows.Scan(&st.IP, &st.Status, &st.Count, &lastPull,
 			&st.Country, &st.Region, &st.City, &st.ISP); err != nil {
 			return nil, fmt.Errorf("scan stat: %w", err)
 		}

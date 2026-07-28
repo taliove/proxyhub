@@ -71,10 +71,15 @@ CREATE TABLE IF NOT EXISTS pull_logs (
 	endpoint_id INTEGER NOT NULL REFERENCES endpoints(id),
 	ip          TEXT NOT NULL,
 	user_agent  TEXT NOT NULL DEFAULT '',
-	pulled_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	pulled_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	-- status 拉取结果(pull-guard ticket 01):被拦请求也留痕,取值见 pull_status.go。
+	-- 新库由本 schema 建出;既有库靠 migratePullLogStatus 幂等补列(同 multi_tenant 的
+	-- "schema + 增量迁移" 双路径),endpoint_id=0 是 path 未知时的全局桶。
+	status      TEXT NOT NULL DEFAULT 'ok'
 );
 CREATE INDEX IF NOT EXISTS idx_pull_logs_endpoint ON pull_logs(endpoint_id);
 CREATE INDEX IF NOT EXISTS idx_pull_logs_ip ON pull_logs(ip);
+CREATE INDEX IF NOT EXISTS idx_pull_logs_endpoint_status ON pull_logs(endpoint_id, status);
 
 CREATE TABLE IF NOT EXISTS ip_geo (
 	ip          TEXT PRIMARY KEY,
@@ -401,6 +406,24 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	if err := s.addColumnIfMissing("audit_logs", "user_agent", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+
+	// pull_logs 异常留痕(pull-guard ticket 01):加 status 列 + (endpoint_id, status)
+	// 索引。既有库补列默认 'ok'——本 ticket 之前只记成功下发,存量行语义就是 ok。
+	if err := s.migratePullLogStatus(); err != nil {
+		return err
+	}
+
+	// 统一 IP 规则表(拉取防护 ticket 02):ip_access_rules 承载整站拒止(scope=global)
+	// 与拉取黑名单(scope=sub),expires_at 为空表示永久。
+	if err := s.EnsureIPAccessRulesSchema(); err != nil {
+		return err
+	}
+
+	// banned_ips 时间格式归一(pull-guard ticket 00):把存量 Go String 格式的
+	// banned_until/updated_at 重写成 UTC "2006-01-02 15:04:05",让裸 SQL
+	// datetime() 能读(ADR 0010)。读路径已双格式兼容,故此处尽力而为:
+	// 失败只 warn 不返回错误,永不阻断启动。
+	s.migrateBannedIPTimeFormat()
 
 	// 初始化地区识别规则表
 	return s.InitRegionRules()

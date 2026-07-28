@@ -12,11 +12,15 @@ func (s *Store) GlobalStats() (totalPulls, uniqueIPs, activeEndpoints int, err e
 
 // GlobalStatsByUser 按用户口径的访问汇总(ticket 07):只统计该用户名下订阅地址的
 // 拉取记录与活跃订阅数。userID=0 回退为全局口径(超管跨用户视角用)。
+//
+// 汇总口径只算成功下发(status='ok'):pull-guard ticket 01 起 pull_logs 也记被拦
+// 尝试,若一并计入,"总拉取数/活跃订阅"会把 404 的探测算成拉取,破坏这些数字的
+// 既有含义(ADR 0028:统计只反映真实客户端拉取)。被拦记录的消费方是单地址 IP 明细。
 func (s *Store) GlobalStatsByUser(userID int64) (totalPulls, uniqueIPs, activeEndpoints int, err error) {
-	scope := ""
+	scope := ` WHERE status = '` + PullStatusOK + `'`
 	args := []any{}
 	if userID > 0 {
-		scope = ` WHERE endpoint_id IN (SELECT id FROM endpoints WHERE user_id = ?)`
+		scope += ` AND endpoint_id IN (SELECT id FROM endpoints WHERE user_id = ?)`
 		args = append(args, userID)
 	}
 
@@ -28,7 +32,7 @@ func (s *Store) GlobalStatsByUser(userID int64) (totalPulls, uniqueIPs, activeEn
 	}
 	// 活跃订阅：最近 24h 有拉取的不同 endpoint_id 数
 	since := time.Now().UTC().Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
-	activeScope := ` WHERE datetime(pulled_at) >= datetime(?)`
+	activeScope := ` WHERE status = '` + PullStatusOK + `' AND datetime(pulled_at) >= datetime(?)`
 	activeArgs := []any{since}
 	if userID > 0 {
 		activeScope += ` AND endpoint_id IN (SELECT id FROM endpoints WHERE user_id = ?)`
@@ -57,13 +61,14 @@ func (s *Store) PullTrend(days int) ([]TrendPoint, error) {
 
 // PullTrendByUser 按用户口径的拉取趋势(ticket 07):只统计该用户名下订阅地址。
 // userID=0 回退为全局口径(超管跨用户视角用)。
+// 与 GlobalStatsByUser 同口径:只算成功下发,被拦尝试不进趋势图。
 func (s *Store) PullTrendByUser(userID int64, days int) ([]TrendPoint, error) {
 	since := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
 	query := `
 		SELECT date(p.pulled_at) AS d, p.endpoint_id, COALESCE(e.alias, ''), COUNT(*)
 		FROM pull_logs p
 		LEFT JOIN endpoints e ON e.id = p.endpoint_id
-		WHERE datetime(p.pulled_at) >= datetime(?)`
+		WHERE p.status = '` + PullStatusOK + `' AND datetime(p.pulled_at) >= datetime(?)`
 	args := []any{since}
 	if userID > 0 {
 		query += ` AND p.endpoint_id IN (SELECT id FROM endpoints WHERE user_id = ?)`
