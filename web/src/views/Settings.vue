@@ -1,7 +1,6 @@
 <template>
   <div>
     <PageHeader />
-
     <el-card>
       <el-tabs>
         <el-tab-pane v-if="authStore.isSuperAdmin" label="安全设置">
@@ -21,9 +20,39 @@
                 :precision="0"
               />
               <span class="hint">
-                同一 IP 登录失败达到该次数后,登录表单开始要求图形验证码。0 = 每次登录都要求(最严),1
-                = 一次失败即要求(默认)。取值范围 0-{{ CAPTCHA_TRIGGER_THRESHOLD_MAX }}
-                的整数。
+                同一 IP 登录失败达该次数后要求验证码。0 = 每次都要求,1 = 一次失败即要求(默认)。
+              </span>
+            </el-form-item>
+            <el-form-item label="订阅拉取限频阈值">
+              <el-input-number
+                v-model="settings.pull_rate_limit_per_hour"
+                :min="0"
+                :max="PULL_RATE_LIMIT_MAX"
+                :step="1"
+                :precision="0"
+              />
+              <span class="hint">
+                单 IP × 单订阅地址每小时允许拉取次数。0 = 关闭限频,默认
+                {{ PULL_RATE_LIMIT_DEFAULT }}。
+              </span>
+            </el-form-item>
+            <el-form-item label="自动黑名单升级次数">
+              <el-input-number
+                v-model="settings.pull_blacklist_escalation_count"
+                :min="1"
+                :step="1"
+                :precision="0"
+              />
+              <span class="hint">
+                1 小时内累计触发限频达该次数后自动拉黑。默认
+                {{ PULL_BLACKLIST_ESCALATION_DEFAULT }}。
+              </span>
+            </el-form-item>
+            <el-form-item label="自动黑名单时长">
+              <el-input v-model="settings.pull_blacklist_duration" placeholder="24h" />
+              <span class="hint">
+                自动拉黑规则的有效期,格式如 1h/24h/168h。默认
+                {{ PULL_BLACKLIST_DURATION_DEFAULT }}。
               </span>
             </el-form-item>
             <el-form-item>
@@ -31,7 +60,6 @@
             </el-form-item>
           </el-form>
         </el-tab-pane>
-
         <el-tab-pane v-if="authStore.isSuperAdmin" label="告警设置">
           <el-form :model="settings" label-width="180px" class="settings-form">
             <el-form-item label="飞书 Webhook">
@@ -45,7 +73,6 @@
             </el-form-item>
           </el-form>
         </el-tab-pane>
-
         <el-tab-pane label="订阅设置">
           <el-form :model="settings" label-width="180px" class="settings-form">
             <el-form-item label="定时刷新机场">
@@ -59,24 +86,19 @@
                 inactive-value="false"
               />
               <span class="hint">
-                关闭后仅「手动刷新」会拉取机场。注意:关闭并重启后节点池为空,订阅将暂时返回
-                503,需手动刷新一次(见 ADR 0004)。
+                关闭后仅「手动刷新」会拉取机场。注意:关闭并重启后节点池为空,订阅暂时返回 503。
               </span>
             </el-form-item>
 
             <el-form-item v-if="authStore.isSuperAdmin" label="机场拉取并行度">
               <el-input-number v-model="settings.fetch_concurrency" :min="1" :max="10" />
               <span class="hint">
-                全量刷新时同时拉取的机场数(1-10,默认 4)。只作用于拉取阶段;健康检查并发独立配置。
+                全量刷新时同时拉取的机场数(1-10,默认 4)。只作用于拉取阶段。
               </span>
             </el-form-item>
-
-            <!-- 地区白名单（新增） -->
             <el-form-item label="地区白名单">
               <RegionWhitelist />
             </el-form-item>
-
-            <!-- 节点名称标准化（见 ADR 0012） -->
             <el-form-item label="节点名称标准化">
               <template #label>
                 节点名称标准化
@@ -88,8 +110,7 @@
                 inactive-value="false"
               />
               <span class="hint">
-                开启后,订阅生成时把机场原名统一为标准格式(如 🇭🇰 香港
-                JS-01);关闭则保留机场原名。机场简称在「机场管理」中配置。
+                开启后,订阅生成时把机场原名统一为标准格式(如 🇭🇰 香港 JS-01)。
               </span>
             </el-form-item>
             <el-form-item v-if="settings.standardize_names === 'true'" label="名称模板">
@@ -102,8 +123,8 @@
                 placeholder="{emoji} {region} {source_abbr}-{index}"
               />
               <span class="hint">
-                可用变量:{emoji}(国旗) {region}(地区中文) {region_code}(地区代码) {source}(机场全名)
-                {source_abbr}(机场简称) {index}(序号) {original_name}(原名)。留空用默认模板。
+                可用变量:{emoji} {region} {region_code} {source} {source_abbr} {index}
+                {original_name}。
               </span>
             </el-form-item>
 
@@ -116,11 +137,10 @@
                 v-model="settings.filter_whitelist"
                 type="textarea"
                 :rows="3"
-                placeholder="留空则不启用。非空时,只保留名称命中任一关键词的机场节点(自建节点豁免)。多个关键词用逗号或换行分隔,如:香港,新加坡,美国,日本"
+                placeholder="留空则不启用。非空时,只保留名称命中任一关键词的节点(自建节点豁免)。多个关键词用逗号或换行分隔。"
               />
               <span class="hint"
-                >地区白名单优先(按地区代码精确筛选),关键词白名单次之(字符串匹配)。子串匹配、不区分大小写(见
-                ADR 0009)。</span
+                >地区白名单优先(按地区代码精确筛选),关键词白名单次之(字符串匹配)。</span
               >
             </el-form-item>
             <el-form-item label="订阅关键词过滤">
@@ -132,11 +152,9 @@
                 v-model="settings.filter_keywords"
                 type="textarea"
                 :rows="4"
-                placeholder="名称命中任一关键词的机场节点将在订阅生成时被剔除(自建节点豁免)。多个关键词用逗号或换行分隔,如:剩余流量,官网,到期"
+                placeholder="名称命中任一关键词的节点将被剔除(自建节点豁免)。多个关键词用逗号或换行分隔。"
               />
-              <span class="hint"
-                >子串匹配、不区分大小写;改动即时对下一次订阅生效,无需刷新(见 ADR 0005)。</span
-              >
+              <span class="hint">子串匹配、不区分大小写;改动即时对下一次订阅生效。</span>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="saveSettings">保存</el-button>
@@ -144,33 +162,22 @@
           </el-form>
         </el-tab-pane>
 
-        <!-- 带宽测试配置 -->
         <el-tab-pane v-if="authStore.isSuperAdmin" label="带宽测试配置">
           <el-form label-width="180px" class="settings-form">
             <el-alert
               type="info"
               :closable="false"
               class="settings-alert"
-              title="采用固定时长测速:下行、上行各跑满「测速时长」(默认 10s),两条曲线等长。数据量仅作上限,须足够大以免快节点提前传完。留空用系统默认值。"
+              title="采用固定时长测速:下行、上行各跑满「测速时长」(默认 10s)。数据量仅作上限。"
             />
             <el-form-item label="测速时长(秒/方向)">
               <el-input v-model="settings.bandwidth_test_duration_sec" placeholder="10" />
-              <template #extra>
-                <span class="form-extra">
-                  下行/上行各自跑满这个时长,速率 = 该时长内传输字节 / 时长。两个方向相同 → 曲线等长
-                </span>
-              </template>
             </el-form-item>
             <el-form-item label="下行探测 URL">
               <el-input
                 v-model="settings.bandwidth_down_url"
                 placeholder="https://speed.cloudflare.com/__down?bytes=1073741824"
               />
-              <template #extra>
-                <span class="form-extra">
-                  下行数据上限由 URL 的 bytes= 参数控制(默认 1GB);读完仍未到时长会自动续传
-                </span>
-              </template>
             </el-form-item>
             <el-form-item label="上行探测 URL">
               <el-input
@@ -180,19 +187,9 @@
             </el-form-item>
             <el-form-item label="上行数据上限(字节)">
               <el-input v-model="settings.bandwidth_up_bytes" placeholder="1073741824 (1GB)" />
-              <template #extra>
-                <span class="form-extra">
-                  上行在测速时长内持续发送的数据上限;到时长即停(通常用不满)
-                </span>
-              </template>
             </el-form-item>
             <el-form-item label="单方向硬超时(秒)">
               <el-input v-model="settings.bandwidth_dir_timeout_sec" placeholder="20" />
-              <template #extra>
-                <span class="form-extra">
-                  防链路卡死的硬上限;正常应先到「测速时长」自然结束,此值仅兜底(应大于测速时长)
-                </span>
-              </template>
             </el-form-item>
             <el-form-item label="整体超时(秒)">
               <el-input v-model="settings.bandwidth_timeout_sec" placeholder="60" />
@@ -209,22 +206,17 @@
           </el-form>
         </el-tab-pane>
 
-        <!-- 直连出口(见 CONTEXT.md「直连出口」;ticket 0021):碰本机网络出口,超管专属 -->
         <el-tab-pane v-if="authStore.isSuperAdmin" label="直连出口">
           <DirectEgressSettings />
         </el-tab-pane>
 
-        <!-- 检测目标配置(每租户,独立组件) -->
         <el-tab-pane label="检测目标配置">
           <DetectionTargets />
         </el-tab-pane>
 
-        <!-- 两步验证:登录者本人的受信 IP(ticket 10)+ 恢复码维护。
-             两者都作用于"登录者本人",不随超管 impersonate 视角漂移。 -->
         <el-tab-pane label="两步验证">
           <h4 class="mfa-section-title">受信 IP</h4>
           <TrustedIPList />
-
           <h4 class="mfa-section-title">恢复码</h4>
           <RecoveryCodeRegenerate />
         </el-tab-pane>
@@ -252,16 +244,21 @@ import RecoveryCodeRegenerate from '@/components/RecoveryCodeRegenerate.vue'
 import {
   CAPTCHA_TRIGGER_THRESHOLD_DEFAULT,
   CAPTCHA_TRIGGER_THRESHOLD_MAX,
-  validateCaptchaTriggerThreshold
+  validateCaptchaTriggerThreshold,
+  PULL_RATE_LIMIT_DEFAULT,
+  PULL_RATE_LIMIT_MAX,
+  validatePullRateLimit,
+  PULL_BLACKLIST_ESCALATION_DEFAULT,
+  validatePullBlacklistEscalation,
+  PULL_BLACKLIST_DURATION_DEFAULT,
+  validatePullBlacklistDuration
 } from './settings-utils'
 
 const authStore = useAuthStore()
 
-// overridden 每键覆盖标记(仅普通用户视角有真值;超管编辑全局默认,恒为空)。
 const overridden = ref<Record<string, boolean>>({})
 
-// TenantBadge 租户级键的状态徽标(本地渲染组件):跟随全局默认 / 已自定义 + 重置。
-// 重置 = 删除本人覆盖,回到跟随全局默认(立即生效,不等保存)。
+// TenantBadge 租户级键的状态徽标:跟随全局默认 / 已自定义 + 重置。
 const TenantBadge = (props: { k: string }) => {
   const isCustom = overridden.value[props.k] === true
   return h('span', { class: 'tenant-badge' }, [
@@ -279,7 +276,6 @@ const TenantBadge = (props: { k: string }) => {
 }
 TenantBadge.props = ['k']
 
-// resetTenantKey 删除某租户级键的本人覆盖并刷新生效视图。
 const resetTenantKey = async (k: string) => {
   await persistSettings({}, [k])
   const { settings: s, overridden: o } = await getSettings()
@@ -288,31 +284,22 @@ const resetTenantKey = async (k: string) => {
   ElMessage.success('已重置为跟随全局默认')
 }
 
-// pickKeys 从信封 settings 里挑出指定键(普通用户视角后端只回租户级键,
-// 超管视角是全量键;挑键防止其他 tab 的值被 Object.assign 吞进主表单)。
 const pickKeys = (src: Record<string, string>, keys: readonly string[]) =>
   Object.fromEntries(keys.filter((k) => k in src).map((k) => [k, src[k]]))
 
-// 主保存 payload 只含主表单自己的键(白名单见 MAIN_SETTINGS_KEYS):
-// onMounted 的 Object.assign 会吞进全量键(含 direct_egress_* 等其他 tab 的键),
-// 全量回写会把挂载时的旧值静默覆盖其他 tab 刚保存的新值;各 tab 只写自己的键。
+// 主保存 payload 只含主表单自己的键(MAIN_SETTINGS_KEYS 白名单)
 const settings = ref<Record<string, string | number>>({
   ban_threshold: 5,
   ban_duration: '1h',
-  // 验证码触发次数(el-input-number 数字;保存时统一序列化为字符串)
   captcha_trigger_threshold: CAPTCHA_TRIGGER_THRESHOLD_DEFAULT,
   feishu_webhook: '',
   min_available_nodes: 10,
-  // 订阅设置:字符串取值以匹配后端 map[string]string 契约
   scheduled_refresh_enabled: 'true',
-  // 机场拉取并行度(el-input-number 数字,保存时统一序列化为字符串;后端 1-10 clamp,默认 4)
   fetch_concurrency: 4,
   filter_keywords: '',
   filter_whitelist: '',
-  // 节点名称标准化(见 ADR 0012)
   standardize_names: 'false',
   name_template: '',
-  // 带宽测试配置(缺省用后端默认值)
   bandwidth_down_url: '',
   bandwidth_up_url: '',
   bandwidth_up_bytes: '',
@@ -320,7 +307,10 @@ const settings = ref<Record<string, string | number>>({
   bandwidth_timeout_sec: '',
   bandwidth_dir_timeout_sec: '',
   bandwidth_min_down_mbps: '',
-  bandwidth_min_up_mbps: ''
+  bandwidth_min_up_mbps: '',
+  pull_rate_limit_per_hour: PULL_RATE_LIMIT_DEFAULT,
+  pull_blacklist_escalation_count: PULL_BLACKLIST_ESCALATION_DEFAULT,
+  pull_blacklist_duration: PULL_BLACKLIST_DURATION_DEFAULT
 })
 
 onMounted(async () => {
@@ -330,22 +320,35 @@ onMounted(async () => {
 })
 
 const saveSettings = async () => {
-  // 输入校验先行:后端对非法阈值是静默回落默认值,不挡住的话用户会看到
-  // "保存成功" 而实际生效的是别的值(仅超管视角提交该键,故只在超管时校验)。
+  // 输入校验先行(超管专属字段)
   if (authStore.isSuperAdmin) {
     const err = validateCaptchaTriggerThreshold(settings.value.captcha_trigger_threshold)
     if (err) {
       ElMessage.error(err)
       return
     }
+    const pullRateErr = validatePullRateLimit(settings.value.pull_rate_limit_per_hour)
+    if (pullRateErr) {
+      ElMessage.error(pullRateErr)
+      return
+    }
+    const pullEscalationErr = validatePullBlacklistEscalation(
+      settings.value.pull_blacklist_escalation_count
+    )
+    if (pullEscalationErr) {
+      ElMessage.error(pullEscalationErr)
+      return
+    }
+    const pullDurationErr = validatePullBlacklistDuration(settings.value.pull_blacklist_duration)
+    if (pullDurationErr) {
+      ElMessage.error(pullDurationErr)
+      return
+    }
   }
-  // 统一序列化为字符串,兼容 el-input-number(数字)与 el-switch(字符串)取值。
-  // 超管写全局默认(主表单全键);普通用户只写租户级键(落本人 user_settings),
-  // 超管专属键即使夹带也会被后端忽略,但这里直接不发,语义更干净。
+  // 统一序列化为字符串
   const keys = authStore.isSuperAdmin ? MAIN_SETTINGS_KEYS : TENANT_SETTINGS_KEYS
   const payload = Object.fromEntries(keys.map((k) => [k, String(settings.value[k])]))
   await persistSettings(payload)
-  // 保存后刷新覆盖标记(新写的键变为已自定义)
   const { overridden: o } = await getSettings()
   overridden.value = o
   ElMessage.success('保存成功')
@@ -353,7 +356,6 @@ const saveSettings = async () => {
 </script>
 
 <style scoped>
-/* 表单测量宽度收敛：长表单不铺满整页，控件对齐更利于扫读 */
 .settings-form {
   max-width: 680px;
 }

@@ -39,7 +39,11 @@ export const ADMIN_SETTINGS_KEYS = [
   'bandwidth_timeout_sec',
   'bandwidth_dir_timeout_sec',
   'bandwidth_min_down_mbps',
-  'bandwidth_min_up_mbps'
+  'bandwidth_min_up_mbps',
+  // 拉取防护参数(pull-guard tickets 04/05/09):
+  'pull_rate_limit_per_hour',
+  'pull_blacklist_escalation_count',
+  'pull_blacklist_duration'
 ] as const
 
 // 设置页主表单自己的 settings 键白名单(超管全局视图 = 租户级 + 超管专属):
