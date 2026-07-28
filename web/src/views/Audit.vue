@@ -10,10 +10,12 @@
           class="ctl-types"
           @change="reload"
         >
-          <el-option label="登录成功" value="login_success" />
-          <el-option label="登录失败" value="login_failure" />
-          <el-option label="蜜罐封禁" value="honeypot_ban" />
-          <el-option label="阈值封禁" value="threshold_ban" />
+          <el-option
+            v-for="opt in EVENT_FILTER_OPTIONS"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
         </el-select>
         <el-input
           v-model="filterIP"
@@ -46,7 +48,23 @@
         </el-table-column>
         <el-table-column prop="ip" label="IP" width="150" />
         <el-table-column prop="username" label="用户名" width="150" show-overflow-tooltip />
-        <el-table-column prop="detail" label="详情" show-overflow-tooltip />
+        <el-table-column label="详情" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="detail-cell">
+              <!-- login_success 的二段标记提到徽标里:区分真实过了 MFA 与受信 IP 免验 -->
+              <el-tag
+                v-for="badge in mfaBadges(row)"
+                :key="badge.marker"
+                :type="badge.tag"
+                size="small"
+                effect="plain"
+                class="mfa-badge"
+                >{{ badge.label }}</el-tag
+              >
+              <span>{{ detailOf(row) }}</span>
+            </span>
+          </template>
+        </el-table-column>
       </el-table>
 
       <div class="pager">
@@ -97,6 +115,13 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import client from '@/api/client'
 import PageHeader from '@/components/PageHeader.vue'
+import {
+  EVENT_FILTER_OPTIONS,
+  detailText,
+  eventLabel,
+  eventTag,
+  loginMFABadge
+} from './audit-utils'
 
 interface AuditEvent {
   event_type: string
@@ -176,14 +201,12 @@ const isBanned = (row: BannedIP) => {
 
 const formatTime = (t: string) => (t ? new Date(t).toLocaleString('zh-CN') : '-')
 
-const EVENT_META: Record<string, { label: string; tag: string }> = {
-  login_success: { label: '登录成功', tag: 'success' },
-  login_failure: { label: '登录失败', tag: 'warning' },
-  honeypot_ban: { label: '蜜罐封禁', tag: 'danger' },
-  threshold_ban: { label: '阈值封禁', tag: 'danger' }
+// 返回数组(0 或 1 个徽标)而非可空值:模板里用 v-for 渲染,省掉非空断言。
+const mfaBadges = (row: AuditEvent) => {
+  const badge = loginMFABadge(row.event_type, row.detail)
+  return badge ? [badge] : []
 }
-const eventLabel = (t: string) => EVENT_META[t]?.label || t
-const eventTag = (t: string) => EVENT_META[t]?.tag || 'info'
+const detailOf = (row: AuditEvent) => detailText(row.event_type, row.detail)
 
 onMounted(() => {
   load()
@@ -202,7 +225,16 @@ onMounted(() => {
   gap: var(--ph-space-2);
 }
 .ctl-types {
-  width: 220px;
+  width: 240px;
+}
+.detail-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+}
+/* 徽标不参与 flex 收缩,详情文字过长时优先截断文字 */
+.mfa-badge {
+  flex: none;
 }
 .ctl-ip {
   width: 160px;
