@@ -37,6 +37,27 @@ const (
 	proxyBrowserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 )
 
+// 透传错误响应的固定泛化文案:详细错误只进服务端日志,客户端一律拿固定字符串。
+// ProxyHTTPClient 的错误链源自含凭证(uuid/password)的 Clash 配置 map 与
+// mihomo adapter.ParseProxy;client.Do 的 dial 错误含节点地址等内部信息。
+// 原样回显 err.Error() 等于把凭证泄露面押注在依赖永不把敏感字段拼进错误文本上。
+const (
+	proxyClientUnavailableMsg = "proxy client unavailable"
+	upstreamRequestFailedMsg  = "upstream request failed"
+)
+
+// writeProxyClientError 代理客户端构造失败:记详细日志,回 500 + 固定泛化文案。
+func (s *Server) writeProxyClientError(w http.ResponseWriter, msg string, err error) {
+	s.logger.Warn(msg, "error", err)
+	http.Error(w, proxyClientUnavailableMsg, http.StatusInternalServerError)
+}
+
+// writeUpstreamError 上游测速端点请求失败:记详细日志,回 502 + 固定泛化文案。
+func (s *Server) writeUpstreamError(w http.ResponseWriter, msg string, err error) {
+	s.logger.Warn(msg, "error", err)
+	http.Error(w, upstreamRequestFailedMsg, http.StatusBadGateway)
+}
+
 // resolveProxySpeedtestNode 解析透传测速的节点(复用 resolveTestNode 口径,按属主限定)。
 // nodeKey/selfNodeID 都空 = 直连基线(后端直连 Cloudflare,不经节点);解析不到返回 nil。
 func (s *Server) resolveProxySpeedtestNode(userID, selfNodeID int64, nodeKey string) *subscription.Node {
@@ -64,8 +85,7 @@ func (s *Server) handleSpeedtestProxyDownload(w http.ResponseWriter, r *http.Req
 	// 经节点(或直连)构造 client,GET Cloudflare
 	client, err := s.detectionService.ProxyHTTPClient(node, proxySpeedtestTimeout)
 	if err != nil {
-		s.logger.Warn("proxy download: create client failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.writeProxyClientError(w, "proxy download: create client failed", err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), proxySpeedtestMaxDuration)
@@ -84,8 +104,7 @@ func (s *Server) handleSpeedtestProxyDownload(w http.ResponseWriter, r *http.Req
 
 	resp, err := client.Do(req)
 	if err != nil {
-		s.logger.Warn("proxy download: upstream failed", "error", err)
-		http.Error(w, fmt.Sprintf("upstream: %v", err), http.StatusBadGateway)
+		s.writeUpstreamError(w, "proxy download: upstream failed", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -150,7 +169,7 @@ func (s *Server) handleSpeedtestProxyLatency(w http.ResponseWriter, r *http.Requ
 
 	client, err := s.detectionService.ProxyHTTPClient(node, 10*time.Second)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.writeProxyClientError(w, "proxy latency: create client failed", err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -165,13 +184,13 @@ func (s *Server) handleSpeedtestProxyLatency(w http.ResponseWriter, r *http.Requ
 
 	resp, err := client.Do(req)
 	if err != nil {
-		s.logger.Warn("proxy latency: upstream failed", "error", err)
-		http.Error(w, fmt.Sprintf("upstream: %v", err), http.StatusBadGateway)
+		s.writeUpstreamError(w, "proxy latency: upstream failed", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		s.logger.Warn("proxy latency: upstream status", "status", resp.StatusCode)
 		http.Error(w, fmt.Sprintf("upstream HTTP %d", resp.StatusCode), http.StatusBadGateway)
 		return
 	}
@@ -211,7 +230,7 @@ func (s *Server) handleSpeedtestProxyUpload(w http.ResponseWriter, r *http.Reque
 
 	client, err := s.detectionService.ProxyHTTPClient(node, proxySpeedtestTimeout)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.writeProxyClientError(w, "proxy upload: create client failed", err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), proxySpeedtestMaxDuration)
@@ -228,8 +247,7 @@ func (s *Server) handleSpeedtestProxyUpload(w http.ResponseWriter, r *http.Reque
 
 	resp, err := client.Do(req)
 	if err != nil {
-		s.logger.Warn("proxy upload: upstream failed", "error", err)
-		http.Error(w, fmt.Sprintf("upstream: %v", err), http.StatusBadGateway)
+		s.writeUpstreamError(w, "proxy upload: upstream failed", err)
 		return
 	}
 	defer resp.Body.Close()
