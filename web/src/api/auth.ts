@@ -36,9 +36,26 @@ export interface LoginUser {
 
 // LoginResponse tolerates both the nested user payload (current backend) and a
 // flat role field (older shape), matching what the view already handled.
+//
+// The MFA handoff (ticket 06) rides the SAME 200 response: password accepted
+// but the address is not trusted yet -> {ok:false, mfa_required:true,
+// mfa_pending_token}. It is deliberately not an error status, so the view must
+// branch on the body rather than on the catch block.
 export interface LoginResponse {
+  ok?: boolean
   role?: string
   user?: LoginUser
+  mfa_required?: boolean
+  mfa_pending_token?: string
+}
+
+// LoginMFAPayload is the body of POST /api/login/mfa. code carries either a
+// 6-digit TOTP or a recovery code - one field, the backend tries TOTP first
+// and recovery second. trust_ip requests the 30 day per-IP exemption.
+export interface LoginMFAPayload {
+  mfa_pending_token: string
+  code: string
+  trust_ip?: boolean
 }
 
 // issueCaptcha requests a fresh challenge. Only called after the backend has
@@ -54,6 +71,18 @@ export function issueCaptcha(): Promise<CaptchaChallenge> {
 // render. skipErrorToast: the view maps 401/403 bodies onto local messages.
 export function login(payload: LoginPayload): Promise<LoginResponse> {
   return client.post<unknown, LoginResponse>('/login', payload, {
+    skipAuthRedirect: true,
+    skipErrorToast: true
+  })
+}
+
+// submitLoginMFA completes the second stage. Same two escapes as login():
+// skipAuthRedirect because a wrong code answers 401 and a reload would throw
+// away the pending token we are still allowed to retry with; skipErrorToast
+// because every 401 here is deliberately indistinguishable on the wire (expired
+// token, foreign IP, budget exhausted, wrong code) and the view owns the copy.
+export function submitLoginMFA(payload: LoginMFAPayload): Promise<LoginResponse> {
+  return client.post<unknown, LoginResponse>('/login/mfa', payload, {
     skipAuthRedirect: true,
     skipErrorToast: true
   })
