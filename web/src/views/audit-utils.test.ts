@@ -31,8 +31,24 @@ describe('eventLabel / eventTag', () => {
     expect(eventLabel('trusted_ip_added')).toBe('受信 IP 添加')
     expect(eventLabel('trusted_ip_revoked')).toBe('受信 IP 撤销')
     expect(eventLabel('trusted_ip_cleared')).toBe('受信 IP 清空')
-    expect(eventLabel('trusted_ip_auto_toggle')).toBe('受信 IP 自动信任开关')
+    expect(eventLabel('trusted_ip_auto_toggle')).toBe('自动信任开关')
     expect(eventLabel('mfa_recovery_regenerated')).toBe('恢复码重新生成')
+  })
+
+  it('labels admin operation events in Chinese', () => {
+    expect(eventLabel('admin_switch_user')).toBe('管理员切换用户')
+    expect(eventLabel('admin_exit_switch')).toBe('退出用户空间')
+    expect(eventLabel('admin_create_user')).toBe('创建用户')
+    expect(eventLabel('admin_update_user')).toBe('更新用户')
+    expect(eventLabel('admin_disable_user')).toBe('禁用用户')
+    expect(eventLabel('admin_enable_user')).toBe('启用用户')
+    expect(eventLabel('admin_delete_user')).toBe('删除用户')
+    expect(eventLabel('admin_reset_password')).toBe('重置密码')
+  })
+
+  it('labels user self-service events in Chinese', () => {
+    expect(eventLabel('password_change')).toBe('修改密码')
+    expect(eventLabel('login_disabled')).toBe('账号禁用')
   })
 
   it('falls back to the raw type so future backend events still render', () => {
@@ -64,6 +80,7 @@ describe('EVENT_FILTER_OPTIONS', () => {
       expect.arrayContaining([
         'login_success',
         'login_failure',
+        'login_disabled',
         'captcha_failure',
         'mfa_failure',
         'mfa_enrolled',
@@ -74,7 +91,16 @@ describe('EVENT_FILTER_OPTIONS', () => {
         'trusted_ip_cleared',
         'trusted_ip_auto_toggle',
         'honeypot_ban',
-        'threshold_ban'
+        'threshold_ban',
+        'admin_switch_user',
+        'admin_exit_switch',
+        'admin_create_user',
+        'admin_update_user',
+        'admin_disable_user',
+        'admin_enable_user',
+        'admin_delete_user',
+        'admin_reset_password',
+        'password_change'
       ])
     )
   })

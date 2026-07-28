@@ -83,7 +83,7 @@ const routes: RouteRecordRaw[] = [
         path: 'audit',
         name: 'Audit',
         component: () => import('@/views/Audit.vue'),
-        meta: { title: '安全审计', icon: 'Warning', group: 'config', requiresSuperAdmin: true }
+        meta: { title: '安全审计', icon: 'Warning', group: 'system', requiresSuperAdmin: true }
       },
       {
         path: 'jobs',
@@ -95,14 +95,14 @@ const routes: RouteRecordRaw[] = [
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/Settings.vue'),
-        meta: { title: '系统设置', icon: 'Setting', group: 'config' }
+        meta: { title: '系统设置', icon: 'Setting', group: 'system' }
       },
       {
         // Admin-only: user management (ticket 05); hidden from nav for non-super-admin
         path: 'admin/users',
         name: 'AdminUsers',
         component: () => import('@/views/admin/Users.vue'),
-        meta: { title: '用户管理', icon: 'User', group: 'config', requiresSuperAdmin: true }
+        meta: { title: '用户管理', icon: 'User', group: 'system', requiresSuperAdmin: true }
       }
     ]
   },

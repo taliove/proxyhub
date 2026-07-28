@@ -6,18 +6,19 @@ import { useAuthStore } from '@/stores/auth'
 export const HOME_PATH = '/'
 
 // 分组键:每个导航项归属且仅归属一个组
-export type NavGroupKey = 'overview' | 'resources' | 'config'
+export type NavGroupKey = 'overview' | 'resources' | 'config' | 'system'
 
 export interface NavGroup {
   key: NavGroupKey
   label: string
 }
 
-// 组序即日常动线:总览 / 资源 / 配置
+// 组序即日常动线:总览 / 资源 / 配置 / 系统
 export const NAV_GROUPS: readonly NavGroup[] = [
   { key: 'overview', label: '总览' },
   { key: 'resources', label: '资源' },
-  { key: 'config', label: '配置' }
+  { key: 'config', label: '配置' },
+  { key: 'system', label: '系统' }
 ]
 
 export interface NavItem {

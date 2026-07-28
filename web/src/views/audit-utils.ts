@@ -27,6 +27,7 @@ interface EventMeta {
 const EVENT_META: Record<string, EventMeta> = {
   login_success: { label: '登录成功', tag: 'success' },
   login_failure: { label: '登录失败', tag: 'warning' },
+  login_disabled: { label: '账号禁用', tag: 'danger' },
   captcha_failure: { label: '验证码失败', tag: 'warning' },
   mfa_failure: { label: 'MFA 失败', tag: 'warning' },
   mfa_enrolled: { label: 'MFA 绑定', tag: 'success' },
@@ -39,9 +40,20 @@ const EVENT_META: Record<string, EventMeta> = {
   trusted_ip_added: { label: '受信 IP 添加', tag: 'warning' },
   trusted_ip_revoked: { label: '受信 IP 撤销', tag: 'info' },
   trusted_ip_cleared: { label: '受信 IP 清空', tag: 'info' },
-  trusted_ip_auto_toggle: { label: '受信 IP 自动信任开关', tag: 'info' },
+  trusted_ip_auto_toggle: { label: '自动信任开关', tag: 'info' },
   honeypot_ban: { label: '蜜罐封禁', tag: 'danger' },
-  threshold_ban: { label: '阈值封禁', tag: 'danger' }
+  threshold_ban: { label: '阈值封禁', tag: 'danger' },
+  // 管理员操作:用户切换与用户管理
+  admin_switch_user: { label: '管理员切换用户', tag: 'warning' },
+  admin_exit_switch: { label: '退出用户空间', tag: 'info' },
+  admin_create_user: { label: '创建用户', tag: 'success' },
+  admin_update_user: { label: '更新用户', tag: 'info' },
+  admin_disable_user: { label: '禁用用户', tag: 'danger' },
+  admin_enable_user: { label: '启用用户', tag: 'success' },
+  admin_delete_user: { label: '删除用户', tag: 'danger' },
+  admin_reset_password: { label: '重置密码', tag: 'warning' },
+  // 用户自助操作
+  password_change: { label: '修改密码', tag: 'success' }
 }
 
 /** eventLabel 返回事件类型的中文展示名;未知类型原样返回(向前兼容后端新事件)。 */
@@ -116,4 +128,138 @@ export function detailText(eventType: string, detail: string): string {
   return detailTokens(detail)
     .filter((token) => !MARKER_BY_TOKEN[token])
     .join(' ')
+}
+
+/**
+ * parseUserAgent 将 UA 字符串解析为中文短标签,用于审计列表的"客户端"列。
+ * 覆盖主流浏览器、移动设备、CLI 工具;未识别的返回简化的 UA 字符串。
+ */
+export function parseUserAgent(ua: string | undefined): string {
+  if (!ua) return '-'
+  const lower = ua.toLowerCase()
+
+  // CLI 工具 (curl, wget, httpie 等)
+  if (lower.includes('curl/')) {
+    const match = ua.match(/curl\/([\d.]+)/)
+    return match ? `curl/${match[1]}` : 'curl'
+  }
+  if (lower.includes('wget/')) return 'wget'
+  if (lower.includes('httpie/')) return 'HTTPie'
+  if (lower.includes('postman')) return 'Postman'
+
+  // 移动设备检测 (需在浏览器检测前,因为移动 UA 也带 Safari/Chrome 字段)
+  const isMobile = lower.includes('mobile') || lower.includes('android')
+  const isTablet = lower.includes('tablet') || lower.includes('ipad')
+
+  // iOS 设备
+  if (lower.includes('iphone')) {
+    if (lower.includes('safari') && !lower.includes('crios') && !lower.includes('fxios')) {
+      return 'Safari · iPhone'
+    }
+    if (lower.includes('crios')) return 'Chrome · iPhone'
+    if (lower.includes('fxios')) return 'Firefox · iPhone'
+    return 'iPhone'
+  }
+  if (lower.includes('ipad')) {
+    if (lower.includes('safari') && !lower.includes('crios')) return 'Safari · iPad'
+    if (lower.includes('crios')) return 'Chrome · iPad'
+    return 'iPad'
+  }
+
+  // Android 设备
+  if (lower.includes('android')) {
+    if (lower.includes('chrome') && !lower.includes('edg')) {
+      const match = ua.match(/Chrome\/([\d]+)/)
+      const version = match ? match[1] : ''
+      return version ? `Chrome ${version} · Android` : 'Chrome · Android'
+    }
+    if (lower.includes('firefox')) return 'Firefox · Android'
+    if (lower.includes('edg')) return 'Edge · Android'
+    return 'Android'
+  }
+
+  // 桌面浏览器
+  let browser = ''
+  let version = ''
+
+  // Chrome 系 (需在 Safari 前检测,因为 Chrome UA 也带 Safari)
+  if (lower.includes('edg/')) {
+    const match = ua.match(/Edg\/([\d]+)/)
+    browser = 'Edge'
+    version = match ? match[1] : ''
+  } else if (lower.includes('chrome/')) {
+    const match = ua.match(/Chrome\/([\d]+)/)
+    browser = 'Chrome'
+    version = match ? match[1] : ''
+  } else if (lower.includes('safari/') && !lower.includes('chrome')) {
+    const match = ua.match(/Version\/([\d.]+)/)
+    browser = 'Safari'
+    version = match ? match[1].split('.')[0] : ''
+  } else if (lower.includes('firefox/')) {
+    const match = ua.match(/Firefox\/([\d]+)/)
+    browser = 'Firefox'
+    version = match ? match[1] : ''
+  } else if (lower.includes('opera') || lower.includes('opr/')) {
+    browser = 'Opera'
+    const match = ua.match(/OPR\/([\d]+)/)
+    version = match ? match[1] : ''
+  }
+
+  // 操作系统检测
+  let os = ''
+  if (lower.includes('windows nt')) {
+    const ntVersionMap: Record<string, string> = {
+      '10.0': 'Windows 11',
+      '6.3': 'Windows 8.1',
+      '6.2': 'Windows 8',
+      '6.1': 'Windows 7'
+    }
+    const match = ua.match(/Windows NT ([\d.]+)/)
+    if (match) {
+      os = ntVersionMap[match[1]] || 'Windows'
+    } else {
+      os = 'Windows'
+    }
+  } else if (lower.includes('mac os x')) {
+    os = 'macOS'
+  } else if (lower.includes('linux')) {
+    os = 'Linux'
+  } else if (lower.includes('cros')) {
+    os = 'ChromeOS'
+  }
+
+  // 组装结果
+  if (!browser) {
+    // 未识别浏览器,返回截断的原始 UA (取前 50 字符)
+    return ua.length > 50 ? ua.substring(0, 47) + '...' : ua
+  }
+
+  const parts = [browser]
+  if (version) parts[0] += ` ${version}`
+  if (os) parts.push(os)
+  if (isMobile && !os.includes('Android') && !os.includes('iPhone')) parts.push('Mobile')
+  if (isTablet && !os.includes('iPad')) parts.push('Tablet')
+
+  return parts.join(' · ')
+}
+
+/**
+ * formatGeoLocation 格式化地理位置信息为中文展示文本。
+ * 私网地址显示"内网地址";公网地址拼接 国家 省 市 · ISP 格式。
+ */
+export function formatGeoLocation(geo: {
+  country?: string
+  region?: string
+  city?: string
+  isp?: string
+}): string {
+  if (!geo || !geo.country) return '内网地址'
+
+  const parts: string[] = []
+  if (geo.country) parts.push(geo.country)
+  if (geo.region) parts.push(geo.region)
+  if (geo.city) parts.push(geo.city)
+
+  const location = parts.join(' ')
+  return geo.isp ? `${location} · ${geo.isp}` : location
 }

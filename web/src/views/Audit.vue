@@ -35,7 +35,7 @@
 
     <!-- 审计事件流水 -->
     <el-card>
-      <el-table v-loading="loading" :data="events">
+      <el-table v-loading="loading" :data="events" @row-click="showDetail">
         <el-table-column label="时间" width="180">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
@@ -47,6 +47,9 @@
           </template>
         </el-table-column>
         <el-table-column prop="ip" label="IP" width="150" />
+        <el-table-column label="客户端" width="200" show-overflow-tooltip>
+          <template #default="{ row }">{{ parseUA(row.user_agent) }}</template>
+        </el-table-column>
         <el-table-column prop="username" label="用户名" width="150" show-overflow-tooltip />
         <el-table-column label="详情" show-overflow-tooltip>
           <template #default="{ row }">
@@ -77,6 +80,15 @@
         />
       </div>
     </el-card>
+
+    <!-- 事件详情抽屉 -->
+    <AuditDetailDrawer
+      v-model="detailVisible"
+      :event="selectedEvent"
+      :banned-i-ps="banned"
+      @ban="onBan"
+      @unban="onUnban"
+    />
 
     <!-- 当前封禁 IP -->
     <el-card class="banned-card">
@@ -115,13 +127,22 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import client from '@/api/client'
 import PageHeader from '@/components/PageHeader.vue'
+import AuditDetailDrawer from './AuditDetailDrawer.vue'
 import {
   EVENT_FILTER_OPTIONS,
   detailText,
   eventLabel,
   eventTag,
-  loginMFABadge
+  loginMFABadge,
+  parseUserAgent
 } from './audit-utils'
+
+interface GeoInfo {
+  country?: string
+  region?: string
+  city?: string
+  isp?: string
+}
 
 interface AuditEvent {
   event_type: string
@@ -129,6 +150,8 @@ interface AuditEvent {
   username: string
   detail: string
   created_at: string
+  user_agent?: string
+  geo?: GeoInfo
 }
 interface BannedIP {
   ip: string
@@ -148,6 +171,10 @@ const timeRange = ref('7d')
 
 const banned = ref<BannedIP[]>([])
 const bannedLoading = ref(false)
+
+// 详情抽屉状态
+const detailVisible = ref(false)
+const selectedEvent = ref<AuditEvent | null>(null)
 
 const load = async () => {
   loading.value = true
@@ -207,6 +234,29 @@ const mfaBadges = (row: AuditEvent) => {
   return badge ? [badge] : []
 }
 const detailOf = (row: AuditEvent) => detailText(row.event_type, row.detail)
+const parseUA = (ua: string | undefined) => parseUserAgent(ua)
+
+// 显示事件详情抽屉
+const showDetail = (row: AuditEvent) => {
+  selectedEvent.value = row
+  detailVisible.value = true
+}
+
+// 封禁 IP (从抽屉触发)
+const onBan = async (ip: string, duration: string) => {
+  await client.post('/audit/ban', { ip, duration })
+  ElMessage.success('封禁成功')
+  await loadBanned()
+  await load()
+}
+
+// 解封 IP (从抽屉触发)
+const onUnban = async (ip: string) => {
+  await client.post('/audit/unban', { ip })
+  ElMessage.success('已解封')
+  await loadBanned()
+  await load()
+}
 
 onMounted(() => {
   load()
