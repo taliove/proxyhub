@@ -391,6 +391,12 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// MFA 与受信 IP(登录加固 ticket 02):users 加 3 列 + user_trusted_ips 表 +
+	// audit_logs (username, ip, created_at) 复合索引。必须在 017_users.sql 之后。
+	if err := s.migrateMFA(); err != nil {
+		return err
+	}
+
 	// 初始化地区识别规则表
 	return s.InitRegionRules()
 }

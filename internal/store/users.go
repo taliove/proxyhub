@@ -145,6 +145,15 @@ type UserUpdate struct {
 	Role               *string
 	MustChangePassword *bool
 	LastLoginAt        *time.Time
+
+	// MFA fields (login hardening ticket 02). TOTPSecret is the base32 shared
+	// secret; writing it does not enable MFA on its own, enrollment is two
+	// staged (secret first, TOTPEnabled only after the user confirms a code).
+	// RecoveryCodesHash carries the SHA-256 hashes of the one-time recovery
+	// codes; writing an empty slice invalidates every outstanding code.
+	TOTPSecret        *string
+	TOTPEnabled       *bool
+	RecoveryCodesHash *[]string
 }
 
 // UpdateUser applies the non-nil fields in u to the user with the given id.
@@ -174,6 +183,22 @@ func (s *Store) UpdateUser(id int64, u UserUpdate) error {
 	if u.LastLoginAt != nil {
 		sets = append(sets, "last_login_at = ?")
 		args = append(args, *u.LastLoginAt)
+	}
+	if u.TOTPSecret != nil {
+		sets = append(sets, "totp_secret = ?")
+		args = append(args, *u.TOTPSecret)
+	}
+	if u.TOTPEnabled != nil {
+		sets = append(sets, "totp_enabled = ?")
+		args = append(args, boolToInt(*u.TOTPEnabled))
+	}
+	if u.RecoveryCodesHash != nil {
+		encoded, err := encodeRecoveryCodes(*u.RecoveryCodesHash)
+		if err != nil {
+			return err
+		}
+		sets = append(sets, "recovery_codes_hash = ?")
+		args = append(args, encoded)
 	}
 	if len(sets) == 0 {
 		return fmt.Errorf("%w: no fields to update", ErrInvalidInput)
