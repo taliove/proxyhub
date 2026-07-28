@@ -12,6 +12,7 @@
 #   proxyhubctl update [VERSION] [--yes] [--prerelease] [--stable-only]
 #   proxyhubctl backup [--protect]
 #   proxyhubctl restore ARCHIVE [--yes]
+#   proxyhubctl reset-mfa --username NAME [--yes]
 #
 set -Eeuo pipefail
 
@@ -1028,6 +1029,69 @@ cmd_uninstall() {
 }
 
 # --------------------------------------------------------------------------
+# reset-mfa command
+# --------------------------------------------------------------------------
+
+# cmd_reset_mfa --username NAME [--yes] - clear one account's MFA enrollment.
+#
+# Self-rescue channel for a lost TOTP device: delegates to the main binary's
+# reset-mfa subcommand, which opens the database directly. Reaching this shell
+# already means root on the box, so the guard here is against a mistyped
+# account, not against an attacker.
+#
+# Confirmation mirrors uninstall: --yes skips the prompt (required for
+# non-interactive callers), otherwise the operator must type "yes". A declined
+# or non-interactive prompt aborts without touching the database.
+cmd_reset_mfa() {
+    local username="" confirmed=0
+    while (( $# > 0 )); do
+        case "$1" in
+            --yes) confirmed=1; shift ;;
+            --username)
+                (( $# >= 2 )) || { _ph_err "--username requires a value"; return 2; }
+                username="$2"; shift 2 ;;
+            --username=*) username="${1#--username=}"; shift ;;
+            -*) _ph_err "unknown option: $1"; return 2 ;;
+            *) _ph_err "unexpected argument: $1"; return 2 ;;
+        esac
+    done
+
+    if [[ -z "$username" ]]; then
+        _ph_err "reset-mfa requires --username NAME"
+        return 2
+    fi
+
+    local binary_path config_path
+    binary_path=$(root_path "$PROXYHUB_BINARY")
+    config_path=$(root_path "${PROXYHUB_CONFIG_DIR}/config.yaml")
+    if [[ ! -x "$binary_path" ]]; then
+        _ph_err "proxyhub binary not found: ${binary_path}"
+        return 1
+    fi
+
+    if (( confirmed == 0 )); then
+        _ph_log "reset-mfa clears the TOTP secret and every recovery code of user '${username}'"
+        _ph_log "the account must enroll a new authenticator on its next login"
+        local answer=""
+        # Prompt on stderr so the confirmation text never pollutes stdout.
+        printf '[proxyhub] type "yes" to reset MFA for %s: ' "$username" >&2
+        read -r answer || answer=""
+        if [[ "$answer" != "yes" ]]; then
+            _ph_err "reset-mfa aborted: no changes made"
+            return 1
+        fi
+    fi
+
+    if ! "$binary_path" reset-mfa --config "$config_path" --username "$username"; then
+        _ph_err "reset-mfa failed for user '${username}'"
+        return 1
+    fi
+
+    _ph_log "MFA reset for user '${username}'"
+    return 0
+}
+
+# --------------------------------------------------------------------------
 # Main command dispatcher
 # --------------------------------------------------------------------------
 
@@ -1121,6 +1185,8 @@ Commands:
                       verification, automatic rollback on failure
   rotate-path [PATH] [--yes]
                       Rotate to a new Site Path (high-risk, requires --yes)
+  reset-mfa --username NAME [--yes]
+                      Clear an account's MFA enrollment (lost TOTP device)
   enable-auto-update  Enable weekly auto-update timer (stable channel only)
   disable-auto-update Disable auto-update timer
   uninstall [--purge] [--yes]
@@ -1133,6 +1199,7 @@ Options:
   --prerelease        With update: allow installing a prerelease version
   --stable-only       With update: reject prereleases (used by auto-update)
   --purge             With uninstall: also remove state and backups
+  --username NAME     With reset-mfa: the account to reset
 EOF
 }
 
@@ -1182,6 +1249,10 @@ main() {
         disable-auto-update)
             acquire_lock || exit 1
             cmd_disable_auto_update "$@"
+            ;;
+        reset-mfa)
+            acquire_lock || exit 1
+            cmd_reset_mfa "$@"
             ;;
         uninstall)
             acquire_lock || exit 1

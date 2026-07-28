@@ -27,12 +27,14 @@ import (
 
 func main() {
 	// 子命令分发: 首个参数为已知子命令时走子命令路径,否则按服务启动处理
-	if len(os.Args) > 1 && os.Args[1] == "state-fingerprint" {
-		if err := runStateFingerprint(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "错误: %v\n", err)
-			os.Exit(1)
+	if len(os.Args) > 1 {
+		if handled, err := runSubcommand(os.Args[1], os.Args[2:]); handled {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "错误: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
-		return
 	}
 
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
@@ -41,6 +43,19 @@ func main() {
 	if err := run(*configPath); err != nil {
 		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// runSubcommand 分发已知子命令。handled 为 false 表示 name 不是子命令,
+// 调用方按服务启动继续处理。
+func runSubcommand(name string, args []string) (handled bool, err error) {
+	switch name {
+	case "state-fingerprint":
+		return true, runStateFingerprint(args)
+	case "reset-mfa":
+		return true, runResetMFA(args, os.Stdout)
+	default:
+		return false, nil
 	}
 }
 

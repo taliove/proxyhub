@@ -184,6 +184,106 @@ test_help() {
     assert_contains "$output" "show-info"
 }
 
+# --------------------------------------------------------------------------
+# reset-mfa cases
+# --------------------------------------------------------------------------
+
+# RESET_MFA_LOG records every mock binary invocation so tests can assert the
+# database was (or was not) touched.
+RESET_MFA_LOG=""
+
+# setup_reset_mfa_mock [EXIT_CODE] - install a mock proxyhub binary that logs
+# its arguments and exits with EXIT_CODE (default 0), plus a stub config file.
+setup_reset_mfa_mock() {
+    local exit_code="${1:-0}"
+    RESET_MFA_LOG="$PROXYHUB_ROOT/reset-mfa-invocations.log"
+    : > "$RESET_MFA_LOG"
+
+    mkdir -p "$PROXYHUB_ROOT/etc/proxyhub"
+    printf 'storage:\n  path: /var/lib/proxyhub/data.db\n' \
+        > "$PROXYHUB_ROOT/etc/proxyhub/config.yaml"
+
+    mkdir -p "$PROXYHUB_ROOT/usr/local/bin"
+    cat > "$PROXYHUB_ROOT/usr/local/bin/proxyhub" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "${RESET_MFA_LOG}"
+if [[ "${exit_code}" != "0" ]]; then
+    printf 'error: no such user\n' >&2
+    exit ${exit_code}
+fi
+printf 'MFA reset for user (id=1)\n'
+exit 0
+EOF
+    chmod +x "$PROXYHUB_ROOT/usr/local/bin/proxyhub"
+}
+
+test_reset_mfa_with_yes() {
+    setup_reset_mfa_mock
+    local output
+    output=$(bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" \
+        reset-mfa --username alice --yes 2>&1)
+    assert_contains "$output" "MFA reset for user"
+    assert_contains "$(cat "$RESET_MFA_LOG")" "reset-mfa"
+    assert_contains "$(cat "$RESET_MFA_LOG")" "--username alice"
+}
+
+test_reset_mfa_interactive_confirm() {
+    setup_reset_mfa_mock
+    local output
+    output=$(printf 'yes\n' | bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" \
+        reset-mfa --username alice 2>&1)
+    assert_contains "$output" "MFA reset for user"
+    assert_contains "$(cat "$RESET_MFA_LOG")" "--username alice"
+}
+
+test_reset_mfa_interactive_decline() {
+    setup_reset_mfa_mock
+    set +e
+    local output
+    output=$(printf 'no\n' | bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" \
+        reset-mfa --username alice 2>&1)
+    local exit_code=$?
+    set -e
+    assert_exit_code 1 "$exit_code"
+    assert_contains "$output" "aborted"
+    # Declining must not reach the database.
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [[ ! -s "$RESET_MFA_LOG" ]]; then
+        pass
+    else
+        fail "declined confirmation should not invoke the binary, got: $(cat "$RESET_MFA_LOG")"
+    fi
+}
+
+test_reset_mfa_requires_username() {
+    setup_reset_mfa_mock
+    set +e
+    local output
+    output=$(bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" reset-mfa --yes 2>&1)
+    local exit_code=$?
+    set -e
+    assert_exit_code 2 "$exit_code"
+    assert_contains "$output" "requires --username"
+}
+
+test_reset_mfa_propagates_binary_failure() {
+    setup_reset_mfa_mock 1
+    set +e
+    local output
+    output=$(bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" \
+        reset-mfa --username ghost --yes 2>&1)
+    local exit_code=$?
+    set -e
+    assert_exit_code 1 "$exit_code"
+    assert_contains "$output" "reset-mfa failed for user 'ghost'"
+}
+
+test_reset_mfa_listed_in_help() {
+    local output
+    output=$(bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" --help 2>&1)
+    assert_contains "$output" "reset-mfa"
+}
+
 test_unknown_subcommand() {
     set +e
     bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" unknown 2>&1
@@ -224,6 +324,12 @@ main() {
     test_restart
     test_show_info
     test_help
+    test_reset_mfa_with_yes
+    test_reset_mfa_interactive_confirm
+    test_reset_mfa_interactive_decline
+    test_reset_mfa_requires_username
+    test_reset_mfa_propagates_binary_failure
+    test_reset_mfa_listed_in_help
     test_unknown_subcommand
     test_no_subcommand
 
