@@ -30,14 +30,15 @@ func (o *Orchestrator) RunDiagnostic(ctx context.Context, airportID int64, airpo
 	// Fetch raw subscription
 	req, err := http.NewRequest(http.MethodGet, airportURL, nil)
 	if err != nil {
-		return o.persistFailedRun(ctx, run, start, fmt.Errorf("build request: %w", err))
+		// 订阅 URL 含 token,parse 错误会引用原始输入串,落库前剥壳(见 subscription.StripURLError)。
+		return o.persistFailedRun(ctx, run, start, fmt.Errorf("build request: %w", subscription.StripURLError(err)))
 	}
 	req.Header.Set("User-Agent", subscriptionUserAgent)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return o.persistFailedRun(ctx, run, start, fmt.Errorf("fetch failed: %w", err))
+		return o.persistFailedRun(ctx, run, start, fmt.Errorf("fetch failed: %w", subscription.StripURLError(err)))
 	}
 	defer resp.Body.Close()
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,6 +42,19 @@ type FetchDiagnostics struct {
 	ParseFailures int   `json:"parse_failures"` // 解析失败行数(非空行中无法解析的)
 }
 
+// StripURLError 剥掉 *url.Error 外壳,只保留内层错误。
+// 安全红线:*url.Error.Error() 会把完整请求 URL 拼进字符串,而机场订阅 URL
+// 内含 bearer token;直接外抛会随日志、refresh_fetch_diags.error、
+// refresh_runs.error 与 /api/refresh/runs/{id} 响应落盘,等于凭证明文持久化。
+// 所有以订阅 URL 发起的 HTTP 错误路径都必须先过它再包装。
+func StripURLError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
+}
+
 // Fetch 从 URL 获取订阅
 func (f *Fetcher) Fetch(name, subscriptionURL string) (*Subscription, error) {
 	sub, _, err := f.FetchWithDiagnostics(name, subscriptionURL)
@@ -62,14 +76,15 @@ func (f *Fetcher) FetchContext(ctx context.Context, name, subscriptionURL string
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, subscriptionURL, nil)
 	if err != nil {
-		return nil, diag, fmt.Errorf("build subscription request: %w", err)
+		// url.Parse 错误会引用原始输入串(含 token),同样剥壳。
+		return nil, diag, fmt.Errorf("build subscription request: %w", StripURLError(err))
 	}
 	req.Header.Set("User-Agent", subscriptionUserAgent)
 
 	resp, err := f.client.Do(req)
 	if err != nil {
 		diag.DurationMs = time.Since(start).Milliseconds()
-		return nil, diag, fmt.Errorf("fetch subscription: %w", err)
+		return nil, diag, fmt.Errorf("fetch subscription: %w", StripURLError(err))
 	}
 	defer resp.Body.Close()
 	diag.HTTPStatus = resp.StatusCode
