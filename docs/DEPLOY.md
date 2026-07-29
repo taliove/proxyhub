@@ -94,8 +94,6 @@ bash install.sh \
 install.sh --help
 ```
 
-> 注:`--version latest` 只解析稳定版;预发布阶段需显式版本(如 `--version 0.1.0-rc.4`),最新 tag 见 [Releases](https://github.com/taliove/proxyhub/releases) 页。
-
 ### 安装后文件结构
 
 ```

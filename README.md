@@ -43,7 +43,7 @@ ProxyHub 是一个自托管的代理订阅聚合系统。它定时从多个上�
 发布包命名格式为 `proxyhub_<版本>_<系统>_<架构>.tar.gz`,内含可执行文件与示例配置。以 Linux x86_64 为例(其他平台见 [Releases](https://github.com/taliove/proxyhub/releases)):
 
 ```bash
-# 解析最新版本号(含预发布;GitHub 的 releases/latest 只认稳定版,预发布阶段会 404)
+# 解析最新版本号(经 releases API,稳定版/预发布都适用)
 VERSION=$(curl -fsSL https://api.github.com/repos/taliove/proxyhub/releases | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1)
 curl -fsSLO "https://github.com/taliove/proxyhub/releases/download/v${VERSION}/proxyhub_${VERSION}_linux_amd64.tar.gz"
 tar -xzf "proxyhub_${VERSION}_linux_amd64.tar.gz"
@@ -82,23 +82,20 @@ cp config.example.yaml config.yaml   # 默认配置即可使用,后续在 Web �
 bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/install.sh)
 ```
 
-> 预发布阶段安装器需显式指定版本(默认 `latest` 只解析稳定版):
-> `bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/install.sh) --version 0.1.0-rc.4`
-
 安装后使用 `proxyhubctl` 运维:`status` / `logs` / `backup` / `update` / `rotate-path`。
 
 详细安装、备份、更新、卸载流程见 **[生产部署指南](docs/DEPLOY.md)**。
 
 ### Docker(开发/测试环境)
 
-镜像发布在 GitHub Container Registry(GHCR)。`:latest` 仅稳定版打上,预发布阶段需显式指定 tag(见 [Releases](https://github.com/taliove/proxyhub/releases)):
+镜像发布在 GitHub Container Registry(GHCR),`:latest` 跟踪最新稳定版:
 
 ```bash
 docker run -d \
   -p 127.0.0.1:8080:8080 \
   -v ./data:/data \
   --name proxyhub \
-  ghcr.io/taliove/proxyhub:v0.1.0-rc.4   # 换成 Releases 页的最新 tag
+  ghcr.io/taliove/proxyhub:latest
 ```
 
 > 端口必须绑回环(`127.0.0.1:8080:8080`):新装实例的 `/api/setup` 未鉴权,
