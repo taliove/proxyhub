@@ -6,18 +6,30 @@
 # redirects every absolute host path into a scratch directory.
 set -Eeuo pipefail
 
-# Locate and source the shared installer library (ticket 01)
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Locate and source the shared installer library (ticket 01). When install.sh
+# itself was fetched standalone (curl | bash, or process substitution), the
+# companion lib is not on disk next to it - fetch it from the same repo over
+# verified HTTPS (PROXYHUB_LIB_URL can pin a fork/ref).
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)
 _ph_lib=""
 for _ph_lib_candidate in \
     ${PROXYHUB_ROOT:+"${PROXYHUB_ROOT}/scripts/install/lib.sh"} \
     "${SCRIPT_DIR}/scripts/install/lib.sh"; do
-    [[ ! -r "$_ph_lib_candidate" ]] || { _ph_lib="$_ph_lib_candidate"; break; }
+    [[ -n $_ph_lib_candidate && -r $_ph_lib_candidate ]] || continue
+    _ph_lib="$_ph_lib_candidate"
+    break
 done
-[[ -n "$_ph_lib" ]] || {
-    printf '[proxyhub] ERROR: cannot locate scripts/install/lib.sh (run from the repository checkout, or set PROXYHUB_ROOT for tests)\n' >&2
-    exit 1
-}
+_PH_LIB_TMP=""
+if [[ -z $_ph_lib ]]; then
+    _PH_LIB_TMP=$(mktemp -d)
+    chmod 700 "$_PH_LIB_TMP"
+    _ph_lib_url="${PROXYHUB_LIB_URL:-https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/lib.sh}"
+    if ! curl -fsSL "$_ph_lib_url" -o "$_PH_LIB_TMP/lib.sh"; then
+        printf '[proxyhub] ERROR: cannot locate scripts/install/lib.sh locally, and download from %s failed\n' "$_ph_lib_url" >&2
+        exit 1
+    fi
+    _ph_lib="$_PH_LIB_TMP/lib.sh"
+fi
 # Dynamic source path: shellcheck cannot follow it; lib.sh has its own tests.
 # shellcheck source=scripts/install/lib.sh
 # shellcheck disable=SC1090,SC1091
@@ -34,7 +46,7 @@ readonly PROXYHUB_PUBLIC_HEALTH_TRIES=45
 
 NON_INTERACTIVE=0 DOMAIN="" EMAIL="" VERSION="latest" VERSION_TAG=""
 REPO="$PROXYHUB_DEFAULT_REPO" ARG_SITE_PATH="" SITE_PATH="" SKIP_DNS_CHECK=0
-DETECTED_OS="" DETECTED_ARCH="" ADMIN_USER="" ADMIN_PASSWORD=""
+DETECTED_OS="" DETECTED_ARCH="" ADMIN_USER="" ADMIN_PASSWORD="" ARG_LISTEN_ADDR=""
 TIMESTAMP="" WORKDIR="" CADDY_BACKUP=""
 
 # _ph_fail MSG... - print each MSG as an error line and return 1 (guard helper).
@@ -66,11 +78,18 @@ OPTIONS
   --repo OWNER/REPO      GitHub releases source (default: taliove/proxyhub).
   --site-path PATH       Custom Site Path: 20-64 chars of [A-Za-z0-9_-], >=3
                          character classes, no reserved words.
+  --listen-addr ADDR     Loopback listen address as 127.0.0.1:PORT
+                         (default 127.0.0.1:8080). Use when 8080 is taken.
   --skip-dns-check       Skip DNS resolution check (CDN / private networks).
   -h, --help             Show this help.
 
+REHEARSAL SEAM (never for real deployments)
+  PROXYHUB_SKIP_PUBLIC_HEALTH=1 skips the public https://<domain>/... health
+  check. Intended for one-command install rehearsals where DNS/ACME cannot
+  succeed (random domain); the loopback health check still runs.
+
 BEHAVIOR
-  READ-ONLY host validation (OS: Ubuntu 22.04/24.04, Debian 12/13; amd64/arm64;
+  READ-ONLY host validation (OS: Ubuntu 22.04/24.04/26.04, Debian 12/13; amd64/arm64;
   systemd; root; outbound HTTPS; DNS; TCP 80/443 free or Caddy-owned) - never
   touches DNS, firewalls, or security groups. Downloads the release tarball +
   SHA256SUMS over verified HTTPS; checksum verified BEFORE unpacking. Installs
@@ -89,6 +108,15 @@ EOF
 _need_value() { (($2 >= 2)) || _ph_die2 "$1 requires a value"; }
 _validate_email() { [[ $1 =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; }
 
+# _validate_listen_addr - 127.0.0.1:PORT with port 1-65535. The admin plane
+# binds loopback only (constitution red line), so wider binds are rejected
+# at argument parsing rather than at first health check.
+_validate_listen_addr() {
+    [[ $1 =~ ^127\.0\.0\.1:([0-9]+)$ ]] || return 1
+    local port=${BASH_REMATCH[1]}
+    ((port >= 1 && port <= 65535))
+}
+
 parse_args() {
     while (($#)); do
         case $1 in
@@ -99,6 +127,7 @@ parse_args() {
             --version) _need_value "$1" $#; VERSION=$2; shift 2 ;;
             --repo) _need_value "$1" $#; REPO=$2; shift 2 ;;
             --site-path) _need_value "$1" $#; ARG_SITE_PATH=$2; shift 2 ;;
+            --listen-addr) _need_value "$1" $#; ARG_LISTEN_ADDR=$2; shift 2 ;;
             -h|--help) usage; exit 0 ;;
             --) shift; break ;;
             *) _ph_die2 "unknown argument: $1 (see --help)" ;;
@@ -110,12 +139,20 @@ parse_args() {
     local bad=0
     [[ -z $DOMAIN ]] || validate_domain "$DOMAIN" || bad=1
     [[ -z $ARG_SITE_PATH ]] || validate_site_path "$ARG_SITE_PATH" || bad=1
+    [[ -z $ARG_LISTEN_ADDR ]] || _validate_listen_addr "$ARG_LISTEN_ADDR" || {
+        _ph_err "invalid --listen-addr '${ARG_LISTEN_ADDR}' (want 127.0.0.1:PORT, port 1-65535)"
+        bad=1
+    }
     [[ $VERSION == latest ]] || validate_version "$VERSION" || bad=1
     validate_repo "$REPO" || bad=1
     if [[ -n $EMAIL ]] && ! _validate_email "$EMAIL"; then
         _ph_err "invalid email '${EMAIL}'"; bad=1
     fi
     ((bad == 0)) || exit 2
+
+    # Custom listen addr flows into config.yaml, the Caddy fragment and the
+    # install record (proxyhubctl re-reads it from the record).
+    [[ -z $ARG_LISTEN_ADDR ]] || PROXYHUB_LISTEN_ADDR="$ARG_LISTEN_ADDR"
 
     [[ $NON_INTERACTIVE == 0 || -n $DOMAIN ]] ||
         _ph_die2 "--non-interactive requires --domain (failing closed; the installer never guesses domains or credentials)"
@@ -151,11 +188,11 @@ _check_os() {
     esac
     f=$(root_path /etc/os-release)
     [[ -r $f ]] ||
-        _ph_fail "cannot read /etc/os-release - unsupported host (supported: Ubuntu 22.04/24.04, Debian 12/13)" || return 1
+        _ph_fail "cannot read /etc/os-release - unsupported host (supported: Ubuntu 22.04/24.04/26.04, Debian 12/13)" || return 1
     id=$(sed -n 's/^ID=//p' "$f" | head -1 | tr -d '"')
     version_id=$(sed -n 's/^VERSION_ID=//p' "$f" | head -1 | tr -d '"')
     case "${id}:${version_id}" in
-        ubuntu:22.04 | ubuntu:24.04 | debian:12 | debian:13)
+        ubuntu:22.04 | ubuntu:24.04 | ubuntu:26.04 | debian:12 | debian:13)
             _ph_log "host platform supported: ${id} ${version_id} ${DETECTED_OS}/${DETECTED_ARCH}" ;;
         *) _ph_fail "unsupported OS '${id} ${version_id}': supported systems are Ubuntu 22.04/24.04 and Debian 12/13" || return 1 ;;
     esac
@@ -305,13 +342,14 @@ _download_and_verify() { # WORKDIR
 
 # Install steps
 _write_config() {
-    local cfg
+    local cfg listen_port
     cfg=$(root_path "${PROXYHUB_CONFIG_DIR}/config.yaml")
+    listen_port="${PROXYHUB_LISTEN_ADDR##*:}"
     mkdir -p "$(dirname "$cfg")" || _ph_fail "failed to create $(dirname "$cfg")" || return 1
     if ! cat >"$cfg" <<EOF
 server:
   host: "127.0.0.1"
-  port: 8080
+  port: ${listen_port}
 storage:
   path: "${PROXYHUB_STATE_DIR}/data.db"
 health_check:
@@ -438,6 +476,10 @@ _verify_url() { # URL TRIES UNIT
 
 _verify_health() {
     _verify_url "http://${PROXYHUB_LISTEN_ADDR}/${SITE_PATH}/healthz" "$PROXYHUB_LOOPBACK_HEALTH_TRIES" proxyhub || return 1
+    if [[ ${PROXYHUB_SKIP_PUBLIC_HEALTH:-0} == 1 ]]; then
+        _ph_log "WARNING: public HTTPS health check skipped (PROXYHUB_SKIP_PUBLIC_HEALTH=1 - rehearsal only, certificate not verified)"
+        return 0
+    fi
     _verify_url "https://${DOMAIN}/${SITE_PATH}/healthz" "$PROXYHUB_PUBLIC_HEALTH_TRIES" caddy ||
         _ph_fail "common causes: DNS not pointing at this host, firewall blocking TCP 80/443, or ACME rate limits"
 }
@@ -521,7 +563,7 @@ main() {
 
 if [[ ${PROXYHUB_INSTALL_NO_MAIN:-0} != 1 ]]; then
     umask 022
-    trap 'rc=$?; trap - EXIT; [[ -z ${WORKDIR:-} || ! -d ${WORKDIR:-} ]] || rm -rf -- "$WORKDIR"; exit "$rc"' EXIT
+    trap 'rc=$?; trap - EXIT; [[ -z ${WORKDIR:-} || ! -d ${WORKDIR:-} ]] || rm -rf -- "$WORKDIR"; [[ -z ${_PH_LIB_TMP:-} || ! -d ${_PH_LIB_TMP:-} ]] || rm -rf -- "$_PH_LIB_TMP"; exit "$rc"' EXIT
     trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
     main "$@"
 fi

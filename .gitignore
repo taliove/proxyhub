@@ -80,3 +80,6 @@ cmd/server/server
 # .cursorrules / .windsurfrules / .codebuddy/ / .gemini/ / .kiro/ / .qoder/).
 # AGENTS.md is the single master and IS tracked; do not recreate mirrors
 # or re-add ignore entries that hide them. See AGENTS.md header.
+
+# Release rehearsal local config (SSH target privacy) - never commit
+scripts/release/rehearsal.local.conf

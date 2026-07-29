@@ -1217,6 +1217,13 @@ main() {
     local cmd="$1"
     shift
 
+    # Honor the listen addr chosen at install time (--listen-addr): regenerated
+    # Caddy fragments and health probes must target the recorded port, not the
+    # lib.sh default.
+    local record_addr
+    record_addr=$(_read_install_field LISTEN_ADDR)
+    [[ -z $record_addr ]] || PROXYHUB_LISTEN_ADDR="$record_addr"
+
     case "$cmd" in
         help|--help|-h)
             usage

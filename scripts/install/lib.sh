@@ -32,7 +32,11 @@ readonly PROXYHUB_RESERVED_WORDS
 readonly PROXYHUB_USER="proxyhub"
 readonly PROXYHUB_GROUP="proxyhub"
 readonly PROXYHUB_BINARY="/usr/local/bin/proxyhub"
-readonly PROXYHUB_LISTEN_ADDR="127.0.0.1:8080"
+# Effective loopback listen address. NOT readonly: install.sh --listen-addr
+# overrides it after argument parsing, and proxyhubctl re-points it from the
+# install record's LISTEN_ADDR so regenerated Caddy fragments and health
+# probes keep targeting the port chosen at install time.
+PROXYHUB_LISTEN_ADDR="${PROXYHUB_LISTEN_ADDR:-127.0.0.1:8080}"
 readonly PROXYHUB_STATE_DIR="/var/lib/proxyhub"
 readonly PROXYHUB_CONFIG_DIR="/etc/proxyhub"
 readonly PROXYHUB_LOG_DIR="/var/log/proxyhub"

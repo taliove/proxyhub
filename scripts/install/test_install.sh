@@ -163,6 +163,30 @@ _assert_rc 2 "bad repo" main --non-interactive --domain example.com --repo "foo"
 _assert_rc 2 "bad version" main --non-interactive --domain example.com --version "1.2"
 _assert_rc 2 "bad email" main --non-interactive --domain example.com --email "not-an-email"
 
+# Bad --listen-addr rejected at parse time (rc 2): non-loopback, out-of-range
+# port, garbage. Loopback-only is a constitution red line.
+_assert_rc 2 "bad listen addr (non-loopback)" main --non-interactive --domain example.com \
+    --listen-addr "0.0.0.0:8080"
+_assert_rc 2 "bad listen addr (port range)" main --non-interactive --domain example.com \
+    --listen-addr "127.0.0.1:99999"
+_assert_rc 2 "bad listen addr (garbage)" main --non-interactive --domain example.com \
+    --listen-addr "foo"
+
+# --help documents the new option and the rehearsal seam.
+for needle in --listen-addr PROXYHUB_SKIP_PUBLIC_HEALTH; do
+    if [[ $help_out == *"$needle"* ]]; then _pass; else _fail "--help missing [$needle]"; fi
+done
+
+# Standalone fetch simulation: script piped via stdin (curl | bash form) with
+# no adjacent lib.sh -> companion lib fetched via PROXYHUB_LIB_URL. Runs from
+# a foreign cwd so the repo-local candidate cannot be found. env -u undoes the
+# harness's exported PROXYHUB_INSTALL_NO_MAIN so the child's main() runs.
+pipe_out=$(cd "$TMPDIR" && env -u PROXYHUB_INSTALL_NO_MAIN \
+    PROXYHUB_LIB_URL="file://$REPO_ROOT/scripts/install/lib.sh" \
+    bash -s -- --help <"$REPO_ROOT/install.sh" 2>&1) && _pass ||
+    _fail "stdin-pipe install.sh --help failed: $pipe_out"
+[[ $pipe_out == *"--listen-addr"* ]] && _pass || _fail "pipe mode help content wrong"
+
 # Reserved / weak Site Paths rejected at parse time (rc 2).
 _assert_rc 2 "reserved site path admin" main --non-interactive --domain example.com \
     --site-path "xX9_admin_xX9_xX9_xX9_x"
@@ -348,6 +372,48 @@ TEST_DIRS+=("$BAD_SBX")
 _assert_eq 1 "$bad_rc" "checksum mismatch exit code"
 [[ ! -e $BAD_SBX/usr/local/bin/proxyhub ]] && _pass || _fail "binary installed despite checksum mismatch"
 [[ ! -e $BAD_SBX/root/.proxyhub-install-info ]] && _pass || _fail "install record written despite checksum mismatch"
+
+# --------------------------------------------------------------------------
+# Custom --listen-addr flows into config, Caddy fragment and install record
+# --------------------------------------------------------------------------
+
+custom=$(
+    setup_sandbox
+    mock_host
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --listen-addr 127.0.0.1:18080 \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\n' "$rc"
+    printf 'SBX=%s\n' "$SBX"
+)
+custom_rc=$(printf '%s\n' "$custom" | sed -n 's/^RC=//p')
+CUSTOM_SBX=$(printf '%s\n' "$custom" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$CUSTOM_SBX")
+
+_assert_eq 0 "$custom_rc" "custom listen addr install exit code"
+_assert_file_contains "$CUSTOM_SBX/etc/proxyhub/config.yaml" 'port: 18080'
+_assert_file_contains "$CUSTOM_SBX/etc/caddy/conf.d/proxyhub.caddy" "reverse_proxy 127.0.0.1:18080"
+_assert_file_contains "$CUSTOM_SBX/root/.proxyhub-install-info" "LISTEN_ADDR=127.0.0.1:18080"
+
+# --------------------------------------------------------------------------
+# Rehearsal seam: PROXYHUB_SKIP_PUBLIC_HEALTH skips the public HTTPS check
+# --------------------------------------------------------------------------
+
+rehearsal=$(
+    setup_sandbox
+    mock_host
+    rc=0
+    ( PROXYHUB_SKIP_PUBLIC_HEALTH=1 main --non-interactive --domain ph-rehearse.example.com \
+        --skip-dns-check >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\n' "$rc"
+    printf 'SBX=%s\n' "$SBX"
+)
+rehearsal_rc=$(printf '%s\n' "$rehearsal" | sed -n 's/^RC=//p')
+REH_SBX=$(printf '%s\n' "$rehearsal" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$REH_SBX")
+
+_assert_eq 0 "$rehearsal_rc" "rehearsal install exit code"
+_assert_file_contains "$REH_SBX/stderr.log" "public HTTPS health check skipped"
 
 # --------------------------------------------------------------------------
 # Caddy-missing guidance (skipped when a real caddy is on the base PATH)
