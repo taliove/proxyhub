@@ -392,7 +392,7 @@ cmd_restore() {
 
     # Reload Caddy if not in test mode.
     if ! _is_test_mode && [[ -f "$caddy_frag" ]]; then
-        if ! systemctl reload caddy.service 2>&1; then
+        if ! reload_caddy_graceful; then
             _ph_err "Caddy reload failed"
             failed=1
         fi
@@ -525,7 +525,7 @@ cmd_rotate_path() {
             [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
             return 1
         fi
-        if ! systemctl reload caddy.service 2>&1; then
+        if ! reload_caddy_graceful; then
             _ph_err "Caddy reload failed, rolling back"
             [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
             return 1
@@ -538,14 +538,14 @@ cmd_rotate_path() {
     if ! sed "s|^SITE_PATH=.*|SITE_PATH=${new_path}|" "$install_info" > "$tmp_info"; then
         _ph_err "failed to update install info"
         [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
-        _is_test_mode || systemctl reload caddy.service 2>&1 || true
+        _is_test_mode || reload_caddy_graceful || true
         rm -f "$tmp_info"
         return 1
     fi
     if ! mv "$tmp_info" "$install_info"; then
         _ph_err "failed to install updated install info"
         [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
-        _is_test_mode || systemctl reload caddy.service 2>&1 || true
+        _is_test_mode || reload_caddy_graceful || true
         rm -f "$tmp_info"
         return 1
     fi
@@ -974,7 +974,9 @@ cmd_uninstall() {
         rm -f "$caddy_frag"
         _ph_log "removed Caddy fragment"
         if ! _is_test_mode; then
-            systemctl reload caddy.service 2>/dev/null || true
+            # Best-effort: with 'admin off' a plain reload silently no-ops and
+            # the stale route would survive until the next Caddy restart.
+            reload_caddy_graceful >/dev/null 2>&1 || true
         fi
     fi
 

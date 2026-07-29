@@ -459,6 +459,17 @@ _ensure_caddy_import() {
     fi
 }
 
+# _reload_caddy - reload via the admin API when available. Setups that
+# disable it (`admin off` in the global options block, e.g. 233boy-style
+# Caddyfiles) make every reload path fail; fall back to a full restart,
+# which briefly interrupts the other sites on this Caddy (warned).
+_reload_caddy() {
+    _systemctl reload caddy 2>/dev/null && return 0
+    _caddy_cli reload --config "$(root_path "$PROXYHUB_CADDYFILE")" 2>/dev/null && return 0
+    _ph_log "WARNING: caddy reload failed (admin API disabled, e.g. 'admin off'); falling back to 'systemctl restart caddy' - brief interruption for other sites on this Caddy"
+    _systemctl restart caddy
+}
+
 _configure_caddy() {
     local caddy_dir frag hit
     caddy_dir=$(root_path /etc/caddy)
@@ -478,7 +489,7 @@ _configure_caddy() {
     else
         _caddy_cli fmt --overwrite "$frag" >/dev/null &&
             _caddy_cli validate --config "$(root_path "$PROXYHUB_CADDYFILE")" &&
-            { _systemctl reload caddy 2>/dev/null || _caddy_cli reload --config "$(root_path "$PROXYHUB_CADDYFILE")"; } || rc=$?
+            _reload_caddy || rc=$?
     fi
     if ((rc != 0)); then
         _ph_err "caddy fmt/validate/reload failed - rolled back the Caddy changes (inspect with: journalctl -u caddy -n 50)"

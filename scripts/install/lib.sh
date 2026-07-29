@@ -328,6 +328,18 @@ EOF
 # Caddy fragment writer
 # --------------------------------------------------------------------------
 
+# reload_caddy_graceful - reload via the admin API, falling back to a full
+# restart when the API is disabled ('admin off' in the global options block,
+# e.g. 233boy-style Caddyfiles). Restart briefly interrupts the other sites
+# on this Caddy (warned). Plain commands: install.sh carries its own
+# seam-based variant (_reload_caddy) for testability.
+reload_caddy_graceful() {
+    systemctl reload caddy.service 2>/dev/null && return 0
+    caddy reload --config /etc/caddy/Caddyfile 2>/dev/null && return 0
+    _ph_log "WARNING: caddy reload failed (admin API disabled, e.g. 'admin off'); falling back to 'systemctl restart caddy' - brief interruption for other sites on this Caddy"
+    systemctl restart caddy.service
+}
+
 # write_caddy_fragment DOMAIN SITE_PATH - write the Caddy v2 site fragment.
 # Terminates TLS for DOMAIN (Caddy automatic HTTPS), proxies /<site-path>/
 # (including /<site-path>/dist/) to the ProxyHub loopback listener, and
