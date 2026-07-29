@@ -132,8 +132,9 @@ jobs:
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
           set -Eeuo pipefail
-          args=(--title "ProxyHub $RELEASE_TAG" --generate-notes)
+          args=(--title "ProxyHub $RELEASE_TAG" --notes-file dist/release-notes.md)
           [[ "$PRERELEASE" != "true" ]] || args+=(--prerelease)
+          bash scripts/release/notes.sh "$RELEASE_TAG" > dist/release-notes.md
           gh release create "$RELEASE_TAG" "${args[@]}" \
             dist/release/proxyhub_*.tar.gz \
             dist/release/SHA256SUMS
