@@ -11,6 +11,9 @@ services:
       - "18081:8080"
     volumes:
       - proxyhub-dev-data:/data
+      # 覆盖镜像内置配置(host 0.0.0.0、库在 /data、mfa_optional 开发放开),
+      # 由 scripts/dev/dev-up.sh 从 config.example.yaml 派生到 var/dev/
+      - ./var/dev/docker-config.yaml:/app/config.yaml:ro
     restart: unless-stopped
 
 volumes:

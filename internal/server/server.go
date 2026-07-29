@@ -1236,6 +1236,10 @@ func (s *Server) issueLoginSession(w http.ResponseWriter, user *store.User, ip, 
 // 读库失败时返回 false:此处只是提示位,真正的强制在 requireMFAEnrolled,
 // 猜错不会放过任何请求。
 func (s *Server) mustEnrollMFA(userID int64) bool {
+	// 开发环境显式放开(mfa_optional):前端不再把未绑定账号拦到绑定页。
+	if s.cfg.Server.MFAOptional {
+		return false
+	}
 	cfg, err := s.st.GetUserMFAConfig(userID)
 	if err != nil {
 		s.logger.Warn("load mfa config for must_enroll_mfa failed",

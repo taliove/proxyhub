@@ -10,6 +10,31 @@ import (
 	"github.com/taliove/proxyhub/internal/store"
 )
 
+// TestRequireMFAEnrolled_OptionalBypassesGate asserts the dev-only escape
+// hatch: with server.mfa_optional set, an unenrolled session passes the gate
+// and login responses no longer flag must_enroll_mfa.
+func TestRequireMFAEnrolled_OptionalBypassesGate(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	srv.cfg.Server.MFAOptional = true
+	h := srv.Handler()
+	doSetup(t, h, "owner", "a-very-strong-pass")
+	cookie, _ := unenrolledSession(t, srv, h, "rookie", "init-pass-1", store.RoleUser)
+
+	if rec := mfaRequest(t, h, cookie, "GET", "/api/endpoints", ""); rec.Code != http.StatusOK {
+		t.Errorf("GET /api/endpoints status = %d, want 200 with mfa_optional (body: %s)",
+			rec.Code, rec.Body.String())
+	}
+	if rec := mfaRequest(t, h, cookie, "GET", "/api/me", ""); rec.Code == http.StatusOK {
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode /api/me body: %v", err)
+		}
+		if enroll, _ := body["must_enroll_mfa"].(bool); enroll {
+			t.Errorf("/api/me must_enroll_mfa = true, want false with mfa_optional")
+		}
+	}
+}
+
 // TestRequireMFAEnrolled_GatesBusinessRoutes asserts the enforcement contract:
 // an authenticated but unenrolled session is refused on business routes with
 // 403 + must_enroll_mfa, while every route the enrollment page itself needs

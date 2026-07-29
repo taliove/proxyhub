@@ -11,6 +11,8 @@ server:
   # host 非回环且要走 Setup 向导时必填(请求头 X-Setup-Token);
   # 开发环境推荐直接用 init CLI 建号,跳过向导,见 docs/DEVELOPMENT.md
   setup_token: "dev-setup-token-change-me"
+  # 开发环境免绑 MFA(生产严禁;见 config.example.yaml 注释)
+  mfa_optional: true
 
 storage:
   # 开发库与默认库分开,互不影响

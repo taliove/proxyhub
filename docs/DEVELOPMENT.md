@@ -40,6 +40,8 @@ make dev-docker-down   # 停止
 
 > ⚠️ 这组账号口令是**公开写死的本机开发约定**(同 postgres/postgres 之于本地开发),只用于本机 Docker 开发环境,任何真实部署都不得使用。生产初始化走安装器或 Setup 向导。
 
+开发环境经 `mfa_optional: true`(compose 挂载的派生配置)放开强制 MFA,登录直进业务面,不用绑认证器;生产默认 `false`,行为不变。
+
 构成(全部入库,可复现):`docker-compose.dev.yml`(端口/数据卷)、`scripts/dev/dev-up.sh`(幂等编排:构建 → 无库则 `proxyhub init` 建号 → 起服务 → 打印访问信息)、`config.dev.example.yaml`(源码直跑开发配置模板)。
 
 ### 源码直跑开发

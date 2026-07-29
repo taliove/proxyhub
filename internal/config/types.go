@@ -26,6 +26,9 @@ type ServerConfig struct {
 	// 本地直连(无转发头的 loopback)永远不需要 token。也可经环境变量
 	// PROXYHUB_SETUP_TOKEN 注入(优先级高于配置文件)。
 	SetupToken string `yaml:"setup_token"`
+	// MFAOptional 放开强制 MFA(未绑定账号也可进入业务面)。仅限本机开发
+	// 环境;生产部署严禁开启,启动时会有 WARN 日志提醒。
+	MFAOptional bool `yaml:"mfa_optional"`
 }
 
 type HealthCheckConfig struct {

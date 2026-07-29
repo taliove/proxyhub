@@ -17,6 +17,18 @@ DEV_PASS=proxyhub-dev
 echo "==> 构建开发镜像(proxyhub:dev)"
 "${COMPOSE[@]}" build
 
+# 派生容器配置(与 Dockerfile 同源 sed + 开发放开 MFA),compose 挂载覆盖
+# 镜像内置的 /app/config.yaml;config.example.yaml 变更时自动跟随
+mkdir -p var/dev
+sed -e 's/host: "127.0.0.1"/host: "0.0.0.0"/' \
+    -e 's|path: "var/data/data.db"|path: "/data/data.db"|' \
+    -e 's/# mfa_optional: false/mfa_optional: true/' \
+    config.example.yaml > var/dev/docker-config.yaml
+# config.example.yaml 漂移时 sed 会静默 no-op,与 Dockerfile 同款守卫
+grep -q 'host: "0.0.0.0"' var/dev/docker-config.yaml
+grep -q 'path: "/data/data.db"' var/dev/docker-config.yaml
+grep -q 'mfa_optional: true' var/dev/docker-config.yaml
+
 # 数据卷里没有库 = 首次:先以一次性容器初始化,再正式起服务
 # (卷名带 compose 项目前缀 proxyhub_,与 up 用的是同一个)
 if ! docker run --rm -v proxyhub_proxyhub-dev-data:/data --entrypoint test proxyhub:dev -f /data/data.db 2>/dev/null; then

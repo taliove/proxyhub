@@ -43,6 +43,12 @@ var mfaExemptPaths = map[string]bool{
 // Must be chained after requireAuth (it needs the UserScope in the context).
 func (s *Server) requireMFAEnrolled(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// 开发环境显式放开(mfa_optional):跳过强制绑定门。生产配置永远
+		// 不应开启(config.ServerConfig.MFAOptional 的注释即警告)。
+		if s.cfg.Server.MFAOptional {
+			next(w, r)
+			return
+		}
 		if mfaExemptPaths[r.URL.Path] {
 			next(w, r)
 			return

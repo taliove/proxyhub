@@ -162,6 +162,9 @@ func run(configPath string) error {
 	fmt.Printf("========================================\n\n")
 
 	logger.Info("server starting", "addr", addr, "initialized", initialized)
+	if cfg.Server.MFAOptional {
+		logger.Warn("mfa_optional is ON: MFA enrollment is not enforced. This must never be enabled in production.")
+	}
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("HTTP 服务: %w", err)
 	}

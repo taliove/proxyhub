@@ -12,6 +12,9 @@ server:
   # 本地直连(无转发头的 loopback)永远不需要。也可用环境变量
   # PROXYHUB_SETUP_TOKEN 注入(优先于本配置)。
   # setup_token: ""
+  # mfa_optional: 放开强制 MFA(未绑定账号也能进业务面)。仅限本机开发
+  # 环境!生产严禁开启;开启后启动日志有 WARN。
+  # mfa_optional: false
 
 storage:
   # 本地运行态统一放 var/(已 gitignore),不要指向仓库根目录
