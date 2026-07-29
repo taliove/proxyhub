@@ -153,4 +153,13 @@ docker-build: ## 构建 Docker 镜像
 docker-run: ## 运行 Docker 容器
 	docker run -d -p 8080:8080 -v ./data:/data $(BINARY_NAME):$(VERSION)
 
+dev-docker: ## Docker 本机开发环境(构建+首次初始化+起服务,幂等;:18081)
+	bash scripts/dev/dev-up.sh
+
+dev-docker-down: ## 停 Docker 本机开发环境
+	docker compose -f docker-compose.dev.yml down
+
+dev-docker-logs: ## 看 Docker 本机开发环境日志
+	docker compose -f docker-compose.dev.yml logs -f
+
 .DEFAULT_GOAL := help

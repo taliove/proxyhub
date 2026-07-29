@@ -20,18 +20,41 @@ make deps   # 安装 Go/前端依赖,并激活本地 git hooks(.githooks/)
 
 ## 开发循环
 
-### 前端开发
+### Docker 本机开发环境(优先)
+
+本机有 Docker 时的推荐方式:一条命令起好带账号的完整环境,与源码直跑互不影响(独立数据卷、独立端口 18081)。
 
 ```bash
-make dev-frontend
-# 访问 http://localhost:3000
-# API 自动代理到后端 :8080
+make dev-docker        # 构建镜像 + 首次初始化 + 起服务(幂等)
+make dev-docker-logs   # 看日志
+make dev-docker-down   # 停止
 ```
 
-### 后端开发
+首次启动自动初始化开发账号,脚本输出访问信息(也可随时重跑 `make dev-docker` 查看):
+
+| 项 | 值 |
+|---|---|
+| 管理后台 | http://localhost:18081/dev-admin-x7k9m2p4q8w3/ |
+| 账号 | `devadmin` |
+| 密码 | `proxyhub-dev` |
+
+> ⚠️ 这组账号口令是**公开写死的本机开发约定**(同 postgres/postgres 之于本地开发),只用于本机 Docker 开发环境,任何真实部署都不得使用。生产初始化走安装器或 Setup 向导。
+
+构成(全部入库,可复现):`docker-compose.dev.yml`(端口/数据卷)、`scripts/dev/dev-up.sh`(幂等编排:构建 → 无库则 `proxyhub init` 建号 → 起服务 → 打印访问信息)、`config.dev.example.yaml`(源码直跑开发配置模板)。
+
+### 源码直跑开发
 
 ```bash
-make dev-backend
+make dev-frontend   # 前端 vite dev server,http://localhost:3000,API 代理到 :8080
+make dev-backend    # 后端
+```
+
+源码直跑想用独立配置时:`cp config.dev.example.yaml config.dev.yaml` 按需修改(gitignored),建号:
+
+```bash
+echo "proxyhub-dev" | ./dist/proxyhub init -config config.dev.yaml \
+  -username devadmin -password-stdin \
+  -domain http://localhost:8080 -site-path /dev-admin-x7k9m2p4q8w3
 ```
 
 ## 构建与测试

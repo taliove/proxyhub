@@ -1,0 +1,17 @@
+# 本机开发环境(非生产)——由 make dev-docker 驱动,见 scripts/dev/dev-up.sh
+# 端口 18081(避开 8080 的源码直跑实例与常见 18080);数据卷独立于生产。
+services:
+  proxyhub:
+    build:
+      context: .
+      args:
+        VERSION: dev
+    image: proxyhub:dev
+    ports:
+      - "18081:8080"
+    volumes:
+      - proxyhub-dev-data:/data
+    restart: unless-stopped
+
+volumes:
+  proxyhub-dev-data:

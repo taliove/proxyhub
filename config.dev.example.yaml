@@ -1,0 +1,35 @@
+# 本机开发配置模板(非生产)——派生自 config.example.yaml(单一事实源),
+# schema 变更时按它重新派生。用法:cp config.dev.example.yaml config.dev.yaml,
+# 按需改 host/setup_token,然后 ./dist/proxyhub -config config.dev.yaml。
+# config.dev.yaml 是运行态,已 gitignore,不入库。
+server:
+  # 默认只本机可连;要从局域网其他设备访问,改成 "0.0.0.0" 或本机 LAN IP
+  host: "127.0.0.1"
+  port: 8080
+  # 直连暴露(无反代)必须显式置空,否则调用方可伪造 XFF 绕过 IP 防线
+  trusted_proxies: []
+  # host 非回环且要走 Setup 向导时必填(请求头 X-Setup-Token);
+  # 开发环境推荐直接用 init CLI 建号,跳过向导,见 docs/DEVELOPMENT.md
+  setup_token: "dev-setup-token-change-me"
+
+storage:
+  # 开发库与默认库分开,互不影响
+  path: "var/data/dev.db"
+
+log:
+  level: "info"
+  format: "json"
+
+health_check:
+  interval: 15m
+  latency_threshold: 500
+  test_url: "https://www.google.com"
+  timeout:
+    latency: 5s
+    request: 10s
+  concurrent: 30
+  retry: 2
+
+filter:
+  nodes_per_region: 10
+  deduplicate: true
