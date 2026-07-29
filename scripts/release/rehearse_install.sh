@@ -44,7 +44,10 @@ rsh_script() { ssh "${SSH_OPTS[@]}" "$TARGET" 'bash -s' ; }
 
 preflight() {
     log "preflight: ssh/sudo/系统/既有安装/端口"
-    rsh 'sudo -n true' 2>/dev/null || fail "目标机 sudo 非免密"
+    local sudo_err
+    if ! sudo_err=$(rsh 'sudo -n true' 2>&1); then
+        fail "目标机 ssh/sudo 预检失败: ${sudo_err:-连接失败}(要求免密 ssh + 免密 sudo)"
+    fi
     local info
     info=$(rsh 'echo "os=$(. /etc/os-release; echo "$ID $VERSION_ID") arch=$(uname -m) caddy=$(command -v caddy || true) record=$(sudo -n test -f /root/.proxyhub-install-info && echo present || echo absent) unit=$(sudo -n test -f /etc/systemd/system/proxyhub.service && echo present || echo absent)"') \
         || fail "ssh 不通: $TARGET"
@@ -88,7 +91,7 @@ run_install() {
             --version '$REHEARSAL_VERSION' \
             --listen-addr '127.0.0.1:${REHEARSAL_LISTEN_PORT}'" \
         >"$WORKDIR/install.log" 2>&1 || {
-        sed -e 's/^( *Admin password *:).*/\1 <redacted>/' "$WORKDIR/install.log" >&2
+        sed -e 's/^ *Admin password *:.*/  Admin password : <redacted>/' "$WORKDIR/install.log" >&2
         fail "install.sh 执行失败(输出如上,密码已脱敏)"
     }
     # 安装输出含一次性管理员密码:只留本地 0600 文件,日志打印脱敏版。
