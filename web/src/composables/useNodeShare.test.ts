@@ -142,7 +142,7 @@ describe('useNodeShare', () => {
 
       await copyNodeLink(node)
 
-      expect(ElMessage.error).toHaveBeenCalledWith('复制失败: Network error')
+      expect(ElMessage.error).toHaveBeenCalledWith('复制失败：Network error')
     })
 
     it('should show error message when clipboard write fails', async () => {
@@ -153,7 +153,7 @@ describe('useNodeShare', () => {
 
       await copyNodeLink(node)
 
-      expect(ElMessage.error).toHaveBeenCalledWith('复制失败: Clipboard denied')
+      expect(ElMessage.error).toHaveBeenCalledWith('复制失败：Clipboard denied')
     })
 
     it('should show error for unsupported protocol', async () => {
@@ -162,7 +162,7 @@ describe('useNodeShare', () => {
       await copyNodeLink(node)
 
       expect(ElMessage.error).toHaveBeenCalledWith(
-        '不支持的协议: http. 仅支持 vmess, vless, trojan, ss, anytls.'
+        '不支持的协议：http. 仅支持 vmess, vless, trojan, ss, anytls.'
       )
     })
   })

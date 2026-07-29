@@ -110,7 +110,7 @@ const handleSave = async () => {
     ElMessage.success('地域白名单已更新')
     emit('saved')
   } catch (err) {
-    ElMessage.error(`更新失败: ${err instanceof Error ? err.message : String(err)}`)
+    ElMessage.error(`更新失败：${err instanceof Error ? err.message : String(err)}`)
   } finally {
     saving.value = false
   }

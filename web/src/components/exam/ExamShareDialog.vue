@@ -105,7 +105,7 @@ const onDownload = async () => {
     URL.revokeObjectURL(url)
     ElMessage.success('已下载分享卡')
   } catch (err) {
-    errorMsg.value = `生成 PNG 失败:${(err as Error).message || '未知错误'}`
+    errorMsg.value = `生成 PNG 失败：${(err as Error).message || '未知错误'}`
   } finally {
     downloading.value = false
   }
@@ -128,7 +128,7 @@ const onCopy = async () => {
     await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })])
     ElMessage.success('已复制到剪贴板')
   } catch (err) {
-    errorMsg.value = `复制失败:${(err as Error).message || '未知错误'}`
+    errorMsg.value = `复制失败：${(err as Error).message || '未知错误'}`
   } finally {
     copying.value = false
   }

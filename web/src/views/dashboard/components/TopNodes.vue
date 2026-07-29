@@ -96,7 +96,7 @@ const showQR = async (item: TopNodeItem): Promise<void> => {
     const uri = await getNodeShareLink(asShareNode(item))
     qrDialog.value?.show(uri)
   } catch (error) {
-    ElMessage.error(`获取分享链接失败: ${error instanceof Error ? error.message : String(error)}`)
+    ElMessage.error(`获取分享链接失败：${error instanceof Error ? error.message : String(error)}`)
   }
 }
 </script>

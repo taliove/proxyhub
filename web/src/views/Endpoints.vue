@@ -102,7 +102,7 @@
             placeholder="留空则用全局模板,如 {emoji} {region} {source_abbr}-{index}"
           />
           <div class="cfg-hint">
-            变量:{emoji} {region} {region_code} {source} {source_abbr} {index}
+            变量：{emoji} {region} {region_code} {source} {source_abbr} {index}
             {original_name}。仅本订阅地址生效。
           </div>
         </el-form-item>

@@ -2,7 +2,7 @@
   <el-dialog v-model="visible" :title="editMode ? '编辑自建节点' : '添加自建节点'" width="600px">
     <el-form :model="form" label-width="100px">
       <el-form-item label="名称">
-        <el-input v-model="form.name" placeholder="例如:自建香港" @input="nameDirty = true" />
+        <el-input v-model="form.name" placeholder="例如：自建香港" @input="nameDirty = true" />
       </el-form-item>
       <el-form-item label="协议">
         <el-select v-model="form.protocol" class="full-width">
@@ -27,7 +27,7 @@
         <el-input v-model="form.password" />
       </el-form-item>
       <el-form-item v-if="show('cipher')" label="加密方式">
-        <el-input v-model="form.cipher" placeholder="例如:aes-256-gcm" />
+        <el-input v-model="form.cipher" placeholder="例如：aes-256-gcm" />
       </el-form-item>
       <el-form-item v-if="show('alter_id')" label="AlterID">
         <el-input-number v-model="form.alter_id" :min="0" />
@@ -40,7 +40,7 @@
         </el-select>
       </el-form-item>
       <el-form-item v-if="show('grpc_service_name')" label="gRPC Service">
-        <el-input v-model="form.grpc_service_name" placeholder="gRPC service name" />
+        <el-input v-model="form.grpc_service_name" placeholder="例如 my-grpc-service" />
       </el-form-item>
       <el-form-item v-if="show('tls')" label="TLS">
         <el-switch v-model="form.tls" />

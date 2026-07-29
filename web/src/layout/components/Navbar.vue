@@ -12,7 +12,7 @@
            inside another user's space; exit returns to their own scope. -->
       <div v-if="authStore.actingUser" class="ph-navbar__acting" data-testid="acting-banner">
         <el-tag type="warning" size="small" effect="dark">
-          正在查看:{{ authStore.actingUser.username }}
+          正在查看：{{ authStore.actingUser.username }}
         </el-tag>
         <el-button link type="warning" size="small" class="ph-navbar__exit" @click="onExitSwitch">
           退出

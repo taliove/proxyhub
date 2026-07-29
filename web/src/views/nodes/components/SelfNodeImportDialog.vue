@@ -7,7 +7,7 @@
       v-model="importUrl"
       type="textarea"
       :rows="6"
-      placeholder="粘贴节点链接,例如:vless://uuid@server:port?..."
+      placeholder="粘贴节点链接,例如：vless://uuid@server:port?..."
     />
     <template #footer>
       <el-button @click="visible = false">取消</el-button>

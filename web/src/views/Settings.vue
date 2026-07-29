@@ -86,7 +86,7 @@
                 inactive-value="false"
               />
               <span class="hint">
-                关闭后仅「手动刷新」会拉取机场。注意:关闭并重启后节点池为空,订阅暂时返回 503。
+                关闭后仅「手动刷新」会拉取机场。注意：关闭并重启后节点池为空,订阅暂时返回 503。
               </span>
             </el-form-item>
 
@@ -123,7 +123,7 @@
                 placeholder="{emoji} {region} {source_abbr}-{index}"
               />
               <span class="hint">
-                可用变量:{emoji} {region} {region_code} {source} {source_abbr} {index}
+                可用变量：{emoji} {region} {region_code} {source} {source_abbr} {index}
                 {original_name}。
               </span>
             </el-form-item>
@@ -168,7 +168,7 @@
               type="info"
               :closable="false"
               class="settings-alert"
-              title="采用固定时长测速:下行、上行各跑满「测速时长」(默认 10s)。数据量仅作上限。"
+              title="采用固定时长测速：下行、上行各跑满「测速时长」(默认 10s)。数据量仅作上限。"
             />
             <el-form-item label="测速时长(秒/方向)">
               <el-input v-model="settings.bandwidth_test_duration_sec" placeholder="10" />

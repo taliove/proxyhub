@@ -6,7 +6,7 @@
     <ul class="purge-notes">
       <li>节点将随下次刷新重新入池,清空后请手动刷新</li>
       <li>屏蔽名单与名称覆盖保留,节点重新入池后继续生效</li>
-      <li>清空与刷新互斥:有刷新任务进行中时操作会被拒绝</li>
+      <li>清空与刷新互斥：有刷新任务进行中时操作会被拒绝</li>
     </ul>
     <template #footer>
       <el-button @click="visible = false">取消</el-button>

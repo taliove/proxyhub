@@ -136,7 +136,7 @@
 
     <!-- Reset-password result: shown once, must be copied now -->
     <el-dialog v-model="passwordResultVisible" title="密码已重置" width="460px">
-      <p class="form-hint">请将新密码复制并转交用户,关闭后无法再次查看:</p>
+      <p class="form-hint">请将新密码复制并转交用户,关闭后无法再次查看：</p>
       <el-input :model-value="passwordResult" readonly>
         <template #append>
           <el-button @click="copyPassword(passwordResult)">复制</el-button>

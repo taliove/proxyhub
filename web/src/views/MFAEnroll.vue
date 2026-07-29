@@ -22,7 +22,7 @@
       </div>
 
       <p class="mfa-enroll__hint">
-        用 Google Authenticator、1Password、Authy 等任一认证器扫码,或手动输入密钥:
+        用 Google Authenticator、1Password、Authy 等任一认证器扫码,或手动输入密钥：
       </p>
 
       <div class="mfa-enroll__secret">

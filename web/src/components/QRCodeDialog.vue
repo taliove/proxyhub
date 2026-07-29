@@ -38,7 +38,7 @@ const show = async (content: string) => {
   try {
     dataUrl.value = await generateQRCode(content)
   } catch (err) {
-    error.value = `生成二维码失败: ${err}`
+    error.value = `生成二维码失败：${err}`
   } finally {
     loading.value = false
   }

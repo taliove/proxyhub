@@ -19,7 +19,7 @@
       width="420px"
       :close-on-click-modal="false"
     >
-      <p class="regen-hint">请输入认证器上的 6 位动态码,或任一未使用的恢复码,以确认本次操作:</p>
+      <p class="regen-hint">请输入认证器上的 6 位动态码,或任一未使用的恢复码,以确认本次操作：</p>
       <el-input
         v-model="confirmCode"
         placeholder="6 位动态码或恢复码"

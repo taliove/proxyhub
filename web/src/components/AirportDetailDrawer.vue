@@ -269,7 +269,7 @@ const copyUrl = async () => {
     await navigator.clipboard.writeText(props.airport.url)
     ElMessage.success('订阅 URL 已复制到剪贴板')
   } catch (err) {
-    ElMessage.error(`复制失败: ${err instanceof Error ? err.message : String(err)}`)
+    ElMessage.error(`复制失败：${err instanceof Error ? err.message : String(err)}`)
   }
 }
 

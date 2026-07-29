@@ -23,7 +23,7 @@ export function useTemplateAutosave() {
       return { valid: true }
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e)
-      return { valid: false, error: `YAML 格式错误: ${errMsg}` }
+      return { valid: false, error: `YAML 格式错误：${errMsg}` }
     }
   }
 

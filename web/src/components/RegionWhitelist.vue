@@ -99,7 +99,7 @@ const loadData = async () => {
     }
   } catch (error) {
     console.error('[RegionWhitelist] loadData error:', error)
-    ElMessage.error('加载失败: ' + errorMessage(error))
+    ElMessage.error('加载失败：' + errorMessage(error))
   } finally {
     loading.value = false
   }
@@ -113,7 +113,7 @@ const save = async () => {
     })
     ElMessage.success('保存成功')
   } catch (error) {
-    ElMessage.error('保存失败: ' + errorMessage(error))
+    ElMessage.error('保存失败：' + errorMessage(error))
   } finally {
     saving.value = false
   }

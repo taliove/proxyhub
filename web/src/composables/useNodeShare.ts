@@ -43,9 +43,9 @@ export async function copyNodeLink(node: Node): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message.includes('Unsupported protocol')) {
-      ElMessage.error(`不支持的协议: ${node.type}. 仅支持 ${SUPPORTED_PROTOCOLS.join(', ')}.`)
+      ElMessage.error(`不支持的协议：${node.type}. 仅支持 ${SUPPORTED_PROTOCOLS.join(', ')}.`)
     } else {
-      ElMessage.error(`复制失败: ${message}`)
+      ElMessage.error(`复制失败：${message}`)
     }
   }
 }

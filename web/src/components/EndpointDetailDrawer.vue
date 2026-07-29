@@ -138,7 +138,7 @@
             />
           </el-select>
           <div class="cfg-hint">
-            留空则跟随用户默认模板(四级回退:订阅地址 → 用户默认 → 超管全局 → 内嵌默认)
+            留空则跟随用户默认模板(四级回退：订阅地址 → 用户默认 → 超管全局 → 内嵌默认)
           </div>
         </el-form-item>
       </el-form>
@@ -221,7 +221,7 @@ const saveTemplateConfig = async () => {
     templateConfigVisible.value = false
     emit('template-changed')
   } catch (err) {
-    ElMessage.error(`更新失败: ${err instanceof Error ? err.message : String(err)}`)
+    ElMessage.error(`更新失败：${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
@@ -271,7 +271,7 @@ const copyUrl = async () => {
     await navigator.clipboard.writeText(props.subscriptionUrl)
     ElMessage.success('订阅 URL 已复制到剪贴板')
   } catch (err) {
-    ElMessage.error(`复制失败: ${err instanceof Error ? err.message : String(err)}`)
+    ElMessage.error(`复制失败：${err instanceof Error ? err.message : String(err)}`)
   }
 }
 </script>

@@ -66,7 +66,7 @@ onMounted(async () => {
         settings.direct_egress_interface ?? DIRECT_EGRESS_DEFAULTS.direct_egress_interface
     }
   } catch (e) {
-    ElMessage.error(`加载直连出口设置失败: ${e instanceof Error ? e.message : String(e)}`)
+    ElMessage.error(`加载直连出口设置失败：${e instanceof Error ? e.message : String(e)}`)
   }
 })
 

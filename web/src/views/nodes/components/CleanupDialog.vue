@@ -12,7 +12,7 @@
     <template v-else>
       <el-alert type="warning" :closable="false" class="cleanup-summary">
         <template #title>
-          将处理 {{ failedNodes.length }} 个不可用节点:机场 {{ airportCount }} 个、自建
+          将处理 {{ failedNodes.length }} 个不可用节点：机场 {{ airportCount }} 个、自建
           {{ selfCount }} 个
         </template>
       </el-alert>

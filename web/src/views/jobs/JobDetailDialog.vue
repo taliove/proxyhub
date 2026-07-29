@@ -106,7 +106,7 @@
               type="warning"
               :closable="false"
               class="fallback-alert"
-              title="非本次任务产出:该报告为任务时间窗内匹配的历史体检记录"
+              title="非本次任务产出：该报告为任务时间窗内匹配的历史体检记录"
             />
             <ExamReportCard
               v-if="reportRows[0].report"

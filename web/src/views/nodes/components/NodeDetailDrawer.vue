@@ -128,7 +128,7 @@
       </div>
 
       <div v-if="node.bandwidth_down_mbps || node.bandwidth_up_mbps" class="drawer-block bw-detail">
-        <span class="bw-label">带宽测试:</span>
+        <span class="bw-label">带宽测试：</span>
         <el-tag size="small" type="success" class="num">
           下行 {{ (node.bandwidth_down_mbps || 0).toFixed(1) }} Mbps
         </el-tag>

@@ -1,7 +1,7 @@
 <template>
   <div>
     <PageHeader>
-      <span v-if="lastUpdate" class="muted">最后更新:{{ formatTime(lastUpdate) }}</span>
+      <span v-if="lastUpdate" class="muted">最后更新：{{ formatTime(lastUpdate) }}</span>
       <el-button @click="openImport">一键导入</el-button>
       <el-button type="primary" @click="openAddSelf">添加自建节点</el-button>
     </PageHeader>
