@@ -31,6 +31,10 @@ type DiagnosticResult struct {
 	NodeCount      int               `json:"node_count"`
 	ProtocolCounts map[string]int    `json:"protocol_counts"`
 	ParseFailures  int               `json:"parse_failures"`
+	// ManualSource 手动机场标记(见 CONTEXT.md「手动机场」):无订阅 URL 可拉,
+	// 诊断段整体为 N/A(显式标记,区别于"拉取失败"的 HTTPStatus=0);
+	// 评分走"URL 不可达且池有节点"权重重归一(现成语义)。
+	ManualSource bool `json:"manual_source,omitempty"`
 }
 
 // TestRun represents a single test execution for an airport.
@@ -88,6 +92,10 @@ type Store interface {
 	// GetAirportURL 按 airport_id 解析订阅 URL(凭证不落 params_json,
 	// Run 时才从 store 读取);机场已删返回 ErrAirportGone。
 	GetAirportURL(ctx context.Context, airportID int64) (string, error)
+	// GetAirportSourceType 按 airport_id 读来源类型(store.AirportSourceURL /
+	// store.AirportSourceManual);手动机场据此跳过 URL 拉取(诊断段 N/A)。
+	// 机场已删返回 ErrAirportGone;空串按拉取型处理(兼容旧数据)。
+	GetAirportSourceType(ctx context.Context, airportID int64) (string, error)
 }
 
 // NewOrchestrator creates a new test orchestrator.

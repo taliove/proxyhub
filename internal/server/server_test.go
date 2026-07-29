@@ -35,6 +35,8 @@ type fakeNodes struct {
 	testExclusiveErr error
 	// testConflictChecker 记录装配期注入的测试侧冲突查询(验证跨 kind 装配)
 	testConflictChecker func(airportID int64) (string, bool)
+	// importErr ImportManualAirportNodes 返回的错误(模拟导入与刷新冲突 409)
+	importErr error
 }
 
 func (f *fakeNodes) Nodes() []*subscription.Node { return f.nodes }
@@ -165,6 +167,15 @@ func (f *fakeNodes) PurgeAirportNodesForUser(userID int64) (int, error) {
 	removed := len(f.nodes) - len(kept)
 	f.nodes = kept
 	return removed, nil
+}
+
+// ImportManualAirportNodes 测试 mock:追加节点入池,模拟真实 Aggregator 的 upsert 语义。
+func (f *fakeNodes) ImportManualAirportNodes(airport *store.Airport, nodes []*subscription.Node) error {
+	if f.importErr != nil {
+		return f.importErr
+	}
+	f.nodes = append(f.nodes, nodes...)
+	return nil
 }
 
 func newTestServer(t *testing.T, nodes []*subscription.Node) (*Server, *store.Store) {

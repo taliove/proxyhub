@@ -484,6 +484,17 @@ func (r *runLog) fetchDiag(airport *store.Airport, diag *subscription.FetchDiagn
 	}
 }
 
+// persistAirportUsage 拉取成功后落库用量信息(仅当响应头存在;
+// 落库失败不阻断拉取主路径,只丢本次捕获)。全量与单机场刷新共用。
+func (a *Aggregator) persistAirportUsage(airport *store.Airport, diag *subscription.FetchDiagnostics) {
+	if diag == nil || diag.Usage == nil {
+		return
+	}
+	if err := a.st.UpdateAirportUsage(airport.ID, diag.Usage); err != nil {
+		a.logger.Warn("update airport usage failed", "airport", airport.Name, "error", err)
+	}
+}
+
 // fetchResult 拉取阶段产出
 type fetchResult struct {
 	airportNodes map[string][]*subscription.Node // 按机场分组（拉取失败的为 nil），供告警判断
@@ -491,6 +502,11 @@ type fetchResult struct {
 	enabled      int   // 启用的机场数
 	failed       int   // 拉取失败的机场数
 	owner        int64 // 本轮刷新的目标分片(ticket 07):拉取机场属主(未归属已归一到超管)
+	// preserve 本轮未成功拉取、但仍现存且启用的机场名集合(手动跳过/拉取失败/
+	// 取消未启动):per-source 合并时这些来源的旧节点原样保留而非标 stale。
+	// 不在成功集也不在 preserve 的旧池来源(机场已删除/被禁用/已改名的旧名)
+	// 属合法消失,照旧进 MergePool stale 扫描(见 ADR 0034 与 Check H1)。
+	preserve map[string]bool
 }
 
 // execute 聚合流水线(旧入口,兼容既有调用):全表扫机场与自建节点,内部按分片归属
@@ -553,11 +569,14 @@ func (a *Aggregator) executeForUser(ctx context.Context, rl *runLog, progress fu
 
 	// MergePool carry-forward：用旧池的检测状态（DetectionLastCheck/Available/Latency/带宽）
 	// 覆盖新池（修复刷新抹掉真实检测结果的 bug），并标记消失节点为 stale。
+	// per-source 合并(spec-manual-airport-import):stale 扫描集 = 成功拉取来源 ∪
+	// 旧池中"不再现存启用"的来源(删除/禁用/旧名);手动机场(永不拉取)与拉取
+	// 失败机场(本轮无数据)在 preserve 集,节点原样保留(MergePool stale 陷阱)。
 	owner := fetched.owner
 	a.mu.RLock()
 	oldPool := a.pools[owner]
 	a.mu.RUnlock()
-	mergedPool := subscription.MergePool(oldPool, allNodes)
+	mergedPool := mergePerSource(oldPool, allNodes, fetched, true)
 
 	// 应用覆盖层（机场节点的 display_name/region 编辑）
 	a.applyOverrides(owner, mergedPool)
@@ -615,10 +634,20 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 	}
 
 	var enabled []*store.Airport
+	manualSkipped := 0
+	preserve := make(map[string]bool)
 	for _, airport := range airports {
-		if airport.Enabled {
-			enabled = append(enabled, airport)
+		if !airport.Enabled {
+			continue
 		}
+		// 手动机场无订阅 URL 可拉,定时/全量刷新跳过(CONTEXT.md「手动机场」);
+		// 其节点进 preserve 集,per-source 合并原样保留而不标 stale。
+		if airport.SourceType == store.AirportSourceManual {
+			manualSkipped++
+			preserve[airport.Name] = true
+			continue
+		}
+		enabled = append(enabled, airport)
 	}
 
 	// 本轮分片属主:单用户刷新直接用请求属主;全量刷新归一到首个超管(Invariant B)。
@@ -627,6 +656,9 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 		owner = a.ownerUserID(0)
 	}
 
+	if manualSkipped > 0 {
+		rl.event(levelInfo, stageFetch, fmt.Sprintf("跳过 %d 个手动机场(无订阅 URL,不参与拉取)", manualSkipped), nil)
+	}
 	if len(enabled) == 0 {
 		rl.event(levelWarn, stageFetch, "没有启用的机场，跳过拉取", nil)
 	} else {
@@ -679,6 +711,7 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 				n.UserID = nodeOwner
 			}
 			rl.fetchDiag(airport, diag, "")
+			a.persistAirportUsage(airport, diag)
 			rl.event(levelInfo, stageFetch, fmt.Sprintf("「%s」拉取成功，%d 个节点", airport.Name, len(sub.Nodes)),
 				map[string]any{
 					"airport": airport.Name, "nodes": len(sub.Nodes),
@@ -694,16 +727,19 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 		airportNodes: make(map[string][]*subscription.Node),
 		enabled:      len(enabled),
 		owner:        owner,
+		preserve:     preserve,
 	}
 	for i, airport := range enabled {
 		o := outcomes[i]
 		if o.skipped {
 			result.airportNodes[airport.Name] = nil
+			preserve[airport.Name] = true // 取消未启动:现存启用机场,节点保留
 			continue
 		}
 		if o.err != nil {
 			result.airportNodes[airport.Name] = nil
 			result.failed++
+			preserve[airport.Name] = true // 拉取失败:本轮无数据 ≠ 节点消失
 			continue
 		}
 		result.airportNodes[airport.Name] = o.nodes
@@ -928,35 +964,81 @@ func (a *Aggregator) applyOverrides(userID int64, pool []*subscription.Node) {
 	}
 }
 
+// fetchedSources 返回本轮成功拉取到节点的来源集合(失败/跳过/手动机场不在内)。
+func fetchedSources(fetched *fetchResult) map[string]bool {
+	sources := make(map[string]bool, len(fetched.airportNodes))
+	for name, nodes := range fetched.airportNodes {
+		if nodes != nil {
+			sources[name] = true
+		}
+	}
+	return sources
+}
+
+// mergePerSource 按来源合并节点池(成功路径与取消路径共用的 per-source 手法):
+//
+//	stale 扫描集 = 成功拉取来源 ∪ 旧池中"不再现存启用"的来源(机场已删除/被禁用/
+//	已改名的旧名——属合法消失,照旧标 stale,否则会永久 active 持续下发订阅);
+//	保留集 = fetched.preserve(手动跳过/拉取失败/取消未启动的现存启用机场)——
+//	本轮无数据 ≠ 节点消失,旧节点原样保留。
+//
+// includeSelfHosted 区分两条路径:成功路径自建节点随 allNodes 重新注入,
+// 旧自建必须进 MergePool(carry-forward 检测状态,未被再注入的旧自建由
+// MergePool 的自建豁免丢弃);取消路径无注入,自建走保留侧原样留下。
+//
+// 尾部按 NodeKey 去重:rest 侧与新拉取集同 key 的旧节点丢弃(新拉取集优先),
+// 防跨来源同 server:port 双份。
+func mergePerSource(oldPool, newNodes []*subscription.Node, fetched *fetchResult, includeSelfHosted bool) []*subscription.Node {
+	fetchedSources := fetchedSources(fetched)
+	var oldOfFetched, rest []*subscription.Node
+	for _, n := range oldPool {
+		// 自建节点路由只看路径,不经 preserve 判定(H1R):成功路径进 MergePool
+		// (随注入 carry-forward,未再注入的旧自建由其自建豁免丢弃);取消路径
+		// 无注入,必须走保留侧——进 MergePool 会被其豁免分支直接丢弃,
+		// 自建 FailBack 节点将整批从池与 DB 快照消失。
+		if n.Source == subscription.SourceSelfHosted {
+			if includeSelfHosted {
+				oldOfFetched = append(oldOfFetched, n)
+			} else {
+				rest = append(rest, n)
+			}
+			continue
+		}
+		inFetchSet := fetchedSources[n.Source]
+		// 保留侧仅限"明确保留"的来源;既未成功拉取又不保留的来源(删除/禁用/旧名)
+		// 并入 stale 扫描集——合法消失必须下架。
+		if inFetchSet || !fetched.preserve[n.Source] {
+			oldOfFetched = append(oldOfFetched, n)
+		} else {
+			rest = append(rest, n)
+		}
+	}
+	merged := subscription.MergePool(oldOfFetched, newNodes)
+	seen := make(map[string]bool, len(merged)+len(rest))
+	for _, n := range merged {
+		seen[n.NodeKey()] = true
+	}
+	for _, n := range rest {
+		if seen[n.NodeKey()] {
+			continue // 新拉取集优先:rest 同 key 旧节点丢弃
+		}
+		merged = append(merged, n)
+	}
+	return merged
+}
+
 // mergePartialOnCancel 取消时的部分入池:只对成功拉取的机场做 MergePool
 // (carry-forward + stale 标记只作用于这些机场),未拉取的机场节点原样保留——
 // 取消不等于"那些机场消失了",标 stale 会让整个池在订阅里消失。
 func (a *Aggregator) mergePartialOnCancel(rl *runLog, fetched *fetchResult) {
 	a.recognizeRegions(rl, fetched.allNodes)
 
-	fetchedSources := make(map[string]bool)
-	for name, nodes := range fetched.airportNodes {
-		if nodes != nil {
-			fetchedSources[name] = true
-		}
-	}
-
 	owner := fetched.owner
 	a.mu.RLock()
 	oldPool := a.pools[owner]
 	a.mu.RUnlock()
-	var oldOfFetched, rest []*subscription.Node
-	for _, n := range oldPool {
-		if fetchedSources[n.Source] {
-			oldOfFetched = append(oldOfFetched, n)
-		} else {
-			rest = append(rest, n)
-		}
-	}
-
-	merged := subscription.MergePool(oldOfFetched, fetched.allNodes)
-	a.applyOverrides(owner, merged)
-	newPool := append(merged, rest...)
+	newPool := mergePerSource(oldPool, fetched.allNodes, fetched, false)
+	a.applyOverrides(owner, newPool)
 	for _, n := range newPool {
 		if n.UserID == 0 {
 			n.UserID = owner
@@ -973,8 +1055,8 @@ func (a *Aggregator) mergePartialOnCancel(rl *runLog, fetched *fetchResult) {
 	}
 
 	rl.event(levelWarn, stageDone,
-		fmt.Sprintf("刷新已取消：%d 个机场已拉取部分照常入池，未拉取机场保持原状", len(fetchedSources)),
-		map[string]any{"fetched_airports": len(fetchedSources)})
+		fmt.Sprintf("刷新已取消：%d 个机场已拉取部分照常入池，未拉取机场保持原状", len(fetchedSources(fetched))),
+		map[string]any{"fetched_airports": len(fetchedSources(fetched))})
 	rl.finish(store.RefreshStatusCancelled, len(fetched.allNodes), 0, len(newPool), "cancelled")
 	a.checkAlerts(fetched.airportNodes, 0)
 }

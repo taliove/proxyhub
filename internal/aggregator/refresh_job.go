@@ -105,6 +105,7 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 		return fmt.Errorf("fetch airport %s: %w", airport.Name, err)
 	}
 	rl.fetchDiag(airport, diag, "")
+	k.agg.persistAirportUsage(airport, diag)
 	rl.event(levelInfo, stageFetch, fmt.Sprintf("「%s」拉取成功,%d 个节点", airport.Name, len(sub.Nodes)),
 		map[string]any{
 			"airport": airport.Name, "nodes": len(sub.Nodes),

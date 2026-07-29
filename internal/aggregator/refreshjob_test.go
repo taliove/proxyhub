@@ -351,7 +351,8 @@ func TestMergePartialOnCancel_UnfetchedAirportsNotMarkedStale(t *testing.T) {
 	}
 	agg.restoreNodePool()
 
-	// 构造取消时刻的拉取结果:X 拉成功,Y 未启动(skipped,airportNodes[Y]=nil)
+	// 构造取消时刻的拉取结果:X 拉成功,Y 未启动(skipped,airportNodes[Y]=nil,
+	// Y 是现存启用机场,进 preserve 集——取消 ≠ 机场消失)
 	newX := &subscription.Node{Name: "X 01", Type: "trojan", Server: "127.0.0.1", Port: 1, Password: "pw", Region: "HK", Source: "机场X"}
 	fetched := &fetchResult{
 		airportNodes: map[string][]*subscription.Node{
@@ -360,6 +361,7 @@ func TestMergePartialOnCancel_UnfetchedAirportsNotMarkedStale(t *testing.T) {
 		},
 		allNodes: []*subscription.Node{newX},
 		enabled:  2,
+		preserve: map[string]bool{"机场Y": true},
 	}
 
 	agg.mergePartialOnCancel(&runLog{}, fetched)

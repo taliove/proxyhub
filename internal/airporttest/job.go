@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -95,20 +96,36 @@ func (k *JobKind) Run(ctx context.Context, params json.RawMessage, _ string, _ f
 
 	reportProgress(progress, jobCursor{Phase: string(StatusDiagnosing)})
 
-	// 订阅 URL 是凭证,不经 params 传递:按 airport_id 从 store 现读。
-	// 机场在入队后被删除 → ErrAirportGone 收口(jobs 行 failed,无 run 产出)。
-	url, err := k.store.GetAirportURL(ctx, p.AirportID)
+	// 来源类型决定诊断段形态:手动机场无 URL 可拉,跳过拉取,
+	// 诊断段显式 N/A(ManualSource),直接进池分支(池空则 failed,文案适配)。
+	sourceType, err := k.store.GetAirportSourceType(ctx, p.AirportID)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		return fmt.Errorf("airport test: resolve subscription for airport %d: %w", p.AirportID, err)
+		return fmt.Errorf("airport test: resolve airport %d: %w", p.AirportID, err)
 	}
 
-	diag, nodes := k.fetch(ctx, p.AirportName, url)
-	// 拉取期间被取消:尚未建行,直接以取消收口(jobs 行 cancelled,无 run 产出)
-	if err := ctx.Err(); err != nil {
-		return err
+	var diag *DiagnosticResult
+	var nodes []*subscription.Node
+	if sourceType == store.AirportSourceManual {
+		diag = &DiagnosticResult{ManualSource: true, ProtocolCounts: map[string]int{}}
+	} else {
+		// 订阅 URL 是凭证,不经 params 传递:按 airport_id 从 store 现读。
+		// 机场在入队后被删除 → ErrAirportGone 收口(jobs 行 failed,无 run 产出)。
+		url, err := k.store.GetAirportURL(ctx, p.AirportID)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return fmt.Errorf("airport test: resolve subscription for airport %d: %w", p.AirportID, err)
+		}
+
+		diag, nodes = k.fetch(ctx, p.AirportName, url)
+		// 拉取期间被取消:尚未建行,直接以取消收口(jobs 行 cancelled,无 run 产出)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 	}
 
 	// 建行:诊断数据 + job_id 关联。持久化走脱离取消的 ctx(取消后收口仍须落库)。

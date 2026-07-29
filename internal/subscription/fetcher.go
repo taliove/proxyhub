@@ -40,6 +40,52 @@ type FetchDiagnostics struct {
 	DurationMs    int64 `json:"duration_ms"`    // 请求发出到 body 读完
 	NodeCount     int   `json:"node_count"`     // 解析成功节点数
 	ParseFailures int   `json:"parse_failures"` // 解析失败行数(非空行中无法解析的)
+	// Usage 机场用量信息(200 响应且带 subscription-userinfo / profile-web-page-url
+	// 头时捕获;无响应头为 nil,调用方据此保留既有落库值)。
+	Usage *UsageInfo `json:"usage,omitempty"`
+}
+
+// UsageInfo 机场用量信息(CONTEXT.md「用量信息」),从响应头捕获:
+// subscription-userinfo 的 upload/download/total(字节)与 expire(unix 秒),
+// profile-web-page-url 的官网地址。畸形字段容错为 0,不阻断拉取。
+type UsageInfo struct {
+	Upload     int64  `json:"upload"`
+	Download   int64  `json:"download"`
+	Total      int64  `json:"total"`
+	Expire     int64  `json:"expire"` // unix 秒;0 = 未知
+	WebPageURL string `json:"web_page_url,omitempty"`
+}
+
+// ParseUsageHeaders 从订阅响应头解析用量信息;两个头都缺失返回 nil
+// (nil 是"机场没报用量"的信号,区别于字段全零的"报了但值为零")。
+func ParseUsageHeaders(h http.Header) *UsageInfo {
+	raw := h.Get("subscription-userinfo")
+	webPage := SanitizeWebPageURL(h.Get("profile-web-page-url"))
+	if raw == "" && webPage == "" {
+		return nil
+	}
+	u := &UsageInfo{WebPageURL: webPage}
+	for _, kv := range strings.Split(raw, ";") {
+		key, val, ok := strings.Cut(strings.TrimSpace(kv), "=")
+		if !ok {
+			continue
+		}
+		n, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64)
+		if err != nil {
+			continue // 畸形字段容错为 0
+		}
+		switch strings.TrimSpace(key) {
+		case "upload":
+			u.Upload = n
+		case "download":
+			u.Download = n
+		case "total":
+			u.Total = n
+		case "expire":
+			u.Expire = n
+		}
+	}
+	return u
 }
 
 // StripURLError 剥掉 *url.Error 外壳,只保留内层错误。
@@ -94,24 +140,20 @@ func (f *Fetcher) FetchContext(ctx context.Context, name, subscriptionURL string
 		return nil, diag, fmt.Errorf("fetch subscription: status %d", resp.StatusCode)
 	}
 
+	// 用量信息捕获(spec-manual-airport-import):仅展示用途,解析失败不阻断拉取。
+	diag.Usage = ParseUsageHeaders(resp.Header)
+
 	body, err := io.ReadAll(resp.Body)
 	diag.DurationMs = time.Since(start).Milliseconds()
 	if err != nil {
 		return nil, diag, fmt.Errorf("read subscription body: %w", err)
 	}
 
-	// 尝试 Base64 解码（订阅整体可能是 base64 编码，支持 raw/padded）
-	decoded, err := base64.RawStdEncoding.DecodeString(string(body))
-	if err != nil {
-		decoded, err = base64.StdEncoding.DecodeString(string(body))
-		if err != nil {
-			// 如果不是 Base64，直接使用原始内容
-			decoded = body
-		}
-	}
+	// 整体 base64 识别与解码收敛到 DecodeSubscription(fetcher/airporttest/手动导入共用)
+	decoded := DecodeSubscription(body)
 
 	// 复用 ParseWithStats 的解析统计口径(与机场测试诊断同源)
-	parsed := ParseWithStats(string(decoded), name)
+	parsed := ParseWithStats(decoded, name)
 	diag.NodeCount = len(parsed.Nodes)
 	diag.ParseFailures = parsed.ParseFailures
 	if len(parsed.Nodes) == 0 {

@@ -22,6 +22,8 @@ func (s *Store) DeleteAirportNodes() (int64, error) {
 
 // DeleteAirportNodesForUser 删除指定用户分片的机场节点(ticket 07);
 // userID=0 为旧行为(跨用户全清)。关联表语义同 DeleteAirportNodes。
+// 手动机场节点豁免(2026-07-29 决策):无 URL 可拉,清空后永不回来——
+// 豁免经 SQL 子查询同事务判定,不在"列名-删除"两步间留竞态窗口。
 func (s *Store) DeleteAirportNodesForUser(userID int64) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -29,9 +31,17 @@ func (s *Store) DeleteAirportNodesForUser(userID int64) (int64, error) {
 	}
 	defer tx.Rollback()
 
-	tagQuery := `DELETE FROM node_tags WHERE node_key IN (SELECT node_key FROM nodes WHERE source != ?`
-	nodeQuery := `DELETE FROM nodes WHERE source != ?`
+	// 手动机场豁免子查询;userID>0 时按同一属主收窄(同名机场跨用户不串)。
+	manualFilter := ` AND source NOT IN (SELECT name FROM airports WHERE source_type = '` + AirportSourceManual + `'`
 	args := []any{subscription.SourceSelfHosted}
+	if userID > 0 {
+		manualFilter += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	manualFilter += `)`
+
+	tagQuery := `DELETE FROM node_tags WHERE node_key IN (SELECT node_key FROM nodes WHERE source != ?` + manualFilter
+	nodeQuery := `DELETE FROM nodes WHERE source != ?` + manualFilter
 	if userID > 0 {
 		tagQuery += ` AND user_id = ?`
 		nodeQuery += ` AND user_id = ?`

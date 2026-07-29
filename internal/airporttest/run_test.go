@@ -60,7 +60,9 @@ type FakeStore struct {
 	// 由 Run 按 airport_id 经 store 解析);URLErr 非 nil 模拟机场已删/库错误。
 	AirportURL    string
 	AirportURLErr error
-	t             *testing.T
+	// AirportSourceType 预置 GetAirportSourceType 返回;空串按拉取型处理(兼容语义)。
+	AirportSourceType string
+	t                 *testing.T
 }
 
 func NewFakeStore(t *testing.T) *FakeStore {
@@ -101,6 +103,11 @@ func (s *FakeStore) UpdateTestRun(ctx context.Context, run *TestRun) error {
 // GetAirportURL 返回预置的机场订阅 URL(任务化后 URL 按 id 解析,不落 params)。
 func (s *FakeStore) GetAirportURL(ctx context.Context, airportID int64) (string, error) {
 	return s.AirportURL, s.AirportURLErr
+}
+
+// GetAirportSourceType 返回预置的来源类型(空串 = 拉取型,与生产兼容语义一致)。
+func (s *FakeStore) GetAirportSourceType(ctx context.Context, airportID int64) (string, error) {
+	return s.AirportSourceType, s.AirportURLErr
 }
 
 // RunCount 并发安全地读已建行数(任务化取消测试轮询用)。

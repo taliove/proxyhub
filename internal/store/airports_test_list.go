@@ -32,6 +32,7 @@ func (s *Store) listAirportsWithTestRuns(ctx context.Context, userID int64) ([]*
 	query := `
 		SELECT
 			a.id, a.name, a.url, a.abbr, a.enabled, a.created_at, a.user_id,
+			a.source_type, a.usage_upload, a.usage_download, a.usage_total, a.usage_expire, a.web_page_url,
 			atr.overall_score, atr.created_at, atr.status
 		FROM airports a
 		LEFT JOIN (
@@ -61,20 +62,14 @@ func (s *Store) listAirportsWithTestRuns(ctx context.Context, userID int64) ([]*
 	var airports []*AirportWithTestRun
 	for rows.Next() {
 		var awt AirportWithTestRun
-		var enabled int
 		var score sql.NullFloat64
 		var testAt sql.NullString
 		var status sql.NullString
 
-		err := rows.Scan(
-			&awt.ID, &awt.Name, &awt.URL, &awt.Abbr, &enabled, &awt.CreatedAt, &awt.UserID,
-			&score, &testAt, &status,
-		)
+		err := scanJoinedAirportRow(rows, &awt, &score, &testAt, &status)
 		if err != nil {
 			return nil, fmt.Errorf("scan airport row: %w", err)
 		}
-
-		awt.Enabled = enabled == 1
 		if score.Valid {
 			awt.LastTestScore = &score.Float64
 		}
@@ -89,4 +84,20 @@ func (s *Store) listAirportsWithTestRuns(ctx context.Context, userID int64) ([]*
 	}
 
 	return airports, rows.Err()
+}
+
+// scanJoinedAirportRow 扫描 listAirportsWithTestRuns 的联表行:
+// 前 13 列与 airportColumns 同序,后 3 列为最近测试 run 的 LEFT JOIN 字段(可空)。
+func scanJoinedAirportRow(rows *sql.Rows, awt *AirportWithTestRun, score *sql.NullFloat64, testAt, status *sql.NullString) error {
+	var enabled int
+	err := rows.Scan(
+		&awt.ID, &awt.Name, &awt.URL, &awt.Abbr, &enabled, &awt.CreatedAt, &awt.UserID,
+		&awt.SourceType, &awt.UsageUpload, &awt.UsageDownload, &awt.UsageTotal, &awt.UsageExpire, &awt.WebPageURL,
+		score, testAt, status,
+	)
+	if err != nil {
+		return err
+	}
+	awt.Enabled = enabled == 1
+	return nil
 }

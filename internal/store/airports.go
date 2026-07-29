@@ -8,6 +8,15 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
+// 机场来源类型(见 CONTEXT.md「手动机场」与 ADR 0034)。
+const (
+	// AirportSourceURL 拉取型机场:从订阅 URL 拉取节点(默认,历史行迁移后落此值)。
+	AirportSourceURL = "url"
+	// AirportSourceManual 手动机场:无订阅 URL(url 列存空串),
+	// 节点由用户粘贴订阅导出内容导入;定时/全量刷新跳过,清空豁免。
+	AirportSourceManual = "manual"
+)
+
 // Airport 机场订阅
 type Airport struct {
 	ID        int64     `json:"id"`
@@ -18,6 +27,16 @@ type Airport struct {
 	CreatedAt time.Time `json:"created_at"`
 	// UserID 属主(ticket 06/07);0 = 未归属(历史数据桶,迁移后由超管认领)。
 	UserID int64 `json:"user_id,omitempty"`
+	// SourceType 来源类型:AirportSourceURL(默认)/ AirportSourceManual。
+	SourceType string `json:"source_type"`
+	// 用量信息(CONTEXT.md「用量信息」;全部可选,零值 = 未知不展示):
+	// 拉取型每次拉取从 subscription-userinfo / profile-web-page-url 响应头捕获覆盖;
+	// 手动型由用户在粘贴导入/编辑时手填(剩余换算为 download 落库,上行未知计 0)。
+	UsageUpload   int64  `json:"usage_upload"`
+	UsageDownload int64  `json:"usage_download"`
+	UsageTotal    int64  `json:"usage_total"`
+	UsageExpire   int64  `json:"usage_expire"` // unix 秒;0 = 未知
+	WebPageURL    string `json:"web_page_url"`
 }
 
 // SelfHostedNode 自建节点
@@ -94,28 +113,52 @@ func (s *Store) defaultOwnerUserID(rowUserID int64) int64 {
 	return 0
 }
 
-// CreateAirportForUser 创建归属指定用户的机场(ticket 07)。userID=0 保留旧行为(未归属)。
+// CreateAirportForUser 创建归属指定用户的拉取型机场(ticket 07)。userID=0 保留旧行为(未归属)。
 func (s *Store) CreateAirportForUser(userID int64, name, url string) (*Airport, error) {
+	return s.createAirportForUser(userID, name, url, AirportSourceURL)
+}
+
+// CreateManualAirportForUser 创建手动机场(url 列存空串 + source_type=manual,见 ADR 0034)。
+// 节点不入库——创建后由粘贴导入端点显式 upsert(凭证红线:粘贴内容不走 jobs params)。
+func (s *Store) CreateManualAirportForUser(userID int64, name string) (*Airport, error) {
+	return s.createAirportForUser(userID, name, "", AirportSourceManual)
+}
+
+func (s *Store) createAirportForUser(userID int64, name, url, sourceType string) (*Airport, error) {
 	result, err := s.db.Exec(
-		`INSERT INTO airports (name, url, user_id) VALUES (?, ?, ?)`,
-		name, url, userID)
+		`INSERT INTO airports (name, url, user_id, source_type) VALUES (?, ?, ?, ?)`,
+		name, url, userID, sourceType)
 	if err != nil {
 		return nil, fmt.Errorf("insert airport: %w", err)
 	}
 
 	id, _ := result.LastInsertId()
 	return &Airport{
-		ID:        id,
-		Name:      name,
-		URL:       url,
-		Enabled:   true,
-		CreatedAt: time.Now(),
-		UserID:    userID,
+		ID:         id,
+		Name:       name,
+		URL:        url,
+		Enabled:    true,
+		CreatedAt:  time.Now(),
+		UserID:     userID,
+		SourceType: sourceType,
 	}, nil
 }
 
-// airportColumns 机场查询共用的列清单(ticket 07 起带 user_id)。
-const airportColumns = `id, name, url, abbr, enabled, created_at, user_id`
+// airportColumns 机场查询共用的列清单(ticket 07 起带 user_id;
+// spec-manual-airport-import 起带 source_type 与用量信息列)。
+const airportColumns = `id, name, url, abbr, enabled, created_at, user_id,
+	source_type, usage_upload, usage_download, usage_total, usage_expire, web_page_url`
+
+// scanAirport 扫描一行机场(airportColumns 列序的唯一事实源)。
+func scanAirport(row interface{ Scan(...any) error }, a *Airport) error {
+	var enabled int
+	if err := row.Scan(&a.ID, &a.Name, &a.URL, &a.Abbr, &enabled, &a.CreatedAt, &a.UserID,
+		&a.SourceType, &a.UsageUpload, &a.UsageDownload, &a.UsageTotal, &a.UsageExpire, &a.WebPageURL); err != nil {
+		return err
+	}
+	a.Enabled = enabled == 1
+	return nil
+}
 
 // ListAirports 列出所有机场(跨用户,全量视角;
 // 按用户过滤走 ListAirportsByUser)。
@@ -152,11 +195,9 @@ func scanAirports(rows *sql.Rows) ([]*Airport, error) {
 	var airports []*Airport
 	for rows.Next() {
 		var a Airport
-		var enabled int
-		if err := rows.Scan(&a.ID, &a.Name, &a.URL, &a.Abbr, &enabled, &a.CreatedAt, &a.UserID); err != nil {
+		if err := scanAirport(rows, &a); err != nil {
 			return nil, fmt.Errorf("scan airport: %w", err)
 		}
-		a.Enabled = enabled == 1
 		airports = append(airports, &a)
 	}
 	return airports, rows.Err()
@@ -165,17 +206,14 @@ func scanAirports(rows *sql.Rows) ([]*Airport, error) {
 // GetAirportByID 获取机场
 func (s *Store) GetAirportByID(id int64) (*Airport, error) {
 	var a Airport
-	var enabled int
-	err := s.db.QueryRow(
-		`SELECT `+airportColumns+` FROM airports WHERE id = ?`, id).
-		Scan(&a.ID, &a.Name, &a.URL, &a.Abbr, &enabled, &a.CreatedAt, &a.UserID)
+	err := scanAirport(s.db.QueryRow(
+		`SELECT `+airportColumns+` FROM airports WHERE id = ?`, id), &a)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query airport: %w", err)
 	}
-	a.Enabled = enabled == 1
 	return &a, nil
 }
 
@@ -186,18 +224,79 @@ func (s *Store) GetAirportByIDForUser(userID, id int64) (*Airport, error) {
 		return s.GetAirportByID(id)
 	}
 	var a Airport
-	var enabled int
-	err := s.db.QueryRow(
-		`SELECT `+airportColumns+` FROM airports WHERE id = ? AND user_id = ?`, id, userID).
-		Scan(&a.ID, &a.Name, &a.URL, &a.Abbr, &enabled, &a.CreatedAt, &a.UserID)
+	err := scanAirport(s.db.QueryRow(
+		`SELECT `+airportColumns+` FROM airports WHERE id = ? AND user_id = ?`, id, userID), &a)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query airport: %w", err)
 	}
-	a.Enabled = enabled == 1
 	return &a, nil
+}
+
+// UpdateAirportUsage 覆盖更新机场用量信息(拉取捕获路径,spec-manual-airport-import)。
+// WebPageURL 为空时保留既有值——响应头缺 profile-web-page-url 不应抹掉用户手填的官网。
+// 手动填写路径用 SetAirportUsageForUser(空官网 = 显式清空,不保留)。
+// 官网非 http/https 时归一为空串(scheme 白名单,XSS 防线,见 subscription.SanitizeWebPageURL)。
+func (s *Store) UpdateAirportUsage(id int64, u *subscription.UsageInfo) error {
+	if u == nil {
+		return nil
+	}
+	webPageURL := subscription.SanitizeWebPageURL(u.WebPageURL)
+	if webPageURL == "" {
+		_, err := s.db.Exec(
+			`UPDATE airports SET usage_upload = ?, usage_download = ?, usage_total = ?, usage_expire = ? WHERE id = ?`,
+			u.Upload, u.Download, u.Total, u.Expire, id)
+		return err
+	}
+	_, err := s.db.Exec(
+		`UPDATE airports SET usage_upload = ?, usage_download = ?, usage_total = ?, usage_expire = ?, web_page_url = ? WHERE id = ?`,
+		u.Upload, u.Download, u.Total, u.Expire, webPageURL, id)
+	return err
+}
+
+// SetAirportUsageForUser 按属主全量覆写用量信息(手动填写路径:空值 = 显式清空,
+// 不做拉取路径的官网保留)。行属他人时 ErrNotFound;userID=0 跳过属主校验。
+// 官网非 http/https 时归一为空串(scheme 白名单,XSS 防线)。
+func (s *Store) SetAirportUsageForUser(userID, id int64, u *subscription.UsageInfo) error {
+	if u == nil {
+		return nil
+	}
+	if userID > 0 {
+		if _, err := s.GetAirportByIDForUser(userID, id); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.Exec(
+		`UPDATE airports SET usage_upload = ?, usage_download = ?, usage_total = ?, usage_expire = ?, web_page_url = ? WHERE id = ?`,
+		u.Upload, u.Download, u.Total, u.Expire, subscription.SanitizeWebPageURL(u.WebPageURL), id)
+	return err
+}
+
+// ManualAirportNames 返回手动机场名集合(来源匹配键)。userID>0 限定该用户名下,
+// =0 跨用户全量(机场节点清空豁免手动机场节点用,无 URL 可拉,清空后永不回来)。
+func (s *Store) ManualAirportNames(userID int64) (map[string]bool, error) {
+	query := `SELECT name FROM airports WHERE source_type = ?`
+	args := []any{AirportSourceManual}
+	if userID > 0 {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query manual airport names: %w", err)
+	}
+	defer rows.Close()
+	names := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names[name] = true
+	}
+	return names, rows.Err()
 }
 
 // SetAirportEnabled 启用/禁用机场

@@ -73,6 +73,10 @@ type NodeSource interface {
 	PurgeAirportNodes() (int, error)
 	// PurgeAirportNodesForUser 与 PurgeAirportNodes 同语义,但只清指定用户的池(ticket 07)。
 	PurgeAirportNodesForUser(userID int64) (int, error)
+	// ImportManualAirportNodes 手动机场粘贴导入入池(同步,非任务;
+	// 凭证红线:粘贴内容不进 jobs params/日志/落库,见 aggregator 实现)。
+	// 与进行中的全量/同机场刷新或机场测试冲突时返回 aggregator.ErrRefreshConflict。
+	ImportManualAirportNodes(airport *store.Airport, nodes []*subscription.Node) error
 }
 
 // Server HTTP 服务
@@ -608,6 +612,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/airports/{id}", guard(s.handleUpdateAirport))
 	mux.HandleFunc("POST /api/airports/{id}/toggle", guard(s.handleToggleAirport))
 	mux.HandleFunc("POST /api/airports/{id}/refresh", guard(s.handleAirportRefresh))
+	mux.HandleFunc("POST /api/airports/{id}/import", guard(s.handleImportAirport))
 	mux.HandleFunc("DELETE /api/airports/{id}", guard(s.handleDeleteAirport))
 
 	// 机场测试（诊断+抽样检活+评分）

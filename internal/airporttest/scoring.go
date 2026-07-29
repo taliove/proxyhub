@@ -33,6 +33,8 @@ type ScoreDimensions struct {
 	HTTPStatus         int            `json:"http_status"`         // 拉取HTTP状态
 	ParseSuccessRate   float64        `json:"parse_success_rate"`  // 解析成功率
 	URLReachable       bool           `json:"url_reachable"`       // 订阅URL是否可达(HTTP 2xx)
+	// ManualSource 手动机场标记:诊断段整体 N/A(非"拉取失败"),前端据此渲染。
+	ManualSource bool `json:"manual_source,omitempty"`
 	// 各维度权重(%,与得分同源输出):URL 可达 50/30/10/10;
 	// 不可达按 5:3:1 重归一,拉取健康为 null(N/A)。
 	// 旧 run 无此组字段,前端回退硬编码权重(见 useAirportTest.dimensionWeightsOf)。

@@ -28,12 +28,19 @@ func (a *Aggregator) PurgeAirportNodes() (int, error) {
 // PurgeAirportNodesForUser 清空指定用户分片的机场节点(ticket 07):
 // 只清该用户池与 DB 中该 user_id 的机场节点,其他用户分片不受影响。
 // userID=0 为旧行为(跨用户全清,兼容既有调用与测试)。
+// 手动机场节点豁免(2026-07-29 决策,CONTEXT.md「机场节点清空」):
+// 手动机场无 URL 可拉,清空后节点永不回来,故内存池与 DB 双清都跳过它们。
 func (a *Aggregator) PurgeAirportNodesForUser(userID int64) (int, error) {
 	a.refreshStartMu.Lock()
 	defer a.refreshStartMu.Unlock()
 
 	if keys := a.refreshJobs.RunningKeys(refreshJobKindName); len(keys) > 0 {
 		return 0, fmt.Errorf("%w: running keys %v", ErrPurgeConflict, keys)
+	}
+
+	manualNames, err := a.st.ManualAirportNames(userID)
+	if err != nil {
+		return 0, fmt.Errorf("list manual airports: %w", err)
 	}
 
 	// 先清 DB:失败则内存池原样不动,两侧保持一致
@@ -51,7 +58,7 @@ func (a *Aggregator) PurgeAirportNodesForUser(userID int64) (int, error) {
 		}
 		kept := make([]*subscription.Node, 0, len(pool))
 		for _, n := range pool {
-			if n.Source == subscription.SourceSelfHosted {
+			if n.Source == subscription.SourceSelfHosted || manualNames[n.Source] {
 				kept = append(kept, n)
 			}
 		}
@@ -61,6 +68,6 @@ func (a *Aggregator) PurgeAirportNodesForUser(userID int64) (int, error) {
 	a.lastUpdate = time.Now()
 	a.mu.Unlock()
 
-	a.logger.Info("airport nodes purged", "removed", removed, "kept_self_hosted", keptTotal, "user_id", userID)
+	a.logger.Info("airport nodes purged", "removed", removed, "kept_self_hosted_and_manual", keptTotal, "user_id", userID)
 	return int(removed), nil
 }

@@ -2,7 +2,6 @@ package airporttest
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,17 +51,11 @@ func (o *Orchestrator) RunDiagnostic(ctx context.Context, airportID int64, airpo
 		return o.persistFailedRun(ctx, run, start, fmt.Errorf("read body: %w", err))
 	}
 
-	// Decode base64 if needed
-	decoded, err := base64.RawStdEncoding.DecodeString(string(body))
-	if err != nil {
-		decoded, err = base64.StdEncoding.DecodeString(string(body))
-		if err != nil {
-			decoded = body
-		}
-	}
+	// 整体 base64 识别与解码收敛到 subscription.DecodeSubscription(三处共用)
+	decoded := subscription.DecodeSubscription(body)
 
 	// Parse with stats
-	parseResult := subscription.ParseWithStats(string(decoded), airportName)
+	parseResult := subscription.ParseWithStats(decoded, airportName)
 
 	if len(parseResult.Nodes) == 0 && parseResult.ParseFailures == parseResult.TotalLines {
 		return o.persistFailedRun(ctx, run, start, fmt.Errorf("no valid nodes found"))
@@ -177,9 +170,13 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 		} else {
 			// 分支B:池无节点
 			if !urlReachable || len(fetchedNodes) == 0 {
-				// URL不通或拉取失败:run failed
+				// URL不通或拉取失败:run failed;手动机场文案适配(无 URL 概念,引导重新粘贴导入)
 				run.Status = StatusFailed
-				run.ErrorMessage = "subscription URL unreachable and no synced nodes in pool"
+				if diagResult.ManualSource {
+					run.ErrorMessage = "manual airport: no synced nodes in pool, paste-import nodes first"
+				} else {
+					run.ErrorMessage = "subscription URL unreachable and no synced nodes in pool"
+				}
 				if err := o.store.UpdateTestRun(pctx, run); err != nil {
 					return nil, fmt.Errorf("update failed run: %w", err)
 				}
@@ -285,6 +282,7 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 	// CalculateScore 内部按 httpStatus 自动重归一权重
 	score, dims := CalculateScore(nodesToTest, diagResult.HTTPStatus, diagResult.ParseFailures, diagResult.NodeCount+diagResult.ParseFailures)
 	dims.SampledNodes = sampledNodeResults(outcomes)
+	dims.ManualSource = diagResult.ManualSource
 	dimsJSON, _ := json.Marshal(dims)
 	scoreVal := score
 	run.Status = StatusCompleted

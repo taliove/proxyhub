@@ -240,6 +240,26 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	if err := s.addColumnIfMissing("airports", "abbr", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// 手动机场来源类型与用量信息(spec-manual-airport-import,见 ADR 0034):
+	// 历史行默认 'url' 拉取型;用量列零值 = 未知不展示。
+	if err := s.addColumnIfMissing("airports", "source_type", "TEXT NOT NULL DEFAULT 'url'"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("airports", "usage_upload", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("airports", "usage_download", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("airports", "usage_total", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("airports", "usage_expire", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("airports", "web_page_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	// 订阅地址的按端点名称标准化覆盖(见 ADR 0012)
 	if err := s.addColumnIfMissing("endpoints", "name_mode", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err

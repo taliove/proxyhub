@@ -31,6 +31,19 @@ func (a *StoreAdapter) GetAirportURL(_ context.Context, airportID int64) (string
 	return airport.URL, nil
 }
 
+// GetAirportSourceType 按 airport_id 现读来源类型(手动机场跳过 URL 拉取);
+// 机场已删(store.ErrNotFound)映射为 ErrAirportGone。
+func (a *StoreAdapter) GetAirportSourceType(_ context.Context, airportID int64) (string, error) {
+	airport, err := a.s.GetAirportByID(airportID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return "", ErrAirportGone
+		}
+		return "", fmt.Errorf("query airport: %w", err)
+	}
+	return airport.SourceType, nil
+}
+
 // CreateTestRun persists a test run.
 func (a *StoreAdapter) CreateTestRun(ctx context.Context, run *TestRun) (int64, error) {
 	storeRun := &store.AirportTestRun{

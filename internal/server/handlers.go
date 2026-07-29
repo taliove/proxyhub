@@ -145,23 +145,43 @@ func (s *Server) handleListAirports(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreateAirport 添加机场(ticket 07:归属当前有效用户)。
+// 来源二选一(spec-manual-airport-import):拉取型(默认,URL)/ 手动机场(粘贴导入,
+// url 空串,创建后由 /import 端点显式粘贴入池);用量信息字段仅对手动机场生效。
 func (s *Server) handleCreateAirport(w http.ResponseWriter, r *http.Request) {
 	scope, ok := s.mustUserScope(w, r)
 	if !ok {
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
-		URL  string `json:"url"`
-		Abbr string `json:"abbr"`
+		Name       string `json:"name"`
+		URL        string `json:"url"`
+		Abbr       string `json:"abbr"`
+		SourceType string `json:"source_type"`
+		airportUsageRequest
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
 
+	sourceType := req.SourceType
+	if sourceType == "" {
+		sourceType = store.AirportSourceURL
+	}
+	if sourceType != store.AirportSourceURL && sourceType != store.AirportSourceManual {
+		http.Error(w, "invalid source_type", http.StatusBadRequest)
+		return
+	}
+
 	effUID := EffectiveUserID(scope)
-	airport, err := s.st.CreateAirportForUser(effUID, req.Name, req.URL)
+	var airport *store.Airport
+	var err error
+	if sourceType == store.AirportSourceManual {
+		airport, err = s.st.CreateManualAirportForUser(effUID, req.Name)
+		req.URL = "" // 手动机场 url 恒为空串(ADR 0034),忽略载荷中的 url
+	} else {
+		airport, err = s.st.CreateAirportForUser(effUID, req.Name, req.URL)
+	}
 	if err != nil {
 		s.logger.Error("create airport failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -189,7 +209,22 @@ func (s *Server) handleCreateAirport(w http.ResponseWriter, r *http.Request) {
 		airport.Abbr = finalAbbr
 	}
 
-	s.logger.Info("airport created", "name", req.Name, "abbr", finalAbbr)
+	// 手动机场的用量信息(可选手填);落库失败仅告警,不阻断创建。
+	if sourceType == store.AirportSourceManual && req.provided() {
+		usage := req.toUsageInfo()
+		if err := s.st.SetAirportUsageForUser(effUID, airport.ID, usage); err != nil {
+			s.logger.Warn("set airport usage failed", "id", airport.ID, "error", err)
+		} else {
+			// 响应对象同步用量字段(创建响应即带用量,前端粘贴导入预填据此)
+			airport.UsageUpload = usage.Upload
+			airport.UsageDownload = usage.Download
+			airport.UsageTotal = usage.Total
+			airport.UsageExpire = usage.Expire
+			airport.WebPageURL = usage.WebPageURL
+		}
+	}
+
+	s.logger.Info("airport created", "name", req.Name, "abbr", finalAbbr, "source_type", sourceType)
 	json.NewEncoder(w).Encode(airport)
 }
 
@@ -476,6 +511,8 @@ func writeRefreshJobResponse(w http.ResponseWriter, jobID int64, key string, sta
 }
 
 // handleUpdateAirport 更新机场信息(ticket 07:校验属主,行属他人 404)。
+// 来源类型创建后不可变;手动机场忽略载荷中的 url(恒为空串),
+// 用量信息字段仅对手动机场生效(spec-manual-airport-import)。
 func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 	scope, ok := s.mustUserScope(w, r)
 	if !ok {
@@ -489,13 +526,31 @@ func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name string `json:"name"`
-		URL  string `json:"url"`
-		Abbr string `json:"abbr"`
+		Name       string `json:"name"`
+		URL        string `json:"url"`
+		Abbr       string `json:"abbr"`
+		SourceType string `json:"source_type"`
+		airportUsageRequest
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
+	}
+
+	effUID := EffectiveUserID(scope)
+	existing, err := s.st.GetAirportByIDForUser(effUID, id)
+	if err != nil {
+		// 错误分流(Check L1):行不存在/属他人 404;库错误 500,不混为一谈
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		s.logger.Error("get airport failed", "id", id, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if existing.SourceType == store.AirportSourceManual {
+		req.URL = "" // 手动机场 url 恒为空串(ADR 0034)
 	}
 
 	// Auto-generate abbr if cleared (ADR 0012)
@@ -512,7 +567,6 @@ func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 		finalAbbr = subscription.NextFreeAbbr(base, used)
 	}
 
-	effUID := EffectiveUserID(scope)
 	if err := s.st.UpdateAirportForUser(effUID, id, req.Name, req.URL, finalAbbr); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
@@ -521,6 +575,15 @@ func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("update airport failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+
+	// 手动机场用量信息覆写(字段提供才动;空值 = 显式清空)
+	if existing.SourceType == store.AirportSourceManual && req.provided() {
+		if err := s.st.SetAirportUsageForUser(effUID, id, req.toUsageInfo()); err != nil {
+			s.logger.Error("update airport usage failed", "id", id, "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	s.logger.Info("airport updated", "id", id, "name", req.Name, "abbr", finalAbbr)
@@ -550,8 +613,14 @@ func (s *Server) handleAirportRefresh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.st.GetAirportByIDForUser(EffectiveUserID(scope), id); err != nil {
+	airport, err := s.st.GetAirportByIDForUser(EffectiveUserID(scope), id)
+	if err != nil {
 		http.Error(w, "airport not found", http.StatusNotFound)
+		return
+	}
+	// 手动机场无订阅 URL 可拉:"刷新"语义是重新粘贴导入(见 CONTEXT.md「手动机场」)。
+	if airport.SourceType == store.AirportSourceManual {
+		http.Error(w, "manual airport: re-import via paste", http.StatusBadRequest)
 		return
 	}
 
