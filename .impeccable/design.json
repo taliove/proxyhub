@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-29T00:00:00Z",
+  "title": "Design System: ProxyHub",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "电波青 (Signal Teal)",
+        "canonical": "#0c8078",
+        "tonalRamp": ["#063f3d", "#085350", "#0a6963", "#0c8078", "#0faea2", "#30c4b8", "#a3ece1", "#effcfa"]
+      },
+      "primary-hover": {
+        "role": "primary",
+        "displayName": "电波青·悬浮",
+        "canonical": "#0faea2",
+        "tonalRamp": ["#063f3d", "#085350", "#0a6963", "#0c8078", "#0faea2", "#30c4b8", "#a3ece1", "#effcfa"]
+      },
+      "primary-active": {
+        "role": "primary",
+        "displayName": "电波青·按下",
+        "canonical": "#0a6963",
+        "tonalRamp": ["#063f3d", "#085350", "#0a6963", "#0c8078", "#0faea2", "#30c4b8", "#a3ece1", "#effcfa"]
+      },
+      "success": {
+        "role": "functional",
+        "displayName": "可用绿",
+        "canonical": "#059669",
+        "tonalRamp": ["#023d2b", "#034c36", "#046347", "#047e57", "#059669", "#4ab48f", "#8fd2b8", "#d9f0e6"]
+      },
+      "warning": {
+        "role": "functional",
+        "displayName": "警示琥珀",
+        "canonical": "#d97706",
+        "tonalRamp": ["#57300a", "#6b3b04", "#7d4605", "#b36406", "#d97706", "#e89a4a", "#f2bc85", "#fbe6cd"]
+      },
+      "danger": {
+        "role": "functional",
+        "displayName": "危险红",
+        "canonical": "#dc2626",
+        "tonalRamp": ["#5f0f0f", "#741313", "#8a1717", "#b31e1e", "#dc2626", "#e65c5c", "#f09393", "#f9d4d4"]
+      },
+      "info": {
+        "role": "functional",
+        "displayName": "信息青灰",
+        "canonical": "#45565c",
+        "tonalRamp": ["#0f1b20", "#1e2b31", "#324249", "#45565c", "#617379", "#91a3a8", "#c7d3d6", "#eff4f5"]
+      },
+      "page-bg": {
+        "role": "neutral",
+        "displayName": "面板纸灰",
+        "canonical": "#f7fafb",
+        "tonalRamp": ["#0f1b20", "#1e2b31", "#324249", "#45565c", "#617379", "#91a3a8", "#c7d3d6", "#eff4f5"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "仪器表面白",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#0f1b20", "#1e2b31", "#324249", "#45565c", "#617379", "#91a3a8", "#c7d3d6", "#eff4f5"]
+      },
+      "hover-bg": {
+        "role": "neutral",
+        "displayName": "悬浮雾灰",
+        "canonical": "#eff4f5",
+        "tonalRamp": ["#0f1b20", "#1e2b31", "#324249", "#45565c", "#617379", "#91a3a8", "#c7d3d6", "#eff4f5"]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "常规描边",
+        "canonical": "#e0e8ea",
+        "tonalRamp": ["#0f1b20", "#1e2b31", "#324249", "#45565c", "#617379", "#91a3a8", "#c7d3d6", "#eff4f5"]
+      },
+      "border-light": {
+        "role": "neutral",
+        "displayName": "浅描边",
+        "canonical": "#eff4f5",
+        "tonalRamp": ["#0f1b20", "#1e2b31", "#324249", "#45565c", "#617379", "#91a3a8", "#c7d3d6", "#eff4f5"]
+      },
+      "text-primary": {
+        "role": "neutral",
+        "displayName": "墨色文本",
+        "canonical": "#0f1b20",
+        "tonalRamp": ["#0f1b20", "#1e2b31", "#324249", "#45565c", "#617379", "#91a3a8", "#c7d3d6", "#eff4f5"]
+      },
+      "text-regular": {
+        "role": "neutral",
+        "displayName": "正文灰",
+        "canonical": "#324249",
+        "tonalRamp": ["#0f1b20", "#1e2b31", "#324249", "#45565c", "#617379", "#91a3a8", "#c7d3d6", "#eff4f5"]
+      },
+      "text-secondary": {
+        "role": "neutral",
+        "displayName": "辅助灰",
+        "canonical": "#617379",
+        "tonalRamp": ["#0f1b20", "#1e2b31", "#324249", "#45565c", "#617379", "#91a3a8", "#c7d3d6", "#eff4f5"]
+      },
+      "text-placeholder": {
+        "role": "neutral",
+        "displayName": "占位灰",
+        "canonical": "#91a3a8",
+        "tonalRamp": ["#0f1b20", "#1e2b31", "#324249", "#45565c", "#617379", "#91a3a8", "#c7d3d6", "#eff4f5"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "仪表盘统计、体检总分等主视觉大数字;非标题禁用。" },
+      "headline": { "displayName": "Headline", "purpose": "页面标题,只出现在 PageHeader。" },
+      "title": { "displayName": "Title", "purpose": "卡片标题、抽屉标题、区块小标。" },
+      "body": { "displayName": "Body", "purpose": "正文基准(14px),表格主要内容。" },
+      "label": { "displayName": "Label", "purpose": "次要信息、描述、表内辅助列(13px/12px)。" },
+      "mono": { "displayName": "Mono", "purpose": "字标、节点名、IP、UUID、YAML 等机器语料;表格数字配 tabular-nums。" }
+    },
+    "shadows": [
+      { "name": "resting", "value": "0 1px 2px rgba(15,27,32,0.05)", "purpose": "卡片默认态静置微影,让白表面从纸灰底上可触摸。" },
+      { "name": "hover-lift", "value": "0 2px 8px rgba(15,27,32,0.08)", "purpose": "hover 响应与轻浮层的抬升。" },
+      { "name": "overlay", "value": "0 8px 24px rgba(15,27,32,0.12)", "purpose": "抽屉、对话框、下拉等覆盖层的确立。" },
+      { "name": "resting-dark", "value": "0 1px 2px rgba(0,0,0,0.3)", "purpose": "暗色静置微影(纯黑基底)。" },
+      { "name": "hover-lift-dark", "value": "0 2px 12px rgba(0,0,0,0.4)", "purpose": "暗色悬浮抬升。" },
+      { "name": "overlay-dark", "value": "0 6px 24px rgba(0,0,0,0.5)", "purpose": "暗色浮层确立。" }
+    ],
+    "motion": [
+      { "name": "transition-standard", "value": "0.2s cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "全站统一的状态过渡(hover、主题切换、卡片抬升)。" },
+      { "name": "wordmark-blink", "value": "1.2s step-end infinite", "purpose": "字标光标方块闪烁;prefers-reduced-motion 下静止。" }
+    ],
+    "breakpoints": [
+      { "name": "mobile", "value": "768px", "purpose": "以下侧边栏改抽屉,折叠开关语义切换。" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "电波青主行动按钮,small 尺寸;每屏至多一个主显。",
+      "html": "<button class=\"ds-btn-primary\">添加机场</button>",
+      "css": ".ds-btn-primary { background: var(--ph-color-primary, #0c8078); color: #fff; border: none; border-radius: var(--ph-radius-sm, 4px); height: 24px; padding: 5px 11px; font-size: 12px; line-height: 1; cursor: pointer; transition: background 0.2s cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-primary:hover { background: var(--ph-color-primary-hover, #0faea2); } .ds-btn-primary:active { background: var(--ph-color-primary-active, #0a6963); } .ds-btn-primary:focus-visible { outline: 2px solid var(--ph-color-primary, #0c8078); outline-offset: 2px; }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "白底描边次要按钮,承载非主行动与可逆操作。",
+      "html": "<button class=\"ds-btn-default\">导出配置</button>",
+      "css": ".ds-btn-default { background: var(--ph-bg-surface, #fff); color: var(--ph-text-regular, #324249); border: 1px solid var(--ph-border, #e0e8ea); border-radius: var(--ph-radius-sm, 4px); height: 24px; padding: 5px 11px; font-size: 12px; line-height: 1; cursor: pointer; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-default:hover { color: var(--ph-color-primary, #0c8078); border-color: var(--ph-color-primary, #0c8078); } .ds-btn-default:focus-visible { outline: 2px solid var(--ph-color-primary, #0c8078); outline-offset: 2px; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "仅不可逆操作(删除、清理、屏蔽);同一视觉区域至多一个主显。",
+      "html": "<button class=\"ds-btn-danger\">删除节点</button>",
+      "css": ".ds-btn-danger { background: var(--ph-danger, #dc2626); color: #fff; border: none; border-radius: var(--ph-radius-sm, 4px); height: 24px; padding: 5px 11px; font-size: 12px; line-height: 1; cursor: pointer; transition: background 0.2s cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-danger:hover { background: color-mix(in srgb, var(--ph-danger, #dc2626), #ffffff 20%); } .ds-btn-danger:active { background: color-mix(in srgb, var(--ph-danger, #dc2626), #000000 20%); } .ds-btn-danger:focus-visible { outline: 2px solid var(--ph-danger, #dc2626); outline-offset: 2px; }"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "白底 1px 描边输入框,focus 描边转电波青,无发光。",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"输入机场订阅 URL\" />",
+      "css": ".ds-input { background: var(--ph-bg-surface, #fff); color: var(--ph-text-primary, #0f1b20); border: 1px solid var(--ph-border, #e0e8ea); border-radius: var(--ph-radius-sm, 4px); height: 24px; padding: 4px 11px; font-size: 12px; width: 260px; transition: border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1); } .ds-input::placeholder { color: var(--ph-text-placeholder, #91a3a8); } .ds-input:hover { border-color: var(--ph-text-placeholder, #91a3a8); } .ds-input:focus-visible { outline: none; border-color: var(--ph-color-primary, #0c8078); }"
+    },
+    {
+      "name": "Tag",
+      "kind": "chip",
+      "refersTo": "tag",
+      "description": "胶囊标签;语义着色只染浅底,不做实心彩块。",
+      "html": "<span class=\"ds-tag\">自动标签</span> <span class=\"ds-tag ds-tag--success\">fast</span>",
+      "css": ".ds-tag { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: var(--ph-radius-full, 999px); background: var(--ph-bg-hover, #eff4f5); color: var(--ph-text-regular, #324249); font-size: 12px; line-height: 1; } .ds-tag--success { background: #d9f0e6; color: var(--ph-success, #059669); }"
+    },
+    {
+      "name": "Status Dot",
+      "kind": "custom",
+      "refersTo": "status-dot",
+      "description": "8px 状态色点,只取功能色;muted 表示未测或禁用。",
+      "html": "<span class=\"ds-dot ds-dot--success\" title=\"可用\"></span> <span class=\"ds-dot ds-dot--warning\" title=\"可逆警示\"></span> <span class=\"ds-dot ds-dot--danger\" title=\"不可用\"></span> <span class=\"ds-dot ds-dot--muted\" title=\"未测\"></span>",
+      "css": ".ds-dot { display: inline-block; width: 8px; height: 8px; border-radius: var(--ph-radius-full, 999px); margin-right: 6px; } .ds-dot--success { background: var(--ph-success, #059669); } .ds-dot--warning { background: var(--ph-warning, #d97706); } .ds-dot--danger { background: var(--ph-danger, #dc2626); } .ds-dot--muted { background: var(--ph-text-placeholder, #91a3a8); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "8px 圆角 + 浅描边 + 静置微影,hover 抬升一档。",
+      "html": "<div class=\"ds-card\"><h3 class=\"ds-card__title\">节点池概况</h3><p class=\"ds-card__body\">可用 42 / 58,平均延迟 186ms。</p></div>",
+      "css": ".ds-card { background: var(--ph-bg-surface, #fff); border: 1px solid var(--ph-border-light, #eff4f5); border-radius: var(--ph-radius-lg, 8px); box-shadow: var(--ph-shadow-sm, 0 1px 2px rgba(15,27,32,0.05)); padding: 16px; max-width: 320px; transition: box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1); } .ds-card:hover { box-shadow: var(--ph-shadow, 0 2px 8px rgba(15,27,32,0.08)); } .ds-card__title { margin: 0 0 8px; font-size: 16px; font-weight: 600; color: var(--ph-text-primary, #0f1b20); } .ds-card__body { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ph-text-secondary, #617379); }"
+    },
+    {
+      "name": "Sidebar Nav Item",
+      "kind": "nav",
+      "description": "侧边栏菜单项:默认正文灰,激活态电波青 + 浅青底;图标用 Tabler 2px 描边。",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav__item\" href=\"#\"><svg class=\"ds-nav__icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\" /><path d=\"M12 7v5l3 3\" /></svg>仪表盘</a><a class=\"ds-nav__item is-active\" href=\"#\"><svg class=\"ds-nav__icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3l8 4.5v9l-8 4.5l-8 -4.5v-9z\" /><path d=\"M12 12l8 -4.5\" /><path d=\"M12 12v9\" /><path d=\"M12 12l-8 -4.5\" /></svg>节点管理</a></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 2px; width: 210px; padding: 8px; background: var(--ph-bg-surface, #fff); } .ds-nav__item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--ph-radius-sm, 4px); color: var(--ph-text-regular, #324249); font-size: 14px; text-decoration: none; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); } .ds-nav__item:hover { background: var(--ph-bg-hover, #eff4f5); } .ds-nav__item.is-active { background: color-mix(in srgb, var(--ph-color-primary, #0c8078), #ffffff 90%); color: var(--ph-color-primary, #0c8078); font-weight: 500; } .ds-nav__icon { width: 18px; height: 18px; flex: none; }"
+    },
+    {
+      "name": "Wordmark",
+      "kind": "custom",
+      "description": "签名字标:等宽粗体 + 主色光标方块,1.2s 步进闪烁。",
+      "html": "<span class=\"ds-wordmark\"><span class=\"ds-wordmark__text\">ProxyHub</span><span class=\"ds-wordmark__cursor\"></span></span>",
+      "css": ".ds-wordmark { display: inline-flex; align-items: baseline; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 28px; font-weight: 700; letter-spacing: 0.01em; color: var(--ph-text-primary, #0f1b20); white-space: nowrap; user-select: none; } .ds-wordmark__cursor { width: 0.55em; height: 1em; margin-left: 2px; background: var(--ph-color-primary, #0c8078); border-radius: 1px; transform: translateY(0.12em); animation: ds-wordmark-blink 1.2s step-end infinite; } @keyframes ds-wordmark-blink { 0%, 55% { opacity: 1; } 56%, 100% { opacity: 0; } } @media (prefers-reduced-motion: reduce) { .ds-wordmark__cursor { animation: none; } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "\"电波塔台\" (The Signal Tower)",
+    "overview": "运营者坐在塔台里:上游是若干\"机场\",进出港的航班是节点,雷达屏是健康检查与任务中心。ProxyHub 的界面就是这座塔台的操作台——所有信息平铺在仪器面板上,调度动作一键可达,任何异常在影响乘客(终端设备)之前先亮在屏幕上。\n\n气质是一台**冷静的仪器**:90% 的中性灰阶构成面板本体,电波青只在主行动、激活态与焦点环上出现,像仪器上唯一的那颗蓝色按键。信息密度优先于留白,控件默认 small 尺寸,视觉层级靠字重、字号与灰阶深浅表达,不靠色块堆砌。暗色是一等公民:不是反色滤镜,表面、文本、描边、阴影均有独立暗色取值。\n\n已确认的视觉反参照:Element Plus 默认主题(#409eff 默认蓝、大圆角、厚阴影的\"模板感\"),以及一切装饰性渐变与彩色背景块。",
+    "keyCharacteristics": [
+      "灰阶为体、电波青为睛:品牌色克制到只做\"一声部\"",
+      "平为默认、影随状态:1px 描边分层,阴影只响应交互状态",
+      "高密度仪器面板:small 控件、4px 基网、等宽数字",
+      "签名元素是字标尾部的闪烁光标方块——终端气质一眼可辨",
+      "暗色独立取值,亮色暗色都是\"正房\""
+    ],
+    "rules": [
+      { "name": "The 一声部 Rule", "body": "电波青在任何单屏上的占比不超过 10%——主行动、激活态、链接、焦点环,仅此而已。它的稀有正是它的音量。", "section": "colors" },
+      { "name": "The 状态用色 Rule", "body": "功能色只表达状态语义(success 可用 / warning 可逆警示 / danger 不可逆 / info 中性),永远不做装饰。想要\"好看的颜色\",答案是灰阶深浅,不是功能色。", "section": "colors" },
+      { "name": "The 危险红纪律 Rule", "body": "danger 只给不可逆操作(删除、清理、屏蔽);同一视觉区域内 danger 按钮至多一个主显,其余收进下拉。", "section": "colors" },
+      { "name": "The Display 不做标题 Rule", "body": "28px/32px 两档 display 字号只服务主视觉数字。页面标题永远 20px,再大的标题需求,答案是把数字做成 display,不是把标题放大。", "section": "typography" },
+      { "name": "The 数字对齐 Rule", "body": "表格与统计中的数字一律 `tabular-nums`,延迟、速率、评分纵向扫读时个位对个位。", "section": "typography" },
+      { "name": "The 刻度外无间距 Rule", "body": "间距、圆角、z-index 只取令牌刻度,页面代码不允许出现刻度外的字面量。这条是规范纪律,靠评审执行;lint 硬门禁覆盖的是内联 style 与单文件行数。", "section": "layout" },
+      { "name": "The 抽屉看、对话办 Rule", "body": "el-drawer = 查看详情,el-dialog = 表单操作,两者语义不互换;表格 expand 展开行禁用。", "section": "layout" },
+      { "name": "The 影随状态 Rule", "body": "阴影是交互的答语,不是装饰的常态。一个元素没有发生状态变化,它就不该投出新的影子。", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 只消费语义令牌(`--ph-bg-*` / `--ph-text-*` / `--ph-color-*`);调值去 tokens.css,调暗色观感去 semantics.css,调 EP 组件去 ep-theme.css。",
+      "Do 让电波青保持稀有——主行动、激活态、链接、焦点环,单屏 ≤10%。",
+      "Do 表格数字用等宽 + `tabular-nums`;主视觉大数字用 display 档(700 字重)。",
+      "Do 新页面先归入列表页或详情模式,页首接 PageHeader,详情走右侧抽屉。",
+      "Do 暗色作为一等公民同步设计:只覆盖语义层,页面代码零改动即切换。",
+      "Do 危险操作走 danger + 确认;不可逆语义与红色绑定。"
+    ],
+    "donts": [
+      "Don't 在页面代码写原始刻度(`--ph-teal-600`)、`--el-*` 变量或内联 style——内联 style 由 lint 门禁硬阻塞,原始刻度与 `--el-*` 禁令是令牌三层架构的纪律。",
+      "Don't 用功能色做装饰,或让 danger 出现在可逆操作上。",
+      "Don't 引入渐变、大圆角、彩色背景块;BrandMark 的 teal 渐变是唯一例外,且仅限品牌位。",
+      "Don't 用 dialog 展示详情、用 expand 展开行、自写页面标题行。",
+      "Don't 把 display 字号(28/32px)用在标题上,或写出 12px 以下的文字。",
+      "Don't 放与电波青不一致的位图 logo,或自造字标的替代品。"
+    ]
+  }
+}
