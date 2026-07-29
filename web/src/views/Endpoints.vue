@@ -148,6 +148,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Endpoint } from '@/types'
 import client from '@/api/client'
+import { appBase } from '@/utils/base'
 import PageHeader from '@/components/PageHeader.vue'
 import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
 import EndpointDetailDrawer from '@/components/EndpointDetailDrawer.vue'
@@ -182,7 +183,7 @@ const loadEndpoints = async () => {
 }
 
 const getSubscriptionUrl = (row: Endpoint) => {
-  return `${window.location.origin}/sub/${row.path}?token=${row.token}`
+  return `${window.location.origin}${appBase()}/sub/${row.path}?token=${row.token}`
 }
 
 const copyUrl = (row: Endpoint) => {

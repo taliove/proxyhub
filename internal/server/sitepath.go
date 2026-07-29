@@ -49,3 +49,28 @@ func (s *Server) sitePathMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r2)
 	})
 }
+
+// rewriteIndexForSitePath rewrites the built index.html for a Site Path
+// deployment. The SPA is built with root-absolute references ("/assets/...",
+// "/proxyhub-icon.png"), which bypass the /<site-path>/ prefix and 404 at
+// both the reverse proxy and sitePathMiddleware. Two rewrites:
+//
+//   - inject window.__PH_BASE__ so the SPA runtime (router history, API
+//     baseURL, subscription URL builders) generates prefixed URLs
+//   - rewrite root-absolute href/src to live under the prefix
+//
+// sitePath is validated to [A-Za-z0-9_-] at init, so embedding it in the
+// inline script is safe. Dynamic-import chunks resolve relative to the entry
+// module URL (import.meta.url), so no JS rewriting is needed beyond index.html.
+func rewriteIndexForSitePath(data []byte, sitePath string) []byte {
+	if sitePath == "" {
+		return data
+	}
+	base := "/" + sitePath
+	html := string(data)
+	html = strings.Replace(html, "<head>",
+		`<head><script>window.__PH_BASE__="`+base+`"</script>`, 1)
+	html = strings.ReplaceAll(html, `href="/`, `href="`+base+`/`)
+	html = strings.ReplaceAll(html, `src="/`, `src="`+base+`/`)
+	return []byte(html)
+}

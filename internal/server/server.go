@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/subtle"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,7 +80,7 @@ type Server struct {
 	cfg                *config.Config
 	st                 *store.Store
 	nodes              NodeSource
-	webFS              embed.FS
+	webFS              fs.FS
 	sessions           *SessionManager
 	logger             *slog.Logger
 	detectionService   *DetectionService
@@ -131,7 +130,7 @@ type Server struct {
 }
 
 // New 创建 HTTP 服务
-func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS embed.FS, logger *slog.Logger, detectionService *DetectionService, geo *geoip.Resolver) *Server {
+func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS fs.FS, logger *slog.Logger, detectionService *DetectionService, geo *geoip.Resolver) *Server {
 	s := &Server{
 		cfg:              cfg,
 		st:               st,
@@ -830,15 +829,31 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 		reqPath = "index.html"
 	}
 
-	// 命中真实静态文件则直接返回，否则回退到 index.html（前端路由接管）
+	// 命中真实静态文件则直接返回(index.html 例外:Site Path 部署需重写注入),
+	// 否则回退到 index.html(前端路由接管)
 	if f, err := webRoot.Open(reqPath); err == nil {
 		f.Close()
+		if reqPath == "index.html" {
+			s.serveIndex(w, webRoot)
+			return
+		}
 		http.FileServer(http.FS(webRoot)).ServeHTTP(w, r)
 		return
 	}
 
-	// 回退到 index.html
-	data, _ := fs.ReadFile(webRoot, "index.html")
+	s.serveIndex(w, webRoot)
+}
+
+// serveIndex 输出 index.html;配置了 Site Path 时重写根绝对资源引用并注入 base。
+func (s *Server) serveIndex(w http.ResponseWriter, webRoot fs.FS) {
+	data, err := fs.ReadFile(webRoot, "index.html")
+	if err != nil {
+		http.Error(w, "frontend not built", http.StatusInternalServerError)
+		return
+	}
+	if sp, spErr := s.st.GetSitePath(); spErr == nil && sp != "" {
+		data = rewriteIndexForSitePath(data, sp)
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(data)
 }

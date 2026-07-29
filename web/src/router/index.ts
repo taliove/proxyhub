@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { appBase } from '@/utils/base'
 import { resolveRedirect } from './guard'
 
 const routes: RouteRecordRaw[] = [
@@ -113,7 +114,7 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(appBase() || '/'),
   routes
 })
 

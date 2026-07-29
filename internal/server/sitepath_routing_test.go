@@ -67,6 +67,15 @@ func TestSitePath_ConfiguredPrefixAllows(t *testing.T) {
 		t.Errorf("GET /<site-path>/api/endpoints: status = %d, want 401", w.Code)
 	}
 
+	// 前缀下的 index.html 必须注入 __PH_BASE__ 且资源引用重写进前缀
+	// (Site Path 部署的 SPA 可用性关键链路,见 rewriteIndexForSitePath)。
+	if w := get(t, h, "/"+testSitePath+"/"); w.Code == http.StatusOK {
+		body := w.Body.String()
+		if !strings.Contains(body, `window.__PH_BASE__="/`+testSitePath+`"`) {
+			t.Errorf("prefixed index.html missing __PH_BASE__ injection")
+		}
+	}
+
 	// 订阅端点在前缀下完整可用
 	ep, err := st.CreateEndpointForUser(1, "dev")
 	if err != nil {

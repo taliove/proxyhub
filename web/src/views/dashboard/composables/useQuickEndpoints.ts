@@ -1,5 +1,6 @@
 import { onMounted, ref } from 'vue'
 import client from '@/api/client'
+import { appBase } from '@/utils/base'
 import type { Endpoint } from '@/types'
 
 // useQuickEndpoints 拉取订阅地址列表(/endpoints),供主页 QuickEndpoints 模块消费。
@@ -22,7 +23,7 @@ export function useQuickEndpoints() {
 
   // 拼装完整订阅 URL,与 Endpoints.vue 同一模式
   const getSubscriptionUrl = (row: Endpoint) =>
-    `${window.location.origin}/sub/${row.path}?token=${row.token}`
+    `${window.location.origin}${appBase()}/sub/${row.path}?token=${row.token}`
 
   return { endpoints, loading, error, getSubscriptionUrl }
 }

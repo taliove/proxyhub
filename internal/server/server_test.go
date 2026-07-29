@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"embed"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/pquerna/otp/totp"
@@ -177,8 +177,12 @@ func newTestServer(t *testing.T, nodes []*subscription.Node) (*Server, *store.St
 
 	cfg := &config.Config{}
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	// 测试不关心 SPA 静态资源，传入空 embed.FS（handleSPA 会优雅报错，不影响 API 测试）
-	var emptyFS embed.FS
+	// 测试用最小前端:一个带 <head> 的 index.html(Site Path 重写依赖它);
+	// 静态资产缺席不影响 API 测试。
+	webFS := fstest.MapFS{
+		"web/index.html": &fstest.MapFile{Data: []byte(
+			"<!doctype html><html><head><title>test</title></head><body><div id=\"app\"></div></body></html>")},
+	}
 	geo := geoip.NewResolver(st, "")
 
 	fakeNodeSource := &fakeNodes{nodes: nodes}
@@ -193,7 +197,7 @@ func newTestServer(t *testing.T, nodes []*subscription.Node) (*Server, *store.St
 		st.GetDetectionTargets,
 	)
 
-	srv := New(cfg, st, fakeNodeSource, emptyFS, logger, detectionService, geo)
+	srv := New(cfg, st, fakeNodeSource, webFS, logger, detectionService, geo)
 	registerTestStore(t, st)
 	return srv, st
 }
