@@ -50,27 +50,34 @@ func (s *Server) sitePathMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// rewriteIndexForSitePath rewrites the built index.html for a Site Path
-// deployment. The SPA is built with root-absolute references ("/assets/...",
-// "/proxyhub-icon.png"), which bypass the /<site-path>/ prefix and 404 at
-// both the reverse proxy and sitePathMiddleware. Two rewrites:
+// rewriteIndexForSitePath rewrites the built index.html for prefix-aware
+// serving. The SPA is built with a relative base ("./assets/...", see
+// web/vite.config.ts), which resolves against the DOCUMENT URL and breaks on
+// deep client routes — under a Site Path (/<site-path>/airports) and at the
+// root too (/mfa/enroll). So this runs for EVERY index.html serve:
 //
-//   - inject window.__PH_BASE__ so the SPA runtime (router history, API
-//     baseURL, subscription URL builders) generates prefixed URLs
-//   - rewrite root-absolute href/src to live under the prefix
+//   - relative href/src become absolute: "/<sitePath>/..." when a Site Path
+//     is configured, plain "/..." at the root
+//   - window.__PH_BASE__ is injected only when a Site Path is set (the SPA
+//     runtime defaults to '' at the root)
 //
-// sitePath is validated to [A-Za-z0-9_-] at init, so embedding it in the
-// inline script is safe. Dynamic-import chunks resolve relative to the entry
-// module URL (import.meta.url), so no JS rewriting is needed beyond index.html.
+// Lazy-loaded chunks and CSS preload deps are module-relative (import.meta
+// resolution) and follow the entry module's location, so no JS rewriting is
+// needed beyond index.html. sitePath is validated to [A-Za-z0-9_-] at init,
+// so embedding it in the inline script is safe.
 func rewriteIndexForSitePath(data []byte, sitePath string) []byte {
-	if sitePath == "" {
-		return data
-	}
-	base := "/" + sitePath
+	base := ""
 	html := string(data)
-	html = strings.Replace(html, "<head>",
-		`<head><script>window.__PH_BASE__="`+base+`"</script>`, 1)
+	if sitePath != "" {
+		base = "/" + sitePath
+		html = strings.Replace(html, "<head>",
+			`<head><script>window.__PH_BASE__="`+base+`"</script>`, 1)
+	}
+	// 顺序敏感:先替换绝对形式(空前缀时是恒等操作),再替换相对形式。
+	// 反过来会让相对形式产生的绝对输出被绝对形式二次命中,拼出双重前缀。
 	html = strings.ReplaceAll(html, `href="/`, `href="`+base+`/`)
 	html = strings.ReplaceAll(html, `src="/`, `src="`+base+`/`)
+	html = strings.ReplaceAll(html, `href="./`, `href="`+base+`/`)
+	html = strings.ReplaceAll(html, `src="./`, `src="`+base+`/`)
 	return []byte(html)
 }

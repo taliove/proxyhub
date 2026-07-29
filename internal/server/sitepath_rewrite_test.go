@@ -9,10 +9,10 @@ import (
 
 const spaTestIndex = `<!doctype html>
 <html><head>
-<link rel="icon" href="/proxyhub-icon.png" />
+<link rel="icon" href="./proxyhub-icon.png" />
 <script>try { localStorage.getItem('ph:dark') } catch (e) {}</script>
-<script type="module" crossorigin src="/assets/index-abc123.js"></script>
-<link rel="stylesheet" crossorigin href="/assets/index-def456.css">
+<script type="module" crossorigin src="./assets/index-abc123.js"></script>
+<link rel="stylesheet" crossorigin href="./assets/index-def456.css">
 </head><body><div id="app"></div></body></html>`
 
 func TestRewriteIndexForSitePath(t *testing.T) {
@@ -28,19 +28,24 @@ func TestRewriteIndexForSitePath(t *testing.T) {
 			t.Errorf("rewritten index missing %q", want)
 		}
 	}
-	// 不得残留根绝对资源引用
-	for _, bad := range []string{`src="/assets/`, `href="/assets/`, `href="/proxyhub-icon.png"`} {
+	// 相对引用与根绝对引用都不得残留,且前缀只能出现一次(防二次命中)
+	for _, bad := range []string{`src="./`, `href="./`, `src="/assets/`, `href="/assets/`,
+		`/GTsRiXWBKs7El92a1HJ9/GTsRiXWBKs7El92a1HJ9/`} {
 		if strings.Contains(out, bad) {
-			t.Errorf("rewritten index still contains root-absolute %q", bad)
+			t.Errorf("rewritten index still contains unprefixed %q", bad)
 		}
 	}
 }
 
 func TestRewriteIndexForSitePath_EmptyPath(t *testing.T) {
-	// 空 site path 不应被调用方走到,但防御一下:不产生 panic,内容不变形
-	out := rewriteIndexForSitePath([]byte(spaTestIndex), "")
-	if !strings.Contains(string(out), `src="/assets/index-abc123.js"`) {
-		t.Error("empty site path should keep root-absolute references as-is")
+	// 根部署(未配 Site Path):相对引用重写为根绝对(深层路由如 /mfa/enroll
+	// 刷新时 ./assets 会错解析到 /mfa/assets),且不注入 __PH_BASE__。
+	out := string(rewriteIndexForSitePath([]byte(spaTestIndex), ""))
+	if !strings.Contains(out, `src="/assets/index-abc123.js"`) {
+		t.Error("root deploy should rewrite relative refs to root-absolute")
+	}
+	if strings.Contains(out, "__PH_BASE__") {
+		t.Error("root deploy must not inject __PH_BASE__")
 	}
 }
 

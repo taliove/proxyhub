@@ -844,16 +844,20 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	s.serveIndex(w, webRoot)
 }
 
-// serveIndex 输出 index.html;配置了 Site Path 时重写根绝对资源引用并注入 base。
+// serveIndex 输出 index.html。每次输出都过 rewriteIndexForSitePath:
+// 相对 base 的构建产物在深层路由下必须重写为绝对路径(根部署同样如此),
+// Site Path 配置时额外注入 __PH_BASE__。
 func (s *Server) serveIndex(w http.ResponseWriter, webRoot fs.FS) {
 	data, err := fs.ReadFile(webRoot, "index.html")
 	if err != nil {
 		http.Error(w, "frontend not built", http.StatusInternalServerError)
 		return
 	}
-	if sp, spErr := s.st.GetSitePath(); spErr == nil && sp != "" {
-		data = rewriteIndexForSitePath(data, sp)
+	sp, spErr := s.st.GetSitePath()
+	if spErr != nil {
+		sp = ""
 	}
+	data = rewriteIndexForSitePath(data, sp)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(data)
 }
