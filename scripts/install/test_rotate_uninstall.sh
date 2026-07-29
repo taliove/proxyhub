@@ -161,6 +161,27 @@ test_rotate_path_custom() {
     teardown_test
 }
 
+# test_rotate_path_no_caddy_refused - verify --no-caddy installs refuse rotation.
+test_rotate_path_no_caddy_refused() {
+    echo "==> test_rotate_path_no_caddy_refused"
+    setup_test
+
+    # Mark the install as --no-caddy (operator's own reverse proxy).
+    echo "NO_CADDY=1" >> "$(root_path /root/.proxyhub-install-info)"
+
+    local rc=0
+    "$PROXYHUBCTL" rotate-path --yes >/dev/null 2>&1 || rc=$?
+    assert_true "[[ $rc -ne 0 ]]" \
+        "rotate-path should fail on a --no-caddy install"
+
+    local install_info
+    install_info=$(root_path /root/.proxyhub-install-info)
+    assert_contains "$install_info" "SITE_PATH=old_secure_path_12345678" \
+        "Site Path should be unchanged after refusal"
+
+    teardown_test
+}
+
 # test_rotate_path_rejects_reserved - verify reserved words are rejected.
 test_rotate_path_rejects_reserved() {
     echo "==> test_rotate_path_rejects_reserved"
@@ -327,6 +348,7 @@ main() {
     # Rotate-path tests.
     test_rotate_path_generates_new
     test_rotate_path_custom
+    test_rotate_path_no_caddy_refused
     test_rotate_path_rejects_reserved
     test_rotate_path_requires_yes
 

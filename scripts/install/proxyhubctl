@@ -485,6 +485,14 @@ cmd_rotate_path() {
         return 1
     fi
 
+    # --no-caddy installs have no managed fragment to rotate; the operator's
+    # own reverse proxy holds the path, which we must not rewrite.
+    if [[ $(sed -n 's/^NO_CADDY=//p' "$install_info") == 1 ]]; then
+        _ph_err "this install uses --no-caddy: rotate-path cannot rewrite your own reverse proxy config"
+        _ph_err "update the Site Path in your proxy (see /etc/proxyhub/reverse-proxy.* examples) instead"
+        return 1
+    fi
+
     _ph_log "rotating Site Path from ${old_path} to ${new_path}"
 
     # Backup current Caddy fragment for rollback.

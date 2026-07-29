@@ -143,7 +143,7 @@ mock_host() {
 # --help documents the contract and exits 0.
 help_out=$(main --help 2>/dev/null)
 for needle in --non-interactive --domain --email --version --repo --site-path \
-    --skip-dns-check "proxyhubctl update" SHA256SUMS; do
+    --listen-addr --no-caddy --skip-dns-check "proxyhubctl update" SHA256SUMS; do
     if [[ $help_out == *"$needle"* ]]; then _pass; else _fail "--help missing [$needle]"; fi
 done
 
@@ -431,6 +431,33 @@ TEST_DIRS+=("$REH_SBX")
 
 _assert_eq 0 "$rehearsal_rc" "rehearsal install exit code"
 _assert_file_contains "$REH_SBX/stderr.log" "public HTTPS health check skipped"
+
+# --------------------------------------------------------------------------
+# --no-caddy: no Caddy touched, reverse-proxy examples written, record marked
+# --------------------------------------------------------------------------
+
+nocad=$(
+    setup_sandbox
+    mock_host
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --no-caddy \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\n' "$rc"
+    printf 'SBX=%s\n' "$SBX"
+)
+nocad_rc=$(printf '%s\n' "$nocad" | sed -n 's/^RC=//p')
+NC_SBX=$(printf '%s\n' "$nocad" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$NC_SBX")
+
+_assert_eq 0 "$nocad_rc" "--no-caddy install exit code"
+[[ ! -e $NC_SBX/etc/caddy/conf.d/proxyhub.caddy ]] && _pass || _fail "caddy fragment written despite --no-caddy"
+_assert_file_contains "$NC_SBX/etc/proxyhub/reverse-proxy.caddy" "reverse_proxy 127.0.0.1:8080"
+_assert_file_contains "$NC_SBX/etc/proxyhub/reverse-proxy.caddy" "proxy.example.com {"
+_assert_file_contains "$NC_SBX/etc/proxyhub/reverse-proxy.nginx.conf" "proxy_pass http://127.0.0.1:8080"
+_assert_file_contains "$NC_SBX/etc/proxyhub/reverse-proxy.nginx.conf" "X-Forwarded-For"
+_assert_file_contains "$NC_SBX/root/.proxyhub-install-info" "NO_CADDY=1"
+_assert_file_contains "$NC_SBX/stderr.log" "public HTTPS health check skipped (--no-caddy)"
+_assert_file_contains "$NC_SBX/stdout.log" "reverse-proxy.caddy"
 
 # --------------------------------------------------------------------------
 # Caddy-missing guidance (skipped when a real caddy is on the base PATH)

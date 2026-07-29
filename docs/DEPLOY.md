@@ -44,6 +44,24 @@ apt install caddy
 systemctl status caddy
 ```
 
+### 自带反向代理(--no-caddy)
+
+如果服务器已有 nginx / Caddy / 其他反代占用 80/443，或你希望自己管理 TLS，用 `--no-caddy` 跳过安装器的 Caddy 配置:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/install.sh) \
+  --non-interactive --domain proxy.example.com --no-caddy
+```
+
+该模式下安装器:不检查 80/443、不碰 Caddy、跳过公网 HTTPS 健康检查(回环健康仍验证),并在 `/etc/proxyhub/` 下生成两份可直接套用的反代样例:
+
+- `reverse-proxy.caddy` — 与托管模式完全相同的 Caddy site block
+- `reverse-proxy.nginx.conf` — nginx server 块模板
+
+> **安全要点**:两份样例都强制**替换**(而非追加)`X-Forwarded-For`。ProxyHub 信任来自环回反代的 XFF 做 IP2Ban/验证码/黑名单判定,如果客户端自带的 XFF 能穿过反代,这些防护全部可绕过。套用配置时不要删掉这几行。
+
+注意:`--no-caddy` 安装的实例,`proxyhubctl rotate-path` 不可用(它无法改写你自己的反代配置);换 Site Path 需手工同步你的反代配置与样例文件。
+
 ## 一键安装
 
 ### 交互式安装（推荐）
