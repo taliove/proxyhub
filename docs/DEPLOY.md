@@ -1,25 +1,25 @@
 # ProxyHub 生产部署指南
 
-ProxyHub 内嵌 mihomo 代理内核,无需单独下载或配置。单二进制文件包含完整的前后端和代理内核。
+ProxyHub 内嵌 mihomo 代理内核，无需单独下载或配置。单二进制文件包含完整的前后端和代理内核。
 
 ## 前置条件
 
 ### 系统要求
-- **操作系统**: Ubuntu 22.04/24.04 或 Debian 12/13
-- **架构**: amd64 或 arm64
-- **用户**: root 权限
+- **操作系统**： Ubuntu 22.04/24.04 或 Debian 12/13
+- **架构**： amd64 或 arm64
+- **用户**： root 权限
 - **systemd**: 必需（用于服务管理）
-- **网络**: 出站 HTTPS 连接（用于下载和健康检查）
+- **网络**： 出站 HTTPS 连接（用于下载和健康检查）
 
 ### 资源占用参考
 
-容量规划参考值（单实例、常规节点规模）:
+容量规划参考值（单实例、常规节点规模）：
 
-- **内存**: 50-128MB（闲置 / 健康检查期间）
-- **CPU**: 1-5%（闲置）,10-20%（健康检查期间）
-- **磁盘**: 二进制约 20MB（含前端 + mihomo 内核),数据库随节点与统计数据增长
-- **并发健康检查**: 默认 30 个节点（可配置）
-- **检查间隔**: 默认 15 分钟（可配置）
+- **内存**： 50-128MB（闲置 / 健康检查期间）
+- **CPU**: 1-5%（闲置），10-20%（健康检查期间）
+- **磁盘**： 二进制约 20MB（含前端 + mihomo 内核），数据库随节点与统计数据增长
+- **并发健康检查**： 默认 30 个节点（可配置）
+- **检查间隔**： 默认 15 分钟（可配置）
 
 ### 域名与 DNS
 - 一个指向服务器的域名（如 `proxy.example.com`）
@@ -29,7 +29,7 @@ ProxyHub 内嵌 mihomo 代理内核,无需单独下载或配置。单二进制�
 ### Caddy 反向代理
 ProxyHub 仅监听 `127.0.0.1:8080`（环回地址），**必须**通过反向代理暴露 HTTPS 访问。
 
-安装 Caddy v2（如果未安装）:
+安装 Caddy v2（如果未安装）：
 ```bash
 # Ubuntu/Debian
 apt install -y debian-keyring debian-archive-keyring apt-transport-https
@@ -39,40 +39,40 @@ apt update
 apt install caddy
 ```
 
-验证 Caddy 运行状态:
+验证 Caddy 运行状态：
 ```bash
 systemctl status caddy
 ```
 
 ### 自带反向代理(--no-caddy)
 
-如果服务器已有 nginx / Caddy / 其他反代占用 80/443，或你希望自己管理 TLS，用 `--no-caddy` 跳过安装器的 Caddy 配置:
+如果服务器已有 nginx / Caddy / 其他反代占用 80/443，或你希望自己管理 TLS，用 `--no-caddy` 跳过安装器的 Caddy 配置：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/install.sh) \
   --non-interactive --domain proxy.example.com --no-caddy
 ```
 
-该模式下安装器:不检查 80/443、不碰 Caddy、跳过公网 HTTPS 健康检查(回环健康仍验证),并在 `/etc/proxyhub/` 下生成两份可直接套用的反代样例:
+该模式下安装器：不检查 80/443、不碰 Caddy、跳过公网 HTTPS 健康检查（回环健康仍验证），并在 `/etc/proxyhub/` 下生成两份可直接套用的反代样例：
 
 - `reverse-proxy.caddy` — 与托管模式完全相同的 Caddy site block
 - `reverse-proxy.nginx.conf` — nginx server 块模板
 
-> **安全要点**:两份样例都强制**替换**(而非追加)`X-Forwarded-For`。ProxyHub 信任来自环回反代的 XFF 做 IP2Ban/验证码/黑名单判定,如果客户端自带的 XFF 能穿过反代,这些防护全部可绕过。套用配置时不要删掉这几行。
+> **安全要点**：两份样例都强制**替换**（而非追加）`X-Forwarded-For`。ProxyHub 信任来自环回反代的 XFF 做 IP2Ban/验证码/黑名单判定，如果客户端自带的 XFF 能穿过反代，这些防护全部可绕过。套用配置时不要删掉这几行。
 
-注意:`--no-caddy` 安装的实例,`proxyhubctl rotate-path` 不可用(它无法改写你自己的反代配置);换 Site Path 需手工同步你的反代配置与样例文件。
+注意：`--no-caddy` 安装的实例，`proxyhubctl rotate-path` 不可用（它无法改写你自己的反代配置）；换 Site Path 需手工同步你的反代配置与样例文件。
 
 ## 一键安装
 
 ### 交互式安装（推荐）
 
-适合首次部署，安装器会引导您完成所有配置:
+适合首次部署，安装器会引导您完成所有配置：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/install.sh)
 ```
 
-安装器将:
+安装器将：
 1. 验证系统环境（OS、架构、systemd、网络）
 2. 提示输入域名和可选的 ACME 邮箱
 3. 自动生成安全的 Site Path（管理后台路径）
@@ -84,7 +84,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/instal
 9. 验证本地和公网健康检查端点
 10. 输出管理员凭证和访问地址
 
-**重要**: 安装完成后会显示管理员凭证，**请立即保存**:
+**重要**： 安装完成后会显示管理员凭证，**请立即保存**：
 ```
 ========================================
 ProxyHub 安装成功
@@ -97,7 +97,7 @@ ProxyHub 安装成功
 
 ### 非交互式安装（CI/CD）
 
-适合自动化部署，所有参数通过命令行传入:
+适合自动化部署，所有参数通过命令行传入：
 
 ```bash
 bash install.sh \
@@ -107,7 +107,7 @@ bash install.sh \
   --version latest
 ```
 
-完整选项说明:
+完整选项说明：
 ```bash
 install.sh --help
 ```
@@ -146,19 +146,19 @@ proxyhubctl backup
 
 ### 推荐备份策略
 
-ProxyHub 数据库包含:
+ProxyHub 数据库包含：
 - 管理员密码（bcrypt 哈希）
 - 机场订阅 URL（明文）
 - 节点信息
 - 自建节点配置（包含密码）
 
-**建议**:
+**建议**：
 - 每日自动备份（cron）
 - 备份归档已加密（使用 openssl enc + 基于 Site Path 的密钥）
 - 异地保存备份（rsync 到备份服务器）
 - 保留最近 7 天备份
 
-示例 cron 任务（每日凌晨 2 点）:
+示例 cron 任务（每日凌晨 2 点）：
 ```bash
 0 2 * * * /usr/local/bin/proxyhubctl backup --protect && find /var/lib/proxyhub/backups -name "*.tar.gz.enc" -mtime +7 -delete
 ```
@@ -169,7 +169,7 @@ ProxyHub 数据库包含:
 proxyhubctl restore /path/to/backup.tar.gz.enc --yes
 ```
 
-恢复过程会:
+恢复过程会：
 1. 停止服务
 2. 验证归档完整性
 3. 解密并解压
@@ -191,7 +191,7 @@ proxyhub --version
 proxyhubctl update
 ```
 
-更新过程:
+更新过程：
 1. 自动备份当前数据
 2. 下载最新版本并验证 SHA256
 3. 停止服务
@@ -210,12 +210,12 @@ proxyhubctl update --version v0.2.0
 
 ### 自动更新（可选）
 
-启用自动更新（每日检查）:
+启用自动更新（每日检查）：
 ```bash
 proxyhubctl auto-update enable
 ```
 
-禁用自动更新:
+禁用自动更新：
 ```bash
 proxyhubctl auto-update disable
 ```
@@ -228,14 +228,14 @@ Site Path 是管理后台的随机路径（如 `/Kx9mY2vP3nQ8rW5tZ/`）。轮换
 proxyhubctl rotate-path
 ```
 
-轮换过程:
+轮换过程：
 1. 生成新 Site Path
 2. 更新 Caddy 配置
 3. 重载 Caddy
 4. 更新 `/root/.proxyhub-install-info`
 5. 输出新的管理后台 URL
 
-**注意**: 轮换后需使用新 URL 访问管理后台。旧 URL 立即失效。
+**注意**： 轮换后需使用新 URL 访问管理后台。旧 URL 立即失效。
 
 ## 卸载
 
@@ -255,7 +255,7 @@ proxyhubctl uninstall
 proxyhubctl status
 ```
 
-输出包含:
+输出包含：
 - 服务运行状态
 - 进程 PID
 - 内存占用
@@ -284,7 +284,7 @@ proxyhubctl restart
 proxyhubctl show-info
 ```
 
-输出包含:
+输出包含：
 - ProxyHub 版本
 - 安装时间
 - 域名
@@ -307,7 +307,7 @@ health_check:
     request: 5s         # 缩短超时（默认 10s）
 ```
 
-重启服务:
+重启服务：
 ```bash
 proxyhubctl restart
 ```
@@ -322,15 +322,15 @@ health_check:
 
 ### 资源占用基准
 
-- **内存**: 50-128 MB（闲置 / 健康检查期间）
-- **CPU**: 1-5%（闲置）, 10-20%（健康检查期间）
-- **磁盘**: 数据库增长约 1MB/千次订阅拉取
+- **内存**： 50-128 MB（闲置 / 健康检查期间）
+- **CPU**: 1-5%（闲置）， 10-20%（健康检查期间）
+- **磁盘**： 数据库增长约 1MB/千次订阅拉取
 
 ## 监控与告警
 
 ### 健康检查端点
 
-ProxyHub 提供健康检查端点，用于监控系统（Prometheus、Uptime Kuma 等）:
+ProxyHub 提供健康检查端点，用于监控系统（Prometheus、Uptime Kuma 等）：
 
 ```bash
 # 本地检查
@@ -344,7 +344,7 @@ curl https://proxy.example.com/<site-path>/health
 
 ### 飞书告警（可选）
 
-ProxyHub 支持飞书 Webhook 告警:
+ProxyHub 支持飞书 Webhook 告警：
 - 机场失效通知
 - 可用节点不足告警
 - 系统错误通知
