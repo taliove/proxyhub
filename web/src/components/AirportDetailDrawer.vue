@@ -48,6 +48,10 @@
           <el-button size="small" :loading="refreshing" @click="emit('refresh', airport)">
             {{ isManual ? '重新粘贴' : '刷新' }}
           </el-button>
+          <!-- 拉取型机场也可粘贴导入(一次性,下次 URL 刷新成功覆盖回来) -->
+          <el-button v-if="!isManual" size="small" @click="emit('import', airport)">
+            粘贴导入
+          </el-button>
           <el-button size="small" @click="emit('test', airport)">测试</el-button>
           <el-button v-if="!isManual" size="small" @click="emit('qrcode', airport)"
             >二维码</el-button
@@ -199,6 +203,8 @@ const emit = defineEmits<{
   (e: 'toggle', airport: Airport): void
   (e: 'delete', airport: Airport): void
   (e: 'refresh', airport: Airport): void
+  // 拉取型机场的粘贴导入入口(手动机场的粘贴走 refresh 事件,语义是重新粘贴)
+  (e: 'import', airport: Airport): void
   (e: 'test', airport: Airport): void
   (e: 'qrcode', airport: Airport): void
   // 报告段显式重跑:full=false 抽样,full=true 测全部

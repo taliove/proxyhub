@@ -104,6 +104,7 @@
       @toggle="toggleAirport"
       @delete="deleteAirport"
       @refresh="refreshAirport"
+      @import="openImport"
       @test="startTestRun"
       @qrcode="showQRCode"
       @run-test="onDrawerRunTest"

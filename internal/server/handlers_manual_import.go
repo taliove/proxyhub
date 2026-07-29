@@ -61,7 +61,11 @@ func (u *airportUsageRequest) toUsageInfo() *subscription.UsageInfo {
 	}
 }
 
-// handleImportAirport POST /api/airports/{id}/import 手动机场粘贴导入(同步 HTTP,非任务)。
+// handleImportAirport POST /api/airports/{id}/import 粘贴导入(同步 HTTP,非任务)。
+//
+// 两种来源都可用(2026-07-29 用户实测拍板):手动机场粘贴是唯一的节点来源;
+// 拉取型机场粘贴是一次性导入——下次 URL 刷新成功自然以 URL 内容覆盖回来
+// (同一单机场 upsert 语义),用于 URL 暂时不可达但手上有导出内容的场景。
 //
 // 凭证红线:粘贴内容含节点凭证——不落库、不进日志、不进 jobs params;
 // 解析出的节点经单机场 upsert 入池(语义同单机场刷新,不跑健康检查)。
@@ -81,10 +85,6 @@ func (s *Server) handleImportAirport(w http.ResponseWriter, r *http.Request) {
 	airport, err := s.st.GetAirportByIDForUser(effUID, id)
 	if err != nil {
 		http.Error(w, "airport not found", http.StatusNotFound)
-		return
-	}
-	if airport.SourceType != store.AirportSourceManual {
-		http.Error(w, "not a manual airport", http.StatusBadRequest)
 		return
 	}
 
@@ -136,9 +136,10 @@ func (s *Server) handleImportAirport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 用量信息可选同贴(手动机场无响应头可捕获,引导手填)。
+	// 用量信息可选同贴,仅手动机场生效(拉取型机场的用量由响应头自动捕获,
+	// 随贴字段一律忽略不报错——与设置接口忽略非适用键的惯例一致,design-airports.md)。
 	// 顺序(Check L3):先入池成功再写用量,避免冲突 409 时用量已被覆写。
-	if req.provided() {
+	if airport.SourceType == store.AirportSourceManual && req.provided() {
 		if err := s.st.SetAirportUsageForUser(effUID, id, req.toUsageInfo()); err != nil {
 			s.logger.Error("update airport usage failed", "airport_id", id, "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)

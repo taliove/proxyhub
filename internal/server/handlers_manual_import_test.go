@@ -12,6 +12,7 @@ import (
 
 	"github.com/taliove/proxyhub/internal/aggregator"
 	"github.com/taliove/proxyhub/internal/store"
+	"github.com/taliove/proxyhub/internal/subscription"
 )
 
 // 手动机场导入 fixture(example.com + 全零 UUID,凭证红线:合成值)。
@@ -175,19 +176,70 @@ func TestImportAirport_PlaintextContent(t *testing.T) {
 	}
 }
 
-func TestImportAirport_RejectsNonManual(t *testing.T) {
+// TestImportAirport_URLAirportUsageIgnored 拉取型机场随贴用量字段被忽略(Check MEDIUM):
+// URL 机场用量由响应头自动捕获,随贴不覆写(既不报错也不落库)。
+func TestImportAirport_URLAirportUsageIgnored(t *testing.T) {
+	s, st := newTestServer(t, nil)
+	ap, err := st.CreateAirport("拉取机场", "https://example.com/sub")
+	if err != nil {
+		t.Fatalf("CreateAirport: %v", err)
+	}
+	// 预置捕获的用量(模拟响应头落库值)
+	if err := st.UpdateAirportUsage(ap.ID, &subscription.UsageInfo{Upload: 1, Download: 2, Total: 100}); err != nil {
+		t.Fatalf("UpdateAirportUsage: %v", err)
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"content":         importNodeSS,
+		"usage_remaining": 999,
+		"usage_total":     9999,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/airports/1/import", bytes.NewReader(payload))
+	req.SetPathValue("id", formatID(ap.ID))
+	w := httptest.NewRecorder()
+	s.handleImportAirport(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+
+	got, _ := st.GetAirportByID(ap.ID)
+	if got.UsageTotal != 100 || got.UsageDownload != 2 {
+		t.Errorf("usage overwritten by import payload: total=%d download=%d, want 100/2 (随贴忽略)",
+			got.UsageTotal, got.UsageDownload)
+	}
+}
+
+// TestImportAirport_URLAirportAllowed 拉取型机场同样可粘贴导入(2026-07-29 拍板):
+// 一次性导入,同一 upsert 语义;下次 URL 刷新成功自然覆盖回来。
+func TestImportAirport_URLAirportAllowed(t *testing.T) {
 	s, _ := newTestServer(t, nil)
 	ap, err := s.st.CreateAirport("拉取机场", "https://example.com/sub")
 	if err != nil {
 		t.Fatalf("CreateAirport: %v", err)
 	}
-	payload, _ := json.Marshal(map[string]any{"content": importNodeSS})
+	payload, _ := json.Marshal(map[string]any{"content": importNodeSS + "\n" + importNodeVless})
 	req := httptest.NewRequest(http.MethodPost, "/airports/1/import", bytes.NewReader(payload))
 	req.SetPathValue("id", formatID(ap.ID))
 	w := httptest.NewRecorder()
 	s.handleImportAirport(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400 (拉取型机场不走粘贴导入)", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s (URL 机场粘贴导入应放行)", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Imported int `json:"imported"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Imported != 2 {
+		t.Errorf("imported = %d, want 2", resp.Imported)
+	}
+	var got int
+	for _, n := range s.nodes.(*fakeNodes).nodes {
+		if n.Source == "拉取机场" {
+			got++
+		}
+	}
+	if got != 2 {
+		t.Errorf("pool nodes for 拉取机场 = %d, want 2", got)
 	}
 }
 
