@@ -83,3 +83,4 @@ cmd/server/server
 
 # Release rehearsal local config (SSH target privacy) - never commit
 scripts/release/rehearsal.local.conf
+__pycache__/

@@ -69,6 +69,8 @@ internal/*/testdata/  Go 惯例:包内测试 fixture
 
 文档过期即删,不留"考古层"。文档语言:全中文(commit message 按 §4 用英文,与文档语言是两回事)。
 
+**标点约定**:用户向文档(README、DEPLOY、SECURITY、FAQ 及未来同类大写文件)中文行文用全角标点(，；：？！（）),代码块/行内代码/URL/命令/英文术语括号内不受影响;开发者向文档(CONTEXT.md、design-*、ADR、DEVELOPMENT.md)维持半角行文,不回改(ADR 不可变)。动过用户向文档,提交前过一遍 `zh-punct` skill 的脚本机械化规整。
+
 ## 4. 提交规范
 
 - 消息:**纯英文、纯 ASCII**(不用 `—`/`→`,用 `-`/`->`),conventional commits 格式:`<type>: <description>`,type ∈ feat/fix/refactor/docs/test/chore/perf/ci
