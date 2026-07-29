@@ -184,7 +184,7 @@ done
 # PROXYHUB_ROOT (empty scratch) marks test mode so file:// is acceptable.
 _pipe_root=$(mktemp -d)
 TEST_DIRS+=("$_pipe_root")
-pipe_out=$(cd "$TMPDIR" && env -u PROXYHUB_INSTALL_NO_MAIN \
+pipe_out=$(cd "${TMPDIR:-/tmp}" && env -u PROXYHUB_INSTALL_NO_MAIN \
     PROXYHUB_ROOT="$_pipe_root" \
     PROXYHUB_LIB_URL="file://$REPO_ROOT/scripts/install/lib.sh" \
     bash -s -- --help <"$REPO_ROOT/install.sh" 2>&1) && _pass ||
@@ -192,7 +192,7 @@ pipe_out=$(cd "$TMPDIR" && env -u PROXYHUB_INSTALL_NO_MAIN \
 [[ $pipe_out == *"--listen-addr"* ]] && _pass || _fail "pipe mode help content wrong"
 
 # Non-https PROXYHUB_LIB_URL refused outside test mode.
-_bad_url_out=$(cd "$TMPDIR" && env -u PROXYHUB_INSTALL_NO_MAIN -u PROXYHUB_ROOT \
+_bad_url_out=$(cd "${TMPDIR:-/tmp}" && env -u PROXYHUB_INSTALL_NO_MAIN -u PROXYHUB_ROOT \
     PROXYHUB_LIB_URL="http://evil.example/lib.sh" \
     bash -s -- --help <"$REPO_ROOT/install.sh" 2>&1) && _fail "http PROXYHUB_LIB_URL accepted" ||
     [[ $_bad_url_out == *"must use https://"* ]] && _pass || _fail "http lib URL refusal message wrong: $_bad_url_out"
