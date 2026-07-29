@@ -35,6 +35,14 @@ jobs:
       - name: Build
         run: make build-backend
 
+      # The release matrix cross-compiles for windows/darwin; platform-gated
+      # syscalls (e.g. syscall.SysProcAttr.Setpgid) only fail there. Compile-
+      # check both on every push instead of discovering it in the release run.
+      - name: Cross-compile check (release matrix OSes)
+        run: |
+          GOOS=windows GOARCH=amd64 go build ./...
+          GOOS=darwin GOARCH=arm64 go build ./...
+
       - name: Vet
         run: make vet
 

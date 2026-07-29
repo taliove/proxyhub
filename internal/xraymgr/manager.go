@@ -415,7 +415,7 @@ func (m *Manager) spawn(userID int64, cfgPath string) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Dir = m.userDir(userID)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = detachProcAttr()
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start xray: %w", err)
