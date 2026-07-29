@@ -88,7 +88,7 @@ run_install() {
             --version '$REHEARSAL_VERSION' \
             --listen-addr '127.0.0.1:${REHEARSAL_LISTEN_PORT}'" \
         >"$WORKDIR/install.log" 2>&1 || {
-        sed -e 's/^\(  Admin password : \).*/\1<redacted>/' "$WORKDIR/install.log" >&2
+        sed -e 's/^( *Admin password *:).*/\1 <redacted>/' "$WORKDIR/install.log" >&2
         fail "install.sh 执行失败(输出如上,密码已脱敏)"
     }
     # 安装输出含一次性管理员密码:只留本地 0600 文件,日志打印脱敏版。

@@ -180,12 +180,27 @@ done
 # Standalone fetch simulation: script piped via stdin (curl | bash form) with
 # no adjacent lib.sh -> companion lib fetched via PROXYHUB_LIB_URL. Runs from
 # a foreign cwd so the repo-local candidate cannot be found. env -u undoes the
-# harness's exported PROXYHUB_INSTALL_NO_MAIN so the child's main() runs.
+# harness's exported PROXYHUB_INSTALL_NO_MAIN so the child's main() runs;
+# PROXYHUB_ROOT (empty scratch) marks test mode so file:// is acceptable.
+_pipe_root=$(mktemp -d)
+TEST_DIRS+=("$_pipe_root")
 pipe_out=$(cd "$TMPDIR" && env -u PROXYHUB_INSTALL_NO_MAIN \
+    PROXYHUB_ROOT="$_pipe_root" \
     PROXYHUB_LIB_URL="file://$REPO_ROOT/scripts/install/lib.sh" \
     bash -s -- --help <"$REPO_ROOT/install.sh" 2>&1) && _pass ||
     _fail "stdin-pipe install.sh --help failed: $pipe_out"
 [[ $pipe_out == *"--listen-addr"* ]] && _pass || _fail "pipe mode help content wrong"
+
+# Non-https PROXYHUB_LIB_URL refused outside test mode.
+_bad_url_out=$(cd "$TMPDIR" && env -u PROXYHUB_INSTALL_NO_MAIN -u PROXYHUB_ROOT \
+    PROXYHUB_LIB_URL="http://evil.example/lib.sh" \
+    bash -s -- --help <"$REPO_ROOT/install.sh" 2>&1) && _fail "http PROXYHUB_LIB_URL accepted" ||
+    [[ $_bad_url_out == *"must use https://"* ]] && _pass || _fail "http lib URL refusal message wrong: $_bad_url_out"
+
+# The rehearsal seam requires --skip-dns-check (refuse lone form).
+_seam_rc=0
+( PROXYHUB_SKIP_PUBLIC_HEALTH=1 main --non-interactive --domain example.com >/dev/null 2>&1 ) || _seam_rc=$?
+_assert_eq 2 "$_seam_rc" "skip-public-health without skip-dns-check"
 
 # Reserved / weak Site Paths rejected at parse time (rc 2).
 _assert_rc 2 "reserved site path admin" main --non-interactive --domain example.com \
@@ -316,6 +331,8 @@ TEST_DIRS+=("$SBX")
 
 _assert_eq 0 "$happy_rc" "happy path exit code"
 [[ -x $SBX/usr/local/bin/proxyhub ]] && _pass || _fail "binary not installed"
+[[ -x $SBX/usr/local/bin/proxyhubctl ]] && _pass || _fail "proxyhubctl not installed"
+[[ -f $SBX/usr/local/bin/proxyhubctl-lib.sh ]] && _pass || _fail "proxyhubctl-lib.sh not installed"
 _assert_file_contains "$SBX/etc/proxyhub/config.yaml" 'host: "127.0.0.1"'
 _assert_file_contains "$SBX/etc/proxyhub/config.yaml" "/var/lib/proxyhub/data.db"
 [[ -f $SBX/etc/systemd/system/proxyhub.service ]] && _pass || _fail "systemd unit missing"

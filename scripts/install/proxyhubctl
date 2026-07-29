@@ -1219,10 +1219,15 @@ main() {
 
     # Honor the listen addr chosen at install time (--listen-addr): regenerated
     # Caddy fragments and health probes must target the recorded port, not the
-    # lib.sh default.
+    # lib.sh default. Re-validate before adopting: the record is root-only, but
+    # a corrupted value must not flow unquoted into a root-written Caddy config.
     local record_addr
     record_addr=$(_read_install_field LISTEN_ADDR)
-    [[ -z $record_addr ]] || PROXYHUB_LISTEN_ADDR="$record_addr"
+    if [[ $record_addr =~ ^127\.0\.0\.1:[0-9]+$ ]]; then
+        PROXYHUB_LISTEN_ADDR="$record_addr"
+    elif [[ -n $record_addr ]]; then
+        _ph_err "ignoring invalid LISTEN_ADDR in install record: $record_addr"
+    fi
 
     case "$cmd" in
         help|--help|-h)

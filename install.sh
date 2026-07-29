@@ -9,27 +9,42 @@ set -Eeuo pipefail
 # Locate and source the shared installer library (ticket 01). When install.sh
 # itself was fetched standalone (curl | bash, or process substitution), the
 # companion lib is not on disk next to it - fetch it from the same repo over
-# verified HTTPS (PROXYHUB_LIB_URL can pin a fork/ref).
+# verified HTTPS (PROXYHUB_LIB_URL can pin a fork/ref). The filesystem
+# candidate is only trusted when the installer itself is a real on-disk file:
+# in piped mode SCRIPT_DIR falls back to the caller's cwd, and sourcing
+# $cwd/scripts/install/lib.sh as root would be a privesc vector (fail closed).
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)
 _ph_lib=""
-for _ph_lib_candidate in \
-    ${PROXYHUB_ROOT:+"${PROXYHUB_ROOT}/scripts/install/lib.sh"} \
-    "${SCRIPT_DIR}/scripts/install/lib.sh"; do
-    [[ -n $_ph_lib_candidate && -r $_ph_lib_candidate ]] || continue
-    _ph_lib="$_ph_lib_candidate"
-    break
-done
+# Test seam first (PROXYHUB_ROOT scratch tree).
+if [[ -n ${PROXYHUB_ROOT:-} && -r ${PROXYHUB_ROOT}/scripts/install/lib.sh ]]; then
+    _ph_lib="${PROXYHUB_ROOT}/scripts/install/lib.sh"
+# Trust the sibling copy only when the installer itself is a real on-disk
+# file: in piped mode (curl | bash) SCRIPT_DIR falls back to the caller's
+# cwd, and sourcing $cwd/scripts/install/lib.sh as root would be a privesc
+# vector. Standalone fetches go straight to the HTTPS download below.
+elif [[ -n ${BASH_SOURCE[0]:-} && -f ${BASH_SOURCE[0]} && -r ${SCRIPT_DIR}/scripts/install/lib.sh ]]; then
+    _ph_lib="${SCRIPT_DIR}/scripts/install/lib.sh"
+fi
 _PH_LIB_TMP=""
 if [[ -z $_ph_lib ]]; then
+    # Only HTTPS is acceptable for root-executed code; file:// stays available
+    # to the test suite via PROXYHUB_ROOT.
+    _ph_lib_url="${PROXYHUB_LIB_URL:-https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/lib.sh}"
+    if [[ $_ph_lib_url != https://* && -z ${PROXYHUB_ROOT:-} ]]; then
+        printf '[proxyhub] ERROR: PROXYHUB_LIB_URL must use https:// (got %s)\n' "$_ph_lib_url" >&2
+        exit 1
+    fi
     _PH_LIB_TMP=$(mktemp -d)
     chmod 700 "$_PH_LIB_TMP"
-    _ph_lib_url="${PROXYHUB_LIB_URL:-https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/lib.sh}"
     if ! curl -fsSL "$_ph_lib_url" -o "$_PH_LIB_TMP/lib.sh"; then
         printf '[proxyhub] ERROR: cannot locate scripts/install/lib.sh locally, and download from %s failed\n' "$_ph_lib_url" >&2
         exit 1
     fi
     _ph_lib="$_PH_LIB_TMP/lib.sh"
 fi
+# Resolved companion-lib path, kept for the proxyhubctl install step
+# (_ph_lib itself is unset below with the other search temporaries).
+_PH_LIB_PATH="$_ph_lib"
 # Dynamic source path: shellcheck cannot follow it; lib.sh has its own tests.
 # shellcheck source=scripts/install/lib.sh
 # shellcheck disable=SC1090,SC1091
@@ -149,6 +164,12 @@ parse_args() {
         _ph_err "invalid email '${EMAIL}'"; bad=1
     fi
     ((bad == 0)) || exit 2
+
+    # The rehearsal seam only makes sense paired with --skip-dns-check;
+    # refusing the lone form keeps it from becoming a lazy-production flag.
+    if [[ ${PROXYHUB_SKIP_PUBLIC_HEALTH:-0} == 1 && $SKIP_DNS_CHECK != 1 ]]; then
+        _ph_die2 "PROXYHUB_SKIP_PUBLIC_HEALTH=1 requires --skip-dns-check (rehearsal-only combination)"
+    fi
 
     # Custom listen addr flows into config.yaml, the Caddy fragment and the
     # install record (proxyhubctl re-reads it from the record).
@@ -533,18 +554,27 @@ main() {
     _ph_log "installed $(root_path "$PROXYHUB_BINARY")"
     # Install the operator CLI and its helper library next to the binary.
     # proxyhubctl sources proxyhubctl-lib.sh from its own directory (see the
-    # candidate search in proxyhubctl).
-    if [[ -r "${SCRIPT_DIR}/scripts/install/proxyhubctl" ]]; then
-        install -m 0755 "${SCRIPT_DIR}/scripts/install/proxyhubctl" \
-            "$(root_path /usr/local/bin/proxyhubctl)" ||
-            _die "failed to install $(root_path /usr/local/bin/proxyhubctl)"
-        install -m 0644 "${SCRIPT_DIR}/scripts/install/lib.sh" \
-            "$(root_path /usr/local/bin/proxyhubctl-lib.sh)" ||
-            _die "failed to install $(root_path /usr/local/bin/proxyhubctl-lib.sh)"
-        _ph_log "installed $(root_path /usr/local/bin/proxyhubctl)"
-    else
-        _ph_log "NOTE: scripts/install/proxyhubctl not found in this checkout; skipping operator CLI install"
+    # candidate search in proxyhubctl). Standalone fetches (curl | bash) have
+    # no checkout on disk: download proxyhubctl from the same repo, and reuse
+    # the companion lib already fetched into _PH_LIB_TMP at source time.
+    _ph_ctl="${SCRIPT_DIR}/scripts/install/proxyhubctl"
+    if [[ ! -r $_ph_ctl ]]; then
+        if [[ -z $_PH_LIB_TMP ]]; then
+            _PH_LIB_TMP=$(mktemp -d)
+            chmod 700 "$_PH_LIB_TMP"
+        fi
+        _ph_ctl_url="${PROXYHUB_CTL_URL:-https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/proxyhubctl}"
+        curl -fsSL "$_ph_ctl_url" -o "$_PH_LIB_TMP/proxyhubctl" ||
+            _die "failed to download proxyhubctl from ${_ph_ctl_url}"
+        _ph_ctl="$_PH_LIB_TMP/proxyhubctl"
     fi
+    install -m 0755 "$_ph_ctl" \
+        "$(root_path /usr/local/bin/proxyhubctl)" ||
+        _die "failed to install $(root_path /usr/local/bin/proxyhubctl)"
+    install -m 0644 "$_PH_LIB_PATH" \
+        "$(root_path /usr/local/bin/proxyhubctl-lib.sh)" ||
+        _die "failed to install $(root_path /usr/local/bin/proxyhubctl-lib.sh)"
+    _ph_log "installed $(root_path /usr/local/bin/proxyhubctl)"
     if ! ensure_proxyhub_group || ! ensure_proxyhub_user || ! ensure_directories; then
         _die "failed to create the service identity and directory layout"
     fi
