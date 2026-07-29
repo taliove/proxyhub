@@ -108,7 +108,18 @@ verify_install() {
         || fail "读安装记录失败"
     rsh "curl -fsS -o /dev/null 'http://127.0.0.1:${REHEARSAL_LISTEN_PORT}/${site_path}/healthz'" \
         || fail "回环健康检查失败"
-    log "  回环健康 OK(site_path 不落日志)"
+    # 浏览器视角断言(2026-07-29 生产事故:SPA 根绝对资源路径在前缀下全 404,
+    # 回环健康检查完全照不到)。首页必须注入 __PH_BASE__,前缀下静态资产必须可达。
+    log "verify: 前缀下 SPA 可用性(index.html 注入 + 资产 200)"
+    local index_html entry
+    index_html=$(rsh "curl -fsS 'http://127.0.0.1:${REHEARSAL_LISTEN_PORT}/${site_path}/'") \
+        || fail "前缀下首页不可达"
+    [[ $index_html == *"__PH_BASE__"* ]] || fail "前缀下 index.html 未注入 __PH_BASE__"
+    entry=$(printf '%s' "$index_html" | grep -oE "src=\"/${site_path}/assets/[^\"]+\.js\"" | head -1 | sed 's/src="//;s/"//')
+    [[ -n $entry ]] || fail "前缀下 index.html 未找到带前缀的入口资产引用"
+    rsh "curl -fsS -o /dev/null 'http://127.0.0.1:${REHEARSAL_LISTEN_PORT}${entry}'" \
+        || fail "前缀下入口资产不可达: $entry"
+    log "  回环健康 + SPA 前缀链路 OK(site_path 不落日志)"
 }
 
 cleanup() {
