@@ -10,11 +10,26 @@
             <span v-if="airport.abbr">{{ airport.abbr }}</span>
             <el-tag v-else type="info" size="small">自动</el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="订阅 URL">
+          <el-descriptions-item v-if="isManual" label="来源">
+            <el-tag type="warning" size="small">手动机场(粘贴导入)</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item v-else label="订阅 URL">
             <span class="url-cell">
               <span class="url-text">{{ airport.url }}</span>
               <el-button link type="primary" @click="copyUrl">复制</el-button>
             </span>
+          </el-descriptions-item>
+          <!-- 用量信息(CONTEXT.md):完整数字 + 官网链接;无数据不展示该行 -->
+          <el-descriptions-item v-if="usageText" label="用量">
+            <span :class="{ danger: usageLow }">{{ usageText }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="expireLabel" label="到期">
+            <span :class="{ danger: expiringSoon }">{{ expireLabel }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="safeWebPageUrl" label="官网">
+            <el-link :href="safeWebPageUrl" target="_blank" type="primary">
+              {{ safeWebPageUrl }}
+            </el-link>
           </el-descriptions-item>
           <el-descriptions-item label="状态">
             <StatusDot
@@ -31,10 +46,12 @@
             {{ airport.enabled ? '禁用' : '启用' }}
           </el-button>
           <el-button size="small" :loading="refreshing" @click="emit('refresh', airport)">
-            刷新
+            {{ isManual ? '重新粘贴' : '刷新' }}
           </el-button>
           <el-button size="small" @click="emit('test', airport)">测试</el-button>
-          <el-button size="small" @click="emit('qrcode', airport)">二维码</el-button>
+          <el-button v-if="!isManual" size="small" @click="emit('qrcode', airport)"
+            >二维码</el-button
+          >
           <el-button size="small" type="danger" @click="emit('delete', airport)">删除</el-button>
         </div>
       </div>
@@ -126,6 +143,15 @@ import { listTestRuns, type TestRun } from '@/composables/useAirportTest'
 import { canGenerateShareLink, copyNodeLink } from '@/composables/useNodeShare'
 import { healthLabel, healthTone, latencyText, regionDisplay } from '@/views/nodes/nodecells'
 import { parseTimeMs, relativeTimeZh } from '@/components/exam/examhistory'
+import {
+  formatBytes,
+  usageRemaining,
+  usageRemainingPercent,
+  isUsageLow,
+  expireText,
+  isExpiringSoon,
+  isExpired
+} from '@/views/airport-utils'
 
 const visible = defineModel<boolean>({ required: true })
 
@@ -137,6 +163,36 @@ const props = withDefaults(
   }>(),
   { refreshing: false }
 )
+
+// 手动机场(CONTEXT.md):无订阅 URL——概况段隐藏 URL/二维码,"刷新"语义是重新粘贴导入
+const isManual = computed(() => props.airport?.source_type === 'manual')
+
+// 官网链接渲染前 scheme 白名单兜底(后端入库已过滤,此处防历史脏数据):
+// 非 http/https(javascript: 等)不渲染为链接(XSS 防线,Check H2)。
+const safeWebPageUrl = computed(() => {
+  const u = props.airport?.web_page_url?.trim()
+  if (!u) return null
+  return /^https?:\/\//i.test(u) ? u : null
+})
+
+// 用量信息:完整数字展示(已用/总量 + 剩余百分比);无数据不展示
+const usageText = computed(() => {
+  const a = props.airport
+  if (!a || !a.usage_total || a.usage_total <= 0) return null
+  const used = (a.usage_upload ?? 0) + (a.usage_download ?? 0)
+  const pct = usageRemainingPercent(a)
+  const remain = usageRemaining(a) ?? 0
+  return `已用 ${formatBytes(used)} / 共 ${formatBytes(a.usage_total)}(剩 ${formatBytes(remain)}${pct !== null ? `,${pct}%` : ''})`
+})
+const usageLow = computed(() => (props.airport ? isUsageLow(props.airport) : false))
+const expiringSoon = computed(() => (props.airport ? isExpiringSoon(props.airport) : false))
+const expireLabel = computed(() => {
+  const a = props.airport
+  if (!a) return null
+  const text = expireText(a)
+  if (!text) return null
+  return isExpired(a) ? `${text}(已过期)` : text
+})
 
 const emit = defineEmits<{
   (e: 'edit', airport: Airport): void
@@ -196,10 +252,13 @@ const onNodePageChange = (p: number) => {
   loadNodes()
 }
 
-// 空态文案:有搜索词时为"无匹配"降级,否则为引导刷新文案
+// 空态文案:有搜索词时为"无匹配"降级,否则按来源类型引导(手动机场 = 重新粘贴)
 const poolEmptyText = computed(() => {
   const kw = nodeKeyword.value.trim()
-  return kw ? `未找到匹配「${kw}」的节点` : '该机场当前在池内无节点,可点上方「刷新」拉取入池。'
+  if (kw) return `未找到匹配「${kw}」的节点`
+  return isManual.value
+    ? '该机场当前在池内无节点,可点上方「重新粘贴」导入。'
+    : '该机场当前在池内无节点,可点上方「刷新」拉取入池。'
 })
 
 // 最近测试报告:打开抽屉时拉取一次;重跑完成后由父级调 reloadReport 刷新。
@@ -314,6 +373,9 @@ const openExam = (node: Node) => {
 .muted {
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-sm);
+}
+.danger {
+  color: var(--el-color-danger);
 }
 .num {
   font-variant-numeric: tabular-nums;

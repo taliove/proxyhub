@@ -16,7 +16,18 @@
             <el-tag v-else type="info" size="small">自动</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="url" label="订阅 URL" show-overflow-tooltip />
+        <el-table-column label="订阅 URL" show-overflow-tooltip>
+          <template #default="{ row }">
+            <el-tag v-if="row.source_type === 'manual'" type="warning" size="small">手动</el-tag>
+            <span v-else>{{ row.url }}</span>
+          </template>
+        </el-table-column>
+        <!-- 用量信息(CONTEXT.md):剩余百分比 + 进度条 + 到期日;临期/将尽标红,无数据 "-" -->
+        <el-table-column label="用量 / 到期" width="180">
+          <template #default="{ row }">
+            <AirportUsageCell :airport="row" />
+          </template>
+        </el-table-column>
         <el-table-column label="最近测试" width="180">
           <template #default="{ row }">
             <span class="test-cell">
@@ -51,7 +62,16 @@
         <el-table-column label="操作" width="200">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+            <!-- 手动机场无 URL 可拉:"刷新"语义是重新粘贴导入(CONTEXT.md「手动机场」) -->
             <el-button
+              v-if="row.source_type === 'manual'"
+              link
+              type="primary"
+              @click="openImport(row)"
+              >重新粘贴</el-button
+            >
+            <el-button
+              v-else
               link
               type="primary"
               :loading="refreshingIds.includes(row.id)"
@@ -64,31 +84,10 @@
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="editMode ? '编辑机场' : '添加机场'" width="600px">
-      <el-form :model="form" label-width="100px">
-        <el-form-item label="名称">
-          <el-input v-model="form.name" placeholder="例如：机场A" @input="onNameInput" />
-        </el-form-item>
-        <el-form-item label="订阅 URL">
-          <el-input v-model="form.url" placeholder="https://..." />
-        </el-form-item>
-        <el-form-item label="简称">
-          <el-input
-            v-model="form.abbr"
-            placeholder="留空则自动生成(如 极速机场 → JS)"
-            maxlength="16"
-            @input="abbrDirty = true"
-          />
-          <div class="form-hint">
-            用于节点名称标准化(如 🇭🇰 香港 JS-01),留空按拼音/字母首字母自动生成
-          </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitForm">{{ editMode ? '保存' : '添加' }}</el-button>
-      </template>
-    </el-dialog>
+    <!-- 添加/编辑机场对话框(含来源选择与手动机场用量字段);行内「重新粘贴」
+         与创建后引导共用粘贴导入对话框 -->
+    <AirportFormDialog v-model="dialogVisible" :airport="editingAirport" @saved="onFormSaved" />
+    <ManualImportDialog v-model="importVisible" :airport="importAirport" @imported="onImported" />
 
     <QRCodeDialog
       ref="qrDialog"
@@ -115,31 +114,43 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import type { Airport } from '@/types'
 import client from '@/api/client'
 import { getJob } from '@/api/jobs'
-import { useDebouncedSuggest } from '@/composables/useDebouncedSuggest'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusDot from '@/components/StatusDot.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
-import { getAirportQRContent } from './airport-utils'
 import AirportTestDialog from '@/components/AirportTestDialog.vue'
 import AirportRowTestMenu from '@/components/AirportRowTestMenu.vue'
 import AirportDetailDrawer from '@/components/AirportDetailDrawer.vue'
+import AirportFormDialog from '@/components/AirportFormDialog.vue'
+import ManualImportDialog from '@/components/ManualImportDialog.vue'
+import AirportUsageCell from '@/components/AirportUsageCell.vue'
 import { testTimeRelative, scoreDisplay, scoreTone, scoreToneLabel } from './airport-test-utils'
+import { getAirportQRContent } from './airport-utils'
 
 const airports = ref<Airport[]>([])
 const loading = ref(false)
 const router = useRouter()
 const refreshing = ref(false)
+// 添加/编辑对话框:null = 添加模式
 const dialogVisible = ref(false)
-const editMode = ref(false)
-const editingId = ref<number | null>(null)
-const form = ref({ name: '', url: '', abbr: '' })
+const editingAirport = ref<Airport | null>(null)
+
+// 手动机场粘贴导入对话框(创建后引导 + 行内「重新粘贴」)
+const importVisible = ref(false)
+const importAirport = ref<Airport | null>(null)
+const openImport = (row: Airport) => {
+  importAirport.value = row
+  importVisible.value = true
+}
+const onImported = () => {
+  loadAirports()
+}
 
 // QR Code dialog
 const qrDialogVisible = ref(false)
@@ -179,30 +190,6 @@ const onTestFinished = () => {
   detailDrawer.value?.reloadReport?.()
 }
 
-// Debounced auto-suggestion: name input -> abbr suggestion
-const abbrRef = computed({
-  get: () => form.value.abbr,
-  set: (val) => {
-    form.value.abbr = val
-  }
-})
-
-const {
-  isDirty: abbrDirty,
-  onInput: onNameInput,
-  reset: resetAbbrSuggest
-} = useDebouncedSuggest(abbrRef, async () => {
-  const name = form.value.name.trim()
-  if (!name) {
-    form.value.abbr = ''
-    return null
-  }
-  const res = await client.get<unknown, { abbr: string }>('/airports/abbr-suggest', {
-    params: { name }
-  })
-  return res.abbr || ''
-})
-
 const loadAirports = async () => {
   loading.value = true
   airports.value = await client.get('/airports')
@@ -215,34 +202,21 @@ const loadAirports = async () => {
 }
 
 const openAddDialog = () => {
-  editMode.value = false
-  editingId.value = null
-  form.value = { name: '', url: '', abbr: '' }
-  resetAbbrSuggest()
+  editingAirport.value = null
   dialogVisible.value = true
 }
 
 const openEditDialog = (row: Airport) => {
-  editMode.value = true
-  editingId.value = row.id
-  form.value = { name: row.name, url: row.url, abbr: row.abbr || '' }
-  // Existing abbr value indicates user-defined, mark as dirty to prevent overwrite
-  // Empty abbr (shown as "auto" in table) allows auto-fill
-  abbrDirty.value = !!row.abbr
+  editingAirport.value = row
   dialogVisible.value = true
 }
 
-const submitForm = async () => {
-  if (editMode.value && editingId.value) {
-    await client.put(`/airports/${editingId.value}`, form.value)
-    ElMessage.success('更新成功')
-  } else {
-    await client.post('/airports', form.value)
-    ElMessage.success('添加成功')
-  }
-  dialogVisible.value = false
-  form.value = { name: '', url: '', abbr: '' }
+// 对话框保存成功:刷新列表;新建的手动机场直接引导粘贴导入完成入池
+const onFormSaved = (airport: Airport, isNew: boolean) => {
   loadAirports()
+  if (isNew && airport.source_type === 'manual') {
+    openImport(airport)
+  }
 }
 
 const refreshNodes = async () => {
@@ -269,6 +243,12 @@ const refreshPollTimers = new Map<number, ReturnType<typeof setTimeout>>()
 const REFRESH_POLL_MAX = 40 // 40 x 1.5s = 60s 超时兜底
 
 const refreshAirport = async (row: Airport) => {
+  // 手动机场无 URL 可拉:"刷新"语义是重新粘贴导入(行内按钮已直开对话框,
+  // 此处兜底详情抽屉的刷新动作)
+  if (row.source_type === 'manual') {
+    openImport(row)
+    return
+  }
   try {
     const resp = await client.post<unknown, { jobId: number; started: boolean }>(
       `/airports/${row.id}/refresh`

@@ -38,6 +38,15 @@ export interface Airport {
   abbr: string
   enabled: boolean
   created_at: string
+  // 来源类型(CONTEXT.md「手动机场」):url = 拉取型(默认) / manual = 手动机场(粘贴导入,url 恒为空串)
+  source_type?: 'url' | 'manual'
+  // 用量信息(CONTEXT.md「用量信息」;全部可选,0/空 = 未知不展示):
+  // upload/download/total 单位字节,expire 为 unix 秒(0 = 未知)
+  usage_upload?: number
+  usage_download?: number
+  usage_total?: number
+  usage_expire?: number
+  web_page_url?: string
   last_test_score?: number | null
   last_test_at?: string | null
   last_test_status?: string | null

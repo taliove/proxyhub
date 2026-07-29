@@ -7,6 +7,8 @@ export interface DiagnosticResult {
   protocol_counts: Record<string, number>
   parse_failures: number
   url_reachable?: boolean // 订阅URL是否可达(HTTP 2xx)
+  // 手动机场(CONTEXT.md):诊断段整体 N/A(无 URL 可拉,非"拉取失败")
+  manual_source?: boolean
 }
 
 export interface CheckingProgress {

@@ -1,8 +1,10 @@
 <template>
   <el-descriptions :column="2" border size="small" class="airport-test-diagnostic num">
     <el-descriptions-item label="HTTP 状态">
+      <!-- 手动机场:诊断段整体 N/A(无订阅 URL 可拉,非"拉取失败") -->
+      <el-tag v-if="diagnostic.manual_source" type="info" size="small">手动机场 N/A</el-tag>
       <el-tag
-        v-if="diagnostic.http_status > 0"
+        v-else-if="diagnostic.http_status > 0"
         :type="diagnostic.http_status === 200 ? 'success' : 'danger'"
         size="small"
       >
@@ -10,10 +12,15 @@
       </el-tag>
       <span v-else>-</span>
     </el-descriptions-item>
-    <el-descriptions-item label="耗时"> {{ diagnostic.duration_ms }} ms </el-descriptions-item>
-    <el-descriptions-item label="解析成功"> {{ diagnostic.node_count }} 节点 </el-descriptions-item>
+    <el-descriptions-item label="耗时">
+      {{ diagnostic.manual_source ? 'N/A' : `${diagnostic.duration_ms} ms` }}
+    </el-descriptions-item>
+    <el-descriptions-item label="解析成功">
+      {{ diagnostic.manual_source ? 'N/A' : `${diagnostic.node_count} 节点` }}
+    </el-descriptions-item>
     <el-descriptions-item label="解析失败">
-      <el-tag v-if="diagnostic.parse_failures > 0" type="warning" size="small">
+      <span v-if="diagnostic.manual_source">N/A</span>
+      <el-tag v-else-if="diagnostic.parse_failures > 0" type="warning" size="small">
         {{ diagnostic.parse_failures }} 行
       </el-tag>
       <span v-else>0</span>
