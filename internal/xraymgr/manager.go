@@ -62,7 +62,8 @@ type Config struct {
 	// Tests override this with a stub script.
 	XrayBin string
 	// WorkDir is the parent directory holding per-user subdirectories.
-	// Production uses var/xray; tests use t.TempDir().
+	// Production uses /var/lib/proxyhub/xray (inside the systemd unit's
+	// ReadWritePaths); tests use t.TempDir().
 	WorkDir string
 	// Logger, optional; defaults to slog.Default().
 	Logger *slog.Logger

@@ -117,13 +117,15 @@ func run(configPath string) error {
 	srv.SetDetectionJobs(detectionJobs)
 	srv.SetVersion(version, buildTime)
 
-	// 每用户 Xray 实例管理(ticket 08):工作目录落在数据库同级的 xray/ 下
-	// (开发 var/xray,生产 /var/lib/proxyhub/xray),Manager 内部负责 MkdirAll;
+	// 每用户 Xray 实例管理(ticket 08):工作目录落在数据库目录内的 xray/ 下
+	// (开发 var/data/xray,生产 /var/lib/proxyhub/xray——必须在 systemd unit 的
+	// ReadWritePaths 之内;历史上用 "../xray" 会被 filepath.Join 归一到
+	// /var/lib/xray,ProtectSystem=strict 下只读,服务起不来),Manager 内部负责 MkdirAll;
 	// 实例按需启动(用户面板/管理面 Start),此处只接线不拉起进程。
 	xrayMgr, err := xraymgr.New(xraymgr.Config{
 		Store:   st,
 		Nodes:   agg,
-		WorkDir: filepath.Join(filepath.Dir(cfg.Storage.Path), "..", "xray"),
+		WorkDir: filepath.Join(filepath.Dir(cfg.Storage.Path), "xray"),
 		Logger:  logger,
 	})
 	if err != nil {
