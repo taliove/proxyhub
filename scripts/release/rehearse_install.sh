@@ -114,6 +114,26 @@ verify_install() {
 cleanup() {
     log "cleanup: proxyhubctl uninstall --purge"
     rsh 'sudo -n /usr/local/bin/proxyhubctl uninstall --purge --yes' >/dev/null 2>&1 || true
+    # proxyhubctl 按设计不删除自身(bash 增量读取运行中脚本),卸载输出里
+    # 明确要求操作者事后手动删除——这里代行这个文档化步骤。
+    rsh 'sudo -n rm -f /usr/local/bin/proxyhubctl /usr/local/bin/proxyhubctl-lib.sh' 2>/dev/null || true
+    # 失败安装的兜底:install.sh 把安装记录放在最后写,中途失败时
+    # proxyhubctl 会因"无受管安装"拒绝卸载,但 unit/binary/目录已存在。
+    # 此时按清单手工拆除(与 uninstall --purge 同覆盖面)。
+    if rsh 'sudo -n test -f /etc/systemd/system/proxyhub.service -o -e /usr/local/bin/proxyhub' 2>/dev/null; then
+        log "cleanup: 检测到失败安装残留,执行兜底拆除"
+        rsh_script <<'EOF' || true
+set -Eeuo pipefail
+sudo -n systemctl stop proxyhub 2>/dev/null || true
+sudo -n systemctl disable proxyhub 2>/dev/null || true
+sudo -n rm -f /etc/systemd/system/proxyhub.service
+sudo -n systemctl daemon-reload
+sudo -n rm -f /usr/local/bin/proxyhub /usr/local/bin/proxyhubctl /usr/local/bin/proxyhubctl-lib.sh
+sudo -n rm -rf /etc/proxyhub /var/lib/proxyhub /var/log/proxyhub /var/backups/proxyhub
+sudo -n rm -f /root/.proxyhub-install-info /etc/caddy/conf.d/proxyhub.caddy
+id proxyhub >/dev/null 2>&1 && sudo -n userdel proxyhub || true
+EOF
+    fi
     if ((WE_INSTALLED_CADDY == 1)); then
         log "cleanup: 卸载演练期间安装的 caddy 及其源"
         rsh_script <<'EOF' || true

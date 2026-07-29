@@ -1020,6 +1020,15 @@ cmd_uninstall() {
         rm -rf "$backup_dir"
         rm -f "$install_info"
         _ph_log "purged state, backups, and install record"
+
+        # Remove the service identity: purge means complete removal. The
+        # service is already stopped; deletion failures (foreign processes)
+        # are tolerated so purge cannot be blocked by a stray login session.
+        if ! _is_test_mode; then
+            id "$PROXYHUB_USER" >/dev/null 2>&1 && userdel "$PROXYHUB_USER" 2>/dev/null || true
+            getent group "$PROXYHUB_GROUP" >/dev/null 2>&1 && groupdel "$PROXYHUB_GROUP" 2>/dev/null || true
+            _ph_log "removed service user/group"
+        fi
     else
         _ph_log "preserved state, backups, and install record (use --purge to remove)"
     fi
