@@ -7,10 +7,41 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/taliove/proxyhub/internal/detection"
+	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
+
+// waitExamJobSettled 等待体检任务完全收口(jobs 行离开 running + 历史已落库)。
+// OnComplete(落历史 + 标签重算 + 区域回写)由 jobs 管理器在 finalize 后经独立
+// goroutine 触发,与 SSE drain 结束无先后保证;jobs 行 Finish 后于 OnComplete,
+// 故本条件覆盖全部异步 DB 写入。不等待就返回会让 t.TempDir 清理与异步 WAL
+// 写入竞态(CI Linux 上 directory not empty,与 5ac2bd0 同类)。
+func waitExamJobSettled(t *testing.T, st *store.Store, nodeKey string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		running := false
+		if recs, err := st.Jobs().LoadRunning(); err == nil {
+			for _, r := range recs {
+				if r.Kind == "exam" && r.Key == nodeKey {
+					running = true
+					break
+				}
+			}
+		}
+		entry, herr := st.LatestCompleteExamHistory(nodeKey)
+		if !running && herr == nil && entry != nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("exam job not settled within 5s (running=%v, history saved=%v)", running, entry != nil)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 // parseSSEFrames 从 SSE 响应体拆出每个 "data: {...}" 帧并解析为 map。
 func parseSSEFrames(t *testing.T, body string) []map[string]any {
@@ -33,7 +64,7 @@ func parseSSEFrames(t *testing.T, body string) []map[string]any {
 
 func TestHandleNodeExamStream_EventSequence(t *testing.T) {
 	node := &subscription.Node{Name: "exam-node", Server: "example.com", Port: 443, Type: "vmess", Source: "airport"}
-	srv, _ := newTestServer(t, []*subscription.Node{node})
+	srv, st := newTestServer(t, []*subscription.Node{node})
 
 	// 注入假探测器(不触真实网络)+ 短配置(3 次采样,间隔小),让 SSE 迅速跑完。
 	det := srv.detectionService.detector
@@ -192,6 +223,10 @@ func TestHandleNodeExamStream_EventSequence(t *testing.T) {
 	if doneAt != len(frames)-1 {
 		t.Errorf("done at %d, want last frame (%d)", doneAt, len(frames)-1)
 	}
+
+	// SSE 结束 ≠ 任务收口:OnComplete 的异步 DB 写入必须等完,
+	// 否则测试返回时 t.TempDir 清理与之竞态(见 waitExamJobSettled 注释)。
+	waitExamJobSettled(t, st, node.NodeKey())
 }
 
 func TestHandleNodeExamStream_NodeNotFound(t *testing.T) {
