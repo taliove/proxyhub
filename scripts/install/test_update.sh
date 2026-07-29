@@ -50,7 +50,11 @@ EOF
     binary_path=$(root_path /usr/local/bin/proxyhub)
     cat > "$binary_path" <<'EOFBIN'
 #!/usr/bin/env bash
-if [[ "$1" == "state-fingerprint" && "$2" == "--authentication-key-stdin" ]]; then
+if [[ "$1" == "state-fingerprint" ]]; then
+    case " $* " in
+        *" --config "*) : ;;
+        *) echo "state-fingerprint invoked without --config" >&2; exit 1 ;;
+    esac
     read -r key
     echo "fingerprint_version: 1"
     echo "algorithm: HMAC-SHA256"
@@ -102,7 +106,11 @@ if [[ "$*" == *".tar.gz"* ]]; then
             tmpdir=$(mktemp -d)
             cat > "${tmpdir}/proxyhub" <<'EOFNEWBIN'
 #!/usr/bin/env bash
-if [[ "$1" == "state-fingerprint" && "$2" == "--authentication-key-stdin" ]]; then
+if [[ "$1" == "state-fingerprint" ]]; then
+    case " $* " in
+        *" --config "*) : ;;
+        *) echo "state-fingerprint invoked without --config" >&2; exit 1 ;;
+    esac
     read -r key
     echo "fingerprint_version: 1"
     echo "algorithm: HMAC-SHA256"
