@@ -4,7 +4,7 @@
 #
 # Usage:
 #   scripts/release/verify.sh dist/release                 # verify everything listed in dist/release/SHA256SUMS
-#   scripts/release/verify.sh dist/release/proxyhub_0.1.0-rc.1_linux_amd64.tar.gz [more.tar.gz ...]
+#   scripts/release/verify.sh dist/release/proxyhub_0.1.0_linux_amd64.tar.gz [more.tar.gz ...]
 #
 set -Eeuo pipefail
 
