@@ -47,11 +47,15 @@ make build        # 完整构建可用
 # 打包演练(单目标提速;完整矩阵由 CI 跑)
 TARGETS="linux/amd64" bash scripts/release/package.sh
 bash scripts/release/verify.sh dist/release
+
+# 远程真机一键安装演练(需 scripts/release/rehearsal.local.conf,样例见同目录 example)
+bash scripts/release/rehearse_install.sh
 ```
 
 - 检查 `dist/release/` 制品名是否符合命名契约(下划线!)
 - 确认 `VERSION` 已更新,且与想打的 tag 一致
 - 过一遍自上次发布以来的 `git log --oneline`,确认没有半成品提交混进 main
+- 远程演练在真机上完整走一遍一键安装(随机域名、跳过公网证书健康检查)并无痕卸载、零残留校验;目标机 SSH 信息只放 gitignored 的 `rehearsal.local.conf`,**永不签入**。演练失败的清理同样自动执行(trap 兜底),但失败后要人工复核残留。
 
 ### 2. 发布(remote 建好之后)
 
