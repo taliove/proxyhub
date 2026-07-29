@@ -1,5 +1,7 @@
 # 本机开发环境(非生产)——由 make dev-docker 驱动,见 scripts/dev/dev-up.sh
-# 端口 18081(避开 8080 的源码直跑实例与常见 18080);数据卷独立于生产。
+# 默认只绑回环:开发账号口令公开写死,绑全网卡等于把管理面送给同局域网的人。
+# 确需局域网访问(手机/他机检查)时:DEV_BIND=0.0.0.0 make dev-docker
+name: proxyhub-dev
 services:
   proxyhub:
     build:
@@ -8,13 +10,11 @@ services:
         VERSION: dev
     image: proxyhub:dev
     ports:
-      - "18081:8080"
+      - "${DEV_BIND:-127.0.0.1}:18081:8080"
     volumes:
-      - proxyhub-dev-data:/data
+      # bind mount 而非命名卷:不依赖 compose 项目名,clone 到任何目录都幂等
+      - ./var/dev/data:/data
       # 覆盖镜像内置配置(host 0.0.0.0、库在 /data、mfa_optional 开发放开),
       # 由 scripts/dev/dev-up.sh 从 config.example.yaml 派生到 var/dev/
       - ./var/dev/docker-config.yaml:/app/config.yaml:ro
     restart: unless-stopped
-
-volumes:
-  proxyhub-dev-data:

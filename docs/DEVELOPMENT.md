@@ -42,6 +42,12 @@ make dev-docker-down   # 停止
 
 开发环境经 `mfa_optional: true`(compose 挂载的派生配置)放开强制 MFA,登录直进业务面,不用绑认证器;生产默认 `false`,行为不变。
 
+默认只绑回环(开发账号口令公开,绑全网卡等于把管理面送给同局域网的人);确需局域网访问(手机/他机检查)时:
+
+```bash
+DEV_BIND=0.0.0.0 make dev-docker
+```
+
 构成(全部入库,可复现):`docker-compose.dev.yml`(端口/数据卷)、`scripts/dev/dev-up.sh`(幂等编排:构建 → 无库则 `proxyhub init` 建号 → 起服务 → 打印访问信息)、`config.dev.example.yaml`(源码直跑开发配置模板)。
 
 ### 源码直跑开发

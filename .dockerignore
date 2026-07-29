@@ -36,3 +36,6 @@ xray_config.json
 
 # Docs not needed in the build context
 docs
+
+# Local runtime state (dev data, logs, pid)
+var

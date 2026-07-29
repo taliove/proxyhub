@@ -29,9 +29,9 @@ grep -q 'host: "0.0.0.0"' var/dev/docker-config.yaml
 grep -q 'path: "/data/data.db"' var/dev/docker-config.yaml
 grep -q 'mfa_optional: true' var/dev/docker-config.yaml
 
-# 数据卷里没有库 = 首次:先以一次性容器初始化,再正式起服务
-# (卷名带 compose 项目前缀 proxyhub_,与 up 用的是同一个)
-if ! docker run --rm -v proxyhub_proxyhub-dev-data:/data --entrypoint test proxyhub:dev -f /data/data.db 2>/dev/null; then
+# 数据目录里没有库 = 首次:先以一次性容器初始化,再正式起服务
+# (bind mount,不依赖 compose 项目名,clone 到任何目录都成立)
+if [ ! -f var/dev/data/data.db ]; then
     echo "==> 首次启动,初始化开发管理员 ${DEV_USER}"
     printf '%s' "$DEV_PASS" | "${COMPOSE[@]}" run --rm -T proxyhub \
         ./proxyhub init -config /app/config.yaml \
@@ -41,6 +41,9 @@ fi
 
 echo "==> 起服务"
 "${COMPOSE[@]}" up -d
+
+# 容器内 root 创建的数据文件收归宿主机用户,否则 go vet 遍历 ./... 报权限错
+"${COMPOSE[@]}" exec -T proxyhub chown -R "$(id -u):$(id -g)" /data 2>/dev/null || true
 
 # 等健康
 for _ in $(seq 1 30); do
