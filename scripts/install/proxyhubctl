@@ -152,7 +152,12 @@ cmd_backup() {
         service_start
         return 1
     fi
-    fingerprint_output=$(printf '%s' "$auth_key" | "$binary_path" state-fingerprint --authentication-key-stdin 2>&1) || {
+    # --config 必传:子命令默认找 CWD 下的 config.yaml,而 proxyhubctl 几乎
+    # 从不在 /etc/proxyhub 里被调用(生产首发事故:在 /etc/caddy 下调用即
+    # fingerprint capture failed)。
+    fingerprint_output=$(printf '%s' "$auth_key" | "$binary_path" state-fingerprint \
+        --config "$(root_path "${PROXYHUB_CONFIG_DIR}/config.yaml")" \
+        --authentication-key-stdin 2>&1) || {
         _ph_err "fingerprint capture failed"
         service_start
         return 1

@@ -42,7 +42,12 @@ setup_test() {
     binary_path=$(root_path /usr/local/bin/proxyhub)
     cat > "$binary_path" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$1" == "state-fingerprint" && "$2" == "--authentication-key-stdin" ]]; then
+if [[ "$1" == "state-fingerprint" ]]; then
+    # --config 必传(生产事故:不传则子命令在调用者 CWD 找 config.yaml)。
+    if [[ "$2" != "--config" || -z "${3:-}" || "$4" != "--authentication-key-stdin" ]]; then
+        echo "state-fingerprint invoked without --config" >&2
+        exit 1
+    fi
     read -r key
     echo "fingerprint_version: 1"
     echo "algorithm: HMAC-SHA256"
