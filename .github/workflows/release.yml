@@ -83,7 +83,9 @@ jobs:
 
   package:
     name: Build matrix + publish release assets
-    needs: test
+    # needs.validate is required for needs.validate.outputs.* below; outputs
+    # are NOT transitive through test, an indirect need resolves to empty.
+    needs: [test, validate]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -138,7 +140,9 @@ jobs:
 
   docker:
     name: Publish GHCR multi-arch image
-    needs: test
+    # needs.validate is required for needs.validate.outputs.* below; outputs
+    # are NOT transitive through test, an indirect need resolves to empty.
+    needs: [test, validate]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
