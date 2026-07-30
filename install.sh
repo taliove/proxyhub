@@ -412,7 +412,6 @@ _run_svc_tool() {
     command "$tool" "$@"
 }
 _systemctl() { _run_svc_tool systemctl "$@"; }
-_caddy_cli() { _run_svc_tool caddy "$@"; }
 
 # _as_service_user CMD... - run CMD as the low-privilege service user so files
 # it creates (the SQLite database) are owned by proxyhub:proxyhub.
@@ -459,21 +458,17 @@ _ensure_caddy_import() {
     fi
 }
 
-# _reload_caddy - reload via the admin API when available. Setups that
-# disable it (`admin off` in the global options block, e.g. 233boy-style
-# Caddyfiles) make every reload path fail; fall back to a full restart,
-# which briefly interrupts the other sites on this Caddy (warned).
-_reload_caddy() {
-    _systemctl reload caddy 2>/dev/null && return 0
-    _caddy_cli reload --config "$(root_path "$PROXYHUB_CADDYFILE")" 2>/dev/null && return 0
-    _ph_log "WARNING: caddy reload failed (admin API disabled, e.g. 'admin off'); falling back to 'systemctl restart caddy' - brief interruption for other sites on this Caddy"
-    _systemctl restart caddy
-}
+# _reload_caddy - test-override seam over the mode-dispatched caddy_reload
+# channel (lib.sh). The channel reloads via the admin API and falls back to
+# a full restart when the API is disabled ('admin off' in the global options
+# block, e.g. 233boy-style Caddyfiles), briefly interrupting the other sites
+# on this Caddy (warned there).
+_reload_caddy() { caddy_reload; }
 
 _configure_caddy() {
     local caddy_dir frag hit
     caddy_dir=$(root_path /etc/caddy)
-    frag=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    frag=$(caddy_fragment_path) || return 1
     if [[ -d $caddy_dir ]]; then
         hit=$(grep -RIlF -- "$DOMAIN" "$caddy_dir" 2>/dev/null | grep -v "^${frag}$" | head -1 || true)
         [[ -z $hit ]] ||
@@ -487,8 +482,8 @@ _configure_caddy() {
     if _is_test_mode; then
         _ph_log "test mode: caddy fmt/validate/reload"
     else
-        _caddy_cli fmt --overwrite "$frag" >/dev/null &&
-            _caddy_cli validate --config "$(root_path "$PROXYHUB_CADDYFILE")" &&
+        caddy_fmt "$frag" >/dev/null &&
+            caddy_validate "$(root_path "$PROXYHUB_CADDYFILE")" &&
             _reload_caddy || rc=$?
     fi
     if ((rc != 0)); then
@@ -588,9 +583,13 @@ _write_install_record() {
     local rec
     rec=$(root_path "$PROXYHUB_INSTALL_INFO")
     mkdir -p "$(dirname "$rec")" || return 1
-    printf '# ProxyHub installation record - managed by install.sh, keep root-only.\nDOMAIN=%s\nSITE_PATH=%s\nREPO=%s\nVERSION=%s\nINSTALLED_AT=%s\nADMIN_USER=%s\nLISTEN_ADDR=%s\nNO_CADDY=%s\n' \
+    # Caddy mode (ADR 0035): native here, none for --no-caddy; the docker
+    # mode and its CADDY_CONTAINER value land with mode detection.
+    local caddy_mode=native
+    ((NO_CADDY == 0)) || caddy_mode=none
+    printf '# ProxyHub installation record - managed by install.sh, keep root-only.\nDOMAIN=%s\nSITE_PATH=%s\nREPO=%s\nVERSION=%s\nINSTALLED_AT=%s\nADMIN_USER=%s\nLISTEN_ADDR=%s\nNO_CADDY=%s\nCADDY_MODE=%s\nCADDY_CONTAINER=%s\n' \
         "$DOMAIN" "$SITE_PATH" "$REPO" "$VERSION_TAG" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "$ADMIN_USER" "$PROXYHUB_LISTEN_ADDR" "$NO_CADDY" >"$rec" ||
+        "$ADMIN_USER" "$PROXYHUB_LISTEN_ADDR" "$NO_CADDY" "$caddy_mode" "" >"$rec" ||
         _ph_fail "failed to write ${rec}" || return 1
     chmod 0600 "$rec" || _ph_fail "failed to chmod ${rec}" || return 1
     _ph_log "wrote ${rec} (mode 0600)"

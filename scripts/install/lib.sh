@@ -43,6 +43,13 @@ readonly PROXYHUB_LOG_DIR="/var/log/proxyhub"
 readonly PROXYHUB_BACKUP_DIR="/var/backups/proxyhub"
 readonly PROXYHUB_UNIT_PATH="/etc/systemd/system/proxyhub.service"
 readonly PROXYHUB_CADDY_FRAGMENT="/etc/caddy/conf.d/proxyhub.caddy"
+# Effective Caddy mode (native|docker|none, ADR 0035). NOT readonly:
+# install.sh mode detection and proxyhubctl's install-record reader adopt
+# the detected/recorded mode. Defaults to native; install records predating
+# the CADDY_MODE field mean native.
+PROXYHUB_CADDY_MODE="${PROXYHUB_CADDY_MODE:-native}"
+# Name of the integrated Caddy container in docker mode; empty otherwise.
+PROXYHUB_CADDY_CONTAINER="${PROXYHUB_CADDY_CONTAINER:-}"
 
 # --------------------------------------------------------------------------
 # Output helpers
@@ -180,6 +187,19 @@ random_token() {
 # _is_test_mode - true when PROXYHUB_ROOT redirects all host paths.
 _is_test_mode() {
     [[ -n "${PROXYHUB_ROOT:-}" ]]
+}
+
+# _docker ARGS... - docker CLI wrapper seam, isomorphic to install.sh's
+# _run_svc_tool/_systemctl: a logged no-op under PROXYHUB_ROOT, otherwise
+# `command docker "$@"`. Every docker invocation in install.sh, proxyhubctl
+# and this library must go through this seam so tests can mock or intercept
+# it (the docker Caddy channel, ADR 0035, builds on it).
+_docker() {
+    if _is_test_mode; then
+        _ph_log "test mode: docker $*"
+        return 0
+    fi
+    command docker "$@"
 }
 
 # ensure_proxyhub_group - create the low-privilege proxyhub system group.
@@ -325,20 +345,72 @@ EOF
 }
 
 # --------------------------------------------------------------------------
+# Caddy mode channel
+# --------------------------------------------------------------------------
+# Every Caddy operation (fragment path resolution, fmt/validate/reload) is
+# dispatched on PROXYHUB_CADDY_MODE so the docker Caddy mode (ADR 0035) can
+# slot in behind the same call sites. Only the native channel is
+# implemented; the docker slot fails closed until that mode lands, and none
+# (--no-caddy) has no managed Caddy to operate on.
+
+# _caddy_mode_fail - shared fail-closed branch for modes without a channel
+# implementation (docker slot) and for corrupt mode values.
+_caddy_mode_fail() {
+    case "$PROXYHUB_CADDY_MODE" in
+        docker) _ph_err "caddy mode 'docker' is not implemented yet" ;;
+        *) _ph_err "unknown caddy mode '${PROXYHUB_CADDY_MODE}'" ;;
+    esac
+    return 1
+}
+
+# caddy_fragment_path - print the managed fragment path, resolved through
+# root_path like every other host path in this library.
+caddy_fragment_path() {
+    case "$PROXYHUB_CADDY_MODE" in
+        native | none) root_path "$PROXYHUB_CADDY_FRAGMENT" ;;
+        *) _caddy_mode_fail ;;
+    esac
+}
+
+# caddy_fmt FRAGMENT - format the fragment in place (caddy fmt --overwrite).
+caddy_fmt() {
+    case "$PROXYHUB_CADDY_MODE" in
+        native) caddy fmt --overwrite "$1" ;;
+        none) return 0 ;;
+        *) _caddy_mode_fail ;;
+    esac
+}
+
+# caddy_validate CONFIG - validate the full Caddy configuration.
+caddy_validate() {
+    case "$PROXYHUB_CADDY_MODE" in
+        native) caddy validate --config "$1" ;;
+        none) return 0 ;;
+        *) _caddy_mode_fail ;;
+    esac
+}
+
+# caddy_reload - reload via the admin API, falling back to a full restart
+# when the API is disabled ('admin off' in the global options block, e.g.
+# 233boy-style Caddyfiles). Restart briefly interrupts the other sites on
+# this Caddy (warned). install.sh keeps a thin seam (_reload_caddy) over
+# this channel so tests can override the reload step.
+caddy_reload() {
+    case "$PROXYHUB_CADDY_MODE" in
+        native)
+            systemctl reload caddy.service 2>/dev/null && return 0
+            caddy reload --config /etc/caddy/Caddyfile 2>/dev/null && return 0
+            _ph_log "WARNING: caddy reload failed (admin API disabled, e.g. 'admin off'); falling back to 'systemctl restart caddy' - brief interruption for other sites on this Caddy"
+            systemctl restart caddy.service
+            ;;
+        none) return 0 ;;
+        *) _caddy_mode_fail ;;
+    esac
+}
+
+# --------------------------------------------------------------------------
 # Caddy fragment writer
 # --------------------------------------------------------------------------
-
-# reload_caddy_graceful - reload via the admin API, falling back to a full
-# restart when the API is disabled ('admin off' in the global options block,
-# e.g. 233boy-style Caddyfiles). Restart briefly interrupts the other sites
-# on this Caddy (warned). Plain commands: install.sh carries its own
-# seam-based variant (_reload_caddy) for testability.
-reload_caddy_graceful() {
-    systemctl reload caddy.service 2>/dev/null && return 0
-    caddy reload --config /etc/caddy/Caddyfile 2>/dev/null && return 0
-    _ph_log "WARNING: caddy reload failed (admin API disabled, e.g. 'admin off'); falling back to 'systemctl restart caddy' - brief interruption for other sites on this Caddy"
-    systemctl restart caddy.service
-}
 
 # write_caddy_fragment DOMAIN SITE_PATH - write the Caddy v2 site fragment.
 # Terminates TLS for DOMAIN (Caddy automatic HTTPS), proxies /<site-path>/
@@ -352,7 +424,7 @@ write_caddy_fragment() {
     validate_site_path "$site_path" || return 1
 
     local frag_path
-    frag_path=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    frag_path=$(caddy_fragment_path) || return 1
     local frag_dir
     frag_dir=$(dirname "$frag_path")
     if ! mkdir -p "$frag_dir"; then

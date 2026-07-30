@@ -185,7 +185,7 @@ cmd_backup() {
     local state_dir config_dir caddy_frag install_info
     state_dir=$(root_path "$PROXYHUB_STATE_DIR")
     config_dir=$(root_path "$PROXYHUB_CONFIG_DIR")
-    caddy_frag=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    caddy_frag=$(caddy_fragment_path) || return 1
     install_info=$(root_path "$PROXYHUB_INSTALL_INFO")
 
     if [[ -d "$state_dir" ]]; then
@@ -318,7 +318,7 @@ cmd_restore() {
     local state_dir config_dir caddy_frag install_info binary_path
     state_dir=$(root_path "$PROXYHUB_STATE_DIR")
     config_dir=$(root_path "$PROXYHUB_CONFIG_DIR")
-    caddy_frag=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    caddy_frag=$(caddy_fragment_path) || return 1
     install_info=$(root_path "$PROXYHUB_INSTALL_INFO")
     binary_path=$(root_path "$PROXYHUB_BINARY")
 
@@ -367,10 +367,10 @@ cmd_restore() {
     # Validate Caddy config.
     if (( failed == 0 )) && [[ -f "$caddy_frag" ]]; then
         if ! _is_test_mode; then
-            if ! caddy fmt --overwrite "$caddy_frag" 2>&1; then
+            if ! caddy_fmt "$caddy_frag" 2>&1; then
                 _ph_err "Caddy format validation failed"
                 failed=1
-            elif ! caddy validate --config /etc/caddy/Caddyfile 2>&1; then
+            elif ! caddy_validate /etc/caddy/Caddyfile 2>&1; then
                 _ph_err "Caddy validate failed"
                 failed=1
             fi
@@ -397,7 +397,7 @@ cmd_restore() {
 
     # Reload Caddy if not in test mode.
     if ! _is_test_mode && [[ -f "$caddy_frag" ]]; then
-        if ! reload_caddy_graceful; then
+        if ! caddy_reload; then
             _ph_err "Caddy reload failed"
             failed=1
         fi
@@ -502,7 +502,7 @@ cmd_rotate_path() {
 
     # Backup current Caddy fragment for rollback.
     local caddy_frag
-    caddy_frag=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    caddy_frag=$(caddy_fragment_path) || return 1
     local rollback_frag="${caddy_frag}.rollback.$$"
     if [[ -f "$caddy_frag" ]]; then
         cp -a "$caddy_frag" "$rollback_frag" || {
@@ -520,17 +520,17 @@ cmd_rotate_path() {
 
     # Validate and reload Caddy.
     if ! _is_test_mode; then
-        if ! caddy fmt --overwrite "$caddy_frag" 2>&1; then
+        if ! caddy_fmt "$caddy_frag" 2>&1; then
             _ph_err "Caddy format validation failed, rolling back"
             [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
             return 1
         fi
-        if ! caddy validate --config /etc/caddy/Caddyfile 2>&1; then
+        if ! caddy_validate /etc/caddy/Caddyfile 2>&1; then
             _ph_err "Caddy validate failed, rolling back"
             [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
             return 1
         fi
-        if ! reload_caddy_graceful; then
+        if ! caddy_reload; then
             _ph_err "Caddy reload failed, rolling back"
             [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
             return 1
@@ -543,14 +543,14 @@ cmd_rotate_path() {
     if ! sed "s|^SITE_PATH=.*|SITE_PATH=${new_path}|" "$install_info" > "$tmp_info"; then
         _ph_err "failed to update install info"
         [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
-        _is_test_mode || reload_caddy_graceful || true
+        _is_test_mode || caddy_reload || true
         rm -f "$tmp_info"
         return 1
     fi
     if ! mv "$tmp_info" "$install_info"; then
         _ph_err "failed to install updated install info"
         [[ -f "$rollback_frag" ]] && cp -a "$rollback_frag" "$caddy_frag"
-        _is_test_mode || reload_caddy_graceful || true
+        _is_test_mode || caddy_reload || true
         rm -f "$tmp_info"
         return 1
     fi
@@ -974,14 +974,14 @@ cmd_uninstall() {
 
     # Remove Caddy fragment and reload.
     local caddy_frag
-    caddy_frag=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    caddy_frag=$(caddy_fragment_path) || return 1
     if [[ -f "$caddy_frag" ]]; then
         rm -f "$caddy_frag"
         _ph_log "removed Caddy fragment"
         if ! _is_test_mode; then
             # Best-effort: with 'admin off' a plain reload silently no-ops and
             # the stale route would survive until the next Caddy restart.
-            reload_caddy_graceful >/dev/null 2>&1 || true
+            caddy_reload >/dev/null 2>&1 || true
         fi
     fi
 
@@ -1252,6 +1252,18 @@ main() {
     elif [[ -n $record_addr ]]; then
         _ph_err "ignoring invalid LISTEN_ADDR in install record: $record_addr"
     fi
+
+    # Adopt the recorded Caddy mode (ADR 0035): every Caddy touch point
+    # dispatches on it via the lib.sh channel. Records predating the field
+    # mean native. Both variables are consumed by lib.sh through the dynamic
+    # source above, which shellcheck cannot follow.
+    # shellcheck disable=SC2034
+    local record_caddy_mode
+    record_caddy_mode=$(_read_install_field CADDY_MODE)
+    # shellcheck disable=SC2034
+    PROXYHUB_CADDY_MODE="${record_caddy_mode:-native}"
+    # shellcheck disable=SC2034
+    PROXYHUB_CADDY_CONTAINER=$(_read_install_field CADDY_CONTAINER)
 
     case "$cmd" in
         help|--help|-h)
