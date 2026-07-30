@@ -69,11 +69,8 @@ verify_dir_signature() {
   local dir="$1"
   local sums="$dir/SHA256SUMS" minisig="$dir/SHA256SUMS.minisig"
   if [[ -f "$minisig" ]] && compgen -G "$dir/proxyhub_*.tar.gz" >/dev/null; then
-    if [[ -n "${MINISIGN_PUBKEY_B64:-}" ]]; then
-      verify_minisig "$sums" "$minisig" "$MINISIGN_PUBKEY_B64" || return 1
-    else
-      verify_minisig "$sums" "$minisig" || return 1
-    fi
+    # Empty third arg falls back to the embedded key inside verify_minisig.
+    verify_minisig "$sums" "$minisig" "${MINISIGN_PUBKEY_B64:-}" || return 1
     log "OK SHA256SUMS.minisig (minisign signature over SHA256SUMS)"
     return 0
   fi
