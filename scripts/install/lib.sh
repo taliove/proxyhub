@@ -60,6 +60,15 @@ PROXYHUB_DOCKER_NETMODE="${PROXYHUB_DOCKER_NETMODE:-}"
 PROXYHUB_BRIDGE_GATEWAY="${PROXYHUB_BRIDGE_GATEWAY:-}"
 PROXYHUB_BRIDGE_SUBNET="${PROXYHUB_BRIDGE_SUBNET:-}"
 
+# Release-signing public key (minisign text format: base64 of "Ed" ||
+# 8-byte keynum || 32-byte raw Ed25519 key), the trust anchor for release
+# artifacts (ADR 0036). The private key lives only in GitHub Secrets
+# (MINISIGN_PRIVATE_KEY); rotation = generate a new pair, swap this constant,
+# ship a new release. Defined once here: install.sh and proxyhubctl both
+# source this library, so the constant travels with whichever copy of
+# lib.sh (or the installed proxyhubctl-lib.sh) they load.
+readonly PROXYHUB_MINISIGN_PUBKEY="RWQHrp6zfJDEQ0TWFXc5k3iL1ZhIADchbbRKuEIIzFaSvtfKD8Gmf/Lg"
+
 # --------------------------------------------------------------------------
 # Output helpers
 # --------------------------------------------------------------------------
@@ -187,6 +196,72 @@ random_token() {
     # once head closes the pipe, so tolerate that under pipefail.
     token=$(LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom 2>/dev/null | head -c "$n") || true
     printf '%s' "$token"
+}
+
+# --------------------------------------------------------------------------
+# Release signature verification (ADR 0036)
+# --------------------------------------------------------------------------
+
+# verify_minisig FILE MINISIG_FILE [PUBKEY_B64] - verify a minisign signature
+# over FILE with openssl only (no minisign dependency on the target host).
+# PUBKEY_B64 defaults to the embedded release key PROXYHUB_MINISIGN_PUBKEY;
+# the parameter exists so tests can pass a synthetic key. Fails closed with a
+# distinct error for each case: missing FILE or MINISIG_FILE, malformed
+# signature, unavailable openssl, verification failure.
+verify_minisig() {
+    local file=$1 minisig=$2 pubkey_b64=${3:-${PROXYHUB_MINISIGN_PUBKEY:-}}
+    if ! command -v openssl >/dev/null 2>&1; then
+        _ph_err "openssl is required to verify release signatures but was not found"
+        return 1
+    fi
+    if [[ ! -f $file ]]; then
+        _ph_err "file to verify not found: ${file}"
+        return 1
+    fi
+    if [[ ! -f $minisig ]]; then
+        _ph_err "signature file missing: ${minisig} - refusing to trust unverified artifacts"
+        return 1
+    fi
+    if [[ -z $pubkey_b64 ]]; then
+        _ph_err "no minisign public key configured"
+        return 1
+    fi
+    local tmpdir rc=0
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-verify.XXXXXX") || return 1
+    _verify_minisig_in "$tmpdir" "$file" "$minisig" "$pubkey_b64" || rc=$?
+    rm -rf "$tmpdir"
+    return "$rc"
+}
+
+# _verify_minisig_in TMPDIR FILE MINISIG_FILE PUBKEY_B64 - worker for
+# verify_minisig, operating inside an already-created scratch directory.
+# MINISIG_FILE line 2 is base64 of exactly 74 bytes: "Ed" || 8-byte keynum ||
+# 64-byte Ed25519 signature (legacy, non-prehashed minisign format). The
+# public key decodes to 42 bytes ("Ed" || keynum || 32-byte raw key), from
+# which an Ed25519 SPKI DER key is rebuilt for `openssl pkeyutl`.
+_verify_minisig_in() {
+    local tmpdir=$1 file=$2 minisig=$3 pubkey_b64=$4
+    if ! sed -n '2p' "$minisig" | base64 -d >"$tmpdir/sig.raw" 2>/dev/null \
+        || [[ $(wc -c <"$tmpdir/sig.raw") -ne 74 ]] \
+        || [[ $(head -c 2 "$tmpdir/sig.raw") != Ed ]]; then
+        _ph_err "malformed signature file ${minisig} (expected a minisign legacy Ed25519 signature)"
+        return 1
+    fi
+    tail -c 64 "$tmpdir/sig.raw" >"$tmpdir/sig.bin"
+    if ! printf '%s' "$pubkey_b64" | base64 -d >"$tmpdir/key.raw" 2>/dev/null \
+        || [[ $(wc -c <"$tmpdir/key.raw") -ne 42 ]]; then
+        _ph_err "configured minisign public key is malformed"
+        return 1
+    fi
+    # Rebuild Ed25519 SPKI DER: fixed 12-byte prefix + 32-byte raw key.
+    printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00' >"$tmpdir/key.der"
+    tail -c 32 "$tmpdir/key.raw" >>"$tmpdir/key.der"
+    if ! openssl pkeyutl -verify -pubin -inkey "$tmpdir/key.der" -keyform DER \
+        -rawin -in "$file" -sigfile "$tmpdir/sig.bin" >/dev/null 2>&1; then
+        _ph_err "signature verification FAILED for ${file} - refusing to trust this download"
+        return 1
+    fi
+    _ph_log "signature verified: ${file}"
 }
 
 # --------------------------------------------------------------------------
