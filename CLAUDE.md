@@ -4,14 +4,4 @@
 
 ## Agent skills
 
-### Issue tracker
-
-Issues and specs live as GitHub issues on `taliove/proxyhub` (via `gh` CLI). See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Default five-label vocabulary (`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`). See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+工程 skill 的仓库级配置,见 `docs/agents/`(issue-tracker / triage-labels / domain)。

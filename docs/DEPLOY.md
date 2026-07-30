@@ -54,8 +54,8 @@ systemctl status caddy
 #### 前提
 
 - **Docker ≥ 20.10**：桥接网络的容器依赖 `host.docker.internal:host-gateway` 映射能力（20.10 引入）；
-- **root 直接执行 docker 命令**：安装器本身以 root 运行，对 Docker 的调用由 root 直接发起，需能访问 Docker socket;
-- **镜像为 caddy**：镜像名取最后一段（去掉 registry/命名空间前缀）、再去掉 tag/digest 后恰为 `caddy`(`caddy`、`caddy:2`、`registry.example.com/caddy:2`、`team/caddy` 均可；`caddy-fork`、`team/caddy-proxy` 之类不算)。
+- **root 直接执行 docker 命令**：安装器本身以 root 运行，对 Docker 的调用由 root 直接发起，需能访问 Docker socket；
+- **镜像为 caddy**：镜像名取最后一段（去掉 registry/命名空间前缀）、再去掉 tag/digest 后恰为 `caddy`(`caddy`、`caddy:2`、`registry.example.com/caddy:2`、`team/caddy` 均可；`caddy-fork`、`team/caddy-proxy` 之类不算）。
 
 #### 容器要求清单
 
@@ -113,7 +113,7 @@ host 网络容器（`network_mode: host`）无需任何额外参数：80/443 发
 >
 > 不信任网桥内其他容器的部署，请改用以下任一方案：
 > - host 网络的 caddy 容器（信任边界不扩）；
-> - 原生 systemd Caddy(native 模式);
+> - 原生 systemd Caddy(native 模式)；
 > - 把 caddy 隔离在独立的 docker 网桥上，网桥内只放你信任的容器。
 
 #### 安装后的运维对齐
