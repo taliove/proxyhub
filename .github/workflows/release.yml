@@ -120,6 +120,37 @@ jobs:
       - name: Verify tarballs against SHA256SUMS
         run: bash scripts/release/verify.sh dist/release
 
+      - name: Install minisign
+        run: sudo apt-get update && sudo apt-get install -y minisign
+
+      - name: Sign SHA256SUMS with minisign
+        env:
+          MINISIGN_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
+        run: |
+          set -Eeuo pipefail
+          # An unsigned release must never ship: an absent secret is a hard
+          # configuration error, distinct from a signing failure below.
+          if [[ -z "${MINISIGN_PRIVATE_KEY:-}" ]]; then
+            echo "MINISIGN_PRIVATE_KEY secret is not configured; refusing to publish an unsigned release" >&2
+            exit 1
+          fi
+          # The secret lands on disk only inside this throwaway key file and
+          # is never echoed (GitHub additionally masks secret values in logs).
+          keyfile="$(mktemp)"
+          trap 'rm -f "$keyfile"' EXIT
+          printf '%s\n' "$MINISIGN_PRIVATE_KEY" >"$keyfile"
+          cd dist/release
+          # Legacy (non-prehashed) format is mandatory: minisign >= 0.11
+          # prehashes by default, and the openssl verifier in
+          # scripts/install/lib.sh only accepts "Ed" signatures.
+          minisign -S -l -s "$keyfile" -x SHA256SUMS.minisig -m SHA256SUMS
+          [[ -f SHA256SUMS.minisig ]] || { echo "minisign produced no SHA256SUMS.minisig" >&2; exit 1; }
+
+      # Round-trip through the same verifier installers use: catches a
+      # mismatched embedded public key / secret pair before anything uploads.
+      - name: Verify signature with the embedded public key
+        run: bash scripts/release/verify.sh dist/release
+
       - name: Attest build provenance of tarballs
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
@@ -137,7 +168,8 @@ jobs:
           bash scripts/release/notes.sh "$RELEASE_TAG" > dist/release-notes.md
           gh release create "$RELEASE_TAG" "${args[@]}" \
             dist/release/proxyhub_*.tar.gz \
-            dist/release/SHA256SUMS
+            dist/release/SHA256SUMS \
+            dist/release/SHA256SUMS.minisig
 
   docker:
     name: Publish GHCR multi-arch image
