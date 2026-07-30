@@ -126,7 +126,8 @@ BEHAVIOR
   root-only (0600) /root/.proxyhub-install-info (never the password). Never
   installs Caddy from third-party repos (existing Caddy v2 is reused) and never
   disables HTTPS certificate validation. Re-running on a managed install
-  refuses to duplicate it: use `proxyhubctl update|repair|uninstall`.
+  refuses to duplicate it: use `proxyhubctl update` to upgrade, or
+  `proxyhubctl uninstall` to remove it first.
 EOF
 }
 
@@ -204,7 +205,7 @@ _check_existing_install() {
     m2=$(root_path "$PROXYHUB_UNIT_PATH")
     [[ -f $m1 || -f $m2 ]] || return 0
     _ph_fail "an existing managed ProxyHub installation was detected ($([ -f "$m1" ] && echo "$m1")$([ -f "$m2" ] && echo " $m2"))" \
-        "this installer refuses to duplicate it; use 'proxyhubctl update', 'proxyhubctl repair', or 'proxyhubctl uninstall'"
+        "this installer refuses to duplicate it; use 'proxyhubctl update' to upgrade, or 'proxyhubctl uninstall' to remove it first"
 }
 
 # Host validation (READ-ONLY: no DNS/firewall/security-group mutation)
