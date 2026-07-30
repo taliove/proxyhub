@@ -448,9 +448,9 @@ _assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CA
         caddy_validate /host/side/Caddyfile &&
         caddy_reload
 ' "$SCRIPT_DIR/lib.sh"
-_assert_file_contains "$DL" "exec cad caddy fmt --overwrite /etc/caddy/conf.d/proxyhub.caddy"
-_assert_file_contains "$DL" "exec cad caddy validate --config /etc/caddy/Caddyfile"
-_assert_file_contains "$DL" "exec cad caddy reload --config /etc/caddy/Caddyfile"
+_assert_file_contains "$DL" "exec -- cad caddy fmt --overwrite /etc/caddy/conf.d/proxyhub.caddy"
+_assert_file_contains "$DL" "exec -- cad caddy validate --config /etc/caddy/Caddyfile"
+_assert_file_contains "$DL" "exec -- cad caddy reload --config /etc/caddy/Caddyfile"
 
 # Docker channel: reload failure falls back to docker restart with the same
 # interruption warning as the native systemctl restart fallback.
@@ -463,7 +463,7 @@ _assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CA
     }
     caddy_reload 2>"$PROXYHUB_ROOT/reload.err"
 ' "$SCRIPT_DIR/lib.sh"
-_assert_file_contains "$DL" "restart cad"
+_assert_file_contains "$DL" "restart -- cad"
 _assert_file_contains "$TEST_ROOT/reload.err" "brief interruption"
 
 # Docker channel: write_caddy_fragment lands on the host-side mount path.

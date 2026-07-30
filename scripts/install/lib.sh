@@ -735,7 +735,7 @@ caddy_fragment_path() {
 caddy_fmt() {
     case "$PROXYHUB_CADDY_MODE" in
         native) _caddy_bin fmt --overwrite "$1" ;;
-        docker) _docker exec "$PROXYHUB_CADDY_CONTAINER" caddy fmt --overwrite "$PROXYHUB_CADDY_FRAGMENT" ;;
+        docker) _docker exec -- "$PROXYHUB_CADDY_CONTAINER" caddy fmt --overwrite "$PROXYHUB_CADDY_FRAGMENT" ;;
         none) return 0 ;;
         *) _caddy_mode_fail ;;
     esac
@@ -747,7 +747,7 @@ caddy_fmt() {
 caddy_validate() {
     case "$PROXYHUB_CADDY_MODE" in
         native) _caddy_bin validate --config "$1" ;;
-        docker) _docker exec "$PROXYHUB_CADDY_CONTAINER" caddy validate --config /etc/caddy/Caddyfile ;;
+        docker) _docker exec -- "$PROXYHUB_CADDY_CONTAINER" caddy validate --config /etc/caddy/Caddyfile ;;
         none) return 0 ;;
         *) _caddy_mode_fail ;;
     esac
@@ -768,9 +768,9 @@ caddy_reload() {
             systemctl restart caddy.service
             ;;
         docker)
-            _docker exec "$PROXYHUB_CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile 2>/dev/null && return 0
+            _docker exec -- "$PROXYHUB_CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile 2>/dev/null && return 0
             _ph_log "WARNING: caddy reload failed (admin API disabled, e.g. 'admin off'); falling back to 'docker restart ${PROXYHUB_CADDY_CONTAINER}' - brief interruption for other sites on this Caddy"
-            _docker restart "$PROXYHUB_CADDY_CONTAINER"
+            _docker restart -- "$PROXYHUB_CADDY_CONTAINER"
             ;;
         none) return 0 ;;
         *) _caddy_mode_fail ;;
