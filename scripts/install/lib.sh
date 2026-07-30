@@ -66,10 +66,14 @@ PROXYHUB_BRIDGE_SUBNET="${PROXYHUB_BRIDGE_SUBNET:-}"
 # (MINISIGN_PRIVATE_KEY); rotation = generate a new pair, swap this constant,
 # ship a new release. Defined once here: install.sh and proxyhubctl both
 # source this library, so the constant travels with whichever copy of
-# lib.sh (or the installed proxyhubctl-lib.sh) they load. NOT readonly:
-# tests substitute a synthetic throwaway keypair per subshell (same seam
-# pattern as PROXYHUB_LISTEN_ADDR); production code never overrides it.
-PROXYHUB_MINISIGN_PUBKEY="${PROXYHUB_MINISIGN_PUBKEY:-RWQHrp6zfJDEQ0TWFXc5k3iL1ZhIADchbbRKuEIIzFaSvtfKD8Gmf/Lg}"
+# lib.sh (or the installed proxyhubctl-lib.sh) they load. Overridable ONLY
+# in PROXYHUB_ROOT test mode (synthetic fixture keys): in production the
+# trust anchor must never be swappable via the environment.
+if [[ -n ${PROXYHUB_ROOT:-} ]]; then
+    PROXYHUB_MINISIGN_PUBKEY="${PROXYHUB_MINISIGN_PUBKEY:-RWQHrp6zfJDEQ0TWFXc5k3iL1ZhIADchbbRKuEIIzFaSvtfKD8Gmf/Lg}"
+else
+    PROXYHUB_MINISIGN_PUBKEY="RWQHrp6zfJDEQ0TWFXc5k3iL1ZhIADchbbRKuEIIzFaSvtfKD8Gmf/Lg"
+fi
 
 # --------------------------------------------------------------------------
 # Output helpers
@@ -318,6 +322,13 @@ fetch_first_ok() {
     local dest=$1 override=${2:-} url
     shift 2 || return 1
     if [[ -n $override ]]; then
+        # The override names code executed as root (lib.sh / proxyhubctl);
+        # plaintext transports are refused, mirroring the PROXYHUB_LIB_URL
+        # guard in install.sh (test mode keeps file:// for fixtures).
+        if [[ $override != https://* && -z ${PROXYHUB_ROOT:-} ]]; then
+            _ph_err "override URL must use https:// (got ${override}) - refusing to fetch code over a plaintext transport"
+            return 1
+        fi
         if curl -fsSL "$override" -o "$dest"; then return 0; fi
         _ph_err "download failed: ${override} (explicit override; built-in candidates not tried)"
         return 1

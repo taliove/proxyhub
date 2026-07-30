@@ -1113,6 +1113,25 @@ _assert_eq 0 "$ovr_rc" "override priority exit code"
 _assert_eq "https://override.example.com/lib.sh" "$(cat "$OVR_SBX/curl.log")" \
     "override wins; built-in candidates never tried"
 
+# Plaintext override URLs are refused outside test mode (the override names
+# code executed as root; the guard fires before any network call).
+plain=$(
+    SBX=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-plain.XXXXXX")
+    export PROXYHUB_ROOT=""
+    curl() { printf 'SHOULD-NOT-FETCH\n'; }
+    rc=0
+    fetch_first_ok "$SBX/lib" "http://override.example.com/lib.sh" \
+        "https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/scripts/install/lib.sh" \
+        2>"$SBX/err.log" || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+plain_rc=$(printf '%s\n' "$plain" | sed -n 's/^RC=//p')
+PLAIN_SBX=$(printf '%s\n' "$plain" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$PLAIN_SBX")
+_assert_eq 1 "$plain_rc" "plaintext override refused exit code"
+_assert_file_contains "$PLAIN_SBX/err.log" "must use https://"
+[[ ! -e $PLAIN_SBX/lib ]] && _pass || _fail "file written despite plaintext refusal"
+
 # Every candidate failing is a hard error.
 allfail=$(
     SBX=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-allfail.XXXXXX")
