@@ -138,6 +138,74 @@ bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/instal
 
 注意：`--no-caddy` 安装的实例，`proxyhubctl rotate-path` 不可用（它无法改写你自己的反代配置）；换 Site Path 需手工同步你的反代配置与样例文件。
 
+## 国内部署（网络受限环境）
+
+GitHub（raw.githubusercontent.com、github.com/releases）在国内大面积不可达，默认安装入口与制品下载都会卡住。本节给出完整替代路径：入口脚本走 jsDelivr CDN，制品下载走 `--download-base` 指向的镜像。安全性不依赖镜像可信，见下文「签名信任锚」。
+
+### 入口：jsDelivr
+
+```bash
+curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh | bash
+```
+
+安装器运行期拉取伴侣库（lib.sh、proxyhubctl）同样 jsDelivr 优先、raw.githubusercontent 后备，两者都失败才报错退出。注意：jsDelivr 只解决「脚本入口」，制品（tarball）默认仍从 GitHub releases 下载——GitHub 整体不可达的机器还必须配合下面的镜像下载基。
+
+### 制品走镜像：--download-base
+
+`--download-base URL`（或环境变量 `PROXYHUB_DOWNLOAD_BASE`，旗标优先）覆盖制品下载基，制品 URL 按 `<base>/<version>/<asset>` 解析，URL 必须是 https://。默认值永远是 GitHub 官方 releases，不内置任何第三方镜像。镜像模式下 latest 自动解析不可用（它依赖 GitHub 重定向），**必须显式 `--version`**，否则安装器直接拒绝并提示；下载基不可达时报错并给出指引，无静默回退。
+
+配方（镜像 + 显式版本）：
+
+```bash
+curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh -o install.sh
+bash install.sh --non-interactive \
+  --domain proxy.example.com \
+  --version 0.3.0 \
+  --download-base https://<镜像>/taliove/proxyhub/releases/download
+```
+
+`--version` 取一个已发布的版本号（去 releases 页或 CHANGELOG 挑；镜像转发的是同一批 release 资产）。
+
+**镜像从哪来**：前缀转发型 ghproxy 类公共服务是当前常见形态——下载基写成「镜像域名前缀 + 原始 GitHub 路径」的拼接，形如 `https://ghproxy.example.com/https://github.com/taliove/proxyhub/releases/download`；自建 nginx 反代 `https://github.com/taliove/proxyhub/releases/download/` 是更稳定的选项。**任何第三方镜像都会过期，本仓库不担保任何具体镜像的可用性，以你实际可达为准**。自查方法：直接探测该镜像能否取到完整制品——
+
+```bash
+curl -fsSI https://<镜像>/<version>/SHA256SUMS.minisig
+```
+
+签名文件（.minisig）与 tarball 都能拿到才算完整转发；只转发热门大文件、丢掉小签名文件的镜像，安装器会 fail closed（见下节）。
+
+### 为什么镜像下载也安全（签名信任锚）
+
+release 资产除 tarball 与 SHA256SUMS 外还包含 `SHA256SUMS.minisig`——发布方用私钥对 SHA256SUMS 的数字签名。安装器与 `proxyhubctl update` 内嵌对应公钥，下载后先用 openssl 验签，再按验过的 SHA256SUMS 核校 tarball；签名缺失、格式非法或验签失败一律 fail closed，拒绝安装。信任链是「内嵌公钥 → 签名 → 校验和 → 制品」，与下载通道无关：恶意镜像可以同时替换 tarball 和 SHA256SUMS，但伪造不出能通过内嵌公钥验签的签名。验签只需要 openssl（≥ 1.1.1，Ubuntu 22.04+/Debian 12+ 自带），不引入新依赖。决策细节见 [ADR 0036](adr/0036-artifact-signing-and-mirror-channel.md)。
+
+### 更新沿用下载基
+
+安装时生效的下载基写入安装档案（`/root/.proxyhub-install-info` 的 `DOWNLOAD_BASE=` 字段），`proxyhubctl update` 自动沿用，升级不必重记镜像参数；显式 `--download-base` 优先于档案值，是换镜像时的确定性覆盖手段。镜像模式下 update 同样需要显式 `--version`。
+
+> **注意**：镜像模式的安装不宜启用自动更新（`proxyhubctl auto-update enable`）——自动更新不带显式版本，按镜像版本纪律会被拒绝；请定期手动 `proxyhubctl update --version <版本>`。
+
+### Caddy 镜像：Docker 加速器
+
+caddy 容器镜像拉自 Docker Hub，国内同样受限。给 Docker 配 registry mirror 后重拉：
+
+```json
+// /etc/docker/daemon.json
+{
+  "registry-mirrors": ["https://<你的加速器地址>"]
+}
+```
+
+```bash
+systemctl restart docker
+docker pull caddy:2
+```
+
+加速器地址由你的云厂商控制台或所用镜像服务提供（阿里云、腾讯云等为每个账号分配专属地址），同样以实际可达为准。宿主原生 Caddy（Cloudsmith 仓库）国内一般可达；不可达时改用 Docker Caddy 模式（见「Docker 容器中的 Caddy」）。
+
+### GeoIP 库
+
+订阅拉取地域白名单依赖的 GeoIP 库，更新源 `download.db-ip.com` 国内基本可达，通常无需处理；确有障碍时 `scripts/geoip/update.sh` 支持 `GEOIP_BASE_URL` 覆盖下载基。
+
 ## 一键安装
 
 ### 交互式安装（推荐）

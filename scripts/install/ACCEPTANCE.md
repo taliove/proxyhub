@@ -507,10 +507,79 @@
 
 ---
 
+## 测试 14: 制品签名验证（验签负例）
+
+### 前置条件
+- [ ] 全新 Ubuntu 22.04 服务器（未安装 ProxyHub）
+- [ ] 一个可控的 HTTPS 静态文件服务（如 nginx / caddy file_server），托管一份从 GitHub releases 下载的某版本制品目录（tarball + SHA256SUMS + SHA256SUMS.minisig）
+
+### 步骤
+1. 篡改镜像目录里的 `SHA256SUMS`（改动任意一行哈希），保留原 `SHA256SUMS.minisig`
+2. 以该目录为下载基运行安装：
+   ```bash
+   bash install.sh \
+     --non-interactive \
+     --domain test14.example.com \
+     --version <对应版本> \
+     --download-base https://<你的验收镜像>
+   ```
+3. 观察安装器在验签阶段的行为
+4. 恢复 SHA256SUMS，改为删除 `SHA256SUMS.minisig`（模拟镜像不转发签名文件），重跑安装
+
+### 通过标准
+- [ ] 篡改 SHA256SUMS 时：安装器在验签阶段报错退出（exit code 非 0），错误信息指明签名校验失败
+- [ ] 缺 SHA256SUMS.minisig 时：安装器同样 fail closed，错误信息指明缺签名文件
+- [ ] 两种负例下 `/usr/local/bin/proxyhub` 均未被写入（`ls /usr/local/bin/proxyhub` 报不存在）
+- [ ] 恢复完整制品目录后重跑，安装成功（签名链正例走通）
+
+### 失败标准
+- 篡改或缺签名时安装仍继续或成功
+- 报错文案未指明签名问题（运维无法定位原因）
+
+---
+
+## 测试 15: 镜像模式安装（--download-base 正例 + latest 负例）
+
+### 前置条件
+- [ ] 全新 Ubuntu 22.04 服务器（未安装 ProxyHub）
+- [ ] 一个当前可达的镜像下载基（ghproxy 前缀型或自建反代），先用 `curl -fsSI <base>/<version>/SHA256SUMS.minisig` 自查签名文件可达
+- [ ] DNS A 记录已指向服务器 IP
+
+### 步骤
+1. 负例先行——镜像下载基 + latest（缺省版本）：
+   ```bash
+   bash install.sh \
+     --non-interactive \
+     --domain test15.example.com \
+     --download-base https://<镜像>/taliove/proxyhub/releases/download
+   ```
+2. 正例——镜像下载基 + 显式版本：
+   ```bash
+   bash install.sh \
+     --non-interactive \
+     --domain test15.example.com \
+     --version <已发布版本> \
+     --download-base https://<镜像>/taliove/proxyhub/releases/download
+   ```
+3. 检查安装档案与日志
+
+### 通过标准
+- [ ] latest 负例：安装器拒绝，exit code 2，错误信息提示镜像下载基必须显式 `--version`；未写任何文件
+- [ ] 正例安装成功，`https://<domain>/<site-path>/health` 返回 200 OK
+- [ ] `/root/.proxyhub-install-info` 含 `DOWNLOAD_BASE=<镜像base>` 字段
+- [ ] 安装日志显示制品 URL 取自镜像 base 而非 github.com
+
+### 失败标准
+- latest + 镜像下载基被放行或静默回退到其他源
+- 安装档案缺 DOWNLOAD_BASE 字段
+- 制品实际仍从 github.com 下载
+
+---
+
 ## 验收决策
 
 ### 通过标准（全部满足）
-- [ ] 测试 1-13 全部通过
+- [ ] 测试 1-15 全部通过
 - [ ] 无 CRITICAL 或 HIGH 优先级 bug
 - [ ] 文档完整（DEPLOY.md + SECURITY.md）
 - [ ] 安装器和 proxyhubctl 帮助文档准确
@@ -551,6 +620,8 @@ ProxyHub 版本： _______________
 | 11 | 重新安装 | ☐ PASS ☐ FAIL | |
 | 12 | Docker Caddy 模式（host 网络） | ☐ PASS ☐ FAIL | |
 | 13 | Docker Caddy 模式（桥接网络） | ☐ PASS ☐ FAIL | |
+| 14 | 制品签名验证（验签负例） | ☐ PASS ☐ FAIL | |
+| 15 | 镜像模式安装 | ☐ PASS ☐ FAIL | |
 
 **最终决策**： ☐ 批准发布 0.1.0  ☐ 需要修复后重测
 

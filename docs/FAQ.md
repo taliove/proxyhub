@@ -179,6 +179,35 @@ A: 在——只要重建后的容器仍然挂载同一个 `/etc/caddy` 持久目
 1. **容器名变了**：安装档案（`/root/.proxyhub-install-info`）里的 `CADDY_CONTAINER` 记的是安装时的容器名，改名后 `proxyhubctl` 会因找不到容器而 fail closed。编辑档案把 `CADDY_CONTAINER` 改成新容器名即可，不必重装；
 2. **桥接拓扑参数丢了**：重建时丢了 `--add-host host.docker.internal:host-gateway`、80/443 端口发布或换了网桥，`proxyhubctl rotate-path` 等操作会在校验阶段 fail closed，按报错指引补齐参数即可。
 
+## 国内网络环境
+
+### Q: 国内服务器（GitHub 不可达）怎么装 ProxyHub？
+
+A: 三步：入口脚本走 jsDelivr CDN，制品下载用 `--download-base` 指向一个你可达的镜像，并且**必须显式 `--version`**（镜像模式下 latest 自动解析不可用，安装器会直接拒绝）：
+
+```bash
+curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh -o install.sh
+bash install.sh --non-interactive --domain proxy.example.com \
+  --version <已发布版本号> \
+  --download-base https://<镜像>/taliove/proxyhub/releases/download
+```
+
+镜像怎么选、可达性怎么自查、caddy 容器镜像与 GeoIP 的配套说明，见 [DEPLOY.md](DEPLOY.md)「国内部署」一节。
+
+### Q: 从第三方镜像下载的制品安全吗？
+
+A: 安全性不靠镜像自觉，靠密码学验签。发布方用私钥给校验和文件（SHA256SUMS）签了名，release 资产里多一个 `SHA256SUMS.minisig`；安装器与更新器内嵌对应公钥，下载后先验签、再按验过的校验和核校 tarball，任何一步不过都拒绝安装。恶意镜像可以同时替换 tarball 和校验和，但伪造不出能通过内嵌公钥的签名——缺签名文件、签名对不上，安装直接中止（fail closed）。验签只用系统自带的 openssl，不装新工具。原理与决策见 [ADR 0036](adr/0036-artifact-signing-and-mirror-channel.md)。
+
+### Q: 国内装的实例，`proxyhubctl update` 怎么用？
+
+A: 安装时的下载基记在 `/root/.proxyhub-install-info` 的 `DOWNLOAD_BASE` 字段，update 自动沿用——当初走镜像装的，升级时不必再传 `--download-base`：
+
+```bash
+proxyhubctl update --version <目标版本号>
+```
+
+镜像模式必须显式 `--version`（latest 解析依赖 GitHub）。要换镜像时显式给 `--download-base`，显式参数优先于档案里的值。
+
 ## 订阅与节点
 
 ### Q: 订阅突然拉不到了(403/404/429)，怎么排查？
