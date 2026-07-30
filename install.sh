@@ -703,7 +703,7 @@ _write_install_record() {
     # bounded widening of the admin-plane trust boundary must be stated in
     # the one-time summary so the operator can make an informed choice.
     if _is_bridge_topology; then
-        printf '  WARNING (docker bridge mode): the management-plane trust boundary\n  widened from loopback to the %s docker bridge. Any container on\n  this bridge can reach the admin plane directly (no TLS) and can\n  spoof X-Forwarded-For. If you do not trust the other containers on\n  this bridge, use a host-network caddy container or native Caddy\n  instead, and isolate caddy on a dedicated bridge network.\n\n' \
+        printf '  WARNING (docker bridge mode): the management-plane trust boundary\n  widened from loopback to the %s docker bridge. Any container on\n  this bridge can reach the admin plane directly (no TLS) and can\n  spoof X-Forwarded-For. Bridge traffic to the admin plane is plain\n  HTTP, so the Site Path can be sniffed by bridge peers. If you do\n  not trust the other containers on this bridge, use a host-network\n  caddy container or native Caddy instead, and isolate caddy on a\n  dedicated bridge network.\n\n' \
             "$PROXYHUB_BRIDGE_SUBNET"
     fi
 }
