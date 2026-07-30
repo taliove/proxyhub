@@ -345,46 +345,190 @@ EOF
 }
 
 # --------------------------------------------------------------------------
-# Caddy mode channel
+# Docker caddy container helpers (ADR 0035)
 # --------------------------------------------------------------------------
-# Every Caddy operation (fragment path resolution, fmt/validate/reload) is
-# dispatched on PROXYHUB_CADDY_MODE so the docker Caddy mode (ADR 0035) can
-# slot in behind the same call sites. Only the native channel is
-# implemented; the docker slot fails closed until that mode lands, and none
-# (--no-caddy) has no managed Caddy to operate on.
+# All container inspection goes through the _docker seam so tests can feed
+# canned inspect/port output. These helpers are the shared vocabulary of
+# install.sh's mode detection and (later) proxyhubctl's docker channel.
 
-# _caddy_mode_fail - shared fail-closed branch for modes without a channel
-# implementation (docker slot) and for corrupt mode values.
-_caddy_mode_fail() {
-    case "$PROXYHUB_CADDY_MODE" in
-        docker) _ph_err "caddy mode 'docker' is not implemented yet" ;;
-        *) _ph_err "unknown caddy mode '${PROXYHUB_CADDY_MODE}'" ;;
+# _docker_image_is_caddy IMAGE - true when IMAGE is the caddy image in any
+# reference form: caddy, caddy:TAG, caddy@sha256:..., or registry-prefixed
+# (.../caddy:TAG). Lookalikes (caddy-fork, team/caddy-proxy) do not match.
+_docker_image_is_caddy() {
+    local img=${1##*/}
+    img=${img%%[:@]*}
+    [[ $img == caddy ]]
+}
+
+# docker_caddy_candidates - print the names of running containers whose image
+# is caddy, one per line. Returns 1 when docker itself is unavailable.
+docker_caddy_candidates() {
+    local ps_out name image
+    ps_out=$(_docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null) || return 1
+    while read -r name image; do
+        [[ -n $name ]] || continue
+        _docker_image_is_caddy "$image" && printf '%s\n' "$name"
+    done <<<"$ps_out"
+    return 0
+}
+
+# docker_validate_caddy_container NAME - explicit --caddy-docker selection
+# checks: the container must exist, be running, and run a caddy image.
+docker_validate_caddy_container() {
+    local name=$1 running image
+    running=$(_docker inspect --format '{{.State.Running}}' "$name" 2>/dev/null) || {
+        _ph_err "caddy container '${name}' does not exist (docker inspect failed)"
+        _ph_err "list containers with: docker ps -a"
+        return 1
+    }
+    if [[ $running != true ]]; then
+        _ph_err "caddy container '${name}' is not running"
+        _ph_err "start it with: docker start ${name}"
+        return 1
+    fi
+    image=$(_docker inspect --format '{{.Config.Image}}' "$name") || return 1
+    if ! _docker_image_is_caddy "$image"; then
+        _ph_err "container '${name}' runs image '${image}', not a caddy image"
+        _ph_err "point --caddy-docker at a container running the caddy image"
+        return 1
+    fi
+    return 0
+}
+
+# _docker_mount_host_path TYPE SOURCE NAME - print the host-side path of an
+# /etc/caddy mount candidate: bind mounts resolve to their Source directory,
+# named volumes to the docker volume data path. Anything else returns 1.
+_docker_mount_host_path() {
+    case $1 in
+        bind)
+            if [[ -d $(root_path "$2") ]]; then printf '%s\n' "$2"; return 0; fi
+            return 1
+            ;;
+        volume) printf '%s\n' "/var/lib/docker/volumes/$3/_data" ;;
+        *) return 1 ;;
     esac
+}
+
+# docker_caddy_mount_root NAME - print the host-side path backing the
+# container's /etc/caddy mount. Single-file mounts and missing mounts fail
+# closed with remediation guidance (config on the container layer would
+# vanish on recreate).
+docker_caddy_mount_root() {
+    local name=$1 mounts mtype mdest msrc mname file_mount=""
+    mounts=$(_docker inspect \
+        --format '{{range .Mounts}}{{printf "%s\t%s\t%s\t%s\n" .Type .Destination .Source .Name}}{{end}}' \
+        "$name") || {
+        _ph_err "failed to inspect container '${name}'"
+        return 1
+    }
+    while IFS=$'\t' read -r mtype mdest msrc mname; do
+        [[ $mdest == /etc/caddy || $mdest == /etc/caddy/* ]] || continue
+        if [[ $mdest == /etc/caddy ]]; then
+            if _docker_mount_host_path "$mtype" "$msrc" "$mname"; then return 0; fi
+            file_mount=$mdest
+        elif [[ $mtype == bind ]]; then
+            file_mount=$mdest
+        fi
+    done <<<"$mounts"
+    if [[ -n $file_mount ]]; then
+        _ph_err "container '${name}' mounts a single file into /etc/caddy (${file_mount}); ProxyHub manages fragments under /etc/caddy/conf.d/ and needs the whole directory"
+        _ph_err "fix: mount a host directory (or named volume) at /etc/caddy instead, e.g. -v /srv/caddy:/etc/caddy"
+        return 1
+    fi
+    _ph_err "container '${name}' has no persistent /etc/caddy mount; configuration written to the container layer would vanish on recreate"
+    _ph_err "fix: add a bind mount or named volume at /etc/caddy, e.g. -v /srv/caddy:/etc/caddy"
     return 1
 }
 
+# docker_caddy_ports_published NAME - a bridge-network caddy container must
+# publish TCP 80 and 443 (TLS issuance depends on them). Host-network
+# containers are exempt: they bind the host interfaces directly.
+# TODO(ticket 03/#18): bridge containers additionally need the
+# host.docker.internal:host-gateway mapping and the gateway-IP listen
+# topology; this function only gates port publishing.
+docker_caddy_ports_published() {
+    local name=$1 netmode ports=""
+    netmode=$(_docker inspect --format '{{.HostConfig.NetworkMode}}' "$name") || {
+        _ph_err "failed to inspect network mode of container '${name}'"
+        return 1
+    }
+    if [[ $netmode == host ]]; then
+        _ph_log "container '${name}' uses host networking: 80/443 publish check exempt"
+        return 0
+    fi
+    ports=$(_docker port "$name" 2>/dev/null) || ports=""
+    if [[ $ports == *"80/tcp ->"* && $ports == *"443/tcp ->"* ]]; then return 0; fi
+    _ph_err "caddy container '${name}' (${netmode} networking) does not publish both TCP 80 and 443; TLS issuance requires them"
+    _ph_err "fix: publish the ports on the container, e.g. -p 80:80 -p 443:443"
+    return 1
+}
+
+# --------------------------------------------------------------------------
+# Caddy mode channel
+# --------------------------------------------------------------------------
+# Every Caddy operation (fragment path resolution, fmt/validate/reload) is
+# dispatched on PROXYHUB_CADDY_MODE so the docker Caddy mode (ADR 0035) slots
+# in behind the same call sites. The docker channel operates inside the
+# selected container through _docker exec/restart while files are written
+# through the resolved host-side mount path; none (--no-caddy) has no managed
+# Caddy to operate on.
+
+# _caddy_mode_fail - shared fail-closed branch for corrupt mode values.
+_caddy_mode_fail() {
+    _ph_err "unknown caddy mode '${PROXYHUB_CADDY_MODE}'"
+    return 1
+}
+
+# caddy_config_dir - print the host-side Caddy config directory, resolved
+# through root_path: /etc/caddy natively, the container's /etc/caddy mount
+# root in docker mode.
+caddy_config_dir() {
+    case "$PROXYHUB_CADDY_MODE" in
+        native | none) root_path /etc/caddy ;;
+        docker)
+            local mroot
+            mroot=$(docker_caddy_mount_root "$PROXYHUB_CADDY_CONTAINER") || return 1
+            root_path "$mroot"
+            ;;
+        *) _caddy_mode_fail ;;
+    esac
+}
+
 # caddy_fragment_path - print the managed fragment path, resolved through
-# root_path like every other host path in this library.
+# root_path like every other host path in this library. In docker mode this
+# is the host-side path under the container's /etc/caddy mount; the container
+# always sees it at PROXYHUB_CADDY_FRAGMENT.
 caddy_fragment_path() {
     case "$PROXYHUB_CADDY_MODE" in
         native | none) root_path "$PROXYHUB_CADDY_FRAGMENT" ;;
+        docker)
+            local cdir
+            cdir=$(caddy_config_dir) || return 1
+            printf '%s%s' "$cdir" "${PROXYHUB_CADDY_FRAGMENT#/etc/caddy}"
+            ;;
         *) _caddy_mode_fail ;;
     esac
 }
 
 # caddy_fmt FRAGMENT - format the fragment in place (caddy fmt --overwrite).
+# The docker branch ignores the host-side FRAGMENT argument: the container
+# always sees the fragment at the constant container path.
 caddy_fmt() {
     case "$PROXYHUB_CADDY_MODE" in
         native) caddy fmt --overwrite "$1" ;;
+        docker) _docker exec "$PROXYHUB_CADDY_CONTAINER" caddy fmt --overwrite "$PROXYHUB_CADDY_FRAGMENT" ;;
         none) return 0 ;;
         *) _caddy_mode_fail ;;
     esac
 }
 
-# caddy_validate CONFIG - validate the full Caddy configuration.
+# caddy_validate CONFIG - validate the full Caddy configuration. The docker
+# branch validates the container-path Caddyfile regardless of the host-side
+# CONFIG argument.
 caddy_validate() {
     case "$PROXYHUB_CADDY_MODE" in
         native) caddy validate --config "$1" ;;
+        docker) _docker exec "$PROXYHUB_CADDY_CONTAINER" caddy validate --config /etc/caddy/Caddyfile ;;
         none) return 0 ;;
         *) _caddy_mode_fail ;;
     esac
@@ -393,8 +537,9 @@ caddy_validate() {
 # caddy_reload - reload via the admin API, falling back to a full restart
 # when the API is disabled ('admin off' in the global options block, e.g.
 # 233boy-style Caddyfiles). Restart briefly interrupts the other sites on
-# this Caddy (warned). install.sh keeps a thin seam (_reload_caddy) over
-# this channel so tests can override the reload step.
+# this Caddy (warned); docker mode restarts the container, mirroring the
+# native systemctl restart fallback. install.sh keeps a thin seam
+# (_reload_caddy) over this channel so tests can override the reload step.
 caddy_reload() {
     case "$PROXYHUB_CADDY_MODE" in
         native)
@@ -402,6 +547,11 @@ caddy_reload() {
             caddy reload --config /etc/caddy/Caddyfile 2>/dev/null && return 0
             _ph_log "WARNING: caddy reload failed (admin API disabled, e.g. 'admin off'); falling back to 'systemctl restart caddy' - brief interruption for other sites on this Caddy"
             systemctl restart caddy.service
+            ;;
+        docker)
+            _docker exec "$PROXYHUB_CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile 2>/dev/null && return 0
+            _ph_log "WARNING: caddy reload failed (admin API disabled, e.g. 'admin off'); falling back to 'docker restart ${PROXYHUB_CADDY_CONTAINER}' - brief interruption for other sites on this Caddy"
+            _docker restart "$PROXYHUB_CADDY_CONTAINER"
             ;;
         none) return 0 ;;
         *) _caddy_mode_fail ;;

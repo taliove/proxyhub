@@ -143,7 +143,7 @@ mock_host() {
 # --help documents the contract and exits 0.
 help_out=$(main --help 2>/dev/null)
 for needle in --non-interactive --domain --email --version --repo --site-path \
-    --listen-addr --no-caddy --skip-dns-check "proxyhubctl update" SHA256SUMS; do
+    --listen-addr --no-caddy --caddy-docker --skip-dns-check "proxyhubctl update" SHA256SUMS; do
     if [[ $help_out == *"$needle"* ]]; then _pass; else _fail "--help missing [$needle]"; fi
 done
 
@@ -460,6 +460,244 @@ _assert_file_contains "$NC_SBX/stderr.log" "public HTTPS health check skipped (-
 _assert_file_contains "$NC_SBX/stdout.log" "reverse-proxy.caddy"
 
 # --------------------------------------------------------------------------
+# Docker caddy mode (ADR 0035)
+# --------------------------------------------------------------------------
+
+# Flag contract: --caddy-docker takes a value and is mutually exclusive with
+# --no-caddy (usage errors exit 2).
+_assert_rc 2 "caddy-docker + no-caddy" main --non-interactive --domain example.com \
+    --no-caddy --caddy-docker caddy
+_assert_rc 2 "missing --caddy-docker value" main --non-interactive --domain example.com \
+    --caddy-docker
+
+# mock_docker_host_caddy - _docker answers for a running host-network caddy
+# container with a bind mount at /srv/caddy.
+mock_docker_host_caddy() {
+    _docker() {
+        if [[ $1 == inspect ]]; then
+            case $3 in
+                *State.Running*) printf 'true\n' ;;
+                *Config.Image*) printf 'caddy:2\n' ;;
+                *HostConfig.NetworkMode*) printf 'host\n' ;;
+                *Mounts*) printf 'bind\t/etc/caddy\t/srv/caddy\t\n' ;;
+            esac
+        fi
+        return 0
+    }
+}
+
+# Happy path: --caddy-docker with a host-network container installs end to
+# end, equivalent to native (loopback listen, fragment via the mount).
+dockhappy=$(
+    setup_sandbox
+    mock_host
+    mock_docker_host_caddy
+    mkdir -p "$SBX/srv/caddy"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --caddy-docker caddy \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\n' "$rc"
+    printf 'SBX=%s\n' "$SBX"
+)
+dock_rc=$(printf '%s\n' "$dockhappy" | sed -n 's/^RC=//p')
+DOCK_SBX=$(printf '%s\n' "$dockhappy" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$DOCK_SBX")
+
+_assert_eq 0 "$dock_rc" "docker host-network install exit code"
+_assert_file_contains "$DOCK_SBX/srv/caddy/conf.d/proxyhub.caddy" "proxy.example.com {"
+_assert_file_contains "$DOCK_SBX/srv/caddy/conf.d/proxyhub.caddy" "reverse_proxy 127.0.0.1:8080"
+_assert_file_contains "$DOCK_SBX/srv/caddy/Caddyfile" "import /etc/caddy/conf.d/*.caddy"
+_assert_file_contains "$DOCK_SBX/etc/proxyhub/config.yaml" 'host: "127.0.0.1"'
+_assert_file_contains "$DOCK_SBX/root/.proxyhub-install-info" "CADDY_MODE=docker"
+_assert_file_contains "$DOCK_SBX/root/.proxyhub-install-info" "CADDY_CONTAINER=caddy"
+_assert_file_contains "$DOCK_SBX/stderr.log" "docker caddy mode: integrating container 'caddy'"
+
+# Mode priority: a native caddy binary wins over docker containers.
+pm=$(
+    _is_test_mode() { return 1; }
+    PROXYHUB_CADDY_MODE=native PROXYHUB_CADDY_CONTAINER=""
+    caddy() { printf 'caddy version v2.8.4\n'; }
+    _docker() { printf 'web caddy:2\n'; }
+    err=$(mktemp)
+    rc=0
+    _check_caddy 2>"$err" || rc=$?
+    printf 'RC=%d MODE=%s CONTAINER=%s\n%s\n' "$rc" "$PROXYHUB_CADDY_MODE" "$PROXYHUB_CADDY_CONTAINER" "$(cat "$err")"
+    rm -f "$err"
+)
+[[ $pm == *"RC=0 MODE=native CONTAINER="* ]] && _pass || _fail "native binary priority: $pm"
+[[ $pm == *"existing Caddy found"* ]] && _pass || _fail "native binary priority log missing: $pm"
+
+# Mode priority: exactly one running caddy container is auto-selected and
+# announced.
+pm=$(
+    _is_test_mode() { return 1; }
+    PROXYHUB_CADDY_MODE=native PROXYHUB_CADDY_CONTAINER=""
+    _have_caddy_bin() { return 1; }
+    _docker() {
+        case $1 in
+            ps) printf 'web caddy:2-alpine\n' ;;
+            inspect)
+                case $3 in
+                    *HostConfig.NetworkMode*) printf 'host\n' ;;
+                    *Mounts*) printf 'volume\t/etc/caddy\t/var/lib/docker/volumes/caddy-data/_data\tcaddy-data\n' ;;
+                esac ;;
+        esac
+        return 0
+    }
+    err=$(mktemp)
+    rc=0
+    _check_caddy 2>"$err" || rc=$?
+    printf 'RC=%d MODE=%s CONTAINER=%s\n%s\n' "$rc" "$PROXYHUB_CADDY_MODE" "$PROXYHUB_CADDY_CONTAINER" "$(cat "$err")"
+    rm -f "$err"
+)
+[[ $pm == *"RC=0 MODE=docker CONTAINER=web"* ]] && _pass || _fail "single container auto-select: $pm"
+[[ $pm == *"auto-selected the only running caddy container 'web'"* ]] && _pass ||
+    _fail "auto-select announcement missing: $pm"
+
+# Mode priority: zero candidates fails closed, naming both absent topologies.
+pm=$(
+    _is_test_mode() { return 1; }
+    _have_caddy_bin() { return 1; }
+    _docker() { return 0; }
+    ss() { :; }
+    rc=0
+    out=$(_check_caddy 2>&1) || rc=$?
+    printf 'RC=%d\n%s\n' "$rc" "$out"
+)
+[[ $pm == *"RC=1"* ]] && _pass || _fail "zero containers must fail closed: $pm"
+[[ $pm == *"no native caddy binary and no running docker caddy container"* ]] && _pass ||
+    _fail "zero-container message: $pm"
+[[ $pm == *"--caddy-docker <container-name>"* ]] && _pass || _fail "zero-container guidance missing: $pm"
+
+# Mode priority: multiple candidates fail closed and list the candidates.
+pm=$(
+    _is_test_mode() { return 1; }
+    _have_caddy_bin() { return 1; }
+    _docker() { printf 'web caddy:2\nedge caddy:latest\n'; }
+    rc=0
+    out=$(_check_caddy 2>&1) || rc=$?
+    printf 'RC=%d\n%s\n' "$rc" "$out"
+)
+[[ $pm == *"RC=1"* ]] && _pass || _fail "multiple containers must fail closed: $pm"
+[[ $pm == *"multiple running caddy containers"* ]] && _pass || _fail "ambiguity message missing: $pm"
+[[ $pm == *"  - web"* && $pm == *"  - edge"* ]] && _pass || _fail "candidate names not listed: $pm"
+
+# Explicit selection: ghost container fails closed.
+pm=$(
+    _is_test_mode() { return 1; }
+    ARG_CADDY_DOCKER=ghost
+    _docker() { return 1; }
+    rc=0
+    out=$(_check_caddy 2>&1) || rc=$?
+    printf 'RC=%d\n%s\n' "$rc" "$out"
+)
+[[ $pm == *"RC=1"* && $pm == *"'ghost' does not exist"* ]] && _pass || _fail "ghost container: $pm"
+
+# Explicit selection: stopped container fails closed.
+pm=$(
+    _is_test_mode() { return 1; }
+    ARG_CADDY_DOCKER=stopped
+    _docker() { case $3 in *State.Running*) printf 'false\n' ;; esac; return 0; }
+    rc=0
+    out=$(_check_caddy 2>&1) || rc=$?
+    printf 'RC=%d\n%s\n' "$rc" "$out"
+)
+[[ $pm == *"RC=1"* && $pm == *"'stopped' is not running"* ]] && _pass || _fail "stopped container: $pm"
+
+# Explicit selection: non-caddy image fails closed.
+pm=$(
+    _is_test_mode() { return 1; }
+    ARG_CADDY_DOCKER=web
+    _docker() { case $3 in *State.Running*) printf 'true\n' ;; *Config.Image*) printf 'nginx:latest\n' ;; esac; return 0; }
+    rc=0
+    out=$(_check_caddy 2>&1) || rc=$?
+    printf 'RC=%d\n%s\n' "$rc" "$out"
+)
+[[ $pm == *"RC=1"* && $pm == *"not a caddy image"* ]] && _pass || _fail "non-caddy image: $pm"
+
+# Explicit selection: bridge container without published 80/443 fails closed.
+pm=$(
+    _is_test_mode() { return 1; }
+    ARG_CADDY_DOCKER=caddy
+    _docker() {
+        case $1 in
+            inspect)
+                case $3 in
+                    *State.Running*) printf 'true\n' ;;
+                    *Config.Image*) printf 'caddy:2\n' ;;
+                    *HostConfig.NetworkMode*) printf 'bridge\n' ;;
+                esac ;;
+            port) printf '8080/tcp -> 0.0.0.0:8080\n' ;;
+        esac
+        return 0
+    }
+    rc=0
+    out=$(_check_caddy 2>&1) || rc=$?
+    printf 'RC=%d\n%s\n' "$rc" "$out"
+)
+[[ $pm == *"RC=1"* && $pm == *"does not publish both TCP 80 and 443"* ]] && _pass ||
+    _fail "bridge without published ports: $pm"
+
+# Rollback: a failing in-container fmt deletes the fragment and restores the
+# Caddyfile backup (docker channel, native rollback semantics).
+rollback=$(
+    SBX=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-docker-rb.XXXXXX")
+    export PROXYHUB_ROOT=$SBX
+    mkdir -p "$SBX/srv/caddy/conf.d"
+    printf '# existing caddyfile\n' >"$SBX/srv/caddy/Caddyfile"
+    PROXYHUB_CADDY_MODE=docker
+    PROXYHUB_CADDY_CONTAINER=caddy
+    DOMAIN=proxy.example.com
+    SITE_PATH="aB3_validSitePath_000"
+    EMAIL=""
+    TIMESTAMP=20260730000000
+    _is_test_mode() { return 1; }
+    _docker() {
+        if [[ $1 == inspect ]]; then
+            case $3 in *Mounts*) printf 'bind\t/etc/caddy\t/srv/caddy\t\n' ;; esac
+        elif [[ $1 == exec ]]; then
+            return 1 # in-container caddy fmt fails
+        fi
+        return 0
+    }
+    rc=0
+    _configure_caddy 2>"$SBX/err.log" || rc=$?
+    printf 'RC=%d\n' "$rc"
+    printf 'SBX=%s\n' "$SBX"
+)
+rb_rc=$(printf '%s\n' "$rollback" | sed -n 's/^RC=//p')
+RB_SBX=$(printf '%s\n' "$rollback" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$RB_SBX")
+
+_assert_eq 1 "$rb_rc" "docker rollback exit code"
+[[ ! -e $RB_SBX/srv/caddy/conf.d/proxyhub.caddy ]] && _pass || _fail "fragment survives rollback"
+_assert_eq "# existing caddyfile" "$(cat "$RB_SBX/srv/caddy/Caddyfile")" "Caddyfile restored from backup"
+_assert_file_contains "$RB_SBX/err.log" "rolled back the Caddy changes"
+
+# Import idempotency: re-running _ensure_caddy_import must not duplicate the
+# import line (docker mode, bind mount).
+idem=$(
+    SBX=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-docker-idem.XXXXXX")
+    export PROXYHUB_ROOT=$SBX
+    mkdir -p "$SBX/srv/caddy"
+    PROXYHUB_CADDY_MODE=docker
+    PROXYHUB_CADDY_CONTAINER=caddy
+    EMAIL=""
+    TIMESTAMP=20260730000001
+    _docker() {
+        if [[ $1 == inspect ]]; then
+            case $3 in *Mounts*) printf 'bind\t/etc/caddy\t/srv/caddy\t\n' ;; esac
+        fi
+        return 0
+    }
+    _ensure_caddy_import >/dev/null 2>&1 && _ensure_caddy_import >/dev/null 2>&1
+    grep -cF 'import /etc/caddy/conf.d/*.caddy' "$SBX/srv/caddy/Caddyfile"
+    printf 'SBX=%s\n' "$SBX"
+)
+TEST_DIRS+=("$(printf '%s\n' "$idem" | sed -n 's/^SBX=//p')")
+_assert_eq 1 "$(printf '%s\n' "$idem" | head -1)" "docker import line idempotent"
+
+# --------------------------------------------------------------------------
 # Caddy-missing guidance (skipped when a real caddy is on the base PATH)
 # --------------------------------------------------------------------------
 
@@ -467,6 +705,7 @@ if ! env -i PATH=/usr/bin:/bin bash -c 'command -v caddy' >/dev/null 2>&1; then
     _assert_rc 1 "caddy missing stops with instructions" env PROXYHUB_ROOT= bash -c '
         export PROXYHUB_INSTALL_NO_MAIN=1 PATH=/usr/bin:/bin
         source "$1/install.sh"
+        _docker() { return 1; } # no docker CLI on this simulated host
         _check_caddy
     ' _ "$REPO_ROOT"
 else
