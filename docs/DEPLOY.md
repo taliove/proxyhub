@@ -148,7 +148,7 @@ GitHub（raw.githubusercontent.com、github.com/releases）在国内大面积不
 curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh | bash
 ```
 
-安装器运行期拉取伴侣库（lib.sh、proxyhubctl）同样 jsDelivr 优先、raw.githubusercontent 后备，两者都失败才报错退出。注意：jsDelivr 只解决「脚本入口」，制品（tarball）默认仍从 GitHub releases 下载——GitHub 整体不可达的机器还必须配合下面的镜像下载基。
+安装器运行期拉取伴侣库（lib.sh、proxyhubctl）同样 jsDelivr 优先、raw.githubusercontent 后备，两者都失败才报错退出。注意：jsDelivr 只解决「脚本入口」，制品（tarball）默认仍从 GitHub releases 下载——GitHub 整体不可达的机器还必须配合下面的镜像下载基。另请注意 jsDelivr 的 `@main` 缓存最长约 12 小时：刚发布的版本（尤其公钥轮换后的首个版本）经 jsDelivr 入口可能拿到旧脚本，此时改用 raw.githubusercontent 入口或等缓存过期。
 
 ### 制品走镜像：--download-base
 

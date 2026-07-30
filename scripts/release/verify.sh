@@ -74,6 +74,10 @@ verify_dir_signature() {
     log "OK SHA256SUMS.minisig (minisign signature over SHA256SUMS)"
     return 0
   fi
+  if [[ -f "$minisig" ]] && ! compgen -G "$dir/proxyhub_*.tar.gz" >/dev/null; then
+    log "WARN: SHA256SUMS.minisig present in $dir but no proxyhub_*.tar.gz - nothing to verify"
+    return 0
+  fi
   if [[ ! -f "$minisig" && -n "${MINISIGN_KEY_FILE:-}" ]]; then
     log "SHA256SUMS.minisig missing in $dir but MINISIGN_KEY_FILE is set - signing was requested, refusing to pass"
     return 1
