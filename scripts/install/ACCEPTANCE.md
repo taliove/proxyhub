@@ -2,11 +2,11 @@
 
 本清单用于 0.1.0 正式发布前的人工验收测试。每项测试均有明确的通过/失败标准。**不自动化** — 这是发布前的人工门禁。
 
-测试环境:
+测试环境：
 - **OS**: Ubuntu 22.04 LTS (amd64)
-- **架构**: amd64
-- **域名**: 测试用域名（DNS 已配置）
-- **网络**: 公网可访问
+- **架构**： amd64
+- **域名**： 测试用域名（DNS 已配置）
+- **网络**： 公网可访问
 
 ---
 
@@ -19,7 +19,7 @@
 
 ### 步骤
 1. SSH 登录服务器
-2. 运行安装器:
+2. 运行安装器：
    ```bash
    bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/install.sh)
    ```
@@ -32,15 +32,15 @@
 - [ ] 安装器输出"安装成功"消息
 - [ ] 访问 `https://<domain>/<site-path>/health` 返回 200 OK
 - [ ] 使用凭证登录管理后台成功
-- [ ] systemd 服务运行中:
+- [ ] systemd 服务运行中：
   ```bash
   systemctl status proxyhub | grep "active (running)"
   ```
-- [ ] Caddy 服务运行中:
+- [ ] Caddy 服务运行中：
   ```bash
   systemctl status caddy | grep "active (running)"
   ```
-- [ ] 文件存在且权限正确:
+- [ ] 文件存在且权限正确：
   ```bash
   ls -l /usr/local/bin/proxyhub          # -rwxr-xr-x root:root
   ls -l /usr/local/bin/proxyhubctl       # -rwxr-xr-x root:root
@@ -65,7 +65,7 @@
 - [ ] Caddy 未安装
 
 ### 步骤
-1. 运行非交互式安装:
+1. 运行非交互式安装：
    ```bash
    bash install.sh \
      --non-interactive \
@@ -125,15 +125,15 @@
 - [ ] 测试3 已通过（系统有数据）
 
 ### 步骤
-1. 运行备份:
+1. 运行备份：
    ```bash
    proxyhubctl backup
    ```
-2. 检查备份文件:
+2. 检查备份文件：
    ```bash
    ls -lh /var/lib/proxyhub/backups/
    ```
-3. 验证备份可读取（不解密，仅检查文件头）:
+3. 验证备份可读取（不解密，仅检查文件头）：
    ```bash
    file /var/lib/proxyhub/backups/proxyhub-backup-*.tar.gz.enc
    ```
@@ -157,12 +157,12 @@
 - [ ] 测试4 已通过（有备份文件）
 
 ### 步骤
-1. 记录当前数据库哈希:
+1. 记录当前数据库哈希：
    ```bash
    md5sum /var/lib/proxyhub/data.db
    ```
 2. 添加一条新机场（用于验证恢复后数据回退）
-3. 恢复备份:
+3. 恢复备份：
    ```bash
    proxyhubctl restore /var/lib/proxyhub/backups/proxyhub-backup-*.tar.gz.enc --yes
    ```
@@ -191,19 +191,19 @@
 - [ ] 当前版本不是最新版本（或使用 `--version` 指定旧版本重新安装）
 
 ### 步骤
-1. 记录当前版本:
+1. 记录当前版本：
    ```bash
    proxyhub --version
    ```
-2. 运行更新:
+2. 运行更新：
    ```bash
    proxyhubctl update
    ```
-3. 检查新版本:
+3. 检查新版本：
    ```bash
    proxyhub --version
    ```
-4. 验证服务正常:
+4. 验证服务正常：
    ```bash
    proxyhubctl status
    curl https://<domain>/<site-path>/health
@@ -231,7 +231,7 @@
 - [ ] 测试6 已通过
 
 ### 步骤
-1. 手动破坏二进制文件（模拟损坏下载）:
+1. 手动破坏二进制文件（模拟损坏下载）：
    ```bash
    # 备份真实二进制
    cp /usr/local/bin/proxyhub /tmp/proxyhub.bak
@@ -239,19 +239,19 @@
    echo "broken" > /tmp/proxyhub-fake
    chmod +x /tmp/proxyhub-fake
    ```
-2. 模拟更新失败（手动执行 proxyhubctl update 的部分步骤）:
+2. 模拟更新失败（手动执行 proxyhubctl update 的部分步骤）：
    ```bash
    systemctl stop proxyhub
    cp /tmp/proxyhub-fake /usr/local/bin/proxyhub
    # 尝试启动（应失败）
    systemctl start proxyhub || echo "Expected failure"
    ```
-3. 手动回滚:
+3. 手动回滚：
    ```bash
    cp /tmp/proxyhub.bak /usr/local/bin/proxyhub
    systemctl start proxyhub
    ```
-4. 验证服务恢复:
+4. 验证服务恢复：
    ```bash
    proxyhubctl status
    ```
@@ -265,7 +265,7 @@
 - 回滚后服务无法启动
 - 数据损坏
 
-**注**: 真实的 `proxyhubctl update` 应自动检测失败并回滚。此测试验证手动回滚路径可行。
+**注**： 真实的 `proxyhubctl update` 应自动检测失败并回滚。此测试验证手动回滚路径可行。
 
 ---
 
@@ -284,11 +284,11 @@
    proxyhubctl rotate-path
    ```
 3. 记录新 Site Path（从输出中）
-4. 验证旧 Site Path 已失效:
+4. 验证旧 Site Path 已失效：
    ```bash
    curl https://<domain>/<old-site-path>/health  # 应返回 404
    ```
-5. 验证新 Site Path 可用:
+5. 验证新 Site Path 可用：
    ```bash
    curl https://<domain>/<new-site-path>/health  # 应返回 200
    ```
@@ -316,19 +316,19 @@
 - [ ] 测试8 已通过
 
 ### 步骤
-1. 启用自动更新:
+1. 启用自动更新：
    ```bash
    proxyhubctl auto-update enable
    ```
-2. 检查 cron 任务:
+2. 检查 cron 任务：
    ```bash
    crontab -l | grep proxyhubctl
    ```
-3. 禁用自动更新:
+3. 禁用自动更新：
    ```bash
    proxyhubctl auto-update disable
    ```
-4. 验证 cron 任务已移除:
+4. 验证 cron 任务已移除：
    ```bash
    crontab -l | grep proxyhubctl || echo "Cron removed (expected)"
    ```
@@ -349,32 +349,32 @@
 
 ### 前置条件
 - [ ] 测试9 已通过
-- [ ] 已创建最终备份:
+- [ ] 已创建最终备份：
   ```bash
   proxyhubctl backup
   ```
 
 ### 步骤
-1. 运行卸载:
+1. 运行卸载：
    ```bash
    proxyhubctl uninstall
    ```
 2. 选择"保留备份"（yes）
-3. 验证文件已移除:
+3. 验证文件已移除：
    ```bash
    ls /usr/local/bin/proxyhub 2>&1 | grep "No such file"
    ls /etc/proxyhub 2>&1 | grep "No such file"
    ls /var/lib/proxyhub 2>&1 | grep "No such file"
    ```
-4. 验证备份已保存:
+4. 验证备份已保存：
    ```bash
    ls -lh /root/proxyhub-uninstall-backup-*.tar.gz.enc
    ```
-5. 验证 Caddy 配置已移除:
+5. 验证 Caddy 配置已移除：
    ```bash
    ls /etc/caddy/conf.d/proxyhub.caddy 2>&1 | grep "No such file"
    ```
-6. 验证 systemd 单元已移除:
+6. 验证 systemd 单元已移除：
    ```bash
    systemctl status proxyhub 2>&1 | grep "could not be found"
    ```
@@ -385,7 +385,7 @@
 - [ ] 备份归档存在于 `/root/`
 - [ ] Caddy 配置已清理
 - [ ] systemd 单元已移除
-- [ ] `proxyhub` 用户已删除:
+- [ ] `proxyhub` 用户已删除：
   ```bash
   id proxyhub 2>&1 | grep "no such user"
   ```
@@ -403,13 +403,13 @@
 - [ ] 测试10 已通过（系统已卸载）
 
 ### 步骤
-1. 重新运行安装器（交互式）:
+1. 重新运行安装器（交互式）：
    ```bash
    bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/install.sh)
    ```
 2. 按提示完成安装
 3. 验证服务正常
-4. 尝试再次运行安装器（应拒绝）:
+4. 尝试再次运行安装器（应拒绝）：
    ```bash
    bash install.sh --non-interactive --domain test.example.com
    ```
@@ -426,10 +426,91 @@
 
 ---
 
+## 测试 12: Docker Caddy 模式安装（host 网络容器）
+
+### 前置条件
+- [ ] 全新 Ubuntu 22.04 服务器（未安装 ProxyHub、宿主机无 caddy 二进制）
+- [ ] DNS A 记录已指向服务器 IP
+- [ ] Docker ≥ 20.10 已安装，root 可直接执行 docker 命令
+- [ ] host 网络 caddy 容器运行中：
+  ```bash
+  mkdir -p /srv/caddy
+  docker run -d --name caddy-host --network host \
+    -v /srv/caddy:/etc/caddy \
+    caddy:2
+  ```
+
+### 步骤
+1. 运行非交互式安装，显式指名容器：
+   ```bash
+   bash install.sh \
+     --non-interactive \
+     --domain test12.example.com \
+     --caddy-docker caddy-host
+   ```
+2. 等待安装完成
+
+### 通过标准
+- [ ] 安装日志包含 docker caddy 模式与所选容器名
+- [ ] 安装日志提示 host 网络、回环拓扑不变
+- [ ] 配置片段写入 `/srv/caddy/conf.d/proxyhub.caddy`，宿主侧 Caddyfile 追加 `import /etc/caddy/conf.d/*.caddy`
+- [ ] `/etc/proxyhub/config.yaml` 的 `server.host` 仍为 `127.0.0.1`（回环不变）
+- [ ] `/root/.proxyhub-install-info` 含 `CADDY_MODE=docker` 与 `CADDY_CONTAINER=caddy-host`
+- [ ] 访问 `https://<domain>/<site-path>/health` 返回 200 OK
+- [ ] `proxyhubctl rotate-path` 成功（docker 通道重写片段并重载容器），新 Site Path 可访问
+
+### 失败标准
+- 安装器误走 native 路径或误报 Caddy 缺失
+- 片段写进容器层而非挂载目录
+- rotate-path 报错或未走 docker 通道
+
+---
+
+## 测试 13: Docker Caddy 模式安装（桥接网络容器）
+
+### 前置条件
+- [ ] 全新 Ubuntu 22.04 服务器（未安装 ProxyHub、宿主机无 caddy 二进制）
+- [ ] DNS A 记录已指向服务器 IP
+- [ ] Docker ≥ 20.10 已安装，root 可直接执行 docker 命令
+- [ ] 桥接网络 caddy 容器运行中（发布 80/443、带 host-gateway 映射）：
+  ```bash
+  mkdir -p /srv/caddy-bridge
+  docker run -d --name caddy-bridge \
+    -p 80:80 -p 443:443 \
+    -v /srv/caddy-bridge:/etc/caddy \
+    --add-host host.docker.internal:host-gateway \
+    caddy:2
+  ```
+
+### 步骤
+1. 运行非交互式安装（不指名容器，验证单容器自动探测）：
+   ```bash
+   bash install.sh \
+     --non-interactive \
+     --domain test13.example.com
+   ```
+2. 等待安装完成，阅读安装摘要
+
+### 通过标准
+- [ ] 安装日志明示自动选用了唯一候选容器 `caddy-bridge`
+- [ ] 安装日志打印网桥网关 IP 与 trusted 子网
+- [ ] 安装摘要包含网桥信任边界警告（信任边界扩到该 docker 网桥、同网桥容器可伪造 XFF）
+- [ ] `/etc/proxyhub/config.yaml` 的 `server.host` 为网桥网关 IP,`trusted_proxies` 为网桥子网
+- [ ] 配置片段的反代目标为 `host.docker.internal:8080`
+- [ ] 访问 `https://<domain>/<site-path>/health` 返回 200 OK
+- [ ] 负向抽查：用缺 `--add-host host.docker.internal:host-gateway` 的桥接容器重新安装，应 fail closed 并打印修复指引
+
+### 失败标准
+- 安装器绑定 127.0.0.1 导致容器反代不通
+- 安装摘要缺少信任边界警告
+- 缺 host-gateway 映射时安装未被拒绝
+
+---
+
 ## 验收决策
 
 ### 通过标准（全部满足）
-- [ ] 测试 1-11 全部通过
+- [ ] 测试 1-13 全部通过
 - [ ] 无 CRITICAL 或 HIGH 优先级 bug
 - [ ] 文档完整（DEPLOY.md + SECURITY.md）
 - [ ] 安装器和 proxyhubctl 帮助文档准确
@@ -451,9 +532,9 @@
 
 ## 测试结果记录
 
-测试执行人: _______________  
-测试日期: _______________  
-ProxyHub 版本: _______________  
+测试执行人： _______________  
+测试日期： _______________  
+ProxyHub 版本： _______________  
 
 | 测试编号 | 测试名称 | 结果 | 备注 |
 |---------|---------|------|------|
@@ -468,8 +549,10 @@ ProxyHub 版本: _______________
 | 9 | 自动更新启用/禁用 | ☐ PASS ☐ FAIL | |
 | 10 | 卸载 | ☐ PASS ☐ FAIL | |
 | 11 | 重新安装 | ☐ PASS ☐ FAIL | |
+| 12 | Docker Caddy 模式（host 网络） | ☐ PASS ☐ FAIL | |
+| 13 | Docker Caddy 模式（桥接网络） | ☐ PASS ☐ FAIL | |
 
-**最终决策**: ☐ 批准发布 0.1.0  ☐ 需要修复后重测
+**最终决策**： ☐ 批准发布 0.1.0  ☐ 需要修复后重测
 
-**签字**: _______________  
-**日期**: _______________
+**签字**： _______________  
+**日期**： _______________

@@ -10,6 +10,7 @@ ProxyHub 内嵌 mihomo 代理内核，无需单独下载或配置。单二进制
 - **用户**： root 权限
 - **systemd**: 必需（用于服务管理）
 - **网络**： 出站 HTTPS 连接（用于下载和健康检查）
+- **Docker**： 仅 Docker Caddy 模式需要——Docker ≥ 20.10，且安装器以 root 直接执行 docker 命令（详见「Docker 容器中的 Caddy」）
 
 ### 资源占用参考
 
@@ -27,7 +28,9 @@ ProxyHub 内嵌 mihomo 代理内核，无需单独下载或配置。单二进制
 - TCP 80/443 端口可用或已被 Caddy 占用
 
 ### Caddy 反向代理
-ProxyHub 仅监听 `127.0.0.1:8080`（环回地址），**必须**通过反向代理暴露 HTTPS 访问。
+ProxyHub 的管理面只监听本机地址（默认 `127.0.0.1:8080` 环回；Docker 桥接拓扑例外，见「Docker 容器中的 Caddy」），**必须**通过反向代理暴露 HTTPS 访问。
+
+安装器识别三种 Caddy 形态：宿主机原生 systemd Caddy（native，本节）、Docker 容器中的 Caddy（docker，见下节）、运维自带反代（`--no-caddy`，none）。
 
 安装 Caddy v2（如果未安装）：
 ```bash
@@ -43,6 +46,79 @@ apt install caddy
 ```bash
 systemctl status caddy
 ```
+
+### Docker 容器中的 Caddy(--caddy-docker)
+
+适用场景：目标机的 Caddy v2 已经跑在 Docker 容器里（`docker run` 或 compose 部署），宿主机上没有原生 caddy 二进制。安装器识别并集成这个容器：写配置片段、容器内校验与重载、失败自动回滚，ProxyHub 本体仍是 systemd 裸机安装——本模式不是全容器化编排。
+
+#### 前提
+
+- **Docker ≥ 20.10**：桥接网络的容器依赖 `host.docker.internal:host-gateway` 映射能力（20.10 引入）；
+- **root 直接执行 docker 命令**：安装器本身以 root 运行，对 Docker 的调用由 root 直接发起，需能访问 Docker socket;
+- **镜像为 caddy**：镜像名取最后一段（去掉 registry/命名空间前缀）、再去掉 tag/digest 后恰为 `caddy`(`caddy`、`caddy:2`、`registry.example.com/caddy:2`、`team/caddy` 均可；`caddy-fork`、`team/caddy-proxy` 之类不算)。
+
+#### 容器要求清单
+
+安装器逐项校验，任一不满足即拒绝安装（fail closed）并打印修复指引：
+
+1. 容器存在且处于运行中；
+2. `/etc/caddy` 是持久挂载：bind mount 或 named volume 均可，安装器解析到宿主机路径写入配置。**单文件挂载**（如只挂 Caddyfile）或无挂载会被拒绝——写在容器层上的配置重建即丢；
+3. 桥接网络的容器：已发布 TCP 80 与 443（host 网络容器豁免，它直接绑定宿主机端口）；
+4. 桥接网络的容器：具备 `host.docker.internal:host-gateway` 映射（`docker run` 加 `--add-host host.docker.internal:host-gateway`,compose 用 `extra_hosts`）。
+
+#### 模式优先级与自动探测
+
+安装器按以下顺序判定 Caddy 模式（`--caddy-docker` 与 `--no-caddy` 互斥，同给即报错退出）：
+
+1. 给了 `--caddy-docker <容器名>`：强制 docker 模式，校验该容器；
+2. 宿主机存在 caddy 二进制：走 native（现状不变）；
+3. 恰好一个运行中的 caddy 镜像容器：自动选用，并在安装日志中明示；
+4. 零个或多个候选：报错退出（多个时列出候选名，要求显式指名）。
+
+#### 用法示例
+
+docker run 形态（桥接网络）：
+
+```bash
+docker run -d --name caddy \
+  -p 80:80 -p 443:443 \
+  -v /srv/caddy:/etc/caddy \
+  --add-host host.docker.internal:host-gateway \
+  caddy:2
+
+bash install.sh --non-interactive --domain proxy.example.com \
+  --caddy-docker caddy
+```
+
+compose 形态（等价片段）：
+
+```yaml
+services:
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /srv/caddy:/etc/caddy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+host 网络容器（`network_mode: host`）无需任何额外参数：80/443 发布检查豁免，回环拓扑原样保留，行为与 native 一致。
+
+#### 桥接模式的安全降级（务必知情）
+
+> **警告**：桥接网络的 caddy 容器够不到宿主机的回环地址，安装器因此把 ProxyHub 管理面绑定到该 docker 网桥的网关 IP，并把 `trusted_proxies` 收窄到该网桥子网。这意味着管理面的信任边界从「仅本机 loopback」扩到「整个该 docker 网桥」：**同一网桥上的任意容器都可以直连管理面（无 TLS），且可以伪造 X-Forwarded-For 绕过 IP 层防御**（IP2Ban、验证码、黑名单的判定都可能被欺骗）。Site Path 保密与反代层的 XFF 替换仍然有效。安装摘要会再次打印这条警告。
+>
+> 不信任网桥内其他容器的部署，请改用以下任一方案：
+> - host 网络的 caddy 容器（信任边界不扩）；
+> - 原生 systemd Caddy(native 模式);
+> - 把 caddy 隔离在独立的 docker 网桥上，网桥内只放你信任的容器。
+
+#### 安装后的运维对齐
+
+安装档案（`/root/.proxyhub-install-info`）新增 `CADDY_MODE` 与 `CADDY_CONTAINER` 两个字段，`proxyhubctl` 的 update / backup / restore / rotate-path / uninstall 读取档案后自动走 docker 通道（容器内 fmt/validate/reload,fragment 写到容器挂载的宿主机路径），无需额外参数。容器失联（被删、被改名）时这些命令 fail closed 并明示；容器换了名字时，编辑档案里的 `CADDY_CONTAINER` 为新容器名即可。Caddy admin API 被禁用（`admin off`）时，重载自动 fallback 为 `docker restart <容器>`，并警告对其他站点的短暂中断。
 
 ### 自带反向代理(--no-caddy)
 
@@ -122,7 +198,7 @@ install.sh --help
 ├── data.db                      # SQLite 数据库
 └── .state-fingerprint           # 状态指纹（验证升级未丢失数据）
 /etc/systemd/system/proxyhub.service   # systemd 单元
-/etc/caddy/conf.d/proxyhub.caddy       # Caddy 配置片段
+/etc/caddy/conf.d/proxyhub.caddy       # Caddy 配置片段(docker 模式:容器 /etc/caddy 挂载的宿主机路径下)
 /root/.proxyhub-install-info     # 安装记录（不含密码）
 ```
 
