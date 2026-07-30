@@ -211,6 +211,18 @@ _docker() {
     command docker "$@"
 }
 
+# _caddy_bin ARGS... - host caddy CLI wrapper seam, isomorphic to _docker: a
+# logged no-op under PROXYHUB_ROOT, otherwise `command caddy "$@"`. The
+# native channel routes through it so test-mode callers never execute a real
+# host caddy (restores the deleted install.sh _caddy_cli seam semantics).
+_caddy_bin() {
+    if _is_test_mode; then
+        _ph_log "test mode: caddy $*"
+        return 0
+    fi
+    command caddy "$@"
+}
+
 # ensure_proxyhub_group - create the low-privilege proxyhub system group.
 # Idempotent; no-op under PROXYHUB_ROOT.
 ensure_proxyhub_group() {
@@ -607,13 +619,22 @@ docker_caddy_prepare_topology() {
     _ph_log "container '${name}' uses bridge networking (${mode}): gateway ${PROXYHUB_BRIDGE_GATEWAY}, trusted subnet ${PROXYHUB_BRIDGE_SUBNET}"
 }
 
+# _is_bridge_topology - true when the docker caddy container sits on a
+# bridge network and ProxyHub must therefore bind the bridge gateway (ADR
+# 0035). PROXYHUB_DOCKER_NETMODE is already normalized to host|bridge by
+# docker_caddy_prepare_topology, so a user-defined (compose) network also
+# reads as bridge here.
+_is_bridge_topology() {
+    [[ $PROXYHUB_CADDY_MODE == docker && $PROXYHUB_DOCKER_NETMODE == bridge ]]
+}
+
 # caddy_upstream_addr - print the upstream address the managed fragment
 # proxies to. Loopback topologies (native, none, host-network docker) keep
 # PROXYHUB_LISTEN_ADDR; a bridge-network docker caddy reaches the host
 # listener through its host-gateway mapping, so the target becomes
 # host.docker.internal with only the listen port carried over.
 caddy_upstream_addr() {
-    if [[ $PROXYHUB_CADDY_MODE == docker && $PROXYHUB_DOCKER_NETMODE == bridge ]]; then
+    if _is_bridge_topology; then
         printf 'host.docker.internal:%s' "${PROXYHUB_LISTEN_ADDR##*:}"
         return 0
     fi
@@ -691,7 +712,7 @@ caddy_fragment_path() {
 # always sees the fragment at the constant container path.
 caddy_fmt() {
     case "$PROXYHUB_CADDY_MODE" in
-        native) caddy fmt --overwrite "$1" ;;
+        native) _caddy_bin fmt --overwrite "$1" ;;
         docker) _docker exec "$PROXYHUB_CADDY_CONTAINER" caddy fmt --overwrite "$PROXYHUB_CADDY_FRAGMENT" ;;
         none) return 0 ;;
         *) _caddy_mode_fail ;;
@@ -703,7 +724,7 @@ caddy_fmt() {
 # CONFIG argument.
 caddy_validate() {
     case "$PROXYHUB_CADDY_MODE" in
-        native) caddy validate --config "$1" ;;
+        native) _caddy_bin validate --config "$1" ;;
         docker) _docker exec "$PROXYHUB_CADDY_CONTAINER" caddy validate --config /etc/caddy/Caddyfile ;;
         none) return 0 ;;
         *) _caddy_mode_fail ;;

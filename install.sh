@@ -243,7 +243,7 @@ _have_caddy_bin() { command -v caddy >/dev/null 2>&1; }
 # port survives, the host part is replaced by the bridge gateway (the
 # user-facing flag stays loopback-only by design, spec decision 5).
 _note_bridge_listen_override() {
-    [[ $PROXYHUB_CADDY_MODE == docker && $PROXYHUB_DOCKER_NETMODE == bridge && -n $ARG_LISTEN_ADDR ]] || return 0
+    _is_bridge_topology && [[ -n $ARG_LISTEN_ADDR ]] || return 0
     _ph_log "--listen-addr ${ARG_LISTEN_ADDR}: bridge mode replaces the loopback host part with the bridge gateway; effective bind ${PROXYHUB_BRIDGE_GATEWAY}:${PROXYHUB_LISTEN_ADDR##*:}"
 }
 
@@ -457,7 +457,7 @@ _write_config() {
     # gateway so the containerized Caddy can reach it, and XFF trust narrows
     # to the bridge subnet. Host-network/native keep the loopback bind and
     # stay byte-identical to before.
-    if [[ $PROXYHUB_CADDY_MODE == docker && $PROXYHUB_DOCKER_NETMODE == bridge ]]; then
+    if _is_bridge_topology; then
         server_host=$PROXYHUB_BRIDGE_GATEWAY
         trusted_line="  trusted_proxies: [\"${PROXYHUB_BRIDGE_SUBNET}\"]"$'\n'
     fi
@@ -657,7 +657,7 @@ _verify_health() {
     local probe_addr=$PROXYHUB_LISTEN_ADDR
     # Docker bridge topology: the loopback probe targets the bridge gateway
     # address (reachable from the host), where the admin plane now listens.
-    if [[ $PROXYHUB_CADDY_MODE == docker && $PROXYHUB_DOCKER_NETMODE == bridge ]]; then
+    if _is_bridge_topology; then
         probe_addr="${PROXYHUB_BRIDGE_GATEWAY}:${PROXYHUB_LISTEN_ADDR##*:}"
     fi
     _verify_url "http://${probe_addr}/${SITE_PATH}/healthz" "$PROXYHUB_LOOPBACK_HEALTH_TRIES" proxyhub || return 1
@@ -701,7 +701,7 @@ _write_install_record() {
     # Docker bridge topology security disclosure (ADR 0035 consequences): the
     # bounded widening of the admin-plane trust boundary must be stated in
     # the one-time summary so the operator can make an informed choice.
-    if [[ $caddy_mode == docker && $PROXYHUB_DOCKER_NETMODE == bridge ]]; then
+    if _is_bridge_topology; then
         printf '  WARNING (docker bridge mode): the management-plane trust boundary\n  widened from loopback to the %s docker bridge. Any container on\n  this bridge can reach the admin plane directly (no TLS) and can\n  spoof X-Forwarded-For. If you do not trust the other containers on\n  this bridge, use a host-network caddy container or native Caddy\n  instead, and isolate caddy on a dedicated bridge network.\n\n' \
             "$PROXYHUB_BRIDGE_SUBNET"
     fi
