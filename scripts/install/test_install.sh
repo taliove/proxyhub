@@ -963,6 +963,39 @@ _assert_file_contains "$DEF_SBX/root/.proxyhub-install-info" \
     "DOWNLOAD_BASE=https://github.com/taliove/proxyhub/releases/download"
 _assert_file_contains "$DEF_SBX/stderr.log" "signature verified"
 
+# Probe tolerance: a bare mirror base answering 404 (real curl -f would exit
+# 22) must NOT fail the connectivity check - the probe proves transport
+# reachability only (Spec review: ghproxy-style bases 404 on the bare path).
+probe404=$(
+    setup_sandbox
+    mock_host
+    eval "_mock_curl_orig() $(declare -f _curl | tail -n +2)"
+    _curl() {
+        local has_f=0 arg url=""
+        for arg in "$@"; do
+            case $arg in
+                -*f*) has_f=1 ;;
+                http*) url=$arg ;;
+            esac
+        done
+        if [[ $url == "https://mirror.example.com/dl" && $has_f == 1 ]]; then
+            return 22 # real curl -f behavior on a 404 bare mirror base
+        fi
+        _mock_curl_orig "$@"
+    }
+    export CURL_CALLS="$SBX/curl.calls"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --version 9.9.9 \
+        --download-base "https://mirror.example.com/dl" \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+probe404_rc=$(printf '%s\n' "$probe404" | sed -n 's/^RC=//p')
+P404_SBX=$(printf '%s\n' "$probe404" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$P404_SBX")
+_assert_eq 0 "$probe404_rc" "404 mirror base tolerated by connectivity probe"
+_assert_file_contains "$P404_SBX/root/.proxyhub-install-info" "DOWNLOAD_BASE=https://mirror.example.com/dl"
+
 # --------------------------------------------------------------------------
 # Signature verification fail-closed (ADR 0036)
 # --------------------------------------------------------------------------

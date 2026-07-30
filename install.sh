@@ -374,9 +374,13 @@ _validate_host_platform() {
     fi
     # Connectivity self-check follows the download base (ADR 0036): the
     # official base still probes github.com; a custom base is probed itself.
+    # No -f: the probe proves TRANSPORT reachability only. A bare mirror
+    # base (ghproxy prefix, nginx reverse proxy) commonly answers 404 while
+    # serving the artifacts fine, so any HTTP response counts as reachable;
+    # only a transport failure (DNS/connect/TLS) fails the check.
     local probe=https://github.com
     [[ $DOWNLOAD_BASE == "$(default_download_base "$REPO")" ]] || probe=$DOWNLOAD_BASE
-    if ! _curl -fsS --max-time 10 -o /dev/null "$probe"; then
+    if ! _curl -sS --max-time 10 -o /dev/null "$probe"; then
         _ph_err "outbound HTTPS to ${probe} failed: the installer must reach the release download base (read-only check; nothing was modified)"
         if [[ $probe == https://github.com ]]; then
             _ph_err "if GitHub is unreachable from this host, point --download-base at a reachable mirror (see --help)"
