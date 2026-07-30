@@ -258,6 +258,417 @@ if [[ ! -e "$CADDY" ]]; then PASS=$((PASS + 1)); else
 fi
 
 # --------------------------------------------------------------------------
+# Docker caddy mode (ADR 0035)
+# --------------------------------------------------------------------------
+
+# Image matcher: all caddy reference forms match, lookalikes do not.
+_assert_ok _docker_image_is_caddy caddy
+_assert_ok _docker_image_is_caddy caddy:2
+_assert_ok _docker_image_is_caddy caddy:2-alpine
+_assert_ok _docker_image_is_caddy caddy@sha256:0000000000000000000000000000000000000000000000000000000000000000
+_assert_ok _docker_image_is_caddy docker.io/library/caddy:2
+_assert_fail _docker_image_is_caddy nginx:latest
+_assert_fail _docker_image_is_caddy caddy-fork:1
+_assert_fail _docker_image_is_caddy example.com/team/caddy-proxy:1
+
+# Candidate enumeration filters running containers by caddy image.
+cand=$(bash -c '
+    source "$0"
+    _docker() {
+        printf "web caddy:2\napi nginx:1.27\nedge docker.io/library/caddy:2-alpine\n"
+        printf "pin caddy@sha256:0000000000000000000000000000000000000000000000000000000000000000\n"
+        printf "fork example.com/team/caddy-fork:1\n"
+    }
+    docker_caddy_candidates
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "$(printf 'web\nedge\npin')" "$cand" "docker_caddy_candidates filters caddy images"
+
+# Docker CLI unavailable -> enumeration fails closed.
+_assert_fail bash -c '
+    source "$0"
+    _docker() { return 1; }
+    docker_caddy_candidates
+' "$SCRIPT_DIR/lib.sh"
+
+# Explicit container validation matrix.
+_assert_ok bash -c '
+    source "$0"
+    _docker() { case $3 in *State.Running*) printf "true\n" ;; *Config.Image*) printf "caddy:2\n" ;; esac; return 0; }
+    docker_validate_caddy_container caddy
+' "$SCRIPT_DIR/lib.sh"
+_assert_fail bash -c '
+    source "$0"
+    _docker() { return 1; }
+    docker_validate_caddy_container ghost
+' "$SCRIPT_DIR/lib.sh"
+_assert_fail bash -c '
+    source "$0"
+    _docker() { case $3 in *State.Running*) printf "false\n" ;; esac; return 0; }
+    docker_validate_caddy_container stopped
+' "$SCRIPT_DIR/lib.sh"
+_assert_fail bash -c '
+    source "$0"
+    _docker() { case $3 in *State.Running*) printf "true\n" ;; *Config.Image*) printf "nginx:latest\n" ;; esac; return 0; }
+    docker_validate_caddy_container web
+' "$SCRIPT_DIR/lib.sh"
+
+# Mount resolution: bind mount resolves to its host Source directory.
+mroot=$(env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
+    source "$0"
+    mkdir -p "$PROXYHUB_ROOT/srv/caddy"
+    _docker() { printf "bind\t/etc/caddy\t/srv/caddy\t\n"; }
+    docker_caddy_mount_root caddy
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "/srv/caddy" "$mroot" "bind mount resolution"
+
+# Mount resolution: named volumes resolve to the mount's Source (the docker
+# volume data path - correct even for a custom data-root or rootless docker),
+# with the same existence check as bind mounts.
+mroot=$(env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
+    source "$0"
+    mkdir -p "$PROXYHUB_ROOT/var/lib/docker/volumes/caddy-data/_data"
+    _docker() { printf "volume\t/etc/caddy\t/var/lib/docker/volumes/caddy-data/_data\tcaddy-data\n"; }
+    docker_caddy_mount_root caddy
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "/var/lib/docker/volumes/caddy-data/_data" "$mroot" "named volume resolution (Source)"
+mroot=$(env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
+    source "$0"
+    mkdir -p "$PROXYHUB_ROOT/data/docker/volumes/caddy-data/_data"
+    _docker() { printf "volume\t/etc/caddy\t/data/docker/volumes/caddy-data/_data\tcaddy-data\n"; }
+    docker_caddy_mount_root caddy
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "/data/docker/volumes/caddy-data/_data" "$mroot" "named volume custom data-root Source"
+_assert_fail env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
+    source "$0"
+    _docker() { printf "volume\t/etc/caddy\t/var/lib/docker/volumes/gone/_data\tgone\n"; }
+    docker_caddy_mount_root caddy
+' "$SCRIPT_DIR/lib.sh"
+
+# Mount resolution: single-file mounts and missing mounts fail closed, with
+# remediation guidance pointing at a directory mount.
+_assert_fail bash -c '
+    source "$0"
+    _docker() { printf "bind\t/etc/caddy/Caddyfile\t/srv/Caddyfile\t\n"; }
+    docker_caddy_mount_root caddy
+' "$SCRIPT_DIR/lib.sh"
+_assert_fail bash -c '
+    source "$0"
+    _docker() { printf "volume\t/data\t/var/lib/docker/volumes/other/_data\tother\n"; }
+    docker_caddy_mount_root caddy
+' "$SCRIPT_DIR/lib.sh"
+sf_msg=$(bash -c '
+    source "$0"
+    _docker() { printf "bind\t/etc/caddy/Caddyfile\t/srv/Caddyfile\t\n"; }
+    docker_caddy_mount_root caddy
+' "$SCRIPT_DIR/lib.sh" 2>&1 || true)
+if [[ $sf_msg == *"-v /srv/caddy:/etc/caddy"* ]]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); printf 'FAIL: single-file mount error lacks remediation guidance: %s\n' "$sf_msg" >&2
+fi
+if [[ $sf_msg == *"mounts only sub-paths under /etc/caddy"* ]]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); printf 'FAIL: sub-path mount error misdiagnosed: %s\n' "$sf_msg" >&2
+fi
+# A mount AT /etc/caddy whose Source is unusable (missing dir / unsupported
+# type) fails closed with an accurate "not a usable persistent directory".
+bad_msg=$(bash -c '
+    source "$0"
+    _docker() { printf "bind\t/etc/caddy\t/srv/proxyhub-test-definitely-absent\t\n"; }
+    docker_caddy_mount_root caddy
+' "$SCRIPT_DIR/lib.sh" 2>&1 || true)
+if [[ $bad_msg == *"not a usable persistent directory"* ]]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); printf 'FAIL: unusable /etc/caddy mount misdiagnosed: %s\n' "$bad_msg" >&2
+fi
+
+# Port publishing: host networking is exempt; bridge must publish 80 and 443.
+_assert_ok bash -c '
+    source "$0"
+    _docker() { printf "host\n"; }
+    docker_caddy_ports_published caddy
+' "$SCRIPT_DIR/lib.sh"
+_assert_ok bash -c '
+    source "$0"
+    _docker() {
+        case $1 in
+            inspect) printf "bridge\n" ;;
+            port) printf "80/tcp -> 0.0.0.0:80\n443/tcp -> 0.0.0.0:443\n" ;;
+        esac
+        return 0
+    }
+    docker_caddy_ports_published caddy
+' "$SCRIPT_DIR/lib.sh"
+_assert_fail bash -c '
+    source "$0"
+    _docker() {
+        case $1 in
+            inspect) printf "bridge\n" ;;
+            port) printf "80/tcp -> 0.0.0.0:80\n" ;;
+        esac
+        return 0
+    }
+    docker_caddy_ports_published caddy
+' "$SCRIPT_DIR/lib.sh"
+# Port publishing: 8080/8443 must NOT satisfy the 80/443 requirement (the
+# match is line-anchored; unprivileged caddy images publish high ports).
+_assert_fail bash -c '
+    source "$0"
+    _docker() {
+        case $1 in
+            inspect) printf "bridge\n" ;;
+            port) printf "8080/tcp -> 0.0.0.0:8080\n8443/tcp -> 0.0.0.0:8443\n" ;;
+        esac
+        return 0
+    }
+    docker_caddy_ports_published caddy
+' "$SCRIPT_DIR/lib.sh"
+
+# Docker channel: fragment path resolves through the mount (bind + volume).
+frag=$(env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    mkdir -p "$PROXYHUB_ROOT/srv/caddy"
+    _docker() { printf "bind\t/etc/caddy\t/srv/caddy\t\n"; }
+    caddy_fragment_path
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "$TEST_ROOT/srv/caddy/conf.d/proxyhub.caddy" "$frag" "docker fragment path (bind)"
+frag=$(env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    mkdir -p "$PROXYHUB_ROOT/var/lib/docker/volumes/caddy-data/_data"
+    _docker() { printf "volume\t/etc/caddy\t/var/lib/docker/volumes/caddy-data/_data\tcaddy-data\n"; }
+    caddy_fragment_path
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "$TEST_ROOT/var/lib/docker/volumes/caddy-data/_data/conf.d/proxyhub.caddy" "$frag" "docker fragment path (volume)"
+
+# Docker channel: fmt/validate/reload execute inside the container at the
+# constant container paths (host-side arguments are mount paths, not visible
+# to the container).
+DL="$TEST_ROOT/docker.calls"
+: >"$DL"
+_assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    _docker() { printf "%s\n" "$*" >>"$PROXYHUB_ROOT/docker.calls"; }
+    caddy_fmt /host/side/proxyhub.caddy &&
+        caddy_validate /host/side/Caddyfile &&
+        caddy_reload
+' "$SCRIPT_DIR/lib.sh"
+_assert_file_contains "$DL" "exec -- cad caddy fmt --overwrite /etc/caddy/conf.d/proxyhub.caddy"
+_assert_file_contains "$DL" "exec -- cad caddy validate --config /etc/caddy/Caddyfile"
+_assert_file_contains "$DL" "exec -- cad caddy reload --config /etc/caddy/Caddyfile"
+
+# Docker channel: reload failure falls back to docker restart with the same
+# interruption warning as the native systemctl restart fallback.
+_assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    _docker() {
+        printf "%s\n" "$*" >>"$PROXYHUB_ROOT/docker.calls"
+        [[ $1 == exec ]] && return 1
+        return 0
+    }
+    caddy_reload 2>"$PROXYHUB_ROOT/reload.err"
+' "$SCRIPT_DIR/lib.sh"
+_assert_file_contains "$DL" "restart -- cad"
+_assert_file_contains "$TEST_ROOT/reload.err" "brief interruption"
+
+# Docker channel: write_caddy_fragment lands on the host-side mount path.
+_assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    mkdir -p "$PROXYHUB_ROOT/srv/caddy"
+    _docker() { printf "bind\t/etc/caddy\t/srv/caddy\t\n"; }
+    write_caddy_fragment "example.com" "'"$SITE"'"
+' "$SCRIPT_DIR/lib.sh"
+_assert_file_contains "$TEST_ROOT/srv/caddy/conf.d/proxyhub.caddy" "example.com {"
+_assert_file_contains "$TEST_ROOT/srv/caddy/conf.d/proxyhub.caddy" "reverse_proxy 127.0.0.1:8080"
+
+# --------------------------------------------------------------------------
+# Docker bridge topology (ADR 0035, ticket 03/#18)
+# --------------------------------------------------------------------------
+
+# IPv4 network math: exact prefixes, a non-octet boundary, and refuse junk.
+_assert_eq "172.17.0.0/16" "$(_ipv4_network 172.17.0.1 16)" "ipv4 network /16"
+_assert_eq "192.168.32.0/20" "$(_ipv4_network 192.168.32.1 20)" "ipv4 network /20 non-octet"
+_assert_eq "10.0.0.0/8" "$(_ipv4_network 10.0.3.1 8)" "ipv4 network /8"
+_assert_eq "172.18.0.0/24" "$(_ipv4_network 172.18.0.9 24)" "ipv4 network /24"
+_assert_fail _ipv4_network 999.1.1.1 16
+_assert_fail _ipv4_network not-an-ip 16
+_assert_fail _ipv4_network 172.17.0.1 0
+_assert_fail _ipv4_network 172.17.0.1 33
+
+# Network mode: printed verbatim; inspect failure and empty mode fail closed.
+_assert_eq "bridge" "$(bash -c '
+    source "$0"
+    _docker() { printf "bridge\n"; }
+    docker_caddy_network_mode caddy
+' "$SCRIPT_DIR/lib.sh")" "network mode printed"
+_assert_fail bash -c '
+    source "$0"
+    _docker() { return 1; }
+    docker_caddy_network_mode caddy
+' "$SCRIPT_DIR/lib.sh"
+_assert_fail bash -c '
+    source "$0"
+    _docker() { printf "\n"; }
+    docker_caddy_network_mode caddy
+' "$SCRIPT_DIR/lib.sh"
+
+# Bridge topology: gateway + subnet derived from the attached network.
+topo=$(bash -c '
+    source "$0"
+    _docker() { printf "bridge\t172.17.0.1\t16\n"; }
+    docker_caddy_bridge_topology caddy
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "172.17.0.1 172.17.0.0/16" "$topo" "bridge topology single network"
+
+# Multi-network determinism: the alphabetically first network with an IPv4
+# gateway wins, regardless of inspect output order.
+topo=$(bash -c '
+    source "$0"
+    _docker() { printf "znet\t172.19.0.1\t24\nanet\t172.18.0.1\t16\n"; }
+    docker_caddy_bridge_topology caddy
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "172.18.0.1 172.18.0.0/16" "$topo" "bridge topology multi-network deterministic"
+
+# Missing/invalid prefix length falls back to the /16 default-bridge
+# convention.
+topo=$(bash -c '
+    source "$0"
+    _docker() { printf "bridge\t172.17.0.1\t0\n"; }
+    docker_caddy_bridge_topology caddy
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "172.17.0.1 172.17.0.0/16" "$topo" "bridge topology prefix fallback"
+
+# Public-range gateways are refused: the admin plane may only bind
+# RFC1918/loopback/link-local (bounded widening, ADR 0035).
+pub_msg=$(bash -c '
+    source "$0"
+    _docker() { printf "pubnet\t8.8.8.1\t24\n"; }
+    docker_caddy_bridge_topology caddy
+' "$SCRIPT_DIR/lib.sh" 2>&1 || true)
+if [[ $pub_msg == *"not a private address"* ]]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); printf 'FAIL: public gateway not refused: %s\n' "$pub_msg" >&2
+fi
+_assert_fail bash -c '
+    source "$0"
+    _docker() { printf "pubnet\t8.8.8.1\t24\n"; }
+    docker_caddy_bridge_topology caddy
+' "$SCRIPT_DIR/lib.sh"
+# 172.x boundary: 172.16-172.31 is private, 172.32 is not.
+_assert_ok bash -c '
+    source "$0"
+    _docker() { printf "bridge\t172.31.0.1\t16\n"; }
+    docker_caddy_bridge_topology caddy >/dev/null
+' "$SCRIPT_DIR/lib.sh"
+_assert_fail bash -c '
+    source "$0"
+    _docker() { printf "bridge\t172.32.0.1\t16\n"; }
+    docker_caddy_bridge_topology caddy
+' "$SCRIPT_DIR/lib.sh"
+
+# IPv6-only gateways and gateway-less networks fail closed.
+_assert_fail bash -c '
+    source "$0"
+    _docker() { printf "bridge\tfd00::1\t64\n"; }
+    docker_caddy_bridge_topology caddy
+' "$SCRIPT_DIR/lib.sh"
+_assert_fail bash -c '
+    source "$0"
+    _docker() { printf "bridge\t\t0\n"; }
+    docker_caddy_bridge_topology caddy
+' "$SCRIPT_DIR/lib.sh"
+
+# host-gateway mapping gate: present passes; absent fails closed with both
+# docker-run and compose remediation forms in the message.
+_assert_ok bash -c '
+    source "$0"
+    _docker() { printf "host.docker.internal:host-gateway\n"; }
+    docker_caddy_require_host_gateway caddy
+' "$SCRIPT_DIR/lib.sh"
+hg_msg=$(bash -c '
+    source "$0"
+    _docker() { printf "myalias:10.0.0.2\n"; }
+    docker_caddy_require_host_gateway caddy
+' "$SCRIPT_DIR/lib.sh" 2>&1 || true)
+if [[ $hg_msg == *"--add-host host.docker.internal:host-gateway"* ]]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); printf 'FAIL: host-gateway error lacks --add-host guidance: %s\n' "$hg_msg" >&2
+fi
+if [[ $hg_msg == *"extra_hosts"* ]]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); printf 'FAIL: host-gateway error lacks compose guidance: %s\n' "$hg_msg" >&2
+fi
+
+# Topology adoption: host networks take the zero-change path (bridge globals
+# stay empty); bridge networks resolve gateway/subnet after the mapping gate.
+top=$(bash -c '
+    source "$0"
+    _docker() { printf "host\n"; }
+    docker_caddy_prepare_topology caddy >/dev/null &&
+        printf "NET=%s GW=%s SUB=%s\n" "$PROXYHUB_DOCKER_NETMODE" "$PROXYHUB_BRIDGE_GATEWAY" "$PROXYHUB_BRIDGE_SUBNET"
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "NET=host GW= SUB=" "$top" "host network zero-change adoption"
+
+top=$(bash -c '
+    source "$0"
+    _docker() {
+        case $3 in
+            *HostConfig.NetworkMode*) printf "bridge\n" ;;
+            *NetworkSettings.Networks*) printf "bridge\t172.17.0.1\t16\n" ;;
+            *HostConfig.ExtraHosts*) printf "host.docker.internal:host-gateway\n" ;;
+        esac
+        return 0
+    }
+    docker_caddy_prepare_topology caddy >/dev/null &&
+        printf "NET=%s GW=%s SUB=%s\n" "$PROXYHUB_DOCKER_NETMODE" "$PROXYHUB_BRIDGE_GATEWAY" "$PROXYHUB_BRIDGE_SUBNET"
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "NET=bridge GW=172.17.0.1 SUB=172.17.0.0/16" "$top" "bridge adoption resolves topology"
+
+_assert_fail bash -c '
+    source "$0"
+    _docker() {
+        case $3 in
+            *HostConfig.NetworkMode*) printf "bridge\n" ;;
+            *NetworkSettings.Networks*) printf "bridge\t172.17.0.1\t16\n" ;;
+            *HostConfig.ExtraHosts*) printf "\n" ;;
+        esac
+        return 0
+    }
+    docker_caddy_prepare_topology caddy >/dev/null 2>&1
+' "$SCRIPT_DIR/lib.sh"
+_assert_fail bash -c '
+    source "$0"
+    _docker() {
+        case $3 in
+            *HostConfig.NetworkMode*) printf "bridge\n" ;;
+            *NetworkSettings.Networks*) printf "bridge\t\t0\n" ;;
+            *HostConfig.ExtraHosts*) printf "host.docker.internal:host-gateway\n" ;;
+        esac
+        return 0
+    }
+    docker_caddy_prepare_topology caddy >/dev/null 2>&1
+' "$SCRIPT_DIR/lib.sh"
+
+# Fragment upstream: bridge mode targets host.docker.internal carrying only
+# the listen port; every other topology keeps the loopback listener.
+_assert_eq "127.0.0.1:8080" "$(bash -c 'source "$0"; caddy_upstream_addr' "$SCRIPT_DIR/lib.sh")" \
+    "native upstream loopback"
+_assert_eq "127.0.0.1:8080" "$(env PROXYHUB_CADDY_MODE=docker PROXYHUB_DOCKER_NETMODE=host \
+    bash -c 'source "$0"; caddy_upstream_addr' "$SCRIPT_DIR/lib.sh")" \
+    "host-network docker upstream loopback"
+_assert_eq "host.docker.internal:8080" "$(env PROXYHUB_CADDY_MODE=docker PROXYHUB_DOCKER_NETMODE=bridge \
+    bash -c 'source "$0"; caddy_upstream_addr' "$SCRIPT_DIR/lib.sh")" \
+    "bridge upstream host-gateway"
+_assert_eq "host.docker.internal:18080" "$(env PROXYHUB_CADDY_MODE=docker PROXYHUB_DOCKER_NETMODE=bridge \
+    PROXYHUB_LISTEN_ADDR=127.0.0.1:18080 bash -c 'source "$0"; caddy_upstream_addr' "$SCRIPT_DIR/lib.sh")" \
+    "bridge upstream carries custom listen port"
+
+# Bridge fragment: reverse_proxy host.docker.internal, XFF/X-Real-IP stay
+# replace-written.
+_assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_DOCKER_NETMODE=bridge \
+    PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    mkdir -p "$PROXYHUB_ROOT/srv/caddy-br"
+    _docker() { printf "bind\t/etc/caddy\t/srv/caddy-br\t\n"; }
+    write_caddy_fragment "example.com" "'"$SITE"'"
+' "$SCRIPT_DIR/lib.sh"
+_assert_file_contains "$TEST_ROOT/srv/caddy-br/conf.d/proxyhub.caddy" "reverse_proxy host.docker.internal:8080"
+_assert_file_contains "$TEST_ROOT/srv/caddy-br/conf.d/proxyhub.caddy" "header_up X-Forwarded-For {remote_host}"
+_assert_file_contains "$TEST_ROOT/srv/caddy-br/conf.d/proxyhub.caddy" "header_up X-Real-IP {remote_host}"
+
+# --------------------------------------------------------------------------
 
 printf 'passed: %d, failed: %d\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))

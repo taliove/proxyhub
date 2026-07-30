@@ -116,6 +116,19 @@ assert_contains() {
     assert_true "grep -q '$2' '$1'" "$3"
 }
 
+# assert_out_contains TEXT PATTERN MSG - fail if TEXT (arbitrary command
+# output, may carry quotes) doesn't contain the fixed string PATTERN. Both
+# sides go through scratch files: assert_true evals its condition, so
+# embedding raw output or patterns in the condition string breaks on quotes.
+assert_out_contains() {
+    local out_file="$PROXYHUB_ROOT/.assert-out.$$"
+    local pat_file="$PROXYHUB_ROOT/.assert-pat.$$"
+    printf '%s' "$1" >"$out_file"
+    printf '%s\n' "$2" >"$pat_file"
+    assert_true "grep -qFf '$pat_file' '$out_file'" "$3"
+    rm -f "$out_file" "$pat_file"
+}
+
 # --------------------------------------------------------------------------
 # Tests: rotate-path
 # --------------------------------------------------------------------------
@@ -339,6 +352,249 @@ test_uninstall_requires_yes() {
 }
 
 # --------------------------------------------------------------------------
+# Tests: docker caddy mode (ADR 0035, ticket 04/#19)
+# --------------------------------------------------------------------------
+
+# mock_docker_lib - copy lib.sh into the scratch search path and append the
+# _docker override fed on stdin, so the proxyhubctl subprocess (which prefers
+# $PROXYHUB_ROOT/scripts/install/lib.sh, see its search order) runs the mock.
+# Adapts test_install.sh's function-override convention to proxyhubctl's
+# out-of-process invocation.
+mock_docker_lib() {
+    mkdir -p "$PROXYHUB_ROOT/scripts/install"
+    cp "$SCRIPT_DIR/lib.sh" "$PROXYHUB_ROOT/scripts/install/lib.sh"
+    cat >>"$PROXYHUB_ROOT/scripts/install/lib.sh"
+}
+
+# setup_docker_install CADDY_MODE_EXTRA... - turn the scratch install into a
+# docker-mode one: record the mode fields and move the fragment onto the
+# mocked container mount ($PROXYHUB_ROOT/srv/caddy). The native-path fragment
+# stays behind on purpose: docker-mode operations must never touch it.
+setup_docker_install() {
+    cat >>"$(root_path /root/.proxyhub-install-info)" <<'EOF'
+CADDY_MODE=docker
+CADDY_CONTAINER=caddy
+EOF
+    mkdir -p "$(root_path /srv/caddy/conf.d)"
+    cp "$(root_path /etc/caddy/conf.d/proxyhub.caddy)" \
+        "$(root_path /srv/caddy/conf.d/proxyhub.caddy)"
+    : >"$PROXYHUB_ROOT/docker.calls"
+}
+
+# mock_docker_alive_host - _docker answers for a running host-network caddy
+# container with a bind mount at /srv/caddy, logging every call.
+mock_docker_alive_host() {
+    mock_docker_lib <<'MOCK'
+_docker() {
+    printf '%s\n' "$*" >>"$PROXYHUB_ROOT/docker.calls"
+    if [[ $1 == inspect ]]; then
+        case $3 in
+            *State.Running*) printf 'true\n' ;;
+            *HostConfig.NetworkMode*) printf 'host\n' ;;
+            *Mounts*) printf 'bind\t/etc/caddy\t/srv/caddy\t\n' ;;
+        esac
+    fi
+    return 0
+}
+MOCK
+}
+
+# mock_docker_alive_bridge - _docker answers for a running bridge-network
+# caddy container (host-gateway mapping, 172.17.0.1/16, 80/443 published).
+mock_docker_alive_bridge() {
+    mock_docker_lib <<'MOCK'
+_docker() {
+    printf '%s\n' "$*" >>"$PROXYHUB_ROOT/docker.calls"
+    if [[ $1 == inspect ]]; then
+        case $3 in
+            *State.Running*) printf 'true\n' ;;
+            *HostConfig.NetworkMode*) printf 'bridge\n' ;;
+            *HostConfig.ExtraHosts*) printf 'host.docker.internal:host-gateway\n' ;;
+            *NetworkSettings.Networks*) printf 'bridge\t172.17.0.1\t16\n' ;;
+            *Mounts*) printf 'bind\t/etc/caddy\t/srv/caddy\t\n' ;;
+        esac
+    elif [[ $1 == port ]]; then
+        printf '80/tcp -> 0.0.0.0:80\n443/tcp -> 0.0.0.0:443\n'
+    fi
+    return 0
+}
+MOCK
+}
+
+# mock_docker_lost - _docker answers as if the recorded container were gone.
+mock_docker_lost() {
+    mock_docker_lib <<'MOCK'
+_docker() {
+    printf '%s\n' "$*" >>"$PROXYHUB_ROOT/docker.calls"
+    return 1
+}
+MOCK
+}
+
+# test_require_running_unit - direct coverage of the lib.sh preflight:
+# no-op outside docker mode, passes for a running container, fails closed
+# for lost/stopped containers and for a corrupt record (no CADDY_CONTAINER).
+test_require_running_unit() {
+    echo "==> test_require_running_unit"
+    setup_test
+
+    assert_true "bash -c 'source \"\$0\"; _docker() { return 1; }; docker_caddy_require_running' '$SCRIPT_DIR/lib.sh'" \
+        "preflight is a no-op in native mode"
+    assert_true "bash -c 'source \"\$0\"; PROXYHUB_CADDY_MODE=docker; PROXYHUB_CADDY_CONTAINER=cad; _docker() { printf \"true\n\"; }; docker_caddy_require_running' '$SCRIPT_DIR/lib.sh'" \
+        "preflight passes for a running recorded container"
+
+    local err
+    err=$(bash -c 'source "$0"; PROXYHUB_CADDY_MODE=docker; PROXYHUB_CADDY_CONTAINER=gone
+        _docker() { return 1; }
+        docker_caddy_require_running' "$SCRIPT_DIR/lib.sh" 2>&1 >/dev/null) && true
+    assert_out_contains "$err" "recorded caddy container 'gone' no longer exists" \
+        "preflight fails closed for a lost container, naming it"
+    err=$(bash -c 'source "$0"; PROXYHUB_CADDY_MODE=docker; PROXYHUB_CADDY_CONTAINER=stopped
+        _docker() { printf "false\n"; }
+        docker_caddy_require_running' "$SCRIPT_DIR/lib.sh" 2>&1 >/dev/null) && true
+    assert_out_contains "$err" "'stopped' is not running" \
+        "preflight fails closed for a stopped container, naming it"
+    assert_out_contains "$err" "docker start stopped" \
+        "preflight prints the start hint for a stopped container"
+    err=$(bash -c 'source "$0"; PROXYHUB_CADDY_MODE=docker; PROXYHUB_CADDY_CONTAINER=
+        docker_caddy_require_running' "$SCRIPT_DIR/lib.sh" 2>&1 >/dev/null) && true
+    assert_out_contains "$err" "no CADDY_CONTAINER" \
+        "preflight fails closed for a corrupt record (docker mode, no container)"
+
+    teardown_test
+}
+
+# test_rotate_path_docker_host - docker mode, host-network container: the
+# fragment is rewritten on the container mount with the loopback upstream,
+# the native-path fragment is untouched, and the liveness preflight is the
+# first docker call (fail fast before touching the mount).
+test_rotate_path_docker_host() {
+    echo "==> test_rotate_path_docker_host"
+    setup_test
+    setup_docker_install
+    mock_docker_alive_host
+
+    "$PROXYHUBCTL" rotate-path --yes
+
+    local frag
+    frag=$(root_path /srv/caddy/conf.d/proxyhub.caddy)
+    local install_info
+    install_info=$(root_path /root/.proxyhub-install-info)
+    local new_path
+    new_path=$(sed -n 's/^SITE_PATH=//p' "$install_info")
+
+    assert_true "[[ '$new_path' != 'old_secure_path_12345678' ]]" \
+        "Site Path rotated in the install record"
+    assert_contains "$frag" "path /${new_path}" \
+        "fragment on the container mount carries the new Site Path"
+    assert_contains "$frag" "reverse_proxy 127.0.0.1:8080" \
+        "host-network container keeps the loopback upstream"
+    assert_contains "$(root_path /etc/caddy/conf.d/proxyhub.caddy)" "old_secure_path_12345678" \
+        "native-path fragment untouched in docker mode"
+    assert_true "head -1 '$PROXYHUB_ROOT/docker.calls' | grep -q 'State.Running'" \
+        "liveness preflight is the first docker call"
+    assert_true "grep -q 'Mounts' '$PROXYHUB_ROOT/docker.calls'" \
+        "fragment path resolved through the container mount"
+
+    teardown_test
+}
+
+# test_rotate_path_docker_bridge - docker mode, bridge-network container:
+# prepare_topology re-derives the gateway reach-back, so the rewritten
+# fragment proxies to host.docker.internal with XFF replacement intact.
+test_rotate_path_docker_bridge() {
+    echo "==> test_rotate_path_docker_bridge"
+    setup_test
+    setup_docker_install
+    mock_docker_alive_bridge
+
+    "$PROXYHUBCTL" rotate-path --yes
+
+    local frag
+    frag=$(root_path /srv/caddy/conf.d/proxyhub.caddy)
+    assert_contains "$frag" "reverse_proxy host.docker.internal:8080" \
+        "bridge fragment proxies to host.docker.internal"
+    assert_contains "$frag" "header_up X-Forwarded-For {remote_host}" \
+        "XFF replacement discipline holds in docker mode"
+    assert_contains "$frag" "header_up X-Real-IP {remote_host}" \
+        "X-Real-IP replacement discipline holds in docker mode"
+    assert_true "grep -q 'NetworkMode' '$PROXYHUB_ROOT/docker.calls'" \
+        "topology re-derived from the live container"
+
+    teardown_test
+}
+
+# test_rotate_path_docker_lost - a lost recorded container fails closed:
+# neither the install record nor the fragment is touched.
+test_rotate_path_docker_lost() {
+    echo "==> test_rotate_path_docker_lost"
+    setup_test
+    setup_docker_install
+    mock_docker_lost
+
+    local rc=0 output
+    output=$("$PROXYHUBCTL" rotate-path --yes 2>&1) || rc=$?
+
+    assert_true "[[ $rc -ne 0 ]]" "rotate-path fails closed when the container is lost"
+    assert_out_contains "$output" "container 'caddy'" "error names the recorded container"
+    assert_contains "$(root_path /root/.proxyhub-install-info)" "SITE_PATH=old_secure_path_12345678" \
+        "install record unchanged after refusal"
+    assert_contains "$(root_path /srv/caddy/conf.d/proxyhub.caddy)" "old_secure_path_12345678" \
+        "fragment unchanged after refusal"
+    assert_true "! grep -q 'Mounts' '$PROXYHUB_ROOT/docker.calls'" \
+        "mount never inspected after the liveness preflight failed"
+
+    teardown_test
+}
+
+# test_uninstall_docker - docker mode uninstall removes the fragment from
+# the container mount and nothing else Caddy-side.
+test_uninstall_docker() {
+    echo "==> test_uninstall_docker"
+    setup_test
+    setup_docker_install
+    mock_docker_alive_host
+
+    "$PROXYHUBCTL" uninstall --yes
+
+    assert_file_not_exists "$(root_path /srv/caddy/conf.d/proxyhub.caddy)" \
+        "fragment removed from the container mount"
+    assert_file_exists "$(root_path /etc/caddy/conf.d/proxyhub.caddy)" \
+        "native-path fragment untouched in docker mode"
+    assert_file_not_exists "$(root_path /usr/local/bin/proxyhub)" \
+        "binary removed"
+    assert_file_exists "$(root_path /root/.proxyhub-install-info)" \
+        "install record preserved without --purge"
+
+    teardown_test
+}
+
+# test_uninstall_docker_lost - a lost recorded container fails closed even
+# for cleanup: nothing is removed, and the error explains the manual path.
+test_uninstall_docker_lost() {
+    echo "==> test_uninstall_docker_lost"
+    setup_test
+    setup_docker_install
+    mock_docker_lost
+
+    local rc=0 output
+    output=$("$PROXYHUBCTL" uninstall --yes 2>&1) || rc=$?
+
+    assert_true "[[ $rc -ne 0 ]]" "uninstall fails closed when the container is lost"
+    assert_out_contains "$output" "container 'caddy'" "error names the recorded container"
+    assert_out_contains "$output" "verify manually" \
+        "error explains the manual record-removal path"
+    assert_file_exists "$(root_path /usr/local/bin/proxyhub)" \
+        "binary preserved after refusal"
+    assert_file_exists "$(root_path /etc/systemd/system/proxyhub.service)" \
+        "service unit preserved after refusal"
+    assert_file_exists "$(root_path /srv/caddy/conf.d/proxyhub.caddy)" \
+        "fragment preserved after refusal"
+
+    teardown_test
+}
+
+# --------------------------------------------------------------------------
 # Main test runner
 # --------------------------------------------------------------------------
 
@@ -360,6 +616,14 @@ main() {
     test_uninstall_preserves_data
     test_uninstall_purge
     test_uninstall_requires_yes
+
+    # Docker caddy mode tests (ADR 0035, ticket 04/#19).
+    test_require_running_unit
+    test_rotate_path_docker_host
+    test_rotate_path_docker_bridge
+    test_rotate_path_docker_lost
+    test_uninstall_docker
+    test_uninstall_docker_lost
 
     printf '\n'
     if [[ "$TESTS_FAILED" -eq 0 ]]; then

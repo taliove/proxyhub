@@ -1,3 +1,7 @@
 # ProxyHub 工程原则
 
 本仓库的工程宪法在 [AGENTS.md](AGENTS.md)——它是唯一主控,任何会话、任何提交都必须遵守。本文件仅作指针,不承载规则。
+
+## Agent skills
+
+工程 skill 的仓库级配置,见 `docs/agents/`(issue-tracker / triage-labels / domain)。

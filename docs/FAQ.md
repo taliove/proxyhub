@@ -133,6 +133,8 @@ systemctl reload caddy
 # 3. 更新 DNS A/AAAA 记录指向服务器 IP
 ```
 
+Docker Caddy 模式的实例：配置片段在容器 `/etc/caddy` 挂载的宿主机路径下，重载用 `docker exec <容器名> caddy reload --config /etc/caddy/Caddyfile`。
+
 ### Q: 端口冲突怎么办？
 
 A: ProxyHub 监听 `127.0.0.1:8080`(环回地址)。如果冲突，编辑 `/etc/proxyhub/config.yaml`:
@@ -143,6 +145,39 @@ server:
 ```
 
 同时更新 Caddy 配置 `/etc/caddy/conf.d/proxyhub.caddy` 中的 `reverse_proxy` 目标端口。
+
+### Q: 服务器上跑着多个 caddy 容器，安装器会选哪个？
+
+A: 一个都不选——多个候选属于歧义情形，安装器 fail closed，列出候选容器名并要求显式指名：
+
+```bash
+bash install.sh --non-interactive --domain proxy.example.com \
+  --caddy-docker my-caddy
+```
+
+恰好只有一个运行中的 caddy 镜像容器时，安装器才会自动选用（安装日志会明示选的是哪个）；给了 `--caddy-docker` 则以你指定的为准。注意 `--caddy-docker` 与 `--no-caddy` 互斥，同给即报错退出。
+
+### Q: 为什么只挂载 Caddyfile 单文件的 caddy 容器被安装器拒绝？
+
+A: 安装器要把配置片段写进 `/etc/caddy/conf.d/` 并在 Caddyfile 里追加 import 行，这要求 `/etc/caddy` 整个目录是持久挂载（bind mount 或 named volume）。只挂载单个 Caddyfile 时，写进容器层的 conf.d 会在容器重建时丢失，与"受管安装"的持久性承诺冲突，所以 fail closed。改造方法（以 bind mount 为例）：
+
+```bash
+mkdir -p /srv/caddy
+docker cp <容器名>:/etc/caddy/. /srv/caddy/   # 搬出现有配置
+# 重建容器:把单文件挂载换成目录挂载
+docker run -d --name caddy \
+  -p 80:80 -p 443:443 \
+  -v /srv/caddy:/etc/caddy \
+  --add-host host.docker.internal:host-gateway \
+  caddy:2
+```
+
+### Q: caddy 容器重建后，ProxyHub 的反代配置还在吗？
+
+A: 在——只要重建后的容器仍然挂载同一个 `/etc/caddy` 持久目录（bind mount 或 named volume），配置片段和 Caddyfile 的 import 行都落在挂载上，容器层丢了不影响。但两点要注意：
+
+1. **容器名变了**：安装档案（`/root/.proxyhub-install-info`）里的 `CADDY_CONTAINER` 记的是安装时的容器名，改名后 `proxyhubctl` 会因找不到容器而 fail closed。编辑档案把 `CADDY_CONTAINER` 改成新容器名即可，不必重装；
+2. **桥接拓扑参数丢了**：重建时丢了 `--add-host host.docker.internal:host-gateway`、80/443 端口发布或换了网桥，`proxyhubctl rotate-path` 等操作会在校验阶段 fail closed，按报错指引补齐参数即可。
 
 ## 订阅与节点
 

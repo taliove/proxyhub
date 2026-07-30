@@ -284,6 +284,71 @@ test_reset_mfa_listed_in_help() {
     assert_contains "$output" "reset-mfa"
 }
 
+# --------------------------------------------------------------------------
+# Docker caddy mode (ADR 0035, ticket 04/#19)
+# --------------------------------------------------------------------------
+# This suite sources the PRISTINE lib.sh copy (no _docker override), so the
+# test-mode _docker seam is a silent no-op: to the liveness preflight a
+# recorded container therefore looks stopped, which is exactly the graceful
+# fail-closed degradation these cases pin down.
+
+# docker_record_on / docker_record_off - temporarily mark the shared install
+# record as docker mode (paired around each docker case below).
+docker_record_on() {
+    local record="$PROXYHUB_ROOT/root/.proxyhub-install-info"
+    cp "$record" "${record}.orig"
+    cat >>"$record" <<'EOF'
+CADDY_MODE=docker
+CADDY_CONTAINER=caddy
+EOF
+}
+
+docker_record_off() {
+    mv "$PROXYHUB_ROOT/root/.proxyhub-install-info.orig" \
+        "$PROXYHUB_ROOT/root/.proxyhub-install-info"
+}
+
+test_docker_rotate_fails_closed_without_container() {
+    docker_record_on
+    set +e
+    local output
+    output=$(bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" \
+        rotate-path new_valid_path_1234567890ab --yes 2>&1)
+    local exit_code=$?
+    set -e
+    docker_record_off
+    assert_exit_code 1 "$exit_code"
+    assert_contains "$output" "recorded caddy container 'caddy' is not running"
+    assert_contains "$output" "docker start caddy"
+    # The refusal must not touch the recorded Site Path.
+    assert_contains "$(cat "$PROXYHUB_ROOT/root/.proxyhub-install-info")" \
+        "SITE_PATH=secure_mgmt_path_12345"
+}
+
+test_docker_status_unaffected() {
+    docker_record_on
+    # Commands that never touch Caddy are not gated by the preflight.
+    local output
+    output=$(bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" status 2>&1)
+    docker_record_off
+    assert_contains "$output" "https://example.com/secure_mgmt_path_12345/"
+}
+
+test_docker_rotate_corrupt_record_fails_closed() {
+    docker_record_on
+    # CADDY_MODE=docker without CADDY_CONTAINER: the record is corrupt.
+    sed -i '/^CADDY_CONTAINER=/d' "$PROXYHUB_ROOT/root/.proxyhub-install-info"
+    set +e
+    local output
+    output=$(bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" \
+        rotate-path new_valid_path_1234567890ab --yes 2>&1)
+    local exit_code=$?
+    set -e
+    docker_record_off
+    assert_exit_code 1 "$exit_code"
+    assert_contains "$output" "no CADDY_CONTAINER"
+}
+
 test_unknown_subcommand() {
     set +e
     bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" unknown 2>&1
@@ -330,6 +395,9 @@ main() {
     test_reset_mfa_requires_username
     test_reset_mfa_propagates_binary_failure
     test_reset_mfa_listed_in_help
+    test_docker_rotate_fails_closed_without_container
+    test_docker_status_unaffected
+    test_docker_rotate_corrupt_record_fails_closed
     test_unknown_subcommand
     test_no_subcommand
 

@@ -54,7 +54,6 @@ unset _ph_lib _ph_lib_candidate
 # Constants and mutable globals (initialized for `set -u` sourcing)
 readonly PROXYHUB_DEFAULT_REPO="taliove/proxyhub"
 readonly PROXYHUB_INSTALL_INFO="/root/.proxyhub-install-info"
-readonly PROXYHUB_CADDYFILE="/etc/caddy/Caddyfile"
 readonly PROXYHUB_CADDY_IMPORT_LINE='import /etc/caddy/conf.d/*.caddy'
 readonly PROXYHUB_LOOPBACK_HEALTH_TRIES=15
 readonly PROXYHUB_PUBLIC_HEALTH_TRIES=45
@@ -62,7 +61,7 @@ readonly PROXYHUB_PUBLIC_HEALTH_TRIES=45
 NON_INTERACTIVE=0 DOMAIN="" EMAIL="" VERSION="latest" VERSION_TAG=""
 REPO="$PROXYHUB_DEFAULT_REPO" ARG_SITE_PATH="" SITE_PATH="" SKIP_DNS_CHECK=0
 DETECTED_OS="" DETECTED_ARCH="" ADMIN_USER="" ADMIN_PASSWORD="" ARG_LISTEN_ADDR=""
-TIMESTAMP="" WORKDIR="" CADDY_BACKUP="" NO_CADDY=0
+TIMESTAMP="" WORKDIR="" CADDY_BACKUP="" NO_CADDY=0 ARG_CADDY_DOCKER=""
 
 # _ph_fail MSG... - print each MSG as an error line and return 1 (guard helper).
 _ph_fail() {
@@ -98,6 +97,15 @@ OPTIONS
   --no-caddy             Bring-your-own reverse proxy: do not touch Caddy and
                          skip the 80/443 requirement; writes ready-to-adapt
                          Caddy and nginx examples to /etc/proxyhub/.
+  --caddy-docker NAME    Integrate an existing dockerized Caddy (ADR 0035):
+                         NAME must be a running container of the caddy image
+                         with a persistent /etc/caddy mount (bind or named
+                         volume). Bridge-network containers must additionally
+                         publish TCP 80/443 and map
+                         host.docker.internal:host-gateway; the admin plane
+                         then binds the bridge gateway with trusted_proxies
+                         narrowed to the bridge subnet (summary warns).
+                         Mutually exclusive with --no-caddy.
   --skip-dns-check       Skip DNS resolution check (CDN / private networks).
   -h, --help             Show this help.
 
@@ -118,7 +126,8 @@ BEHAVIOR
   root-only (0600) /root/.proxyhub-install-info (never the password). Never
   installs Caddy from third-party repos (existing Caddy v2 is reused) and never
   disables HTTPS certificate validation. Re-running on a managed install
-  refuses to duplicate it: use `proxyhubctl update|repair|uninstall`.
+  refuses to duplicate it: use `proxyhubctl update` to upgrade, or
+  `proxyhubctl uninstall` to remove it first.
 EOF
 }
 
@@ -147,12 +156,16 @@ parse_args() {
             --site-path) _need_value "$1" $#; ARG_SITE_PATH=$2; shift 2 ;;
             --listen-addr) _need_value "$1" $#; ARG_LISTEN_ADDR=$2; shift 2 ;;
             --no-caddy) NO_CADDY=1; shift ;;
+            --caddy-docker) _need_value "$1" $#; ARG_CADDY_DOCKER=$2; shift 2 ;;
             -h|--help) usage; exit 0 ;;
             --) shift; break ;;
             *) _ph_die2 "unknown argument: $1 (see --help)" ;;
         esac
     done
     (($# == 0)) || _ph_die2 "unexpected positional arguments: $*"
+
+    [[ -z $ARG_CADDY_DOCKER || $NO_CADDY == 0 ]] ||
+        _ph_die2 "--caddy-docker and --no-caddy are mutually exclusive (see --help)"
 
     # Validate formats immediately - fail closed before touching the host.
     local bad=0
@@ -192,7 +205,7 @@ _check_existing_install() {
     m2=$(root_path "$PROXYHUB_UNIT_PATH")
     [[ -f $m1 || -f $m2 ]] || return 0
     _ph_fail "an existing managed ProxyHub installation was detected ($([ -f "$m1" ] && echo "$m1")$([ -f "$m2" ] && echo " $m2"))" \
-        "this installer refuses to duplicate it; use 'proxyhubctl update', 'proxyhubctl repair', or 'proxyhubctl uninstall'"
+        "this installer refuses to duplicate it; use 'proxyhubctl update' to upgrade, or 'proxyhubctl uninstall' to remove it first"
 }
 
 # Host validation (READ-ONLY: no DNS/firewall/security-group mutation)
@@ -223,12 +236,75 @@ _check_os() {
     esac
 }
 
-# _check_caddy - a compatible Caddy must exist, or ports 80/443 must be free.
+# _have_caddy_bin - true when a native caddy binary is on PATH (test seam).
+_have_caddy_bin() { command -v caddy >/dev/null 2>&1; }
+
+# _note_bridge_listen_override - when the operator passed --listen-addr and
+# the adopted topology is a docker bridge, surface the effective bind: the
+# port survives, the host part is replaced by the bridge gateway (the
+# user-facing flag stays loopback-only by design, spec decision 5).
+_note_bridge_listen_override() {
+    _is_bridge_topology && [[ -n $ARG_LISTEN_ADDR ]] || return 0
+    _ph_log "--listen-addr ${ARG_LISTEN_ADDR}: bridge mode replaces the loopback host part with the bridge gateway; effective bind ${PROXYHUB_BRIDGE_GATEWAY}:${PROXYHUB_LISTEN_ADDR##*:}"
+}
+
+# _select_docker_caddy NAME - explicit --caddy-docker selection: validate the
+# container, its port publishing, its /etc/caddy mount and its network
+# topology (host-gateway mapping + gateway derivation for bridge networks),
+# then adopt the docker Caddy mode (ADR 0035).
+_select_docker_caddy() {
+    local name=$1
+    docker_validate_caddy_container "$name" || return 1
+    docker_caddy_ports_published "$name" || return 1
+    docker_caddy_mount_root "$name" >/dev/null || return 1
+    docker_caddy_prepare_topology "$name" || return 1
+    PROXYHUB_CADDY_CONTAINER=$name
+    PROXYHUB_CADDY_MODE=docker
+    _ph_log "docker caddy mode: integrating container '${name}'"
+    _note_bridge_listen_override
+}
+
+# _autodetect_docker_caddy - return 0 after adopting the docker mode when
+# exactly one running caddy-image container exists (announced); return 1 when
+# there are none (caller falls through to the native fail-closed path);
+# return 2 after printing the ambiguity error when there are several.
+_autodetect_docker_caddy() {
+    local candidates count
+    candidates=$(docker_caddy_candidates 2>/dev/null) || return 1
+    [[ -n $candidates ]] || return 1
+    count=$(printf '%s\n' "$candidates" | wc -l | tr -d ' ')
+    if ((count > 1)); then
+        _ph_err "multiple running caddy containers found; refusing to guess which one to integrate:"
+        printf '%s\n' "$candidates" | sed 's/^/[proxyhub]   - /' >&2
+        _ph_err "re-run with --caddy-docker <name> to pick one explicitly"
+        return 2
+    fi
+    PROXYHUB_CADDY_CONTAINER=$candidates
+    PROXYHUB_CADDY_MODE=docker
+    _ph_log "auto-selected the only running caddy container '${candidates}' (docker caddy mode; override with --caddy-docker)"
+    docker_caddy_ports_published "$candidates" || return 2
+    docker_caddy_mount_root "$candidates" >/dev/null || return 2
+    docker_caddy_prepare_topology "$candidates" || return 2
+    _note_bridge_listen_override
+    return 0
+}
+
+# _check_caddy - Caddy mode detection (ADR 0035). Priority: --caddy-docker
+# forces docker > a native caddy binary selects native > exactly one running
+# caddy-image container selects docker (announced) > fail closed.
 _check_caddy() {
+    if [[ -n $ARG_CADDY_DOCKER ]]; then
+        _select_docker_caddy "$ARG_CADDY_DOCKER"
+        return
+    fi
     _is_test_mode && return 0
-    if command -v caddy >/dev/null 2>&1; then
+    if _have_caddy_bin; then
         _ph_log "existing Caddy found: $(command caddy version 2>/dev/null | head -1)"; return 0
     fi
+    local det=0
+    _autodetect_docker_caddy || det=$?
+    if ((det == 0)); then return 0; fi
+    if ((det == 2)); then return 1; fi
     local conflicts
     conflicts=$(ss -ltnH 2>/dev/null | awk '{print $4}' | sed -n 's/.*:\(80\|443\)$/\1/p' | sort -u | tr '\n' ' ' || true)
     [[ -z ${conflicts// /} ]] ||
@@ -236,8 +312,9 @@ _check_caddy() {
             "TCP port(s) ${conflicts% }already bound by another service; Caddy must own 80/443 for TLS" \
             "identify the conflict with: ss -ltnp | grep -E ':(80|443) '  then stop or reconfigure it and re-run" || return 1
     _ph_fail \
-        "Caddy v2 is required but not installed, and this installer never installs Caddy from third-party sources" \
-        "install it from the official Caddy repository: https://caddyserver.com/docs/install#debian-ubuntu-raspbian"
+        "Caddy v2 is required but not installed: no native caddy binary and no running docker caddy container found" \
+        "this installer never installs Caddy from third-party sources; install it from the official Caddy repository: https://caddyserver.com/docs/install#debian-ubuntu-raspbian" \
+        "already running caddy in docker? re-run with --caddy-docker <container-name>"
 }
 
 _check_dns() { # DOMAIN
@@ -373,15 +450,24 @@ _download_and_verify() { # WORKDIR
 
 # Install steps
 _write_config() {
-    local cfg listen_port
+    local cfg listen_port server_host trusted_line=""
     cfg=$(root_path "${PROXYHUB_CONFIG_DIR}/config.yaml")
     listen_port="${PROXYHUB_LISTEN_ADDR##*:}"
+    server_host="127.0.0.1"
+    # Docker bridge topology (ADR 0035): the admin plane binds the bridge
+    # gateway so the containerized Caddy can reach it, and XFF trust narrows
+    # to the bridge subnet. Host-network/native keep the loopback bind and
+    # stay byte-identical to before.
+    if _is_bridge_topology; then
+        server_host=$PROXYHUB_BRIDGE_GATEWAY
+        trusted_line="  trusted_proxies: [\"${PROXYHUB_BRIDGE_SUBNET}\"]"$'\n'
+    fi
     mkdir -p "$(dirname "$cfg")" || _ph_fail "failed to create $(dirname "$cfg")" || return 1
     if ! cat >"$cfg" <<EOF
 server:
-  host: "127.0.0.1"
+  host: "${server_host}"
   port: ${listen_port}
-storage:
+${trusted_line}storage:
   path: "${PROXYHUB_STATE_DIR}/data.db"
 health_check:
   interval: 15m
@@ -412,7 +498,6 @@ _run_svc_tool() {
     command "$tool" "$@"
 }
 _systemctl() { _run_svc_tool systemctl "$@"; }
-_caddy_cli() { _run_svc_tool caddy "$@"; }
 
 # _as_service_user CMD... - run CMD as the low-privilege service user so files
 # it creates (the SQLite database) are owned by proxyhub:proxyhub.
@@ -434,10 +519,15 @@ _run_proxyhub_init() {
 }
 
 # Caddy integration
+# _ensure_caddy_import - guarantee the main Caddyfile imports conf.d/*.caddy,
+# backing it up first. In docker mode the Caddyfile lives at the container's
+# /etc/caddy mount root (caddy_config_dir); the import line itself keeps
+# container path semantics.
 _ensure_caddy_import() {
-    local main
-    main=$(root_path "$PROXYHUB_CADDYFILE")
-    mkdir -p "$(root_path /etc/caddy)" || return 1
+    local cdir main
+    cdir=$(caddy_config_dir) || return 1
+    main="${cdir}/Caddyfile"
+    mkdir -p "$cdir" || return 1
     CADDY_BACKUP=""
     if [[ ! -f $main ]]; then
         {
@@ -459,21 +549,17 @@ _ensure_caddy_import() {
     fi
 }
 
-# _reload_caddy - reload via the admin API when available. Setups that
-# disable it (`admin off` in the global options block, e.g. 233boy-style
-# Caddyfiles) make every reload path fail; fall back to a full restart,
-# which briefly interrupts the other sites on this Caddy (warned).
-_reload_caddy() {
-    _systemctl reload caddy 2>/dev/null && return 0
-    _caddy_cli reload --config "$(root_path "$PROXYHUB_CADDYFILE")" 2>/dev/null && return 0
-    _ph_log "WARNING: caddy reload failed (admin API disabled, e.g. 'admin off'); falling back to 'systemctl restart caddy' - brief interruption for other sites on this Caddy"
-    _systemctl restart caddy
-}
+# _reload_caddy - test-override seam over the mode-dispatched caddy_reload
+# channel (lib.sh). The channel reloads via the admin API and falls back to
+# a full restart when the API is disabled ('admin off' in the global options
+# block, e.g. 233boy-style Caddyfiles), briefly interrupting the other sites
+# on this Caddy (warned there).
+_reload_caddy() { caddy_reload; }
 
 _configure_caddy() {
     local caddy_dir frag hit
-    caddy_dir=$(root_path /etc/caddy)
-    frag=$(root_path "$PROXYHUB_CADDY_FRAGMENT")
+    caddy_dir=$(caddy_config_dir) || return 1
+    frag=$(caddy_fragment_path) || return 1
     if [[ -d $caddy_dir ]]; then
         hit=$(grep -RIlF -- "$DOMAIN" "$caddy_dir" 2>/dev/null | grep -v "^${frag}$" | head -1 || true)
         [[ -z $hit ]] ||
@@ -487,14 +573,14 @@ _configure_caddy() {
     if _is_test_mode; then
         _ph_log "test mode: caddy fmt/validate/reload"
     else
-        _caddy_cli fmt --overwrite "$frag" >/dev/null &&
-            _caddy_cli validate --config "$(root_path "$PROXYHUB_CADDYFILE")" &&
+        caddy_fmt "$frag" >/dev/null &&
+            caddy_validate "${caddy_dir}/Caddyfile" &&
             _reload_caddy || rc=$?
     fi
     if ((rc != 0)); then
         _ph_err "caddy fmt/validate/reload failed - rolled back the Caddy changes (inspect with: journalctl -u caddy -n 50)"
         rm -f "$frag"
-        [[ -z $CADDY_BACKUP || ! -f $CADDY_BACKUP ]] || cp -a "$CADDY_BACKUP" "$(root_path "$PROXYHUB_CADDYFILE")" || true
+        [[ -z $CADDY_BACKUP || ! -f $CADDY_BACKUP ]] || cp -a "$CADDY_BACKUP" "${caddy_dir}/Caddyfile" || true
         return 1
     fi
     _ph_log "Caddy configured for https://${DOMAIN}/${SITE_PATH}/"
@@ -569,7 +655,13 @@ _verify_url() { # URL TRIES UNIT
 }
 
 _verify_health() {
-    _verify_url "http://${PROXYHUB_LISTEN_ADDR}/${SITE_PATH}/healthz" "$PROXYHUB_LOOPBACK_HEALTH_TRIES" proxyhub || return 1
+    local probe_addr=$PROXYHUB_LISTEN_ADDR
+    # Docker bridge topology: the loopback probe targets the bridge gateway
+    # address (reachable from the host), where the admin plane now listens.
+    if _is_bridge_topology; then
+        probe_addr="${PROXYHUB_BRIDGE_GATEWAY}:${PROXYHUB_LISTEN_ADDR##*:}"
+    fi
+    _verify_url "http://${probe_addr}/${SITE_PATH}/healthz" "$PROXYHUB_LOOPBACK_HEALTH_TRIES" proxyhub || return 1
     if [[ $NO_CADDY == 1 ]]; then
         _ph_log "public HTTPS health check skipped (--no-caddy): verify your own reverse proxy forwards /${SITE_PATH}/ to http://${PROXYHUB_LISTEN_ADDR}"
         return 0
@@ -588,9 +680,14 @@ _write_install_record() {
     local rec
     rec=$(root_path "$PROXYHUB_INSTALL_INFO")
     mkdir -p "$(dirname "$rec")" || return 1
-    printf '# ProxyHub installation record - managed by install.sh, keep root-only.\nDOMAIN=%s\nSITE_PATH=%s\nREPO=%s\nVERSION=%s\nINSTALLED_AT=%s\nADMIN_USER=%s\nLISTEN_ADDR=%s\nNO_CADDY=%s\n' \
+    # Caddy mode (ADR 0035): detected by _check_caddy (native default, docker
+    # when a container was selected); --no-caddy records none. CADDY_CONTAINER
+    # is only set in docker mode.
+    local caddy_mode=$PROXYHUB_CADDY_MODE
+    ((NO_CADDY == 0)) || caddy_mode=none
+    printf '# ProxyHub installation record - managed by install.sh, keep root-only.\nDOMAIN=%s\nSITE_PATH=%s\nREPO=%s\nVERSION=%s\nINSTALLED_AT=%s\nADMIN_USER=%s\nLISTEN_ADDR=%s\nNO_CADDY=%s\nCADDY_MODE=%s\nCADDY_CONTAINER=%s\n' \
         "$DOMAIN" "$SITE_PATH" "$REPO" "$VERSION_TAG" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "$ADMIN_USER" "$PROXYHUB_LISTEN_ADDR" "$NO_CADDY" >"$rec" ||
+        "$ADMIN_USER" "$PROXYHUB_LISTEN_ADDR" "$NO_CADDY" "$caddy_mode" "$PROXYHUB_CADDY_CONTAINER" >"$rec" ||
         _ph_fail "failed to write ${rec}" || return 1
     chmod 0600 "$rec" || _ph_fail "failed to chmod ${rec}" || return 1
     _ph_log "wrote ${rec} (mode 0600)"
@@ -601,6 +698,13 @@ _write_install_record() {
         printf '  --no-caddy: no reverse proxy was configured. Adapt one of the\n  generated examples to your setup, then browse the Management URL:\n    %s\n    %s\n  Both enforce the X-Forwarded-For replacement rule (security).\n\n' \
             "$(root_path "${PROXYHUB_CONFIG_DIR}/reverse-proxy.caddy")" \
             "$(root_path "${PROXYHUB_CONFIG_DIR}/reverse-proxy.nginx.conf")"
+    fi
+    # Docker bridge topology security disclosure (ADR 0035 consequences): the
+    # bounded widening of the admin-plane trust boundary must be stated in
+    # the one-time summary so the operator can make an informed choice.
+    if _is_bridge_topology; then
+        printf '  WARNING (docker bridge mode): the management-plane trust boundary\n  widened from loopback to the %s docker bridge. Any container on\n  this bridge can reach the admin plane directly (no TLS) and can\n  spoof X-Forwarded-For. Bridge traffic to the admin plane is plain\n  HTTP, so the Site Path can be sniffed by bridge peers. If you do\n  not trust the other containers on this bridge, use a host-network\n  caddy container or native Caddy instead, and isolate caddy on a\n  dedicated bridge network.\n\n' \
+            "$PROXYHUB_BRIDGE_SUBNET"
     fi
 }
 
