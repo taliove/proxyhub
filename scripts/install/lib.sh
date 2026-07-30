@@ -433,25 +433,29 @@ docker_caddy_require_running() {
 }
 
 # _docker_mount_host_path TYPE SOURCE NAME - print the host-side path of an
-# /etc/caddy mount candidate: bind mounts resolve to their Source directory,
-# named volumes to the docker volume data path. Anything else returns 1.
+# /etc/caddy mount candidate: bind mounts and named volumes both resolve to
+# the mount's Source (for volumes that is the docker volume data path, even
+# with a custom data-root or rootless docker). Fails when the resolved
+# directory does not exist. Anything else returns 1.
 _docker_mount_host_path() {
     case $1 in
-        bind)
+        bind | volume)
+            [[ -n $2 ]] || return 1
             if [[ -d $(root_path "$2") ]]; then printf '%s\n' "$2"; return 0; fi
             return 1
             ;;
-        volume) printf '%s\n' "/var/lib/docker/volumes/$3/_data" ;;
         *) return 1 ;;
     esac
 }
 
 # docker_caddy_mount_root NAME - print the host-side path backing the
-# container's /etc/caddy mount. Single-file mounts and missing mounts fail
-# closed with remediation guidance (config on the container layer would
-# vanish on recreate).
+# container's /etc/caddy mount. Fails closed with accurate remediation when
+# /etc/caddy itself is not a usable persistent directory: an /etc/caddy
+# mount whose Source is missing or of an unsupported type, mounts that only
+# cover sub-paths (e.g. a lone Caddyfile or conf.d), or no mount at all.
+# Config on the container layer would vanish on recreate.
 docker_caddy_mount_root() {
-    local name=$1 mounts mtype mdest msrc mname file_mount=""
+    local name=$1 mounts mtype mdest msrc mname bad_root="" sub_mounts=""
     mounts=$(_docker inspect \
         --format '{{range .Mounts}}{{printf "%s\t%s\t%s\t%s\n" .Type .Destination .Source .Name}}{{end}}' \
         "$name") || {
@@ -462,13 +466,18 @@ docker_caddy_mount_root() {
         [[ $mdest == /etc/caddy || $mdest == /etc/caddy/* ]] || continue
         if [[ $mdest == /etc/caddy ]]; then
             if _docker_mount_host_path "$mtype" "$msrc" "$mname"; then return 0; fi
-            file_mount=$mdest
-        elif [[ $mtype == bind ]]; then
-            file_mount=$mdest
+            bad_root="${mtype}:${msrc:-none}"
+        else
+            sub_mounts+="${mdest} (${mtype}) "
         fi
     done <<<"$mounts"
-    if [[ -n $file_mount ]]; then
-        _ph_err "container '${name}' mounts a single file into /etc/caddy (${file_mount}); ProxyHub manages fragments under /etc/caddy/conf.d/ and needs the whole directory"
+    if [[ -n $bad_root ]]; then
+        _ph_err "container '${name}' mounts /etc/caddy but it is not a usable persistent directory (${bad_root})"
+        _ph_err "fix: mount a host directory (or named volume) at /etc/caddy instead, e.g. -v /srv/caddy:/etc/caddy"
+        return 1
+    fi
+    if [[ -n $sub_mounts ]]; then
+        _ph_err "container '${name}' mounts only sub-paths under /etc/caddy (${sub_mounts% }); ProxyHub manages fragments under /etc/caddy/conf.d/ and needs the whole directory"
         _ph_err "fix: mount a host directory (or named volume) at /etc/caddy instead, e.g. -v /srv/caddy:/etc/caddy"
         return 1
     fi

@@ -51,6 +51,7 @@ FAIL=0
 SKIPS=0
 TEST_DIRS=()
 CASE_CONTAINERS=()
+CASE_VOLUMES=()
 PLACEHOLDER_PID=""
 
 _pass() { PASS=$((PASS + 1)); }
@@ -119,9 +120,16 @@ _stop_case_containers() {
     CASE_CONTAINERS=()
 }
 
+_stop_case_volumes() {
+    ((${#CASE_VOLUMES[@]} == 0)) && return 0
+    docker volume rm -f "${CASE_VOLUMES[@]}" >/dev/null 2>&1 || true
+    CASE_VOLUMES=()
+}
+
 _cleanup() {
     _stop_placeholder
     _stop_case_containers
+    _stop_case_volumes
     docker ps -aq --filter "label=$TEST_LABEL" 2>/dev/null |
         xargs -r docker rm -f >/dev/null 2>&1 || true
     local d
@@ -367,6 +375,59 @@ case_explicit_host_network() {
 }
 
 # --------------------------------------------------------------------------
+# Case 2b: named volume mount - resolution honors the inspect Source and the
+# fragment really lands in the volume. Root-guarded: volume mountpoints are
+# root-owned, so the true-write path needs root; otherwise SKIP (the
+# Source-based resolution is covered non-root by test_lib.sh mocks).
+# --------------------------------------------------------------------------
+case_named_volume() {
+    printf '==> case: named volume install\n'
+    if ((EUID != 0)); then
+        _skip "named volume case needs root (volume mountpoints are root-owned)"
+        return
+    fi
+    new_scratch
+    local vol=phdc-vol
+    docker volume create "$vol" >/dev/null
+    CASE_VOLUMES+=("$vol")
+    local src
+    src=$(docker volume inspect --format '{{.Mountpoint}}' "$vol")
+    [[ -n $src ]] || {
+        _fail "volume inspect returned empty mountpoint: $vol"
+        return
+    }
+    write_caddyfile "$src/Caddyfile" 1 ""
+    mkdir -p "$src/conf.d"
+    # Same symlink trick as setup_mount: root_path(real source) must resolve
+    # into the real volume data dir.
+    mkdir -p "$SBX$(dirname "$src")"
+    ln -s "$src" "$SBX$src"
+    local name=phdc-vol
+    if ! start_caddy "$name" \
+        --add-host host.docker.internal:host-gateway \
+        -p 18084:80 -p 18447:443 \
+        -v "$vol:/etc/caddy"; then
+        _fail "container start failed: $name"
+        return
+    fi
+    wait_admin "$name" || _fail "admin API never came up: $name"
+
+    local rc
+    rc=$(drive_install --caddy-docker "$name" | tail -1)
+    _assert_eq "RC=0" "$rc" "named volume install rc"
+    _assert_file_contains "$src/conf.d/proxyhub.caddy" "reverse_proxy host.docker.internal:8080"
+    if docker exec "$name" test -f /etc/caddy/conf.d/proxyhub.caddy; then
+        _pass
+    else _fail "fragment not visible inside the volume-backed container"; fi
+    if admin_config "$name" | grep -qF "$TEST_DOMAIN"; then
+        _pass
+    else _fail "active caddy config does not serve $TEST_DOMAIN after named volume install"; fi
+    _assert_file_contains "$SBX/root/.proxyhub-install-info" "CADDY_CONTAINER=$name"
+    _stop_case_containers
+    _stop_case_volumes
+}
+
+# --------------------------------------------------------------------------
 # Case 3: zero running caddy containers fail closed (auto-detect path).
 # --------------------------------------------------------------------------
 case_zero_containers() {
@@ -439,7 +500,7 @@ case_single_file_mount() {
     local rc
     rc=$(drive_install --caddy-docker "$name" | tail -1)
     _assert_eq "RC=1" "$rc" "single-file mount rc"
-    _assert_out_contains "$SBX/install.err" "mounts a single file into /etc/caddy" "single-file message"
+    _assert_out_contains "$SBX/install.err" "mounts only sub-paths under /etc/caddy" "single-file message"
     _assert_out_contains "$SBX/install.err" "fix: mount a host directory" "single-file guidance"
     if [[ ! -e $SBX/etc/proxyhub/config.yaml && ! -e $SBX/usr/local/bin/proxyhub ]]; then
         _pass
@@ -635,6 +696,7 @@ EOF
 
 case_auto_detect_bridge
 case_explicit_host_network
+case_named_volume
 case_zero_containers
 case_multi_containers
 case_single_file_mount

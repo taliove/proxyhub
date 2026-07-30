@@ -662,6 +662,8 @@ pm=$(
 pm=$(
     _is_test_mode() { return 1; }
     PROXYHUB_CADDY_MODE=native PROXYHUB_CADDY_CONTAINER=""
+    PROXYHUB_ROOT=$(mktemp -d)
+    mkdir -p "$PROXYHUB_ROOT/var/lib/docker/volumes/caddy-data/_data"
     _have_caddy_bin() { return 1; }
     _docker() {
         case $1 in
@@ -679,6 +681,7 @@ pm=$(
     _check_caddy 2>"$err" || rc=$?
     printf 'RC=%d MODE=%s CONTAINER=%s\n%s\n' "$rc" "$PROXYHUB_CADDY_MODE" "$PROXYHUB_CADDY_CONTAINER" "$(cat "$err")"
     rm -f "$err"
+    rm -rf "$PROXYHUB_ROOT"
 )
 [[ $pm == *"RC=0 MODE=docker CONTAINER=web"* ]] && _pass || _fail "single container auto-select: $pm"
 [[ $pm == *"auto-selected the only running caddy container 'web'"* ]] && _pass ||

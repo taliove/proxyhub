@@ -321,13 +321,28 @@ mroot=$(env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
 ' "$SCRIPT_DIR/lib.sh")
 _assert_eq "/srv/caddy" "$mroot" "bind mount resolution"
 
-# Mount resolution: named volume resolves to the docker volume data path.
-mroot=$(bash -c '
+# Mount resolution: named volumes resolve to the mount's Source (the docker
+# volume data path - correct even for a custom data-root or rootless docker),
+# with the same existence check as bind mounts.
+mroot=$(env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
     source "$0"
+    mkdir -p "$PROXYHUB_ROOT/var/lib/docker/volumes/caddy-data/_data"
     _docker() { printf "volume\t/etc/caddy\t/var/lib/docker/volumes/caddy-data/_data\tcaddy-data\n"; }
     docker_caddy_mount_root caddy
 ' "$SCRIPT_DIR/lib.sh")
-_assert_eq "/var/lib/docker/volumes/caddy-data/_data" "$mroot" "named volume resolution"
+_assert_eq "/var/lib/docker/volumes/caddy-data/_data" "$mroot" "named volume resolution (Source)"
+mroot=$(env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
+    source "$0"
+    mkdir -p "$PROXYHUB_ROOT/data/docker/volumes/caddy-data/_data"
+    _docker() { printf "volume\t/etc/caddy\t/data/docker/volumes/caddy-data/_data\tcaddy-data\n"; }
+    docker_caddy_mount_root caddy
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "/data/docker/volumes/caddy-data/_data" "$mroot" "named volume custom data-root Source"
+_assert_fail env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
+    source "$0"
+    _docker() { printf "volume\t/etc/caddy\t/var/lib/docker/volumes/gone/_data\tgone\n"; }
+    docker_caddy_mount_root caddy
+' "$SCRIPT_DIR/lib.sh"
 
 # Mount resolution: single-file mounts and missing mounts fail closed, with
 # remediation guidance pointing at a directory mount.
@@ -348,6 +363,19 @@ sf_msg=$(bash -c '
 ' "$SCRIPT_DIR/lib.sh" 2>&1 || true)
 if [[ $sf_msg == *"-v /srv/caddy:/etc/caddy"* ]]; then PASS=$((PASS + 1)); else
     FAIL=$((FAIL + 1)); printf 'FAIL: single-file mount error lacks remediation guidance: %s\n' "$sf_msg" >&2
+fi
+if [[ $sf_msg == *"mounts only sub-paths under /etc/caddy"* ]]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); printf 'FAIL: sub-path mount error misdiagnosed: %s\n' "$sf_msg" >&2
+fi
+# A mount AT /etc/caddy whose Source is unusable (missing dir / unsupported
+# type) fails closed with an accurate "not a usable persistent directory".
+bad_msg=$(bash -c '
+    source "$0"
+    _docker() { printf "bind\t/etc/caddy\t/srv/proxyhub-test-definitely-absent\t\n"; }
+    docker_caddy_mount_root caddy
+' "$SCRIPT_DIR/lib.sh" 2>&1 || true)
+if [[ $bad_msg == *"not a usable persistent directory"* ]]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); printf 'FAIL: unusable /etc/caddy mount misdiagnosed: %s\n' "$bad_msg" >&2
 fi
 
 # Port publishing: host networking is exempt; bridge must publish 80 and 443.
@@ -389,6 +417,7 @@ frag=$(env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_
 _assert_eq "$TEST_ROOT/srv/caddy/conf.d/proxyhub.caddy" "$frag" "docker fragment path (bind)"
 frag=$(env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
     source "$0"
+    mkdir -p "$PROXYHUB_ROOT/var/lib/docker/volumes/caddy-data/_data"
     _docker() { printf "volume\t/etc/caddy\t/var/lib/docker/volumes/caddy-data/_data\tcaddy-data\n"; }
     caddy_fragment_path
 ' "$SCRIPT_DIR/lib.sh")
