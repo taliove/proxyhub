@@ -23,7 +23,7 @@ accepted
 3. **配置投递:解析持久挂载**。`docker inspect` 解析容器 `/etc/caddy` 挂载——bind mount 取 Source 路径,named volume 解析 `/var/lib/docker/volumes/.../_data`;fragment 经宿主机路径写入、Caddyfile 追加 `import /etc/caddy/conf.d/*.caddy`(容器路径语义)。单文件挂载等形态 fail closed 并打印修复指引。docker 模式下校验容器已发布 80/443。
 4. **回连拓扑:自动识别双路径**。容器为 `network_mode: host`→零改动(loopback 原样,fragment 不变);桥接网络→`config.yaml` 的 `server.host` 写该容器所在网桥的网关 IP,`trusted_proxies` 收窄到该网桥子网,fragment 用 `reverse_proxy host.docker.internal:PORT`,并校验容器具备 `host.docker.internal:host-gateway` 映射(缺失→fail closed + `--add-host` 修复指引)。
 5. **Caddy 操作镜像 native 语义**:`docker exec <容器> caddy fmt/validate/reload`;admin API 被禁用(如 `admin off`)时 fallback `docker restart <容器>` 并警告对其他站点的短暂中断(与 native 的 `systemctl restart` fallback 同构)。写 fragment → fmt → validate → reload 任一环失败即回滚(删 fragment、还原 Caddyfile 备份),与 native 一致。
-6. **proxyhubctl 全量对齐**:安装档案新增 `CADDY_MODE` 与 `CADDY_CONTAINER`;update/repair/rotate-path/uninstall 读档案后自动走 docker 通道,容器失联时 fail closed。
+6. **proxyhubctl 全量对齐**:安装档案新增 `CADDY_MODE` 与 `CADDY_CONTAINER`;update/backup/restore/rotate-path/uninstall 读档案后自动走 docker 通道,容器失联时 fail closed。
 7. **薄集成测试**:新增 `scripts/install/test_docker_caddy.sh`——真 `caddy:2` 容器 + bind mount 配置目录到 scratch 树,安装器以 `PROXYHUB_ROOT` 测试模式运行,docker seam 打真、systemctl/curl 照旧 mock;覆盖容器探测、挂载解析、fragment 投递、fmt/validate/reload、坏配置回滚、零容器/多容器/无挂载 fail closed、uninstall 清理;无 docker 环境自动 skip。
 
 ## 理由

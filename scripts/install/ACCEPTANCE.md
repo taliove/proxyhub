@@ -418,7 +418,7 @@
 - [ ] 重新安装成功（全新安装）
 - [ ] 服务正常运行
 - [ ] 第二次运行安装器被拒绝（检测到已安装）
-- [ ] 错误消息提示使用 `proxyhubctl update|repair|uninstall`
+- [ ] 错误消息提示使用 `proxyhubctl update` 升级或 `proxyhubctl uninstall` 卸载
 
 ### 失败标准
 - 重新安装失败
