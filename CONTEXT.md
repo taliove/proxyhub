@@ -188,6 +188,14 @@ _区别_: 关键词/地区白名单过滤的是下发哪些节点;地域白名�
 统一规则表 `ip_access_rules` 中 scope=global 的规则,由挂在 Site Path 中间件之后、路由分发之前的拒止中间件执行,命中即统一 404(与 Site Path 未命中逐字节一致,不暴露任何存在性);store 查询失败 fail-open;loopback 永远豁免(SSH 隧道是逃生门)。拉取防护的自动黑名单条目为 scope=sub(只拒 /sub),超管可在审计页"IP 规则"区块一键升级为 global;手动条目建时选定 scope。纯黑名单模型——管理面白名单已否决(自锁风险大于收益,Site Path + loopback 监听 + Caddy 层白名单三道既有防线充分,否决记录见 ADR 0033)。
 _区别_: 登录 IP2Ban 是带失败计数的自动处置(handleLogin 内,独立表);整站黑名单是显式规则 + 全路由中间件。
 
+**Caddy 模式 (Caddy Mode)**:
+一键安装器对目标机 Caddy 拓扑的识别结果,三态:`native`(宿主机原生 systemd Caddy,`command -v caddy` 探测)/ `docker`(容器化 Caddy,见"Docker Caddy 模式")/ `none`(`--no-caddy`,运维自带反代,安装器只写示例文件)。记录在安装档案的 `CADDY_MODE` 字段,proxyhubctl 的 update/repair/rotate-path/uninstall 读档案后走对应通道;旧档案缺省按 `native` 兼容。模式优先级:`--caddy-docker` 强制 docker > 有 caddy 二进制走 native > 自动探测单个 docker caddy 容器 > fail closed(见 ADR 0035)。
+_Avoid_: 反代模式、部署模式
+
+**Docker Caddy 模式 (Docker Caddy Mode)**:
+Caddy 模式的一种:目标机的 Caddy v2 跑在 Docker 容器里,安装器识别并集成它(ProxyHub 本体仍是 systemd 裸机安装)。容器选择混合制:`--caddy-docker <容器名>` 显式指定,不指定时恰好一个运行中的 caddy 镜像容器自动选用并明示,零个/多个 fail closed。配置投递解析容器 `/etc/caddy` 持久挂载(bind mount 或 named volume,经宿主机路径写 fragment、追加容器路径语义的 import 行;单文件挂载等形态 fail closed)。回连拓扑自动识别:`network_mode: host` 容器零改动(loopback 原样);桥接容器绑定该网桥网关 IP、`trusted_proxies` 收窄到网桥子网、fragment 用 `host.docker.internal`(校验 host-gateway 映射)。**安全降级有界且明示**:桥接模式下管理面信任边界从 loopback 扩到该 docker 网桥——同网桥任意容器可直连管理面(无 TLS)且可伪造 XFF,Site Path 保密与 XFF 替换仍在(见 ADR 0035)。
+_Avoid_: 容器部署(ProxyHub 本体仍裸机,不是全容器化编排)
+
 **用户 (User)**:
 ProxyHub 管理面的账号实体,分超级管理员(super_admin)与普通用户(user)两种角色。普通用户拥有独立的机场、节点池、订阅地址、自建节点与 Xray 实例,资源互相隔离。由超管在后台开通,初始密码 + 首登强制改密。
 
