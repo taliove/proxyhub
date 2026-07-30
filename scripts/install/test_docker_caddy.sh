@@ -239,14 +239,15 @@ drive_install() {
     )
 }
 
-# start_placeholder PORT DIR - serve DIR on 0.0.0.0:PORT (reachable both from
-# the host and, through the host-gateway mapping, from bridge containers).
+# start_placeholder PORT DIR BIND_ADDR - serve DIR on BIND_ADDR:PORT. The
+# bridge case passes the gateway address: reachable both from the host and,
+# through the host-gateway mapping, from bridge containers - never 0.0.0.0.
 start_placeholder() {
-    (cd "$2" && exec python3 -m http.server "$1" --bind 0.0.0.0 >/dev/null 2>&1) &
+    (cd "$2" && exec python3 -m http.server "$1" --bind "$3" >/dev/null 2>&1) &
     PLACEHOLDER_PID=$!
     local i
     for i in $(seq 1 20); do
-        curl -fsS -o /dev/null "http://127.0.0.1:$1/" 2>/dev/null && return 0
+        curl -fsS -o /dev/null "http://$3:$1/" 2>/dev/null && return 0
         sleep 0.5
     done
     return 1
@@ -274,7 +275,7 @@ case_auto_detect_bridge() {
     local name=phdc-auto
     if ! start_caddy "$name" \
         --add-host host.docker.internal:host-gateway \
-        -p 18080:80 -p 18443:443 \
+        -p 127.0.0.1:18080:80 -p 127.0.0.1:18443:443 \
         -v "$mount:/etc/caddy"; then
         _fail "container start failed: $name"
         return
@@ -318,7 +319,7 @@ case_auto_detect_bridge() {
     if ((HAVE_PYTHON3 == 1)); then
         mkdir -p "$SBX/www"
         printf 'proxyhub-placeholder-ok' >"$SBX/www/index.html"
-        if start_placeholder 18099 "$SBX/www"; then
+        if start_placeholder 18099 "$SBX/www" "$gw"; then
             local host_side container_side
             host_side=$(curl -fsS --max-time 5 "http://$gw:18099/" 2>/dev/null || true)
             _assert_eq "proxyhub-placeholder-ok" "$host_side" "gateway-address listener reachable from host"
@@ -405,7 +406,7 @@ case_named_volume() {
     local name=phdc-vol
     if ! start_caddy "$name" \
         --add-host host.docker.internal:host-gateway \
-        -p 18084:80 -p 18447:443 \
+        -p 127.0.0.1:18084:80 -p 127.0.0.1:18447:443 \
         -v "$vol:/etc/caddy"; then
         _fail "container start failed: $name"
         return
@@ -490,7 +491,7 @@ case_single_file_mount() {
     local name=phdc-sfile
     if ! start_caddy "$name" \
         --add-host host.docker.internal:host-gateway \
-        -p 18083:80 -p 18446:443 \
+        -p 127.0.0.1:18083:80 -p 127.0.0.1:18446:443 \
         -v "$SBX/Caddyfile.single:/etc/caddy/Caddyfile"; then
         _fail "container start failed: $name"
         return
@@ -520,7 +521,7 @@ case_missing_host_gateway() {
     write_caddyfile "$mount/Caddyfile" 1 ""
     local name=phdc-nohg
     if ! start_caddy "$name" \
-        -p 18084:80 -p 18448:443 \
+        -p 127.0.0.1:18084:80 -p 127.0.0.1:18448:443 \
         -v "$mount:/etc/caddy"; then
         _fail "container start failed: $name"
         return
@@ -640,7 +641,7 @@ case_uninstall() {
     local name=phdc-uninstall
     if ! start_caddy "$name" \
         --add-host host.docker.internal:host-gateway \
-        -p 18085:80 -p 18449:443 \
+        -p 127.0.0.1:18085:80 -p 127.0.0.1:18449:443 \
         -v "$mount:/etc/caddy"; then
         _fail "container start failed: $name"
         return
