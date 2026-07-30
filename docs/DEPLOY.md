@@ -55,7 +55,7 @@ systemctl status caddy
 
 - **Docker ≥ 20.10**：桥接网络的容器依赖 `host.docker.internal:host-gateway` 映射能力（20.10 引入）；
 - **root 直接执行 docker 命令**：安装器本身以 root 运行，对 Docker 的调用由 root 直接发起，需能访问 Docker socket；
-- **镜像为 caddy**：镜像名取最后一段（去掉 registry/命名空间前缀）、再去掉 tag/digest 后恰为 `caddy`(`caddy`、`caddy:2`、`registry.example.com/caddy:2`、`team/caddy` 均可；`caddy-fork`、`team/caddy-proxy` 之类不算）。
+- **镜像为 caddy**：镜像名取最后一段（去掉 registry/命名空间前缀）、再去掉 tag/digest 后恰为 `caddy`(`caddy`、`caddy:2`、`registry.example.com/caddy:2`、`team/caddy` 均可；`caddy-fork`、`team/caddy-proxy` 之类不算)。
 
 #### 容器要求清单
 
