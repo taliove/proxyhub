@@ -543,6 +543,23 @@ _ipv4_network() {
     printf '%s/%d\n' "$out" "$prefix"
 }
 
+# _ipv4_is_private IP - true when IP is an address the admin plane may bind:
+# RFC1918 (10/8, 172.16/12, 192.168/16), loopback (127/8) or link-local
+# (169.254/16). The bridge-gateway bind (ADR 0035) is a BOUNDED widening of
+# the loopback red line; a gateway on a public range would blow past that
+# bound, so adopters must check before trusting docker-reported topology.
+_ipv4_is_private() {
+    case $1 in
+        10.* | 127.* | 169.254.* | 192.168.*) return 0 ;;
+        172.*)
+            local second=${1#172.}
+            second=${second%%.*}
+            [[ $second =~ ^[0-9]+$ ]] && ((10#$second >= 16 && 10#$second <= 31))
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 # docker_caddy_bridge_topology NAME - print "GATEWAY_IP SUBNET_CIDR" for the
 # container's bridge attachment (one line, space separated). Multi-network
 # containers pick deterministically: the alphabetically first network with a
@@ -564,6 +581,11 @@ docker_caddy_bridge_topology() {
         [[ -n $gw && $gw != *:* ]] || continue # IPv4 gateways only
         [[ $prefix =~ $num_re ]] && ((10#$prefix >= 1 && 10#$prefix <= 32)) || prefix=16
         if subnet=$(_ipv4_network "$gw" "$prefix"); then
+            if ! _ipv4_is_private "$gw"; then
+                _ph_err "container '${name}' gateway ${gw} (network '${net}') is not a private address; refusing to bind the admin plane outside RFC1918/loopback/link-local"
+                _ph_err "fix: attach the caddy container to a standard private docker network"
+                return 1
+            fi
             printf '%s %s\n' "$gw" "$subnet"
             return 0
         fi

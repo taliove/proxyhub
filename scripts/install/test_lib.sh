@@ -533,6 +533,33 @@ topo=$(bash -c '
 ' "$SCRIPT_DIR/lib.sh")
 _assert_eq "172.17.0.1 172.17.0.0/16" "$topo" "bridge topology prefix fallback"
 
+# Public-range gateways are refused: the admin plane may only bind
+# RFC1918/loopback/link-local (bounded widening, ADR 0035).
+pub_msg=$(bash -c '
+    source "$0"
+    _docker() { printf "pubnet\t8.8.8.1\t24\n"; }
+    docker_caddy_bridge_topology caddy
+' "$SCRIPT_DIR/lib.sh" 2>&1 || true)
+if [[ $pub_msg == *"not a private address"* ]]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); printf 'FAIL: public gateway not refused: %s\n' "$pub_msg" >&2
+fi
+_assert_fail bash -c '
+    source "$0"
+    _docker() { printf "pubnet\t8.8.8.1\t24\n"; }
+    docker_caddy_bridge_topology caddy
+' "$SCRIPT_DIR/lib.sh"
+# 172.x boundary: 172.16-172.31 is private, 172.32 is not.
+_assert_ok bash -c '
+    source "$0"
+    _docker() { printf "bridge\t172.31.0.1\t16\n"; }
+    docker_caddy_bridge_topology caddy >/dev/null
+' "$SCRIPT_DIR/lib.sh"
+_assert_fail bash -c '
+    source "$0"
+    _docker() { printf "bridge\t172.32.0.1\t16\n"; }
+    docker_caddy_bridge_topology caddy
+' "$SCRIPT_DIR/lib.sh"
+
 # IPv6-only gateways and gateway-less networks fail closed.
 _assert_fail bash -c '
     source "$0"
