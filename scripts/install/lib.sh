@@ -35,7 +35,9 @@ readonly PROXYHUB_BINARY="/usr/local/bin/proxyhub"
 # Effective loopback listen address. NOT readonly: install.sh --listen-addr
 # overrides it after argument parsing, and proxyhubctl re-points it from the
 # install record's LISTEN_ADDR so regenerated Caddy fragments and health
-# probes keep targeting the port chosen at install time.
+# probes keep targeting the port chosen at install time. In the docker bridge
+# topology only its port part is used: the host part is replaced by the
+# bridge gateway (config) or host.docker.internal (fragment).
 PROXYHUB_LISTEN_ADDR="${PROXYHUB_LISTEN_ADDR:-127.0.0.1:8080}"
 readonly PROXYHUB_STATE_DIR="/var/lib/proxyhub"
 readonly PROXYHUB_CONFIG_DIR="/etc/proxyhub"
@@ -50,6 +52,13 @@ readonly PROXYHUB_CADDY_FRAGMENT="/etc/caddy/conf.d/proxyhub.caddy"
 PROXYHUB_CADDY_MODE="${PROXYHUB_CADDY_MODE:-native}"
 # Name of the integrated Caddy container in docker mode; empty otherwise.
 PROXYHUB_CADDY_CONTAINER="${PROXYHUB_CADDY_CONTAINER:-}"
+# Docker network topology of the integrated container (ADR 0035): host
+# (zero-change loopback path) or bridge (gateway listen + narrowed XFF
+# trust). Resolved by docker_caddy_prepare_topology during mode detection;
+# the bridge gateway/subnet only exist when NETMODE=bridge.
+PROXYHUB_DOCKER_NETMODE="${PROXYHUB_DOCKER_NETMODE:-}"
+PROXYHUB_BRIDGE_GATEWAY="${PROXYHUB_BRIDGE_GATEWAY:-}"
+PROXYHUB_BRIDGE_SUBNET="${PROXYHUB_BRIDGE_SUBNET:-}"
 
 # --------------------------------------------------------------------------
 # Output helpers
@@ -440,18 +449,148 @@ docker_caddy_mount_root() {
     return 1
 }
 
-# docker_caddy_ports_published NAME - a bridge-network caddy container must
-# publish TCP 80 and 443 (TLS issuance depends on them). Host-network
-# containers are exempt: they bind the host interfaces directly.
-# TODO(ticket 03/#18): bridge containers additionally need the
-# host.docker.internal:host-gateway mapping and the gateway-IP listen
-# topology; this function only gates port publishing.
-docker_caddy_ports_published() {
-    local name=$1 netmode ports=""
-    netmode=$(_docker inspect --format '{{.HostConfig.NetworkMode}}' "$name") || {
+# docker_caddy_network_mode NAME - print the container's HostConfig network
+# mode: host, bridge, or a user-defined network name (compose-style). Fails
+# closed when inspect fails or reports an empty mode.
+docker_caddy_network_mode() {
+    local name=$1 mode
+    mode=$(_docker inspect --format '{{.HostConfig.NetworkMode}}' "$name") || {
         _ph_err "failed to inspect network mode of container '${name}'"
         return 1
     }
+    if [[ -z $mode ]]; then
+        _ph_err "container '${name}' reports an empty network mode"
+        return 1
+    fi
+    printf '%s\n' "$mode"
+}
+
+# _ipv4_network IP PREFIX - print the base network CIDR (A.B.C.D/PREFIX) for
+# an IPv4 dotted-quad and prefix length 1-32. Returns 1 on malformed input.
+_ipv4_network() {
+    local ip=$1 prefix=$2
+    local ip_re='^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$'
+    local num_re='^[0-9]+$'
+    # The prefix check runs first: a second =~ would clobber BASH_REMATCH.
+    [[ $prefix =~ $num_re ]] || return 1
+    [[ $ip =~ $ip_re ]] || return 1
+    local octets=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}")
+    prefix=$((10#$prefix))
+    ((prefix >= 1 && prefix <= 32)) || return 1
+    local out="" i octet mask
+    for i in 0 1 2 3; do
+        octet=$((10#${octets[$i]}))
+        ((octet <= 255)) || return 1
+        if ((prefix >= (i + 1) * 8)); then
+            mask=255
+        elif ((prefix <= i * 8)); then
+            mask=0
+        else
+            mask=$((256 - 2 ** (8 - (prefix - i * 8))))
+        fi
+        out+="$((octet & mask))"
+        ((i == 3)) || out+="."
+    done
+    printf '%s/%d\n' "$out" "$prefix"
+}
+
+# docker_caddy_bridge_topology NAME - print "GATEWAY_IP SUBNET_CIDR" for the
+# container's bridge attachment (one line, space separated). Multi-network
+# containers pick deterministically: the alphabetically first network with a
+# non-empty IPv4 gateway (inspect map order is not stable). A missing/invalid
+# IPPrefixLen falls back to the /16 default-bridge convention. Fails closed
+# when no attached network exposes an IPv4 gateway.
+docker_caddy_bridge_topology() {
+    local name=$1 nets
+    # SC2016: the single-quoted argument is a docker Go template, not shell.
+    # shellcheck disable=SC2016
+    nets=$(_docker inspect \
+        --format '{{range $n, $net := .NetworkSettings.Networks}}{{printf "%s\t%s\t%d\n" $n $net.Gateway $net.IPPrefixLen}}{{end}}' \
+        "$name") || {
+        _ph_err "failed to inspect networks of container '${name}'"
+        return 1
+    }
+    local net gw prefix subnet num_re='^[0-9]+$'
+    while IFS=$'\t' read -r net gw prefix; do
+        [[ -n $gw && $gw != *:* ]] || continue # IPv4 gateways only
+        [[ $prefix =~ $num_re ]] && ((10#$prefix >= 1 && 10#$prefix <= 32)) || prefix=16
+        if subnet=$(_ipv4_network "$gw" "$prefix"); then
+            printf '%s %s\n' "$gw" "$subnet"
+            return 0
+        fi
+    done < <(printf '%s\n' "$nets" | LC_ALL=C sort)
+    _ph_err "container '${name}' has no IPv4 gateway on any attached network; cannot derive the bridge listen address"
+    return 1
+}
+
+# docker_caddy_require_host_gateway NAME - a bridge-network caddy reaches the
+# host listener through host.docker.internal, which requires the
+# host-gateway extra-hosts mapping (Docker >= 20.10). Fails closed with
+# remediation guidance when the mapping is absent.
+docker_caddy_require_host_gateway() {
+    local name=$1 hosts
+    hosts=$(_docker inspect \
+        --format '{{range .HostConfig.ExtraHosts}}{{printf "%s\n" .}}{{end}}' \
+        "$name") || {
+        _ph_err "failed to inspect extra hosts of container '${name}'"
+        return 1
+    }
+    if printf '%s\n' "$hosts" | grep -qxF 'host.docker.internal:host-gateway'; then
+        return 0
+    fi
+    _ph_err "caddy container '${name}' (bridge networking) lacks the host.docker.internal:host-gateway mapping; the reverse proxy could not reach the ProxyHub listener on the host"
+    _ph_err "fix: add '--add-host host.docker.internal:host-gateway' to docker run, or 'extra_hosts: [\"host.docker.internal:host-gateway\"]' to docker-compose.yml"
+    return 1
+}
+
+# docker_caddy_prepare_topology NAME - classify the container's network
+# topology and resolve everything the bridge listen path needs, BEFORE any
+# file is written (fail-fast with the other host validations). Host-network
+# containers take the zero-change path (loopback semantics stay). Bridge
+# containers (including user-defined/compose networks) must expose a
+# derivable IPv4 gateway and carry the host-gateway mapping; both checks
+# fail closed. On success sets PROXYHUB_DOCKER_NETMODE (host|bridge) and,
+# for bridge, PROXYHUB_BRIDGE_GATEWAY / PROXYHUB_BRIDGE_SUBNET.
+docker_caddy_prepare_topology() {
+    local name=$1 mode
+    mode=$(docker_caddy_network_mode "$name") || return 1
+    if [[ $mode == host ]]; then
+        PROXYHUB_DOCKER_NETMODE=host
+        PROXYHUB_BRIDGE_GATEWAY=""
+        PROXYHUB_BRIDGE_SUBNET=""
+        _ph_log "container '${name}' uses host networking: loopback topology unchanged"
+        return 0
+    fi
+    local topo
+    topo=$(docker_caddy_bridge_topology "$name") || return 1
+    docker_caddy_require_host_gateway "$name" || return 1
+    PROXYHUB_DOCKER_NETMODE=bridge
+    PROXYHUB_BRIDGE_GATEWAY=${topo%% *}
+    PROXYHUB_BRIDGE_SUBNET=${topo##* }
+    _ph_log "container '${name}' uses bridge networking (${mode}): gateway ${PROXYHUB_BRIDGE_GATEWAY}, trusted subnet ${PROXYHUB_BRIDGE_SUBNET}"
+}
+
+# caddy_upstream_addr - print the upstream address the managed fragment
+# proxies to. Loopback topologies (native, none, host-network docker) keep
+# PROXYHUB_LISTEN_ADDR; a bridge-network docker caddy reaches the host
+# listener through its host-gateway mapping, so the target becomes
+# host.docker.internal with only the listen port carried over.
+caddy_upstream_addr() {
+    if [[ $PROXYHUB_CADDY_MODE == docker && $PROXYHUB_DOCKER_NETMODE == bridge ]]; then
+        printf 'host.docker.internal:%s' "${PROXYHUB_LISTEN_ADDR##*:}"
+        return 0
+    fi
+    printf '%s' "$PROXYHUB_LISTEN_ADDR"
+}
+
+# docker_caddy_ports_published NAME - a bridge-network caddy container must
+# publish TCP 80 and 443 (TLS issuance depends on them). Host-network
+# containers are exempt: they bind the host interfaces directly. The bridge
+# listen topology itself (host-gateway mapping, gateway bind) is gated by
+# docker_caddy_prepare_topology.
+docker_caddy_ports_published() {
+    local name=$1 netmode ports=""
+    netmode=$(docker_caddy_network_mode "$name") || return 1
     if [[ $netmode == host ]]; then
         _ph_log "container '${name}' uses host networking: 80/443 publish check exempt"
         return 0
@@ -564,15 +703,18 @@ caddy_reload() {
 
 # write_caddy_fragment DOMAIN SITE_PATH - write the Caddy v2 site fragment.
 # Terminates TLS for DOMAIN (Caddy automatic HTTPS), proxies /<site-path>/
-# (including /<site-path>/dist/) to the ProxyHub loopback listener, and
-# returns a plain 404 for / and everything else. The embedded Xray data-plane
-# is reached only through ProxyHub; no Xray port is exposed.
+# (including /<site-path>/dist/) to the ProxyHub listener (loopback, or
+# host.docker.internal in the docker bridge topology - caddy_upstream_addr),
+# and returns a plain 404 for / and everything else. The embedded Xray
+# data-plane is reached only through ProxyHub; no Xray port is exposed.
 write_caddy_fragment() {
     local domain="${1:-}"
     local site_path="${2:-}"
     validate_domain "$domain" || return 1
     validate_site_path "$site_path" || return 1
 
+    local upstream
+    upstream=$(caddy_upstream_addr)
     local frag_path
     frag_path=$(caddy_fragment_path) || return 1
     local frag_dir
@@ -588,11 +730,12 @@ write_caddy_fragment() {
 ${domain} {
 	@proxyhub path /${site_path} /${site_path}/*
 	handle @proxyhub {
-		# Replace (not append) forwarding headers: ProxyHub trusts XFF from its
-		# loopback peer, so a caller-supplied X-Forwarded-For must never survive
-		# the proxy hop - otherwise IP2Ban / honeypot / captcha / blacklist can
-		# all be bypassed by spoofing 127.0.0.1.
-		reverse_proxy ${PROXYHUB_LISTEN_ADDR} {
+		# Replace (not append) forwarding headers: ProxyHub trusts XFF only from
+		# its declared peers (loopback, or the narrowed bridge subnet), so a
+		# caller-supplied X-Forwarded-For must never survive the proxy hop -
+		# otherwise IP2Ban / honeypot / captcha / blacklist can all be bypassed
+		# by spoofing a trusted source.
+		reverse_proxy ${upstream} {
 			header_up X-Forwarded-For {remote_host}
 			header_up X-Real-IP {remote_host}
 		}

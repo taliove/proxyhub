@@ -123,6 +123,9 @@ mock_host() {
                 *) url=$1; shift ;;
             esac
         done
+        # Optional probe recorder: bridge-topology tests assert which address
+        # the loopback health check actually hit.
+        [[ -z ${CURL_CALLS:-} || -z $url ]] || printf '%s\n' "$url" >>"$CURL_CALLS"
         if ((effective)); then
             printf 'https://github.com/%s/releases/tag/%s\n' "$REPO" "$TEST_TAG"
             return 0
@@ -511,6 +514,133 @@ _assert_file_contains "$DOCK_SBX/etc/proxyhub/config.yaml" 'host: "127.0.0.1"'
 _assert_file_contains "$DOCK_SBX/root/.proxyhub-install-info" "CADDY_MODE=docker"
 _assert_file_contains "$DOCK_SBX/root/.proxyhub-install-info" "CADDY_CONTAINER=caddy"
 _assert_file_contains "$DOCK_SBX/stderr.log" "docker caddy mode: integrating container 'caddy'"
+# Host-network containers take the zero-change path: no trusted_proxies
+# widening, no bridge trust-boundary warning.
+_assert_file_not_contains "$DOCK_SBX/etc/proxyhub/config.yaml" "trusted_proxies"
+if grep -qF "trust boundary" "$DOCK_SBX/stdout.log"; then
+    _fail "host-network summary unexpectedly carries the bridge trust-boundary warning"
+else _pass; fi
+
+# --------------------------------------------------------------------------
+# Docker bridge topology (ADR 0035, ticket 03/#18)
+# --------------------------------------------------------------------------
+
+# mock_docker_bridge_caddy - _docker answers for a bridge-network caddy
+# container: host-gateway mapping present, 172.17.0.1/16 gateway, 80/443
+# published, bind mount at /srv/caddy.
+mock_docker_bridge_caddy() {
+    _docker() {
+        if [[ $1 == inspect ]]; then
+            case $3 in
+                *State.Running*) printf 'true\n' ;;
+                *Config.Image*) printf 'caddy:2\n' ;;
+                *HostConfig.NetworkMode*) printf 'bridge\n' ;;
+                *HostConfig.ExtraHosts*) printf 'host.docker.internal:host-gateway\n' ;;
+                *NetworkSettings.Networks*) printf 'bridge\t172.17.0.1\t16\n' ;;
+                *Mounts*) printf 'bind\t/etc/caddy\t/srv/caddy\t\n' ;;
+            esac
+        elif [[ $1 == port ]]; then
+            printf '80/tcp -> 0.0.0.0:80\n443/tcp -> 0.0.0.0:443\n'
+        fi
+        return 0
+    }
+}
+
+# Bridge happy path: gateway bind + trusted_proxies narrowing + fragment
+# retarget + gateway health probe + summary trust-boundary warning.
+bridge=$(
+    setup_sandbox
+    mock_host
+    mock_docker_bridge_caddy
+    mkdir -p "$SBX/srv/caddy"
+    export CURL_CALLS="$SBX/curl.calls"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --caddy-docker caddy \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\n' "$rc"
+    printf 'SBX=%s\n' "$SBX"
+)
+br_rc=$(printf '%s\n' "$bridge" | sed -n 's/^RC=//p')
+BR_SBX=$(printf '%s\n' "$bridge" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$BR_SBX")
+
+_assert_eq 0 "$br_rc" "docker bridge install exit code"
+_assert_file_contains "$BR_SBX/etc/proxyhub/config.yaml" 'host: "172.17.0.1"'
+_assert_file_contains "$BR_SBX/etc/proxyhub/config.yaml" 'trusted_proxies: ["172.17.0.0/16"]'
+_assert_file_contains "$BR_SBX/srv/caddy/conf.d/proxyhub.caddy" "reverse_proxy host.docker.internal:8080"
+_assert_file_contains "$BR_SBX/srv/caddy/conf.d/proxyhub.caddy" "header_up X-Forwarded-For {remote_host}"
+_assert_file_contains "$BR_SBX/srv/caddy/conf.d/proxyhub.caddy" "header_up X-Real-IP {remote_host}"
+_assert_file_contains "$BR_SBX/root/.proxyhub-install-info" "CADDY_MODE=docker"
+_assert_file_contains "$BR_SBX/stderr.log" "uses bridge networking"
+br_site=$(sed -n 's/^SITE_PATH=//p' "$BR_SBX/root/.proxyhub-install-info")
+_assert_file_contains "$BR_SBX/curl.calls" "http://172.17.0.1:8080/${br_site}/healthz"
+_assert_file_contains "$BR_SBX/stdout.log" "trust boundary"
+_assert_file_contains "$BR_SBX/stdout.log" "spoof"
+_assert_file_contains "$BR_SBX/stdout.log" "dedicated bridge"
+
+# Bridge + custom --listen-addr: only the port survives; the host part is
+# replaced by the gateway IP and the effective bind is announced.
+bridgela=$(
+    setup_sandbox
+    mock_host
+    mock_docker_bridge_caddy
+    mkdir -p "$SBX/srv/caddy"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --caddy-docker caddy \
+        --listen-addr 127.0.0.1:18080 >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\n' "$rc"
+    printf 'SBX=%s\n' "$SBX"
+)
+brla_rc=$(printf '%s\n' "$bridgela" | sed -n 's/^RC=//p')
+BRLA_SBX=$(printf '%s\n' "$bridgela" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$BRLA_SBX")
+
+_assert_eq 0 "$brla_rc" "bridge custom listen addr exit code"
+_assert_file_contains "$BRLA_SBX/etc/proxyhub/config.yaml" 'host: "172.17.0.1"'
+_assert_file_contains "$BRLA_SBX/etc/proxyhub/config.yaml" 'port: 18080'
+_assert_file_contains "$BRLA_SBX/srv/caddy/conf.d/proxyhub.caddy" "reverse_proxy host.docker.internal:18080"
+_assert_file_contains "$BRLA_SBX/stderr.log" "effective bind 172.17.0.1:18080"
+_assert_file_contains "$BRLA_SBX/root/.proxyhub-install-info" "LISTEN_ADDR=127.0.0.1:18080"
+
+# Missing host-gateway mapping: fail closed BEFORE any file is written, with
+# both docker-run and compose remediation forms.
+nohg=$(
+    setup_sandbox
+    mock_host
+    _docker() {
+        if [[ $1 == inspect ]]; then
+            case $3 in
+                *State.Running*) printf 'true\n' ;;
+                *Config.Image*) printf 'caddy:2\n' ;;
+                *HostConfig.NetworkMode*) printf 'bridge\n' ;;
+                *HostConfig.ExtraHosts*) printf '\n' ;;
+                *NetworkSettings.Networks*) printf 'bridge\t172.17.0.1\t16\n' ;;
+                *Mounts*) printf 'bind\t/etc/caddy\t/srv/caddy\t\n' ;;
+            esac
+        elif [[ $1 == port ]]; then
+            printf '80/tcp -> 0.0.0.0:80\n443/tcp -> 0.0.0.0:443\n'
+        fi
+        return 0
+    }
+    mkdir -p "$SBX/srv/caddy"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --caddy-docker caddy \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\n' "$rc"
+    printf 'SBX=%s\n' "$SBX"
+)
+nohg_rc=$(printf '%s\n' "$nohg" | sed -n 's/^RC=//p')
+NOHG_SBX=$(printf '%s\n' "$nohg" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$NOHG_SBX")
+
+_assert_eq 1 "$nohg_rc" "missing host-gateway exit code"
+_assert_file_contains "$NOHG_SBX/stderr.log" "--add-host host.docker.internal:host-gateway"
+_assert_file_contains "$NOHG_SBX/stderr.log" "extra_hosts"
+[[ ! -e $NOHG_SBX/usr/local/bin/proxyhub ]] && _pass || _fail "binary installed despite missing host-gateway mapping"
+[[ ! -e $NOHG_SBX/etc/proxyhub/config.yaml ]] && _pass || _fail "config written despite missing host-gateway mapping"
+[[ ! -e $NOHG_SBX/srv/caddy/conf.d/proxyhub.caddy ]] && _pass || _fail "fragment written despite missing host-gateway mapping"
+
+# --------------------------------------------------------------------------
 
 # Mode priority: a native caddy binary wins over docker containers.
 pm=$(

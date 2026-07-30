@@ -100,7 +100,12 @@ OPTIONS
   --caddy-docker NAME    Integrate an existing dockerized Caddy (ADR 0035):
                          NAME must be a running container of the caddy image
                          with a persistent /etc/caddy mount (bind or named
-                         volume). Mutually exclusive with --no-caddy.
+                         volume). Bridge-network containers must additionally
+                         publish TCP 80/443 and map
+                         host.docker.internal:host-gateway; the admin plane
+                         then binds the bridge gateway with trusted_proxies
+                         narrowed to the bridge subnet (summary warns).
+                         Mutually exclusive with --no-caddy.
   --skip-dns-check       Skip DNS resolution check (CDN / private networks).
   -h, --help             Show this help.
 
@@ -233,17 +238,29 @@ _check_os() {
 # _have_caddy_bin - true when a native caddy binary is on PATH (test seam).
 _have_caddy_bin() { command -v caddy >/dev/null 2>&1; }
 
+# _note_bridge_listen_override - when the operator passed --listen-addr and
+# the adopted topology is a docker bridge, surface the effective bind: the
+# port survives, the host part is replaced by the bridge gateway (the
+# user-facing flag stays loopback-only by design, spec decision 5).
+_note_bridge_listen_override() {
+    [[ $PROXYHUB_CADDY_MODE == docker && $PROXYHUB_DOCKER_NETMODE == bridge && -n $ARG_LISTEN_ADDR ]] || return 0
+    _ph_log "--listen-addr ${ARG_LISTEN_ADDR}: bridge mode replaces the loopback host part with the bridge gateway; effective bind ${PROXYHUB_BRIDGE_GATEWAY}:${PROXYHUB_LISTEN_ADDR##*:}"
+}
+
 # _select_docker_caddy NAME - explicit --caddy-docker selection: validate the
-# container, its port publishing and its /etc/caddy mount, then adopt the
-# docker Caddy mode (ADR 0035).
+# container, its port publishing, its /etc/caddy mount and its network
+# topology (host-gateway mapping + gateway derivation for bridge networks),
+# then adopt the docker Caddy mode (ADR 0035).
 _select_docker_caddy() {
     local name=$1
     docker_validate_caddy_container "$name" || return 1
     docker_caddy_ports_published "$name" || return 1
     docker_caddy_mount_root "$name" >/dev/null || return 1
+    docker_caddy_prepare_topology "$name" || return 1
     PROXYHUB_CADDY_CONTAINER=$name
     PROXYHUB_CADDY_MODE=docker
     _ph_log "docker caddy mode: integrating container '${name}'"
+    _note_bridge_listen_override
 }
 
 # _autodetect_docker_caddy - return 0 after adopting the docker mode when
@@ -266,6 +283,8 @@ _autodetect_docker_caddy() {
     _ph_log "auto-selected the only running caddy container '${candidates}' (docker caddy mode; override with --caddy-docker)"
     docker_caddy_ports_published "$candidates" || return 2
     docker_caddy_mount_root "$candidates" >/dev/null || return 2
+    docker_caddy_prepare_topology "$candidates" || return 2
+    _note_bridge_listen_override
     return 0
 }
 
@@ -430,15 +449,24 @@ _download_and_verify() { # WORKDIR
 
 # Install steps
 _write_config() {
-    local cfg listen_port
+    local cfg listen_port server_host trusted_line=""
     cfg=$(root_path "${PROXYHUB_CONFIG_DIR}/config.yaml")
     listen_port="${PROXYHUB_LISTEN_ADDR##*:}"
+    server_host="127.0.0.1"
+    # Docker bridge topology (ADR 0035): the admin plane binds the bridge
+    # gateway so the containerized Caddy can reach it, and XFF trust narrows
+    # to the bridge subnet. Host-network/native keep the loopback bind and
+    # stay byte-identical to before.
+    if [[ $PROXYHUB_CADDY_MODE == docker && $PROXYHUB_DOCKER_NETMODE == bridge ]]; then
+        server_host=$PROXYHUB_BRIDGE_GATEWAY
+        trusted_line="  trusted_proxies: [\"${PROXYHUB_BRIDGE_SUBNET}\"]"$'\n'
+    fi
     mkdir -p "$(dirname "$cfg")" || _ph_fail "failed to create $(dirname "$cfg")" || return 1
     if ! cat >"$cfg" <<EOF
 server:
-  host: "127.0.0.1"
+  host: "${server_host}"
   port: ${listen_port}
-storage:
+${trusted_line}storage:
   path: "${PROXYHUB_STATE_DIR}/data.db"
 health_check:
   interval: 15m
@@ -626,7 +654,13 @@ _verify_url() { # URL TRIES UNIT
 }
 
 _verify_health() {
-    _verify_url "http://${PROXYHUB_LISTEN_ADDR}/${SITE_PATH}/healthz" "$PROXYHUB_LOOPBACK_HEALTH_TRIES" proxyhub || return 1
+    local probe_addr=$PROXYHUB_LISTEN_ADDR
+    # Docker bridge topology: the loopback probe targets the bridge gateway
+    # address (reachable from the host), where the admin plane now listens.
+    if [[ $PROXYHUB_CADDY_MODE == docker && $PROXYHUB_DOCKER_NETMODE == bridge ]]; then
+        probe_addr="${PROXYHUB_BRIDGE_GATEWAY}:${PROXYHUB_LISTEN_ADDR##*:}"
+    fi
+    _verify_url "http://${probe_addr}/${SITE_PATH}/healthz" "$PROXYHUB_LOOPBACK_HEALTH_TRIES" proxyhub || return 1
     if [[ $NO_CADDY == 1 ]]; then
         _ph_log "public HTTPS health check skipped (--no-caddy): verify your own reverse proxy forwards /${SITE_PATH}/ to http://${PROXYHUB_LISTEN_ADDR}"
         return 0
@@ -663,6 +697,13 @@ _write_install_record() {
         printf '  --no-caddy: no reverse proxy was configured. Adapt one of the\n  generated examples to your setup, then browse the Management URL:\n    %s\n    %s\n  Both enforce the X-Forwarded-For replacement rule (security).\n\n' \
             "$(root_path "${PROXYHUB_CONFIG_DIR}/reverse-proxy.caddy")" \
             "$(root_path "${PROXYHUB_CONFIG_DIR}/reverse-proxy.nginx.conf")"
+    fi
+    # Docker bridge topology security disclosure (ADR 0035 consequences): the
+    # bounded widening of the admin-plane trust boundary must be stated in
+    # the one-time summary so the operator can make an informed choice.
+    if [[ $caddy_mode == docker && $PROXYHUB_DOCKER_NETMODE == bridge ]]; then
+        printf '  WARNING (docker bridge mode): the management-plane trust boundary\n  widened from loopback to the %s docker bridge. Any container on\n  this bridge can reach the admin plane directly (no TLS) and can\n  spoof X-Forwarded-For. If you do not trust the other containers on\n  this bridge, use a host-network caddy container or native Caddy\n  instead, and isolate caddy on a dedicated bridge network.\n\n' \
+            "$PROXYHUB_BRIDGE_SUBNET"
     fi
 }
 
