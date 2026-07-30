@@ -174,6 +174,28 @@ test_show_info() {
     assert_contains "$output" "VERSION=v1.2.3"
 }
 
+test_status_shows_default_download_base() {
+    # The shared record predates the DOWNLOAD_BASE field: status reports the
+    # official GitHub releases base as the effective download base (ADR 0036).
+    local output
+    output=$(bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" status 2>&1)
+    assert_contains "$output" "Download base:"
+    assert_contains "$output" "https://github.com/taliove/proxyhub/releases/download"
+}
+
+test_status_shows_record_download_base() {
+    # A record written by install.sh --download-base: status reports the
+    # recorded mirror as the effective download base.
+    local record="$PROXYHUB_ROOT/root/.proxyhub-install-info"
+    cp "$record" "${record}.orig"
+    printf 'DOWNLOAD_BASE=https://mirror.example.com/dl\n' >>"$record"
+    local output
+    output=$(bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" status 2>&1)
+    mv "${record}.orig" "$record"
+    assert_contains "$output" "Download base:"
+    assert_contains "$output" "https://mirror.example.com/dl"
+}
+
 test_help() {
     local output
     output=$(bash "$PROXYHUB_ROOT/usr/local/bin/proxyhubctl" --help 2>&1)
@@ -388,6 +410,8 @@ main() {
     test_logs_with_lines
     test_restart
     test_show_info
+    test_status_shows_default_download_base
+    test_status_shows_record_download_base
     test_help
     test_reset_mfa_with_yes
     test_reset_mfa_interactive_confirm

@@ -18,6 +18,10 @@
 #                          (git log -1 --format=%ct). Same tree + same epoch
 #                          => byte-identical tarballs.
 #   OUTPUT_DIR=path        Output directory (default: dist/release).
+#   MINISIGN_KEY_FILE=path minisign private key file. When set, SHA256SUMS is
+#                          signed into SHA256SUMS.minisig (the CI release path,
+#                          ADR 0036). When unset, signing is skipped with a
+#                          WARN so local rehearsals stay unblocked.
 #
 set -Eeuo pipefail
 
@@ -108,6 +112,27 @@ sha256() { # file
   fi
 }
 
+# sign_sums PUBLISH_DIR - sign PUBLISH_DIR/SHA256SUMS into SHA256SUMS.minisig
+# with minisign when MINISIGN_KEY_FILE points at a private key file. The
+# release workflow always sets it (and fails earlier when the secret is
+# absent), so a missing key here only happens in local rehearsals: warn and
+# leave the manifest unsigned. Key material is never logged.
+sign_sums() {
+  local dir="$1"
+  if [[ -z "${MINISIGN_KEY_FILE:-}" ]]; then
+    log "WARN: MINISIGN_KEY_FILE not set - leaving SHA256SUMS unsigned (local rehearsal only; releases must be signed)"
+    return 0
+  fi
+  [[ -f "$MINISIGN_KEY_FILE" ]] || { log "MINISIGN_KEY_FILE '$MINISIGN_KEY_FILE' does not exist"; return 1; }
+  command -v minisign >/dev/null 2>&1 || { log "minisign is required to sign SHA256SUMS"; return 1; }
+  # Legacy (non-prehashed) format is mandatory: minisign >= 0.11 prehashes by
+  # default, and the openssl verifier in scripts/install/lib.sh only accepts
+  # the legacy "Ed" signature layout.
+  minisign -S -l -s "$MINISIGN_KEY_FILE" -x "$dir/SHA256SUMS.minisig" -m "$dir/SHA256SUMS" || return 1
+  [[ -f "$dir/SHA256SUMS.minisig" ]] || { log "minisign produced no SHA256SUMS.minisig"; return 1; }
+  log "signed SHA256SUMS -> SHA256SUMS.minisig"
+}
+
 # --- Main --------------------------------------------------------------------
 
 workspace=""
@@ -159,13 +184,16 @@ main() {
   done < <(printf '%s\n' "${assets[@]}" | LC_ALL=C sort)
   mv "$sums_tmp" "$publish/SHA256SUMS"
 
+  sign_sums "$publish" || fail "could not sign SHA256SUMS"
+
   mkdir -p "$OUTPUT_DIR"
-  rm -f "$OUTPUT_DIR"/proxyhub_*.tar.gz "$OUTPUT_DIR/SHA256SUMS"
+  rm -f "$OUTPUT_DIR"/proxyhub_*.tar.gz "$OUTPUT_DIR/SHA256SUMS" "$OUTPUT_DIR/SHA256SUMS.minisig"
   cp "$publish"/* "$OUTPUT_DIR/" || fail "could not publish to $OUTPUT_DIR"
 
   log "release assets written to $OUTPUT_DIR:"
   local f
-  for f in "$OUTPUT_DIR"/proxyhub_*.tar.gz "$OUTPUT_DIR/SHA256SUMS"; do
+  for f in "$OUTPUT_DIR"/proxyhub_*.tar.gz "$OUTPUT_DIR/SHA256SUMS" "$OUTPUT_DIR/SHA256SUMS.minisig"; do
+    [[ -f "$f" ]] || continue
     log "  $(basename "$f")"
   done
 }

@@ -28,19 +28,37 @@ fi
 _PH_LIB_TMP=""
 if [[ -z $_ph_lib ]]; then
     # Only HTTPS is acceptable for root-executed code; file:// stays available
-    # to the test suite via PROXYHUB_ROOT.
-    _ph_lib_url="${PROXYHUB_LIB_URL:-https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/lib.sh}"
-    if [[ $_ph_lib_url != https://* && -z ${PROXYHUB_ROOT:-} ]]; then
-        printf '[proxyhub] ERROR: PROXYHUB_LIB_URL must use https:// (got %s)\n' "$_ph_lib_url" >&2
+    # to the test suite via PROXYHUB_ROOT. Source candidates (ADR 0036): an
+    # explicit PROXYHUB_LIB_URL wins over everything (no fallback when it
+    # fails); otherwise jsDelivr (same @main ref as the documented CN entry)
+    # first, raw.githubusercontent as fallback. The companion lib carries no
+    # trust - the release signature verified below is the trust anchor.
+    if [[ -n ${PROXYHUB_LIB_URL:-} && ${PROXYHUB_LIB_URL} != https://* && -z ${PROXYHUB_ROOT:-} ]]; then
+        printf '[proxyhub] ERROR: PROXYHUB_LIB_URL must use https:// (got %s)\n' "${PROXYHUB_LIB_URL}" >&2
         exit 1
+    fi
+    _ph_lib_urls=()
+    if [[ -n ${PROXYHUB_LIB_URL:-} ]]; then
+        _ph_lib_urls=("${PROXYHUB_LIB_URL}")
+    else
+        _ph_lib_urls=(
+            "https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/scripts/install/lib.sh"
+            "https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/lib.sh"
+        )
     fi
     _PH_LIB_TMP=$(mktemp -d)
     chmod 700 "$_PH_LIB_TMP"
-    if ! curl -fsSL "$_ph_lib_url" -o "$_PH_LIB_TMP/lib.sh"; then
-        printf '[proxyhub] ERROR: cannot locate scripts/install/lib.sh locally, and download from %s failed\n' "$_ph_lib_url" >&2
+    for _ph_lib_url in "${_ph_lib_urls[@]}"; do
+        if curl -fsSL "$_ph_lib_url" -o "$_PH_LIB_TMP/lib.sh" 2>/dev/null; then
+            _ph_lib="$_PH_LIB_TMP/lib.sh"
+            break
+        fi
+        printf '[proxyhub] WARNING: companion lib download failed, trying next source: %s\n' "$_ph_lib_url" >&2
+    done
+    if [[ -z $_ph_lib ]]; then
+        printf '[proxyhub] ERROR: cannot locate scripts/install/lib.sh locally, and every download source failed\n' >&2
         exit 1
     fi
-    _ph_lib="$_PH_LIB_TMP/lib.sh"
 fi
 # Resolved companion-lib path, kept for the proxyhubctl install step
 # (_ph_lib itself is unset below with the other search temporaries).
@@ -49,7 +67,7 @@ _PH_LIB_PATH="$_ph_lib"
 # shellcheck source=scripts/install/lib.sh
 # shellcheck disable=SC1090,SC1091
 source "$_ph_lib"
-unset _ph_lib _ph_lib_candidate
+unset _ph_lib _ph_lib_url _ph_lib_urls
 
 # Constants and mutable globals (initialized for `set -u` sourcing)
 readonly PROXYHUB_DEFAULT_REPO="taliove/proxyhub"
@@ -62,13 +80,10 @@ NON_INTERACTIVE=0 DOMAIN="" EMAIL="" VERSION="latest" VERSION_TAG=""
 REPO="$PROXYHUB_DEFAULT_REPO" ARG_SITE_PATH="" SITE_PATH="" SKIP_DNS_CHECK=0
 DETECTED_OS="" DETECTED_ARCH="" ADMIN_USER="" ADMIN_PASSWORD="" ARG_LISTEN_ADDR=""
 TIMESTAMP="" WORKDIR="" CADDY_BACKUP="" NO_CADDY=0 ARG_CADDY_DOCKER=""
+# Download base (ADR 0036): --download-base wins over PROXYHUB_DOWNLOAD_BASE;
+# empty means the official GitHub releases base (resolved in parse_args).
+ARG_DOWNLOAD_BASE="" DOWNLOAD_BASE=""
 
-# _ph_fail MSG... - print each MSG as an error line and return 1 (guard helper).
-_ph_fail() {
-    local _m
-    for _m in "$@"; do _ph_err "$_m"; done
-    return 1
-}
 # _ph_die2 MSG... - print an error line and exit 2 (usage-error helper).
 _ph_die2() { _ph_err "$@"; exit 2; }
 
@@ -90,6 +105,12 @@ OPTIONS
   --version VERSION      "latest" (default) or explicit semver (1.2.3 / v1.2.3).
                          Pre-releases require an explicit value.
   --repo OWNER/REPO      GitHub releases source (default: taliove/proxyhub).
+  --download-base URL    Mirror download base for release artifacts (ADR 0036;
+                         default: GitHub official releases). https:// only;
+                         artifact URLs resolve as URL/<version>/<name>. A
+                         custom base requires an explicit --version and is
+                         probed for connectivity instead of github.com.
+                         Env: PROXYHUB_DOWNLOAD_BASE (the flag wins).
   --site-path PATH       Custom Site Path: 20-64 chars of [A-Za-z0-9_-], >=3
                          character classes, no reserved words.
   --listen-addr ADDR     Loopback listen address as 127.0.0.1:PORT
@@ -118,7 +139,9 @@ BEHAVIOR
   READ-ONLY host validation (OS: Ubuntu 22.04/24.04/26.04, Debian 12/13; amd64/arm64;
   systemd; root; outbound HTTPS; DNS; TCP 80/443 free or Caddy-owned) - never
   touches DNS, firewalls, or security groups. Downloads the release tarball +
-  SHA256SUMS over verified HTTPS; checksum verified BEFORE unpacking. Installs
+  SHA256SUMS + SHA256SUMS.minisig over verified HTTPS; the minisign signature
+  over SHA256SUMS is verified against the embedded release public key BEFORE
+  the tarball checksum, which is verified BEFORE unpacking (ADR 0036). Installs
   the binary, proxyhub user, directories, config.yaml, systemd unit; generates
   admin credentials passed to `proxyhub init` via stdin (never argv); writes,
   validates and reloads the Caddy fragment; verifies BOTH the loopback and the
@@ -153,6 +176,7 @@ parse_args() {
             --email) _need_value "$1" $#; EMAIL=$2; shift 2 ;;
             --version) _need_value "$1" $#; VERSION=$2; shift 2 ;;
             --repo) _need_value "$1" $#; REPO=$2; shift 2 ;;
+            --download-base) _need_value "$1" $#; ARG_DOWNLOAD_BASE=$2; shift 2 ;;
             --site-path) _need_value "$1" $#; ARG_SITE_PATH=$2; shift 2 ;;
             --listen-addr) _need_value "$1" $#; ARG_LISTEN_ADDR=$2; shift 2 ;;
             --no-caddy) NO_CADDY=1; shift ;;
@@ -181,6 +205,15 @@ parse_args() {
         _ph_err "invalid email '${EMAIL}'"; bad=1
     fi
     ((bad == 0)) || exit 2
+
+    # Download base (ADR 0036): resolve after REPO is validated; the flag
+    # wins over the environment variable. A custom (non-GitHub) base cannot
+    # resolve "latest" (that needs GitHub redirects), so mirror mode demands
+    # an explicit --version - fail closed, never guess.
+    DOWNLOAD_BASE=$(resolve_download_base "$REPO" "${ARG_DOWNLOAD_BASE:-${PROXYHUB_DOWNLOAD_BASE:-}}") || exit 2
+    if [[ $VERSION == latest && $DOWNLOAD_BASE != "$(default_download_base "$REPO")" ]]; then
+        _ph_die2 "custom download base requires an explicit --version (latest resolution needs GitHub)"
+    fi
 
     # The rehearsal seam only makes sense paired with --skip-dns-check;
     # refusing the lone form keeps it from becoming a lazy-production flag.
@@ -339,8 +372,21 @@ _validate_host_platform() {
         fi
         ((EUID == 0)) || _ph_fail "the installer must run as root (try: sudo bash install.sh ...)" || return 1
     fi
-    _curl -fsS --max-time 10 -o /dev/null "https://github.com" ||
-        _ph_fail "outbound HTTPS to github.com failed: the installer must reach GitHub releases (read-only check; nothing was modified)" || return 1
+    # Connectivity self-check follows the download base (ADR 0036): the
+    # official base still probes github.com; a custom base is probed itself.
+    # No -f: the probe proves TRANSPORT reachability only. A bare mirror
+    # base (ghproxy prefix, nginx reverse proxy) commonly answers 404 while
+    # serving the artifacts fine, so any HTTP response counts as reachable;
+    # only a transport failure (DNS/connect/TLS) fails the check.
+    local probe=https://github.com
+    [[ $DOWNLOAD_BASE == "$(default_download_base "$REPO")" ]] || probe=$DOWNLOAD_BASE
+    if ! _curl -sS --max-time 10 -o /dev/null "$probe"; then
+        _ph_err "outbound HTTPS to ${probe} failed: the installer must reach the release download base (read-only check; nothing was modified)"
+        if [[ $probe == https://github.com ]]; then
+            _ph_err "if GitHub is unreachable from this host, point --download-base at a reachable mirror (see --help)"
+        fi
+        return 1
+    fi
     # --no-caddy: the operator brings their own reverse proxy, so neither a
     # local Caddy nor free 80/443 is required.
     if ((NO_CADDY == 0)); then
@@ -403,50 +449,10 @@ _generate_credentials() {
     [[ ${#ADMIN_PASSWORD} -ge 24 ]] || _ph_fail "generated admin password is too short"
 }
 
-# Download + verify (HTTPS verification is never disabled)
-_curl() { command curl "$@"; }
-_fetch() { _curl -fsSL --max-time 120 -o "$2" "$1" || _ph_fail "download failed: $1"; }
-
-_resolve_latest_tag() { # REPO -> stdout tag
-    local effective tag
-    effective=$(_curl -fsSIL --max-time 15 -o /dev/null -w '%{url_effective}' \
-        "https://github.com/$1/releases/latest") ||
-        _ph_fail "could not resolve the latest release of $1 (network error, or no stable release published yet)" || return 1
-    tag=${effective##*/}
-    if [[ -z $tag || $tag == latest ]] || ! validate_version "$tag" >/dev/null; then
-        _ph_fail "unexpected latest-release redirect for $1: '${effective}'"
-        return 1
-    fi
-    printf '%s' "$tag"
-}
-
-_download_and_verify() { # WORKDIR
-    local workdir=$1 asset base line_file="${1}/.checksum-line"
-    asset="proxyhub_${VERSION_TAG#v}_${DETECTED_OS}_${DETECTED_ARCH}.tar.gz"
-    base="https://github.com/${REPO}/releases/download/${VERSION_TAG}"
-
-    _ph_log "downloading ${base}/${asset}"
-    _fetch "${base}/SHA256SUMS" "${workdir}/SHA256SUMS" || return 1
-    _fetch "${base}/${asset}" "${workdir}/${asset}" || return 1
-
-    # Extract ONLY the matching checksum line; exactly one entry must exist.
-    grep -F -- "$asset" "${workdir}/SHA256SUMS" | grep -E '^[0-9a-fA-F]{64}[[:space:]]+[^[:space:]]+$' >"$line_file" || true
-    [[ $(wc -l <"$line_file" | tr -d ' ') == 1 ]] ||
-        _ph_fail "SHA256SUMS does not contain exactly one entry for ${asset} - refusing to install" || return 1
-
-    _ph_log "verifying SHA256 checksum of ${asset}"
-    if command -v sha256sum >/dev/null 2>&1; then
-        (cd "$workdir" && sha256sum -c "$line_file")
-    elif command -v shasum >/dev/null 2>&1; then
-        (cd "$workdir" && shasum -a 256 -c "$line_file")
-    else
-        _ph_fail "neither sha256sum nor shasum is available for checksum verification" || return 1
-    fi || _ph_fail "checksum verification FAILED for ${asset} - the download is corrupt or substituted; refusing to install" || return 1
-
-    mkdir -p "${workdir}/extract"
-    tar -xzf "${workdir}/${asset}" -C "${workdir}/extract" || _ph_fail "failed to unpack ${asset}" || return 1
-    [[ -f "${workdir}/extract/proxyhub" ]] || _ph_fail "${asset} does not contain the proxyhub binary"
-}
+# Download + verify (HTTPS verification is never disabled). The fetch
+# pipeline (SHA256SUMS + .minisig download, signature verification, checksum,
+# unpack) and latest-tag resolution live in lib.sh (fetch_release_and_verify,
+# _resolve_latest_tag) so `proxyhubctl update` walks the same chain (ADR 0036).
 
 # Install steps
 _write_config() {
@@ -685,9 +691,9 @@ _write_install_record() {
     # is only set in docker mode.
     local caddy_mode=$PROXYHUB_CADDY_MODE
     ((NO_CADDY == 0)) || caddy_mode=none
-    printf '# ProxyHub installation record - managed by install.sh, keep root-only.\nDOMAIN=%s\nSITE_PATH=%s\nREPO=%s\nVERSION=%s\nINSTALLED_AT=%s\nADMIN_USER=%s\nLISTEN_ADDR=%s\nNO_CADDY=%s\nCADDY_MODE=%s\nCADDY_CONTAINER=%s\n' \
+    printf '# ProxyHub installation record - managed by install.sh, keep root-only.\nDOMAIN=%s\nSITE_PATH=%s\nREPO=%s\nVERSION=%s\nINSTALLED_AT=%s\nADMIN_USER=%s\nLISTEN_ADDR=%s\nNO_CADDY=%s\nCADDY_MODE=%s\nCADDY_CONTAINER=%s\nDOWNLOAD_BASE=%s\n' \
         "$DOMAIN" "$SITE_PATH" "$REPO" "$VERSION_TAG" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "$ADMIN_USER" "$PROXYHUB_LISTEN_ADDR" "$NO_CADDY" "$caddy_mode" "$PROXYHUB_CADDY_CONTAINER" >"$rec" ||
+        "$ADMIN_USER" "$PROXYHUB_LISTEN_ADDR" "$NO_CADDY" "$caddy_mode" "$PROXYHUB_CADDY_CONTAINER" "$DOWNLOAD_BASE" >"$rec" ||
         _ph_fail "failed to write ${rec}" || return 1
     chmod 0600 "$rec" || _ph_fail "failed to chmod ${rec}" || return 1
     _ph_log "wrote ${rec} (mode 0600)"
@@ -732,7 +738,9 @@ main() {
 
     TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
     WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-install.XXXXXX") || _die "cannot create a temporary workspace"
-    _download_and_verify "$WORKDIR" || _die "release download or checksum verification failed"
+    fetch_release_and_verify "$WORKDIR" "$DOWNLOAD_BASE" "$VERSION_TAG" \
+        "proxyhub_${VERSION_TAG#v}_${DETECTED_OS}_${DETECTED_ARCH}.tar.gz" ||
+        _die "release download or signature/checksum verification failed"
     if ! mkdir -p "$(dirname "$(root_path "$PROXYHUB_BINARY")")" ||
         ! install -m 0755 "${WORKDIR}/extract/proxyhub" "$(root_path "$PROXYHUB_BINARY")"; then
         _die "failed to install $(root_path "$PROXYHUB_BINARY")"
@@ -749,9 +757,12 @@ main() {
             _PH_LIB_TMP=$(mktemp -d)
             chmod 700 "$_PH_LIB_TMP"
         fi
-        _ph_ctl_url="${PROXYHUB_CTL_URL:-https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/proxyhubctl}"
-        curl -fsSL "$_ph_ctl_url" -o "$_PH_LIB_TMP/proxyhubctl" ||
-            _die "failed to download proxyhubctl from ${_ph_ctl_url}"
+        # Same source candidates as the companion lib (ADR 0036): explicit
+        # PROXYHUB_CTL_URL first, then jsDelivr, then raw.githubusercontent.
+        fetch_first_ok "$_PH_LIB_TMP/proxyhubctl" "${PROXYHUB_CTL_URL:-}" \
+            "https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/scripts/install/proxyhubctl" \
+            "https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/proxyhubctl" ||
+            _die "failed to download proxyhubctl from every source"
         _ph_ctl="$_PH_LIB_TMP/proxyhubctl"
     fi
     install -m 0755 "$_ph_ctl" \

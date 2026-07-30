@@ -190,7 +190,8 @@ _assert_eq "/tmp/x/etc/proxyhub" "$(PROXYHUB_ROOT=/tmp/x root_path /etc/proxyhub
 # --------------------------------------------------------------------------
 
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-lib-test.XXXXXX")
-trap 'rm -rf "$TEST_ROOT"' EXIT
+SIGN_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-sign-test.XXXXXX")
+trap 'rm -rf "$TEST_ROOT" "$SIGN_ROOT"' EXIT
 
 _assert_ok env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; ensure_proxyhub_group' "$SCRIPT_DIR/lib.sh"
 _assert_ok env PROXYHUB_ROOT="$TEST_ROOT" bash -c 'source "$0"; ensure_proxyhub_user' "$SCRIPT_DIR/lib.sh"
@@ -667,6 +668,73 @@ _assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_DO
 _assert_file_contains "$TEST_ROOT/srv/caddy-br/conf.d/proxyhub.caddy" "reverse_proxy host.docker.internal:8080"
 _assert_file_contains "$TEST_ROOT/srv/caddy-br/conf.d/proxyhub.caddy" "header_up X-Forwarded-For {remote_host}"
 _assert_file_contains "$TEST_ROOT/srv/caddy-br/conf.d/proxyhub.caddy" "header_up X-Real-IP {remote_host}"
+
+# --------------------------------------------------------------------------
+# verify_minisig (ADR 0036 signature trust anchor)
+# --------------------------------------------------------------------------
+
+# The verifier may only rely on tools a stock Ubuntu/Debian base image always
+# ships: coreutils (base64/tail/head/wc/sed/mktemp) + openssl.
+for tool in base64 tail head wc sed mktemp openssl; do
+    _assert_ok command -v "$tool"
+done
+
+# Synthetic throwaway Ed25519 keypair, generated inside the test scratch and
+# destroyed with it. Never committed, never usable for real releases.
+openssl genpkey -algorithm ed25519 -out "$SIGN_ROOT/testkey.pem" 2>/dev/null
+openssl pkey -in "$SIGN_ROOT/testkey.pem" -pubout -outform DER 2>/dev/null \
+    | tail -c 32 >"$SIGN_ROOT/testkey.raw"
+# Minisign text-format pubkey: base64("Ed" || 8-byte keynum || 32-byte key).
+TEST_PUBKEY_B64=$( { printf 'Ed'; head -c 8 /dev/zero; cat "$SIGN_ROOT/testkey.raw"; } | base64 | tr -d '\n')
+
+# _make_minisig PRIVKEY_PEM FILE OUT - assemble a minisign-format .minisig for
+# FILE using a test private key: line 1 is a comment, line 2 is
+# base64("Ed" || 8-byte keynum || 64-byte Ed25519 signature).
+_make_minisig() {
+    openssl pkeyutl -sign -inkey "$1" -rawin -in "$2" -out "$3.sigbin" 2>/dev/null
+    {
+        printf 'untrusted comment: signature from synthetic test key\n'
+        { printf 'Ed'; head -c 8 /dev/zero; cat "$3.sigbin"; } | base64 | tr -d '\n'
+        printf '\n'
+    } >"$3"
+}
+
+printf '%s  %s\n' "0000000000000000000000000000000000000000000000000000000000000000" \
+    "proxyhub_0.0.0_linux_amd64.tar.gz" >"$SIGN_ROOT/SHA256SUMS"
+_make_minisig "$SIGN_ROOT/testkey.pem" "$SIGN_ROOT/SHA256SUMS" "$SIGN_ROOT/SHA256SUMS.minisig"
+
+# Positive: a valid signature verifies.
+_assert_ok verify_minisig "$SIGN_ROOT/SHA256SUMS" "$SIGN_ROOT/SHA256SUMS.minisig" "$TEST_PUBKEY_B64"
+
+# Tamper: content changed after signing is rejected.
+printf '%s  %s\n' "1111111111111111111111111111111111111111111111111111111111111111" \
+    "proxyhub_0.0.0_linux_amd64.tar.gz" >"$SIGN_ROOT/SHA256SUMS.tampered"
+_assert_fail verify_minisig "$SIGN_ROOT/SHA256SUMS.tampered" "$SIGN_ROOT/SHA256SUMS.minisig" "$TEST_PUBKEY_B64"
+
+# Missing .minisig fails closed.
+_assert_fail verify_minisig "$SIGN_ROOT/SHA256SUMS" "$SIGN_ROOT/SHA256SUMS.minisig.absent" "$TEST_PUBKEY_B64"
+
+# Malformed .minisig fails closed: wrong decoded length, wrong prefix.
+printf 'untrusted comment: x\n%s\n' "$(printf 'EdSHORT' | base64 | tr -d '\n')" >"$SIGN_ROOT/badsize.minisig"
+_assert_fail verify_minisig "$SIGN_ROOT/SHA256SUMS" "$SIGN_ROOT/badsize.minisig" "$TEST_PUBKEY_B64"
+{
+    printf 'untrusted comment: x\n'
+    { printf 'ED'; head -c 72 /dev/zero; } | base64 | tr -d '\n'
+    printf '\n'
+} >"$SIGN_ROOT/badprefix.minisig"
+_assert_fail verify_minisig "$SIGN_ROOT/SHA256SUMS" "$SIGN_ROOT/badprefix.minisig" "$TEST_PUBKEY_B64"
+
+# Embedded release pubkey constant is well-formed minisign text format.
+_assert_eq "42" "$(printf '%s' "$PROXYHUB_MINISIGN_PUBKEY" | base64 -d | wc -c | tr -d ' ')" \
+    "embedded pubkey decodes to 42 bytes"
+_assert_eq "Ed" "$(printf '%s' "$PROXYHUB_MINISIGN_PUBKEY" | base64 -d | head -c 2)" \
+    "embedded pubkey has Ed prefix"
+
+# Missing openssl fails closed (stripped PATH; the openssl check fires before
+# any other tool is needed).
+_assert_fail env PATH=/nonexistent bash -c \
+    'source "$0"; verify_minisig "$1" "$2" "$3"' \
+    "$SCRIPT_DIR/lib.sh" "$SIGN_ROOT/SHA256SUMS" "$SIGN_ROOT/SHA256SUMS.minisig" "$TEST_PUBKEY_B64"
 
 # --------------------------------------------------------------------------
 

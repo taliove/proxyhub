@@ -188,6 +188,14 @@ _区别_: 关键词/地区白名单过滤的是下发哪些节点;地域白名�
 统一规则表 `ip_access_rules` 中 scope=global 的规则,由挂在 Site Path 中间件之后、路由分发之前的拒止中间件执行,命中即统一 404(与 Site Path 未命中逐字节一致,不暴露任何存在性);store 查询失败 fail-open;loopback 永远豁免(SSH 隧道是逃生门)。拉取防护的自动黑名单条目为 scope=sub(只拒 /sub),超管可在审计页"IP 规则"区块一键升级为 global;手动条目建时选定 scope。纯黑名单模型——管理面白名单已否决(自锁风险大于收益,Site Path + loopback 监听 + Caddy 层白名单三道既有防线充分,否决记录见 ADR 0033)。
 _区别_: 登录 IP2Ban 是带失败计数的自动处置(handleLogin 内,独立表);整站黑名单是显式规则 + 全路由中间件。
 
+**下载基 (Download Base)**:
+安装器与 `proxyhubctl update` 拉取制品(release tarball、SHA256SUMS、SHA256SUMS.minisig、伴侣库)的 URL 基址。默认 GitHub 官方 releases,可经 `--download-base` / `PROXYHUB_DOWNLOAD_BASE` 显式覆盖为镜像地址(国内场景);不内置任何第三方镜像为默认,无静默回退。镜像模式下 latest 自动解析不可用,必须显式 `--version`。下载基写入安装档案 `DOWNLOAD_BASE=` 字段,update 自动沿用(显式参数优先)。制品真实性不依赖下载基的可信度——由签名信任锚保证(见 ADR 0036)。
+_Avoid_: 镜像站(镜像只是下载基的一种取值)
+
+**签名信任锚 (Signature Trust Anchor)**:
+制品真实性验证的根:内嵌在 install.sh/proxyhubctl 里的 minisign 公钥。release.yml 用私钥(GitHub Secrets)给 SHA256SUMS 签名,安装/更新时以 openssl 验签(Ed25519,不引入 minisign 依赖),再按验过的 SHA256SUMS 核校 tarball。链条:内嵌公钥 → SHA256SUMS.minisig → SHA256SUMS → tarball。有了它,制品从任何传输通道(GitHub/镜像/CDN/离线拷贝)下载都不影响真实性;缺签名或验签失败 fail closed(见 ADR 0036)。
+_区别_: 校验和(SHA256SUMS)只防传输损坏,同源下发时防不了源被替换;签名信任锚防替换。
+
 **Caddy 模式 (Caddy Mode)**:
 一键安装器对目标机 Caddy 拓扑的识别结果,三态:`native`(宿主机原生 systemd Caddy,`command -v caddy` 探测)/ `docker`(容器化 Caddy,见"Docker Caddy 模式")/ `none`(`--no-caddy`,运维自带反代,安装器只写示例文件)。记录在安装档案的 `CADDY_MODE` 字段,proxyhubctl 的 update/repair/rotate-path/uninstall 读档案后走对应通道;旧档案缺省按 `native` 兼容。模式优先级:`--caddy-docker` 强制 docker > 有 caddy 二进制走 native > 自动探测单个 docker caddy 容器 > fail closed(见 ADR 0035)。
 _Avoid_: 反代模式、部署模式

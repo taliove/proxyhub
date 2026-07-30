@@ -17,6 +17,19 @@ TESTS_FAILED=0
 # Test framework helpers
 # --------------------------------------------------------------------------
 
+# sign_fixture_sums PRIVKEY_PEM SUMS_FILE - (re)sign a fixture SHA256SUMS in
+# minisign text format: line 2 = base64("Ed" || 8-byte keynum || signature).
+# Same assembly as test_install.sh's helper.
+sign_fixture_sums() {
+    openssl pkeyutl -sign -inkey "$1" -rawin -in "$2" -out "$2.sigbin" 2>/dev/null
+    {
+        printf 'untrusted comment: signature from synthetic test key\n'
+        { printf 'Ed'; head -c 8 /dev/zero; cat "$2.sigbin"; } | base64 | tr -d '\n'
+        printf '\n'
+    } >"$2.minisig"
+    rm -f "$2.sigbin"
+}
+
 # setup_test - create a test environment.
 setup_test() {
     export PROXYHUB_ROOT
@@ -70,41 +83,35 @@ EOFBIN
     export PATH="${PROXYHUB_ROOT}/bin:${PATH}"
     mkdir -p "${PROXYHUB_ROOT}/bin"
     
-    # Mock curl.
+    # Mock curl: logs every invocation to curl.calls, serves the
+    # api.github.com latest-release JSON, the signed fixture SHA256SUMS and
+    # its .minisig, and a freshly built mock tarball for any .tar.gz URL.
     cat > "${PROXYHUB_ROOT}/bin/curl" <<'EOFCURL'
 #!/usr/bin/env bash
 # Mock curl for testing.
+printf '%s\n' "$*" >> "${PROXYHUB_ROOT}/curl.calls"
 prev_arg=""
+out=""
+for arg in "$@"; do
+    if [[ "$prev_arg" == "-o" ]]; then out="$arg"; fi
+    prev_arg="$arg"
+done
 if [[ "$*" == *"api.github.com/repos"*"/releases/latest"* ]]; then
     echo '{"tag_name":"v1.1.0","prerelease":false}'
     exit 0
 fi
-if [[ "$*" == *"SHA256SUMS"* ]]; then
-    # Find output file. Emit the full release-matrix manifest (5 targets),
-    # matching scripts/release/package.sh output shape, with a syntactically
-    # valid 64-hex fake checksum.
-    for arg in "$@"; do
-        if [[ "$prev_arg" == "-o" ]]; then
-            {
-                echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_darwin_amd64.tar.gz"
-                echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_darwin_arm64.tar.gz"
-                echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_linux_amd64.tar.gz"
-                echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_linux_arm64.tar.gz"
-                echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_windows_amd64.tar.gz"
-            } > "$arg"
-            exit 0
-        fi
-        prev_arg="$arg"
-    done
+if [[ "$*" == *"SHA256SUMS.minisig"* ]]; then
+    [[ -n "$out" ]] && cp "${PROXYHUB_ROOT}/fixtures/SHA256SUMS.minisig" "$out" && exit 0
     exit 1
 fi
-if [[ "$*" == *".tar.gz"* ]]; then
-    # Find output file.
-    for arg in "$@"; do
-        if [[ "$prev_arg" == "-o" ]]; then
-            # Create a minimal tarball with mock binary.
-            tmpdir=$(mktemp -d)
-            cat > "${tmpdir}/proxyhub" <<'EOFNEWBIN'
+if [[ "$*" == *"SHA256SUMS"* ]]; then
+    [[ -n "$out" ]] && cp "${PROXYHUB_ROOT}/fixtures/SHA256SUMS" "$out" && exit 0
+    exit 1
+fi
+if [[ "$*" == *".tar.gz"* && -n "$out" ]]; then
+    # Create a minimal tarball with mock binary.
+    tmpdir=$(mktemp -d)
+    cat > "${tmpdir}/proxyhub" <<'EOFNEWBIN'
 #!/usr/bin/env bash
 if [[ "$1" == "state-fingerprint" ]]; then
     case " $* " in
@@ -120,14 +127,10 @@ if [[ "$1" == "state-fingerprint" ]]; then
 fi
 exit 1
 EOFNEWBIN
-            chmod +x "${tmpdir}/proxyhub"
-            tar -czf "$arg" -C "$tmpdir" proxyhub
-            rm -rf "$tmpdir"
-            exit 0
-        fi
-        prev_arg="$arg"
-    done
-    exit 1
+    chmod +x "${tmpdir}/proxyhub"
+    tar -czf "$out" -C "$tmpdir" proxyhub
+    rm -rf "$tmpdir"
+    exit 0
 fi
 exit 1
 EOFCURL
@@ -143,6 +146,31 @@ fi
 /usr/bin/sha256sum "$@"
 EOFSHA
     chmod +x "${PROXYHUB_ROOT}/bin/sha256sum"
+
+    # Signature trust chain fixture (ADR 0036): a throwaway Ed25519 keypair
+    # per test. The mock curl serves a SHA256SUMS manifest signed with it and
+    # the ctl subprocess verifies against the exported public key (lib.sh
+    # reads PROXYHUB_MINISIGN_PUBKEY from the environment; the production
+    # constant stays untouched). The manifest lists the full release matrix
+    # with a syntactically valid 64-hex fake checksum, matching
+    # scripts/release/package.sh output shape.
+    local fix_dir="${PROXYHUB_ROOT}/fixtures"
+    mkdir -p "$fix_dir"
+    cat > "${fix_dir}/SHA256SUMS" <<'EOFSUMS'
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_darwin_amd64.tar.gz
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_darwin_arm64.tar.gz
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_linux_amd64.tar.gz
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_linux_arm64.tar.gz
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  proxyhub_1.1.0_windows_amd64.tar.gz
+EOFSUMS
+    openssl genpkey -algorithm ed25519 -out "${fix_dir}/testkey.pem" 2>/dev/null
+    openssl pkey -in "${fix_dir}/testkey.pem" -pubout -outform DER 2>/dev/null \
+        | tail -c 32 >"${fix_dir}/testkey.raw"
+    PROXYHUB_MINISIGN_PUBKEY=$(
+        { printf 'Ed'; head -c 8 /dev/zero; cat "${fix_dir}/testkey.raw"; } | base64 | tr -d '\n'
+    )
+    export PROXYHUB_MINISIGN_PUBKEY
+    sign_fixture_sums "${fix_dir}/testkey.pem" "${fix_dir}/SHA256SUMS"
 }
 
 teardown_test() {
@@ -150,6 +178,7 @@ teardown_test() {
         rm -rf "$PROXYHUB_ROOT"
         unset PROXYHUB_ROOT
     fi
+    unset PROXYHUB_MINISIGN_PUBKEY
 }
 
 assert_true() {
@@ -274,6 +303,153 @@ EOFSHA
 }
 
 # --------------------------------------------------------------------------
+# Download base and signature gate (ADR 0036, ticket C4/#27)
+# --------------------------------------------------------------------------
+
+# mark_live_binary - append a sentinel comment to the installed mock binary so
+# fail-closed tests can prove the in-service binary was never replaced.
+mark_live_binary() {
+    LIVE_BINARY=$(root_path /usr/local/bin/proxyhub)
+    LIVE_SENTINEL="# sentinel-$$"
+    printf '%s\n' "$LIVE_SENTINEL" >>"$LIVE_BINARY"
+}
+
+# assert_install_untouched MSG_PREFIX - after a refused update: the sentinel
+# survives in the live binary and the record still reads v1.0.0.
+assert_install_untouched() {
+    assert_true "grep -qF '$LIVE_SENTINEL' '$LIVE_BINARY'" \
+        "$1: in-service binary not replaced"
+    local version
+    version=$(grep '^VERSION=' "$(root_path /root/.proxyhub-install-info)" | cut -d= -f2)
+    assert_true "[[ '$version' == 'v1.0.0' ]]" "$1: version unchanged"
+}
+
+test_update_mirror_record_base() {
+    echo "==> test_update_mirror_record_base"
+    setup_test
+
+    # Record carries a mirror download base (written by install.sh
+    # --download-base at install time); update must follow it.
+    printf 'DOWNLOAD_BASE=https://mirror.example.com/dl\n' \
+        >>"$(root_path /root/.proxyhub-install-info)"
+
+    "$PROXYHUBCTL" update v1.1.0
+
+    local new_version
+    new_version=$(grep '^VERSION=' "$(root_path /root/.proxyhub-install-info)" | cut -d= -f2)
+    assert_true "[[ '$new_version' == 'v1.1.0' ]]" "mirror-mode update bumps the version"
+    assert_true "grep -qF 'https://mirror.example.com/dl/v1.1.0/SHA256SUMS.minisig' '$PROXYHUB_ROOT/curl.calls'" \
+        "signature file fetched from the recorded mirror"
+    assert_true "grep -qF 'https://mirror.example.com/dl/v1.1.0/proxyhub_1.1.0_linux_amd64.tar.gz' '$PROXYHUB_ROOT/curl.calls'" \
+        "tarball fetched from the recorded mirror"
+    assert_true "! grep -q 'github.com' '$PROXYHUB_ROOT/curl.calls'" \
+        "mirror mode never contacts github.com"
+
+    teardown_test
+}
+
+test_update_explicit_download_base_wins() {
+    echo "==> test_update_explicit_download_base_wins"
+    setup_test
+
+    printf 'DOWNLOAD_BASE=https://record-mirror.example.com/dl\n' \
+        >>"$(root_path /root/.proxyhub-install-info)"
+
+    "$PROXYHUBCTL" update v1.1.0 --download-base https://flag-mirror.example.com/dl
+
+    local new_version
+    new_version=$(grep '^VERSION=' "$(root_path /root/.proxyhub-install-info)" | cut -d= -f2)
+    assert_true "[[ '$new_version' == 'v1.1.0' ]]" "explicit-flag update bumps the version"
+    assert_true "grep -qF 'https://flag-mirror.example.com/dl/v1.1.0/proxyhub_1.1.0_linux_amd64.tar.gz' '$PROXYHUB_ROOT/curl.calls'" \
+        "explicit --download-base wins over the record"
+    assert_true "! grep -q 'record-mirror' '$PROXYHUB_ROOT/curl.calls'" \
+        "recorded mirror not contacted when the flag is given"
+
+    teardown_test
+}
+
+test_update_old_record_defaults_github() {
+    echo "==> test_update_old_record_defaults_github"
+    setup_test
+
+    # The setup_test record predates the DOWNLOAD_BASE field: the effective
+    # base must fall back to the official GitHub releases base.
+    "$PROXYHUBCTL" update v1.1.0
+
+    assert_true "grep -qF 'https://github.com/taliove/proxyhub/releases/download/v1.1.0/SHA256SUMS.minisig' '$PROXYHUB_ROOT/curl.calls'" \
+        "old record: signature file fetched from the official base"
+    assert_true "grep -qF 'https://github.com/taliove/proxyhub/releases/download/v1.1.0/proxyhub_1.1.0_linux_amd64.tar.gz' '$PROXYHUB_ROOT/curl.calls'" \
+        "old record: tarball fetched from the official base"
+
+    teardown_test
+}
+
+test_update_mirror_requires_explicit_version() {
+    echo "==> test_update_mirror_requires_explicit_version"
+    setup_test
+
+    printf 'DOWNLOAD_BASE=https://mirror.example.com/dl\n' \
+        >>"$(root_path /root/.proxyhub-install-info)"
+
+    local rc=0 output
+    output=$("$PROXYHUBCTL" update 2>&1) || rc=$?
+
+    assert_true "[[ $rc -eq 2 ]]" "mirror + no explicit version exits 2"
+    printf '%s' "$output" >"$PROXYHUB_ROOT/out.log"
+    assert_true "grep -qF 'custom download base requires an explicit --version (latest resolution needs GitHub)' '$PROXYHUB_ROOT/out.log'" \
+        "guidance matches install.sh wording"
+    assert_true "[[ ! -e '$PROXYHUB_ROOT/curl.calls' ]]" "no network call before the refusal"
+    local version
+    version=$(grep '^VERSION=' "$(root_path /root/.proxyhub-install-info)" | cut -d= -f2)
+    assert_true "[[ '$version' == 'v1.0.0' ]]" "version unchanged after refusal"
+
+    teardown_test
+}
+
+test_update_missing_minisig_fails_closed() {
+    echo "==> test_update_missing_minisig_fails_closed"
+    setup_test
+
+    # A mirror that does not forward the .minisig: the download fails and the
+    # update must refuse before the live binary is touched.
+    rm -f "$PROXYHUB_ROOT/fixtures/SHA256SUMS.minisig"
+    mark_live_binary
+
+    local rc=0 output
+    output=$("$PROXYHUBCTL" update v1.1.0 2>&1) || rc=$?
+
+    assert_true "[[ $rc -eq 1 ]]" "missing .minisig exits 1"
+    printf '%s' "$output" >"$PROXYHUB_ROOT/out.log"
+    assert_true "grep -qF 'SHA256SUMS.minisig' '$PROXYHUB_ROOT/out.log'" \
+        "error names the missing signature file"
+    assert_install_untouched "missing .minisig"
+
+    teardown_test
+}
+
+test_update_bad_signature_fails_closed() {
+    echo "==> test_update_bad_signature_fails_closed"
+    setup_test
+
+    # The mirror replaced SHA256SUMS AND its .minisig (signed with a
+    # different key): verification must fail closed.
+    openssl genpkey -algorithm ed25519 -out "$PROXYHUB_ROOT/fixtures/evilkey.pem" 2>/dev/null
+    sign_fixture_sums "$PROXYHUB_ROOT/fixtures/evilkey.pem" "$PROXYHUB_ROOT/fixtures/SHA256SUMS"
+    mark_live_binary
+
+    local rc=0 output
+    output=$("$PROXYHUBCTL" update v1.1.0 2>&1) || rc=$?
+
+    assert_true "[[ $rc -eq 1 ]]" "wrong-key signature exits 1"
+    printf '%s' "$output" >"$PROXYHUB_ROOT/out.log"
+    assert_true "grep -qF 'signature verification FAILED' '$PROXYHUB_ROOT/out.log'" \
+        "signature failure is reported"
+    assert_install_untouched "bad signature"
+
+    teardown_test
+}
+
+# --------------------------------------------------------------------------
 # Docker caddy mode (ADR 0035, ticket 04/#19)
 # --------------------------------------------------------------------------
 
@@ -385,6 +561,12 @@ main() {
     test_update_happy_path
     test_update_prerelease_gating
     test_update_checksum_fail_rollback
+    test_update_mirror_record_base
+    test_update_explicit_download_base_wins
+    test_update_old_record_defaults_github
+    test_update_mirror_requires_explicit_version
+    test_update_missing_minisig_fails_closed
+    test_update_bad_signature_fails_closed
     test_update_docker_happy
     test_update_docker_lost_container
 

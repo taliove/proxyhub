@@ -10,6 +10,7 @@
 #   proxyhubctl restart
 #   proxyhubctl show-info
 #   proxyhubctl update [VERSION] [--yes] [--prerelease] [--stable-only]
+#                      [--download-base URL]
 #   proxyhubctl backup [--protect]
 #   proxyhubctl restore ARCHIVE [--yes]
 #   proxyhubctl reset-mfa --username NAME [--yes]
@@ -622,11 +623,14 @@ _detect_os_arch() {
 }
 
 # cmd_update [VERSION] [--version VERSION] [--yes] [--prerelease] [--stable-only]
-# Guarded update: backup first, download + SHA256 verify, swap the binary,
-# verify the retained-state fingerprint with the new binary, restart; roll
-# back to the previous binary on any failure after the swap.
+#            [--download-base URL]
+# Guarded update: backup first, download + minisign signature + SHA256
+# double-gate verification (ADR 0036), swap the binary, verify the
+# retained-state fingerprint with the new binary, restart; roll back to the
+# previous binary on any failure after the swap.
 cmd_update() {
     local target="" confirmed=0 allow_prerelease=0 stable_only=0
+    local download_base_arg=""
     while (( $# > 0 )); do
         case "$1" in
             --yes) confirmed=1; shift ;;
@@ -635,6 +639,10 @@ cmd_update() {
             --version)
                 (( $# >= 2 )) || { _ph_err "--version requires a value"; return 2; }
                 target="$2"; shift 2 ;;
+            --download-base)
+                (( $# >= 2 )) || { _ph_err "--download-base requires a value"; return 2; }
+                download_base_arg="$2"; shift 2 ;;
+            --download-base=*) download_base_arg="${1#--download-base=}"; shift ;;
             -*) _ph_err "unknown option: $1"; return 2 ;;
             *) target="$1"; shift ;;
         esac
@@ -653,6 +661,27 @@ cmd_update() {
     if [[ -z "$current_version" ]]; then
         _ph_err "failed to read current VERSION from ${install_info}"
         return 1
+    fi
+
+    # Effective download base (ADR 0036): an explicit --download-base wins
+    # over the install record's DOWNLOAD_BASE; records predating the field
+    # fall back to the official GitHub releases base. An invalid flag value
+    # is a usage error (rc 2); a corrupt record value is an operational
+    # failure (rc 1).
+    local record_base download_base
+    record_base=$(_read_install_field DOWNLOAD_BASE)
+    if [[ -n $download_base_arg ]]; then
+        download_base=$(resolve_download_base "$repo" "$download_base_arg") || return 2
+    else
+        download_base=$(resolve_download_base "$repo" "$record_base") || return 1
+    fi
+
+    # Mirror version discipline: latest resolution is anchored on GitHub
+    # (ADR 0036) and mirrors cannot reliably proxy it, so a custom download
+    # base requires an explicit version (same wording as install.sh).
+    if [[ -z $target && $download_base != "$(default_download_base "$repo")" ]]; then
+        _ph_err "custom download base requires an explicit --version (latest resolution needs GitHub)"
+        return 2
     fi
 
     # Resolve the target version: explicit argument, or the latest release.
@@ -719,7 +748,7 @@ cmd_update() {
     arch="${os_arch#* }"
     # Asset naming must match scripts/release/package.sh (underscores).
     local asset="proxyhub_${target#v}_${os}_${arch}.tar.gz"
-    local base="https://github.com/${repo}/releases/download/${target}"
+    local base="${download_base}/${target}"
 
     local workdir
     workdir=$(mktemp -d) || {
@@ -733,6 +762,15 @@ cmd_update() {
         _ph_err "failed to download SHA256SUMS for ${target}"
         return 1
     fi
+    # Signature trust anchor (ADR 0036): verify the minisign signature over
+    # SHA256SUMS before trusting any checksum in it. A missing or failing
+    # signature refuses the download here, before the live binary is touched
+    # (the pre-update backup rollback path is never reached).
+    if ! curl -fsSL --max-time 60 -o "${workdir}/SHA256SUMS.minisig" "${base}/SHA256SUMS.minisig"; then
+        _ph_err "failed to download SHA256SUMS.minisig for ${target}; refusing to update (current installation untouched)"
+        return 1
+    fi
+    verify_minisig "${workdir}/SHA256SUMS" "${workdir}/SHA256SUMS.minisig" || return 1
     if ! curl -fsSL --max-time 300 -o "${workdir}/${asset}" "${base}/${asset}"; then
         _ph_err "failed to download ${asset}"
         return 1
@@ -1160,10 +1198,19 @@ cmd_status() {
     site_path=$(_read_install_field SITE_PATH)
     version=$(_read_install_field VERSION)
 
+    # Effective download base (ADR 0036): the recorded DOWNLOAD_BASE, or the
+    # official GitHub releases base for records predating the field.
+    local repo download_base
+    repo=$(_read_install_field REPO)
+    repo="${repo:-taliove/proxyhub}"
+    download_base=$(_read_install_field DOWNLOAD_BASE)
+    download_base="${download_base:-$(default_download_base "$repo")}"
+
     printf 'ProxyHub Status\n'
     printf '===============\n'
     printf 'Service state: %s\n' "$state"
     printf 'Version:       %s\n' "${version:-unknown}"
+    printf 'Download base: %s\n' "$download_base"
     if [[ -n "$domain" ]] && [[ -n "$site_path" ]]; then
         printf 'Management URL: https://%s/%s/\n' "$domain" "$site_path"
     else
@@ -1234,9 +1281,12 @@ Commands:
   backup [--protect]  Create a timestamped backup
   restore ARCHIVE [--yes]
                       Restore from a backup archive
-  update [VERSION] [--yes] [--prerelease] [--stable-only]
-                      Guarded update: backup, checksum + state-fingerprint
-                      verification, automatic rollback on failure
+  update [VERSION] [--yes] [--prerelease] [--stable-only] [--download-base URL]
+                      Guarded update: backup, signature + checksum +
+                      state-fingerprint verification, automatic rollback on
+                      failure. Downloads follow the install record's
+                      DOWNLOAD_BASE; --download-base overrides it (a custom
+                      base requires an explicit VERSION)
   rotate-path [PATH] [--yes]
                       Rotate to a new Site Path (high-risk, requires --yes)
   reset-mfa --username NAME [--yes]
@@ -1252,6 +1302,8 @@ Options:
   --yes               Skip confirmation prompts (required for high-risk ops)
   --prerelease        With update: allow installing a prerelease version
   --stable-only       With update: reject prereleases (used by auto-update)
+  --download-base URL With update: mirror download base (overrides the
+                      install record's DOWNLOAD_BASE; https:// only)
   --purge             With uninstall: also remove state and backups
   --username NAME     With reset-mfa: the account to reset
 EOF
