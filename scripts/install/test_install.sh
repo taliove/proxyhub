@@ -67,6 +67,18 @@ trap _cleanup_dirs EXIT
 # Sandbox + mock builders (used inside subshells)
 # --------------------------------------------------------------------------
 
+# sign_fixture_sums PRIVKEY_PEM SUMS_FILE - (re)sign a fixture SHA256SUMS in
+# minisign text format (line 2 = base64("Ed" || 8-byte keynum || signature)).
+sign_fixture_sums() {
+    openssl pkeyutl -sign -inkey "$1" -rawin -in "$2" -out "$2.sigbin" 2>/dev/null
+    {
+        printf 'untrusted comment: signature from synthetic test key\n'
+        { printf 'Ed'; head -c 8 /dev/zero; cat "$2.sigbin"; } | base64 | tr -d '\n'
+        printf '\n'
+    } >"$2.minisig"
+    rm -f "$2.sigbin"
+}
+
 # setup_sandbox - create PROXYHUB_ROOT with a supported /etc/os-release and a
 # fixture release (fake binary tarball + SHA256SUMS with a decoy entry).
 setup_sandbox() {
@@ -105,6 +117,17 @@ EOF
                 "proxyhub_9.9.9_linux_arm64.tar.gz"
         } >SHA256SUMS
     )
+    # Synthetic throwaway Ed25519 keypair for the signature trust chain (ADR
+    # 0036): every install-path test passes REAL signature verification
+    # against this key. PROXYHUB_MINISIGN_PUBKEY is substituted only inside
+    # this subshell; the production constant in lib.sh stays untouched.
+    openssl genpkey -algorithm ed25519 -out "$FIX_DIR/testkey.pem" 2>/dev/null
+    openssl pkey -in "$FIX_DIR/testkey.pem" -pubout -outform DER 2>/dev/null |
+        tail -c 32 >"$FIX_DIR/testkey.raw"
+    PROXYHUB_MINISIGN_PUBKEY=$(
+        { printf 'Ed'; head -c 8 /dev/zero; cat "$FIX_DIR/testkey.raw"; } | base64 | tr -d '\n'
+    )
+    sign_fixture_sums "$FIX_DIR/testkey.pem" "$FIX_DIR/SHA256SUMS"
 }
 
 # mock_host - override every host/network seam. Defines functions; call inside
@@ -131,6 +154,7 @@ mock_host() {
             return 0
         fi
         case $url in
+            *.minisig) cp "$FIX_DIR/SHA256SUMS.minisig" "$out" ;;
             */SHA256SUMS) cp "$FIX_DIR/SHA256SUMS" "$out" ;;
             *.tar.gz) cp "$FIX_DIR/$TEST_ASSET" "$out" ;;
             *) : ;;
@@ -844,6 +868,266 @@ if ! env -i PATH=/usr/bin:/bin bash -c 'command -v caddy' >/dev/null 2>&1; then
 else
     printf 'SKIP: caddy present on base PATH; skipping caddy-missing test\n'
 fi
+
+# --------------------------------------------------------------------------
+# Download base (ADR 0036): parsing, precedence, https and latest discipline
+# --------------------------------------------------------------------------
+
+# --help documents the new flag.
+[[ $help_out == *"--download-base"* ]] && _pass || _fail "--help missing [--download-base]"
+
+# Default base derives from --repo (GitHub official releases).
+db=$(parse_args --non-interactive --domain example.com >/dev/null 2>&1 && printf '%s' "$DOWNLOAD_BASE")
+_assert_eq "https://github.com/taliove/proxyhub/releases/download" "$db" "default download base"
+
+# The flag wins over the environment variable; trailing slashes are stripped.
+db=$(PROXYHUB_DOWNLOAD_BASE="https://env-mirror.example.com/dl" parse_args \
+    --non-interactive --domain example.com --version 9.9.9 \
+    --download-base "https://flag-mirror.example.com/dl/" >/dev/null 2>&1 && printf '%s' "$DOWNLOAD_BASE")
+_assert_eq "https://flag-mirror.example.com/dl" "$db" "flag wins over env; trailing slash stripped"
+
+# The environment variable supplies the base when the flag is absent.
+db=$(PROXYHUB_DOWNLOAD_BASE="https://env-mirror.example.com/dl" parse_args \
+    --non-interactive --domain example.com --version 9.9.9 >/dev/null 2>&1 && printf '%s' "$DOWNLOAD_BASE")
+_assert_eq "https://env-mirror.example.com/dl" "$db" "env download base"
+
+# Non-https bases are usage errors (exit 2), via flag or env.
+_assert_rc 2 "non-https --download-base" main --non-interactive --domain example.com \
+    --download-base "http://mirror.example.com/dl"
+rc=0
+( PROXYHUB_DOWNLOAD_BASE="http://mirror.example.com/dl" main --non-interactive --domain example.com ) >/dev/null 2>&1 || rc=$?
+_assert_eq 2 "$rc" "non-https env download base"
+
+# Mirror mode + --version latest fails closed with explicit-version guidance.
+ml=$(
+    rc=0
+    out=$(main --non-interactive --domain example.com \
+        --download-base "https://mirror.example.com/dl" 2>&1) || rc=$?
+    printf 'RC=%d\n%s\n' "$rc" "$out"
+)
+[[ $ml == *"RC=2"* ]] && _pass || _fail "mirror + latest did not exit 2: $ml"
+[[ $ml == *"custom download base requires an explicit --version"* ]] && _pass ||
+    _fail "mirror + latest guidance missing: $ml"
+
+# --------------------------------------------------------------------------
+# Download base flow-through: probe + artifact URLs derive from the base
+# --------------------------------------------------------------------------
+
+# Custom mirror base: the probe hits the base itself, every artifact URL
+# resolves under it, github.com is never touched, the record carries the
+# base, and real signature verification passes end to end.
+mirror=$(
+    setup_sandbox
+    mock_host
+    export CURL_CALLS="$SBX/curl.calls"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --version 9.9.9 \
+        --download-base "https://mirror.example.com/dl" \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+mirror_rc=$(printf '%s\n' "$mirror" | sed -n 's/^RC=//p')
+MIR_SBX=$(printf '%s\n' "$mirror" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$MIR_SBX")
+
+_assert_eq 0 "$mirror_rc" "mirror download base install exit code"
+_assert_file_contains "$MIR_SBX/curl.calls" "https://mirror.example.com/dl"
+_assert_file_contains "$MIR_SBX/curl.calls" "https://mirror.example.com/dl/v9.9.9/SHA256SUMS"
+_assert_file_contains "$MIR_SBX/curl.calls" "https://mirror.example.com/dl/v9.9.9/SHA256SUMS.minisig"
+_assert_file_contains "$MIR_SBX/curl.calls" "https://mirror.example.com/dl/v9.9.9/proxyhub_9.9.9_linux_amd64.tar.gz"
+_assert_file_not_contains "$MIR_SBX/curl.calls" "github.com"
+_assert_file_contains "$MIR_SBX/root/.proxyhub-install-info" "DOWNLOAD_BASE=https://mirror.example.com/dl"
+_assert_file_contains "$MIR_SBX/stderr.log" "signature verified"
+
+# Default base: probe stays on github.com, artifact URLs keep the current
+# GitHub releases shape, and the record carries the official base.
+defbase=$(
+    setup_sandbox
+    mock_host
+    export CURL_CALLS="$SBX/curl.calls"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --version 9.9.9 \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+defbase_rc=$(printf '%s\n' "$defbase" | sed -n 's/^RC=//p')
+DEF_SBX=$(printf '%s\n' "$defbase" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$DEF_SBX")
+
+_assert_eq 0 "$defbase_rc" "default download base install exit code"
+_assert_file_contains "$DEF_SBX/curl.calls" "https://github.com"
+_assert_file_contains "$DEF_SBX/curl.calls" "https://github.com/taliove/proxyhub/releases/download/v9.9.9/SHA256SUMS"
+_assert_file_contains "$DEF_SBX/curl.calls" "https://github.com/taliove/proxyhub/releases/download/v9.9.9/SHA256SUMS.minisig"
+_assert_file_contains "$DEF_SBX/curl.calls" "https://github.com/taliove/proxyhub/releases/download/v9.9.9/proxyhub_9.9.9_linux_amd64.tar.gz"
+_assert_file_contains "$DEF_SBX/root/.proxyhub-install-info" \
+    "DOWNLOAD_BASE=https://github.com/taliove/proxyhub/releases/download"
+_assert_file_contains "$DEF_SBX/stderr.log" "signature verified"
+
+# --------------------------------------------------------------------------
+# Signature verification fail-closed (ADR 0036)
+# --------------------------------------------------------------------------
+
+# Missing .minisig (a mirror that does not forward it): fail closed before
+# any binary lands.
+nomin=$(
+    setup_sandbox
+    mock_host
+    rm -f "$FIX_DIR/SHA256SUMS.minisig"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --version 9.9.9 \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+nomin_rc=$(printf '%s\n' "$nomin" | sed -n 's/^RC=//p')
+NOM_SBX=$(printf '%s\n' "$nomin" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$NOM_SBX")
+
+_assert_eq 1 "$nomin_rc" "missing .minisig exit code"
+_assert_file_contains "$NOM_SBX/stderr.log" "signature file missing"
+[[ ! -e $NOM_SBX/usr/local/bin/proxyhub ]] && _pass || _fail "binary installed despite missing .minisig"
+[[ ! -e $NOM_SBX/root/.proxyhub-install-info ]] && _pass || _fail "install record written despite missing .minisig"
+
+# Signature from the wrong key (mirror replaced SHA256SUMS AND its .minisig):
+# verification fails closed before any binary lands.
+badsig=$(
+    setup_sandbox
+    mock_host
+    openssl genpkey -algorithm ed25519 -out "$FIX_DIR/evilkey.pem" 2>/dev/null
+    sign_fixture_sums "$FIX_DIR/evilkey.pem" "$FIX_DIR/SHA256SUMS"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --version 9.9.9 \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+badsig_rc=$(printf '%s\n' "$badsig" | sed -n 's/^RC=//p')
+SIG_SBX=$(printf '%s\n' "$badsig" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$SIG_SBX")
+
+_assert_eq 1 "$badsig_rc" "wrong-key signature exit code"
+_assert_file_contains "$SIG_SBX/stderr.log" "signature verification FAILED"
+[[ ! -e $SIG_SBX/usr/local/bin/proxyhub ]] && _pass || _fail "binary installed despite a bad signature"
+[[ ! -e $SIG_SBX/root/.proxyhub-install-info ]] && _pass || _fail "install record written despite a bad signature"
+
+# --------------------------------------------------------------------------
+# Companion-source candidates (ADR 0036)
+# --------------------------------------------------------------------------
+
+# fetch_first_ok: a failing first candidate falls through to the next, in
+# order.
+cand=$(
+    SBX=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-cand.XXXXXX")
+    log="$SBX/curl.log"
+    : >"$log"
+    curl() {
+        local out="" url=""
+        while (($#)); do
+            case $1 in -o) out=$2; shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac
+        done
+        printf '%s\n' "$url" >>"$log"
+        case $url in
+            *raw.githubusercontent.com*) printf 'fake ctl\n' >"$out" ;;
+            *) return 1 ;;
+        esac
+    }
+    rc=0
+    fetch_first_ok "$SBX/ctl" "" \
+        "https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/scripts/install/proxyhubctl" \
+        "https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/proxyhubctl" \
+        2>"$SBX/err.log" || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+cand_rc=$(printf '%s\n' "$cand" | sed -n 's/^RC=//p')
+CAND_SBX=$(printf '%s\n' "$cand" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$CAND_SBX")
+
+_assert_eq 0 "$cand_rc" "candidate fallback exit code"
+_assert_eq "fake ctl" "$(cat "$CAND_SBX/ctl")" "second candidate served the file"
+_assert_eq "https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/scripts/install/proxyhubctl" \
+    "$(sed -n 1p "$CAND_SBX/curl.log")" "jsDelivr candidate tried first"
+_assert_eq "https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/proxyhubctl" \
+    "$(sed -n 2p "$CAND_SBX/curl.log")" "raw.githubusercontent candidate tried second"
+_assert_file_contains "$CAND_SBX/err.log" "trying next source"
+
+# The explicit override wins over every candidate; candidates are never tried
+# (no silent fallback when the override fails either).
+ovr=$(
+    SBX=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-ovr.XXXXXX")
+    log="$SBX/curl.log"
+    : >"$log"
+    curl() {
+        local out="" url=""
+        while (($#)); do
+            case $1 in -o) out=$2; shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac
+        done
+        printf '%s\n' "$url" >>"$log"
+        case $url in
+            *override.example.com*) printf 'override lib\n' >"$out" ;;
+            *) return 1 ;;
+        esac
+    }
+    rc=0
+    fetch_first_ok "$SBX/lib" "https://override.example.com/lib.sh" \
+        "https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/scripts/install/lib.sh" \
+        "https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/lib.sh" \
+        2>/dev/null || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+ovr_rc=$(printf '%s\n' "$ovr" | sed -n 's/^RC=//p')
+OVR_SBX=$(printf '%s\n' "$ovr" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$OVR_SBX")
+
+_assert_eq 0 "$ovr_rc" "override priority exit code"
+_assert_eq "https://override.example.com/lib.sh" "$(cat "$OVR_SBX/curl.log")" \
+    "override wins; built-in candidates never tried"
+
+# Every candidate failing is a hard error.
+allfail=$(
+    SBX=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-allfail.XXXXXX")
+    curl() { return 1; }
+    rc=0
+    fetch_first_ok "$SBX/lib" "" \
+        "https://a.example.com/lib.sh" "https://b.example.com/lib.sh" \
+        2>"$SBX/err.log" || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+allfail_rc=$(printf '%s\n' "$allfail" | sed -n 's/^RC=//p')
+AF_SBX=$(printf '%s\n' "$allfail" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$AF_SBX")
+
+_assert_eq 1 "$allfail_rc" "all candidates failing exit code"
+_assert_file_contains "$AF_SBX/err.log" "all download candidates failed"
+[[ ! -e $AF_SBX/lib ]] && _pass || _fail "file written despite all candidates failing"
+
+# Header companion-lib candidates: piped install.sh (curl | bash form) with a
+# failing jsDelivr falls back to raw.githubusercontent, in order.
+_hdr_tmp=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-hdr.XXXXXX")
+TEST_DIRS+=("$_hdr_tmp")
+mkdir -p "$_hdr_tmp/root"
+cat >"$_hdr_tmp/curl" <<'EOF'
+#!/usr/bin/env bash
+out="" url=""
+while (($#)); do
+    case $1 in -o) out=$2; shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac
+done
+printf '%s\n' "$url" >>"${FAKECURL_LOG}"
+case $url in
+    *raw.githubusercontent.com*/scripts/install/lib.sh) cp "${FAKECURL_LIB}" "$out" ;;
+    *) exit 22 ;;
+esac
+EOF
+chmod +x "$_hdr_tmp/curl"
+hdr_out=$(cd "${TMPDIR:-/tmp}" && env -u PROXYHUB_INSTALL_NO_MAIN \
+    PATH="$_hdr_tmp:/usr/bin:/bin" \
+    FAKECURL_LOG="$_hdr_tmp/curl.log" \
+    FAKECURL_LIB="$REPO_ROOT/scripts/install/lib.sh" \
+    PROXYHUB_ROOT="$_hdr_tmp/root" \
+    bash -s -- --help <"$REPO_ROOT/install.sh" 2>&1) && _pass ||
+    _fail "piped install.sh with candidate fallback failed: $hdr_out"
+[[ $hdr_out == *"--download-base"* ]] && _pass || _fail "piped fallback help content wrong"
+_assert_eq "https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/scripts/install/lib.sh" \
+    "$(sed -n 1p "$_hdr_tmp/curl.log")" "header tries jsDelivr first"
+_assert_eq "https://raw.githubusercontent.com/taliove/proxyhub/main/scripts/install/lib.sh" \
+    "$(sed -n 2p "$_hdr_tmp/curl.log")" "header falls back to raw.githubusercontent"
 
 # --------------------------------------------------------------------------
 

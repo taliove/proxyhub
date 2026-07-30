@@ -66,8 +66,10 @@ PROXYHUB_BRIDGE_SUBNET="${PROXYHUB_BRIDGE_SUBNET:-}"
 # (MINISIGN_PRIVATE_KEY); rotation = generate a new pair, swap this constant,
 # ship a new release. Defined once here: install.sh and proxyhubctl both
 # source this library, so the constant travels with whichever copy of
-# lib.sh (or the installed proxyhubctl-lib.sh) they load.
-readonly PROXYHUB_MINISIGN_PUBKEY="RWQHrp6zfJDEQ0TWFXc5k3iL1ZhIADchbbRKuEIIzFaSvtfKD8Gmf/Lg"
+# lib.sh (or the installed proxyhubctl-lib.sh) they load. NOT readonly:
+# tests substitute a synthetic throwaway keypair per subshell (same seam
+# pattern as PROXYHUB_LISTEN_ADDR); production code never overrides it.
+PROXYHUB_MINISIGN_PUBKEY="${PROXYHUB_MINISIGN_PUBKEY:-RWQHrp6zfJDEQ0TWFXc5k3iL1ZhIADchbbRKuEIIzFaSvtfKD8Gmf/Lg}"
 
 # --------------------------------------------------------------------------
 # Output helpers
@@ -76,6 +78,13 @@ readonly PROXYHUB_MINISIGN_PUBKEY="RWQHrp6zfJDEQ0TWFXc5k3iL1ZhIADchbbRKuEIIzFaSv
 # _ph_err MSG... - print an error line to stderr with the [proxyhub] prefix.
 _ph_err() {
     printf '[proxyhub] %s\n' "$*" >&2
+}
+
+# _ph_fail MSG... - print each MSG as an error line and return 1.
+_ph_fail() {
+    local _m
+    for _m in "$@"; do _ph_err "$_m"; done
+    return 1
 }
 
 # _ph_log MSG... - print an informational line to stderr.
@@ -262,6 +271,139 @@ _verify_minisig_in() {
         return 1
     fi
     _ph_log "signature verified: ${file}"
+}
+
+# --------------------------------------------------------------------------
+# Download base and release fetch (ADR 0036)
+# --------------------------------------------------------------------------
+
+# default_download_base REPO - print the official GitHub releases download
+# base for REPO. The base is tag-independent: per-release URLs append
+# "/<version-tag>/<asset>" (release_asset_url).
+default_download_base() {
+    printf 'https://github.com/%s/releases/download' "$1"
+}
+
+# release_asset_url BASE VERSION_TAG NAME - print the download URL of a
+# release asset derived from a download base.
+release_asset_url() {
+    printf '%s/%s/%s' "$1" "$2" "$3"
+}
+
+# resolve_download_base REPO [CUSTOM] - print the effective download base:
+# CUSTOM (trailing slashes stripped) when given, else the official GitHub
+# base. CUSTOM must be an https:// URL: the release signature anchors
+# artifact trust, but plaintext transport is still refused outright.
+resolve_download_base() {
+    local repo=$1 custom=${2:-}
+    if [[ -z $custom ]]; then
+        default_download_base "$repo"
+        return 0
+    fi
+    while [[ $custom == */ ]]; do custom=${custom%/}; done
+    if [[ $custom != https://* ]]; then
+        _ph_err "download base must use https:// (got '${custom}')"
+        return 1
+    fi
+    printf '%s' "$custom"
+}
+
+# fetch_first_ok DEST OVERRIDE CANDIDATES... - download to DEST. An explicit
+# OVERRIDE wins over everything and never falls through to the built-in
+# candidates (no silent fallback); without an override each candidate is
+# tried in order and only a total failure is an error. Used for the
+# companion files (lib.sh, proxyhubctl), which carry no trust - the release
+# signature is the trust anchor, transport is CDN HTTPS either way.
+fetch_first_ok() {
+    local dest=$1 override=${2:-} url
+    shift 2 || return 1
+    if [[ -n $override ]]; then
+        if curl -fsSL "$override" -o "$dest"; then return 0; fi
+        _ph_err "download failed: ${override} (explicit override; built-in candidates not tried)"
+        return 1
+    fi
+    for url in "$@"; do
+        if curl -fsSL "$url" -o "$dest" 2>/dev/null; then
+            _ph_log "downloaded ${url}"
+            return 0
+        fi
+        _ph_err "download candidate failed, trying next source: ${url}"
+    done
+    _ph_err "all download candidates failed for ${dest##*/}"
+    return 1
+}
+
+# _curl ARGS... - curl wrapper seam; tests override it to mock the network.
+_curl() { command curl "$@"; }
+
+# _fetch URL DEST - download URL to DEST (HTTPS verification never disabled).
+_fetch() {
+    _curl -fsSL --max-time 120 -o "$2" "$1" && return 0
+    _ph_err "download failed: $1"
+    return 1
+}
+
+# _resolve_latest_tag REPO -> stdout tag. Latest resolution is anchored on
+# GitHub redirects BY DESIGN (ADR 0036): mirrors cannot reliably proxy it,
+# which is why a custom download base requires an explicit --version instead.
+_resolve_latest_tag() { # REPO -> stdout tag
+    local effective tag
+    effective=$(_curl -fsSIL --max-time 15 -o /dev/null -w '%{url_effective}' \
+        "https://github.com/$1/releases/latest") ||
+        _ph_fail "could not resolve the latest release of $1 (network error, or no stable release published yet)" || return 1
+    tag=${effective##*/}
+    if [[ -z $tag || $tag == latest ]] || ! validate_version "$tag" >/dev/null; then
+        _ph_fail "unexpected latest-release redirect for $1: '${effective}'"
+        return 1
+    fi
+    printf '%s' "$tag"
+}
+
+# fetch_release_and_verify WORKDIR DOWNLOAD_BASE VERSION_TAG ASSET - download
+# SHA256SUMS, SHA256SUMS.minisig and ASSET from DOWNLOAD_BASE/VERSION_TAG,
+# then verify IN ORDER: the minisign signature over SHA256SUMS (the trust
+# anchor, ADR 0036), then ASSET's checksum against the signed SHA256SUMS,
+# then unpack. Every step fails closed: a missing .minisig, a malformed or
+# failing signature, or a checksum mismatch refuses the download before any
+# binary lands on the host.
+fetch_release_and_verify() {
+    local workdir=$1 base="${2}/${3}" asset=$4 line_file="${1}/.checksum-line"
+
+    _ph_log "downloading ${base}/${asset}"
+    _fetch "${base}/SHA256SUMS" "${workdir}/SHA256SUMS" || return 1
+    _fetch "${base}/SHA256SUMS.minisig" "${workdir}/SHA256SUMS.minisig" || return 1
+    verify_minisig "${workdir}/SHA256SUMS" "${workdir}/SHA256SUMS.minisig" || return 1
+    _fetch "${base}/${asset}" "${workdir}/${asset}" || return 1
+
+    # Extract ONLY the matching checksum line; exactly one entry must exist.
+    grep -F -- "$asset" "${workdir}/SHA256SUMS" | grep -E '^[0-9a-fA-F]{64}[[:space:]]+[^[:space:]]+$' >"$line_file" || true
+    if [[ $(wc -l <"$line_file" | tr -d ' ') != 1 ]]; then
+        _ph_err "SHA256SUMS does not contain exactly one entry for ${asset} - refusing to install"
+        return 1
+    fi
+
+    _ph_log "verifying SHA256 checksum of ${asset}"
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "$workdir" && sha256sum -c "$line_file")
+    elif command -v shasum >/dev/null 2>&1; then
+        (cd "$workdir" && shasum -a 256 -c "$line_file")
+    else
+        _ph_err "neither sha256sum nor shasum is available for checksum verification"
+        return 1
+    fi || {
+        _ph_err "checksum verification FAILED for ${asset} - the download is corrupt or substituted; refusing to install"
+        return 1
+    }
+
+    mkdir -p "${workdir}/extract"
+    if ! tar -xzf "${workdir}/${asset}" -C "${workdir}/extract"; then
+        _ph_err "failed to unpack ${asset}"
+        return 1
+    fi
+    [[ -f "${workdir}/extract/proxyhub" ]] || {
+        _ph_err "${asset} does not contain the proxyhub binary"
+        return 1
+    }
 }
 
 # --------------------------------------------------------------------------
