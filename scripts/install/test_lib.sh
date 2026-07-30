@@ -406,6 +406,19 @@ _assert_fail bash -c '
     }
     docker_caddy_ports_published caddy
 ' "$SCRIPT_DIR/lib.sh"
+# Port publishing: 8080/8443 must NOT satisfy the 80/443 requirement (the
+# match is line-anchored; unprivileged caddy images publish high ports).
+_assert_fail bash -c '
+    source "$0"
+    _docker() {
+        case $1 in
+            inspect) printf "bridge\n" ;;
+            port) printf "8080/tcp -> 0.0.0.0:8080\n8443/tcp -> 0.0.0.0:8443\n" ;;
+        esac
+        return 0
+    }
+    docker_caddy_ports_published caddy
+' "$SCRIPT_DIR/lib.sh"
 
 # Docker channel: fragment path resolves through the mount (bind + volume).
 frag=$(env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '

@@ -654,7 +654,7 @@ docker_caddy_ports_published() {
         return 0
     fi
     ports=$(_docker port "$name" 2>/dev/null) || ports=""
-    if [[ $ports == *"80/tcp ->"* && $ports == *"443/tcp ->"* ]]; then return 0; fi
+    if [[ $ports =~ (^|$'\n')80/tcp && $ports =~ (^|$'\n')443/tcp ]]; then return 0; fi
     _ph_err "caddy container '${name}' (${netmode} networking) does not publish both TCP 80 and 443; TLS issuance requires them"
     _ph_err "fix: publish the ports on the container, e.g. -p 80:80 -p 443:443"
     return 1
