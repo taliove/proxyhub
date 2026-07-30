@@ -404,6 +404,34 @@ docker_validate_caddy_container() {
     return 0
 }
 
+# docker_caddy_require_running - proxyhubctl's preflight for every Caddy
+# touch point (ADR 0035): in docker mode the container recorded at install
+# time must still exist and be running, otherwise the operation fails closed
+# BEFORE any mutation - a stale record must never steer fmt/validate/reload
+# at the wrong container or silently skip the Caddy side. No-op in other
+# modes. Lighter than docker_validate_caddy_container (install-time
+# selection): the image was already validated when the record was written.
+docker_caddy_require_running() {
+    [[ $PROXYHUB_CADDY_MODE == docker ]] || return 0
+    local name=$PROXYHUB_CADDY_CONTAINER
+    if [[ -z $name ]]; then
+        _ph_err "install record sets CADDY_MODE=docker but no CADDY_CONTAINER; the install record is corrupt"
+        return 1
+    fi
+    local running
+    running=$(_docker inspect --format '{{.State.Running}}' "$name" 2>/dev/null) || {
+        _ph_err "recorded caddy container '${name}' no longer exists (deleted or renamed?)"
+        _ph_err "inspect with 'docker ps -a'; if the container was replaced, update CADDY_CONTAINER in the install record"
+        return 1
+    }
+    if [[ $running != true ]]; then
+        _ph_err "recorded caddy container '${name}' is not running"
+        _ph_err "start it with 'docker start ${name}' (or update CADDY_CONTAINER in the install record if it was replaced)"
+        return 1
+    fi
+    return 0
+}
+
 # _docker_mount_host_path TYPE SOURCE NAME - print the host-side path of an
 # /etc/caddy mount candidate: bind mounts resolve to their Source directory,
 # named volumes to the docker volume data path. Anything else returns 1.

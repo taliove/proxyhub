@@ -125,6 +125,10 @@ cmd_backup() {
         esac
     done
 
+    # Docker caddy mode: the fragment lives on the recorded container's
+    # mount; fail closed before stopping the service when it is gone.
+    docker_caddy_require_running || return 1
+
     local timestamp
     timestamp=$(date +%Y%m%d-%H%M%S)
     local random_suffix
@@ -281,6 +285,10 @@ cmd_restore() {
         _ph_err "restore requires --yes confirmation"
         return 2
     fi
+
+    # Docker caddy mode: fail closed before replacing anything when the
+    # recorded container is gone (the restored fragment lands on its mount).
+    docker_caddy_require_running || return 1
 
     _ph_log "restoring from: ${archive_path}"
 
@@ -500,6 +508,16 @@ cmd_rotate_path() {
 
     _ph_log "rotating Site Path from ${old_path} to ${new_path}"
 
+    # Docker caddy mode: verify the recorded container is alive, then
+    # re-derive the reach-back topology from the live container (gateway and
+    # subnet are deliberately NOT recorded; they drift when the container is
+    # recreated). write_caddy_fragment only emits the bridge upstream
+    # (host.docker.internal:PORT) after prepare_topology ran.
+    docker_caddy_require_running || return 1
+    if [[ $PROXYHUB_CADDY_MODE == docker ]]; then
+        docker_caddy_prepare_topology "$PROXYHUB_CADDY_CONTAINER" || return 1
+    fi
+
     # Backup current Caddy fragment for rollback.
     local caddy_frag
     caddy_frag=$(caddy_fragment_path) || return 1
@@ -683,6 +701,10 @@ cmd_update() {
     fi
 
     _ph_log "updating ProxyHub ${current_version} -> ${target}"
+
+    # Docker caddy mode: the pre-update backup copies the fragment off the
+    # recorded container's mount; fail closed here, before the service stop.
+    docker_caddy_require_running || return 1
 
     # Backup BEFORE touching anything (also stops/starts the service).
     _ph_log "creating pre-update backup"
@@ -948,6 +970,14 @@ cmd_uninstall() {
     if (( confirmed == 0 )); then
         _ph_err "uninstall is a high-risk operation requiring --yes confirmation"
         return 2
+    fi
+
+    # Docker caddy mode: fail closed even for cleanup - the fragment lives on
+    # the recorded container's mount, and silently skipping its removal would
+    # leave a stale route if the container comes back.
+    if ! docker_caddy_require_running; then
+        _ph_err "if the container was removed together with the caddy deployment, the fragment mount may already be gone; verify manually, then remove the install record"
+        return 1
     fi
 
     _ph_log "uninstalling ProxyHub"

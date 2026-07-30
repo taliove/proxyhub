@@ -274,6 +274,106 @@ EOFSHA
 }
 
 # --------------------------------------------------------------------------
+# Docker caddy mode (ADR 0035, ticket 04/#19)
+# --------------------------------------------------------------------------
+
+# mock_docker_lib - copy lib.sh into the scratch search path and append the
+# _docker override fed on stdin, so the proxyhubctl subprocess (which prefers
+# $PROXYHUB_ROOT/scripts/install/lib.sh, see its search order) runs the mock.
+mock_docker_lib() {
+    mkdir -p "$PROXYHUB_ROOT/scripts/install"
+    cp "$SCRIPT_DIR/lib.sh" "$PROXYHUB_ROOT/scripts/install/lib.sh"
+    cat >>"$PROXYHUB_ROOT/scripts/install/lib.sh"
+}
+
+# setup_docker_install - mark the scratch install as docker mode and put the
+# fragment on the mocked container mount ($PROXYHUB_ROOT/srv/caddy).
+setup_docker_install() {
+    cat >>"$(root_path /root/.proxyhub-install-info)" <<'EOF'
+CADDY_MODE=docker
+CADDY_CONTAINER=caddy
+EOF
+    mkdir -p "$(root_path /srv/caddy/conf.d)"
+    echo "caddy config" > "$(root_path /srv/caddy/conf.d/proxyhub.caddy)"
+    : >"$PROXYHUB_ROOT/docker.calls"
+}
+
+# mock_docker_alive - _docker answers for a running host-network caddy
+# container with a bind mount at /srv/caddy, logging every call.
+mock_docker_alive() {
+    mock_docker_lib <<'MOCK'
+_docker() {
+    printf '%s\n' "$*" >>"$PROXYHUB_ROOT/docker.calls"
+    if [[ $1 == inspect ]]; then
+        case $3 in
+            *State.Running*) printf 'true\n' ;;
+            *Mounts*) printf 'bind\t/etc/caddy\t/srv/caddy\t\n' ;;
+        esac
+    fi
+    return 0
+}
+MOCK
+}
+
+test_update_docker_happy() {
+    echo "==> test_update_docker_happy"
+    setup_test
+    setup_docker_install
+    mock_docker_alive
+
+    "$PROXYHUBCTL" update v1.1.0
+
+    local install_info
+    install_info=$(root_path /root/.proxyhub-install-info)
+    local new_version
+    new_version=$(grep '^VERSION=' "$install_info" | cut -d= -f2)
+    assert_true "[[ '$new_version' == 'v1.1.0' ]]" "docker-mode update bumps the version"
+
+    # The pre-update backup carried the fragment off the container mount.
+    local archive_path
+    archive_path=$(find "$(root_path /var/backups/proxyhub)" -name 'proxyhub-backup-*.tar.gz' | head -1)
+    assert_true "tar -tzf '$archive_path' | grep -q 'caddy/proxyhub.caddy'" \
+        "pre-update backup contains the fragment from the container mount"
+    assert_true "head -1 '$PROXYHUB_ROOT/docker.calls' | grep -q 'State.Running'" \
+        "liveness preflight is the first docker call"
+    assert_true "grep -q 'Mounts' '$PROXYHUB_ROOT/docker.calls'" \
+        "fragment path resolved through the container mount"
+
+    teardown_test
+}
+
+test_update_docker_lost_container() {
+    echo "==> test_update_docker_lost_container"
+    setup_test
+    setup_docker_install
+    mock_docker_lib <<'MOCK'
+_docker() {
+    printf '%s\n' "$*" >>"$PROXYHUB_ROOT/docker.calls"
+    return 1
+}
+MOCK
+
+    local rc=0 output
+    output=$("$PROXYHUBCTL" update v1.1.0 2>&1) || rc=$?
+
+    assert_true "[[ $rc -ne 0 ]]" "update fails closed when the container is lost"
+    printf '%s' "$output" > "$PROXYHUB_ROOT/out.log"
+    assert_true "grep -qF \"container 'caddy'\" '$PROXYHUB_ROOT/out.log'" \
+        "error names the recorded container"
+
+    local install_info
+    install_info=$(root_path /root/.proxyhub-install-info)
+    local version
+    version=$(grep '^VERSION=' "$install_info" | cut -d= -f2)
+    assert_true "[[ '$version' == 'v1.0.0' ]]" "version unchanged after refusal"
+    local backup_count
+    backup_count=$(find "$(root_path /var/backups/proxyhub)" -name 'proxyhub-backup-*.tar.gz' | wc -l)
+    assert_true "[[ $backup_count -eq 0 ]]" "no pre-update backup attempted after refusal"
+
+    teardown_test
+}
+
+# --------------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------------
 
@@ -285,6 +385,8 @@ main() {
     test_update_happy_path
     test_update_prerelease_gating
     test_update_checksum_fail_rollback
+    test_update_docker_happy
+    test_update_docker_lost_container
 
     echo
     echo "========================================="
