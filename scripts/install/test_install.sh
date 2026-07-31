@@ -1041,6 +1041,37 @@ _assert_eq 0 "$autolat_rc" "prefix fallback + latest install exit code"
 _assert_file_contains "$ALAT_SBX/stderr.log" "resolved latest release v9.9.9 via the jsDelivr data API"
 _assert_file_contains "$ALAT_SBX/root/.proxyhub-install-info" "VERSION=v9.9.9"
 
+# jsDelivr failure branch: prefix reachable but the data API returns garbage
+# (error page / no usable stable version) -> fail closed with guidance, and
+# the original GitHub error is preserved ahead of the jsDelivr one.
+jsbad=$(
+    setup_sandbox
+    mock_host
+    _curl() {
+        local url=""
+        while (($#)); do
+            case $1 in
+                -o) shift 2 ;;
+                -*) shift ;;
+                *) url=$1; shift ;;
+            esac
+        done
+        case $url in
+            https://github.com | https://github.com/*) return 1 ;;
+            *data.jsdelivr.com*) printf '<html><body>Bad Gateway</body></html>' ;;
+        esac
+        return 0
+    }
+    rc=0
+    out=$(main --non-interactive --domain proxy.example.com 2>&1) || rc=$?
+    printf 'RC=%d\n%s\n' "$rc" "$out"
+)
+[[ $jsbad == *"RC=1"* ]] && _pass || _fail "jsDelivr garbage must fail closed: $jsbad"
+[[ $jsbad == *"no usable stable version"* ]] && _pass || _fail "jsDelivr garbage message: $jsbad"
+[[ $jsbad == *"could not resolve the latest release"* ]] && _pass ||
+    _fail "original GitHub error not preserved: $jsbad"
+[[ $jsbad == *"--version"* ]] && _pass || _fail "jsDelivr garbage guidance missing: $jsbad"
+
 # Everything down: official probe and every prefix fail -> fail closed with
 # the --download-base guidance.
 alldown=$(

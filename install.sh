@@ -80,8 +80,10 @@ NON_INTERACTIVE=0 DOMAIN="" EMAIL="" VERSION="latest" VERSION_TAG=""
 REPO="$PROXYHUB_DEFAULT_REPO" ARG_SITE_PATH="" SITE_PATH="" SKIP_DNS_CHECK=0
 DETECTED_OS="" DETECTED_ARCH="" ADMIN_USER="" ADMIN_PASSWORD="" ARG_LISTEN_ADDR=""
 TIMESTAMP="" WORKDIR="" CADDY_BACKUP="" NO_CADDY=0 ARG_CADDY_DOCKER=""
-# Download base (ADR 0036): --download-base wins over PROXYHUB_DOWNLOAD_BASE;
-# empty means the official GitHub releases base (resolved in parse_args).
+# Download base (ADR 0036/0037): --download-base wins over PROXYHUB_DOWNLOAD_BASE;
+# empty means the official GitHub releases base (resolved in parse_args), with
+# automatic fallback to a curated pass-through prefix when github.com is
+# unreachable and jsDelivr-backed latest resolution (ADR 0037).
 ARG_DOWNLOAD_BASE="" DOWNLOAD_BASE="" DOWNLOAD_BASE_EXPLICIT=0
 
 # _ph_die2 MSG... - print an error line and exit 2 (usage-error helper).
@@ -458,8 +460,8 @@ _generate_credentials() {
 
 # Download + verify (HTTPS verification is never disabled). The fetch
 # pipeline (SHA256SUMS + .minisig download, signature verification, checksum,
-# unpack) and latest-tag resolution live in lib.sh (fetch_release_and_verify,
-# _resolve_latest_tag) so `proxyhubctl update` walks the same chain (ADR 0036).
+# unpack) and latest-version resolution live in lib.sh (fetch_release_and_verify,
+# resolve_latest_version) so `proxyhubctl update` walks the same chain (ADR 0036).
 
 # Install steps
 _write_config() {
