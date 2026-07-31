@@ -779,7 +779,7 @@ docker_caddy_mount_root() {
             if _docker_mount_host_path "$mtype" "$msrc" "$mname"; then return 0; fi
             bad_root="${mtype}:${msrc:-none}"
         else
-            sub_mounts+="${mdest} (${mtype}) "
+            sub_mounts+="${mdest} (${mtype}, from ${msrc:-unknown}) "
         fi
     done <<<"$mounts"
     if [[ -n $bad_root ]]; then
