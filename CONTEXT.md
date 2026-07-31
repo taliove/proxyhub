@@ -189,7 +189,7 @@ _区别_: 关键词/地区白名单过滤的是下发哪些节点;地域白名�
 _区别_: 登录 IP2Ban 是带失败计数的自动处置(handleLogin 内,独立表);整站黑名单是显式规则 + 全路由中间件。
 
 **下载基 (Download Base)**:
-安装器与 `proxyhubctl update` 拉取制品(release tarball、SHA256SUMS、SHA256SUMS.minisig、伴侣库)的 URL 基址。默认 GitHub 官方 releases,可经 `--download-base` / `PROXYHUB_DOWNLOAD_BASE` 显式覆盖为镜像地址(国内场景);不内置任何第三方镜像为默认,无静默回退。镜像模式下 latest 自动解析不可用,必须显式 `--version`。下载基写入安装档案 `DOWNLOAD_BASE=` 字段,update 自动沿用(显式参数优先)。制品真实性不依赖下载基的可信度——由签名信任锚保证(见 ADR 0036)。
+安装器与 `proxyhubctl update` 拉取制品(release tarball、SHA256SUMS、SHA256SUMS.minisig、伴侣库)的 URL 基址。默认 GitHub 官方 releases;未显式指定且 GitHub 不可达时,安装器自动回退到策展**直通前缀**(gh-proxy.com 形态,日志明示,latest 解析随之回退 jsDelivr 数据 API);显式 `--download-base` / `PROXYHUB_DOWNLOAD_BASE` 优先于一切自动行为,且显式镜像模式必须显式 `--version`。下载基写入安装档案 `DOWNLOAD_BASE=` 字段,update 自动沿用(显式参数优先)。制品真实性不依赖下载基的可信度——由签名信任锚保证(见 ADR 0036;自动回退见 ADR 0037)。
 _Avoid_: 镜像站(镜像只是下载基的一种取值)
 
 **签名信任锚 (Signature Trust Anchor)**:
