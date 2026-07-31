@@ -312,6 +312,40 @@ resolve_download_base() {
     printf '%s' "$custom"
 }
 
+# Curated pass-through prefixes for the reachability fallback (ADR 0037).
+# Each prefixes the official GitHub URL; order is probe order. Artifacts
+# stay authentic regardless of which prefix serves them - the minisign
+# signature (ADR 0036), not the transport, anchors trust.
+# shellcheck disable=SC2034
+PROXYHUB_GH_PREFIXES=(
+    "https://gh-proxy.com/"
+)
+readonly PROXYHUB_GH_PREFIXES
+
+# probe_download_base REPO - resolve the effective default download base:
+# the official GitHub base when github.com is reachable, else the first
+# curated pass-through prefix that serves it. Transport probes only
+# (404-tolerant): they prove reachability, not content.
+probe_download_base() {
+    local repo=$1 official prefix
+    official=$(default_download_base "$repo")
+    if _curl -sS --max-time 10 -o /dev/null https://github.com; then
+        printf '%s' "$official"
+        return 0
+    fi
+    for prefix in "${PROXYHUB_GH_PREFIXES[@]}"; do
+        if _curl -sS --max-time 10 -o /dev/null "${prefix}${official}"; then
+            _ph_log "github.com unreachable; falling back to pass-through prefix: ${prefix}"
+            _ph_log "artifacts stay authentic regardless of transport (minisign verification, ADR 0036)"
+            printf '%s' "${prefix}${official}"
+            return 0
+        fi
+    done
+    _ph_err "outbound HTTPS to github.com failed, and no pass-through prefix is reachable either"
+    _ph_err "set --download-base to a reachable mirror (see --help)"
+    return 1
+}
+
 # fetch_first_ok DEST OVERRIDE CANDIDATES... - download to DEST. An explicit
 # OVERRIDE wins over everything and never falls through to the built-in
 # candidates (no silent fallback); without an override each candidate is
@@ -368,6 +402,32 @@ _resolve_latest_tag() { # REPO -> stdout tag
         return 1
     fi
     printf '%s' "$tag"
+}
+
+# resolve_latest_version REPO -> stdout tag. GitHub redirect first (via
+# _resolve_latest_tag); when GitHub is unreachable, fall back to the
+# jsDelivr data API, which mirrors the repo's tag list and is reachable
+# where GitHub is not (ADR 0037). The first stable semver wins; prerelease
+# tags never match the digit-only capture.
+resolve_latest_version() {
+    local tag json
+    if tag=$(_resolve_latest_tag "$1" 2>/dev/null); then
+        printf '%s' "$tag"
+        return 0
+    fi
+    json=$(_curl -fsSL --max-time 15 "https://data.jsdelivr.com/v1/packages/gh/$1") || {
+        _ph_err "could not resolve the latest release of $1 (GitHub unreachable and the jsDelivr data API failed)"
+        _ph_err "pass an explicit --version (see --help)"
+        return 1
+    }
+    tag=$(printf '%s' "$json" | sed -n 's/^[[:space:]]*"version": *"\([0-9][0-9.]*[0-9]\)".*/\1/p' | head -1)
+    if [[ -z $tag ]] || ! validate_version "$tag" >/dev/null; then
+        _ph_err "the jsDelivr data API returned no usable stable version for $1"
+        _ph_err "pass an explicit --version (see --help)"
+        return 1
+    fi
+    _ph_log "resolved latest release v${tag#v} via the jsDelivr data API (GitHub unreachable)"
+    printf 'v%s\n' "${tag#v}"
 }
 
 # fetch_release_and_verify WORKDIR DOWNLOAD_BASE VERSION_TAG ASSET - download

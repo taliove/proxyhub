@@ -82,7 +82,7 @@ DETECTED_OS="" DETECTED_ARCH="" ADMIN_USER="" ADMIN_PASSWORD="" ARG_LISTEN_ADDR=
 TIMESTAMP="" WORKDIR="" CADDY_BACKUP="" NO_CADDY=0 ARG_CADDY_DOCKER=""
 # Download base (ADR 0036): --download-base wins over PROXYHUB_DOWNLOAD_BASE;
 # empty means the official GitHub releases base (resolved in parse_args).
-ARG_DOWNLOAD_BASE="" DOWNLOAD_BASE=""
+ARG_DOWNLOAD_BASE="" DOWNLOAD_BASE="" DOWNLOAD_BASE_EXPLICIT=0
 
 # _ph_die2 MSG... - print an error line and exit 2 (usage-error helper).
 _ph_die2() { _ph_err "$@"; exit 2; }
@@ -111,6 +111,10 @@ OPTIONS
                          custom base requires an explicit --version and is
                          probed for connectivity instead of github.com.
                          Env: PROXYHUB_DOWNLOAD_BASE (the flag wins).
+                         Without this flag the installer auto-falls-back to a
+                         curated pass-through prefix when github.com is
+                         unreachable, and resolves "latest" via the jsDelivr
+                         data API (ADR 0037) - no flag needed.
   --site-path PATH       Custom Site Path: 20-64 chars of [A-Za-z0-9_-], >=3
                          character classes, no reserved words.
   --listen-addr ADDR     Loopback listen address as 127.0.0.1:PORT
@@ -206,12 +210,17 @@ parse_args() {
     fi
     ((bad == 0)) || exit 2
 
-    # Download base (ADR 0036): resolve after REPO is validated; the flag
-    # wins over the environment variable. A custom (non-GitHub) base cannot
-    # resolve "latest" (that needs GitHub redirects), so mirror mode demands
-    # an explicit --version - fail closed, never guess.
+    # Download base (ADR 0036/0037): resolve after REPO is validated; the
+    # flag wins over the environment variable. An EXPLICIT custom (non-
+    # GitHub) base cannot resolve "latest" (that needs GitHub redirects),
+    # so mirror mode demands an explicit --version - fail closed, never
+    # guess. The DEFAULT path is allowed to keep "latest" here: when
+    # github.com turns out unreachable, the base auto-falls-back to a
+    # pass-through prefix and latest resolves via the jsDelivr data API.
     DOWNLOAD_BASE=$(resolve_download_base "$REPO" "${ARG_DOWNLOAD_BASE:-${PROXYHUB_DOWNLOAD_BASE:-}}") || exit 2
-    if [[ $VERSION == latest && $DOWNLOAD_BASE != "$(default_download_base "$REPO")" ]]; then
+    DOWNLOAD_BASE_EXPLICIT=0
+    [[ -z ${ARG_DOWNLOAD_BASE:-${PROXYHUB_DOWNLOAD_BASE:-}} ]] || DOWNLOAD_BASE_EXPLICIT=1
+    if [[ $DOWNLOAD_BASE_EXPLICIT == 1 && $VERSION == latest && $DOWNLOAD_BASE != "$(default_download_base "$REPO")" ]]; then
         _ph_die2 "custom download base requires an explicit --version (latest resolution needs GitHub)"
     fi
 
@@ -372,20 +381,18 @@ _validate_host_platform() {
         fi
         ((EUID == 0)) || _ph_fail "the installer must run as root (try: sudo bash install.sh ...)" || return 1
     fi
-    # Connectivity self-check follows the download base (ADR 0036): the
-    # official base still probes github.com; a custom base is probed itself.
-    # No -f: the probe proves TRANSPORT reachability only. A bare mirror
-    # base (ghproxy prefix, nginx reverse proxy) commonly answers 404 while
-    # serving the artifacts fine, so any HTTP response counts as reachable;
-    # only a transport failure (DNS/connect/TLS) fails the check.
-    local probe=https://github.com
-    [[ $DOWNLOAD_BASE == "$(default_download_base "$REPO")" ]] || probe=$DOWNLOAD_BASE
-    if ! _curl -sS --max-time 10 -o /dev/null "$probe"; then
-        _ph_err "outbound HTTPS to ${probe} failed: the installer must reach the release download base (read-only check; nothing was modified)"
-        if [[ $probe == https://github.com ]]; then
-            _ph_err "if GitHub is unreachable from this host, point --download-base at a reachable mirror (see --help)"
+    # Download base reachability (ADR 0036/0037). An explicit custom base is
+    # probed as-is (transport only, 404-tolerant: a bare mirror base often
+    # answers 404 while serving the artifacts fine). The default path probes
+    # github.com and auto-falls-back to a curated pass-through prefix when
+    # it is unreachable, re-resolving DOWNLOAD_BASE for everything after.
+    if [[ $DOWNLOAD_BASE_EXPLICIT == 1 ]]; then
+        if ! _curl -sS --max-time 10 -o /dev/null "$DOWNLOAD_BASE"; then
+            _ph_err "outbound HTTPS to ${DOWNLOAD_BASE} failed: the installer must reach the release download base (read-only check; nothing was modified)"
+            return 1
         fi
-        return 1
+    else
+        DOWNLOAD_BASE=$(probe_download_base "$REPO") || return 1
     fi
     # --no-caddy: the operator brings their own reverse proxy, so neither a
     # local Caddy nor free 80/443 is required.
@@ -730,7 +737,7 @@ main() {
     _generate_credentials || _die "credential generation failed"
 
     if [[ $VERSION == latest ]]; then
-        VERSION_TAG=$(_resolve_latest_tag "$REPO") || _die "could not resolve the latest stable release of ${REPO}"
+        VERSION_TAG=$(resolve_latest_version "$REPO") || _die "could not resolve the latest stable release of ${REPO}"
     else
         VERSION_TAG="v${VERSION#v}"
     fi
