@@ -313,57 +313,64 @@ _assert_fail bash -c '
     docker_validate_caddy_container web
 ' "$SCRIPT_DIR/lib.sh"
 
-# Mount resolution: bind mount resolves to its host Source directory.
+# Layout resolution: bind mount resolves to the root layout with its host
+# Source directory.
 mroot=$(env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
     source "$0"
     mkdir -p "$PROXYHUB_ROOT/srv/caddy"
     _docker() { printf "bind\t/etc/caddy\t/srv/caddy\t\n"; }
-    docker_caddy_mount_root caddy
+    docker_caddy_config_layout caddy
 ' "$SCRIPT_DIR/lib.sh")
-_assert_eq "/srv/caddy" "$mroot" "bind mount resolution"
+_assert_eq "root /srv/caddy" "$mroot" "root layout bind resolution"
 
-# Mount resolution: named volumes resolve to the mount's Source (the docker
+# Layout resolution: named volumes resolve to the mount's Source (the docker
 # volume data path - correct even for a custom data-root or rootless docker),
 # with the same existence check as bind mounts.
 mroot=$(env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
     source "$0"
     mkdir -p "$PROXYHUB_ROOT/var/lib/docker/volumes/caddy-data/_data"
     _docker() { printf "volume\t/etc/caddy\t/var/lib/docker/volumes/caddy-data/_data\tcaddy-data\n"; }
-    docker_caddy_mount_root caddy
+    docker_caddy_config_layout caddy
 ' "$SCRIPT_DIR/lib.sh")
-_assert_eq "/var/lib/docker/volumes/caddy-data/_data" "$mroot" "named volume resolution (Source)"
+_assert_eq "root /var/lib/docker/volumes/caddy-data/_data" "$mroot" "root layout volume resolution (Source)"
 mroot=$(env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
     source "$0"
     mkdir -p "$PROXYHUB_ROOT/data/docker/volumes/caddy-data/_data"
     _docker() { printf "volume\t/etc/caddy\t/data/docker/volumes/caddy-data/_data\tcaddy-data\n"; }
-    docker_caddy_mount_root caddy
+    docker_caddy_config_layout caddy
 ' "$SCRIPT_DIR/lib.sh")
-_assert_eq "/data/docker/volumes/caddy-data/_data" "$mroot" "named volume custom data-root Source"
+_assert_eq "root /data/docker/volumes/caddy-data/_data" "$mroot" "root layout custom data-root Source"
 _assert_fail env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
     source "$0"
     _docker() { printf "volume\t/etc/caddy\t/var/lib/docker/volumes/gone/_data\tgone\n"; }
-    docker_caddy_mount_root caddy
+    docker_caddy_config_layout caddy
 ' "$SCRIPT_DIR/lib.sh"
 
-# Mount resolution: single-file mounts and missing mounts fail closed, with
+# Layout resolution: a single-file Caddyfile bind is the file layout (ADR
+# 0039) - accepted, not refused.
+mroot=$(env PROXYHUB_ROOT="$TEST_ROOT" bash -c '
+    source "$0"
+    mkdir -p "$PROXYHUB_ROOT/srv"
+    : > "$PROXYHUB_ROOT/srv/Caddyfile"
+    _docker() { printf "bind\t/etc/caddy/Caddyfile\t/srv/Caddyfile\t\n"; }
+    docker_caddy_config_layout caddy
+' "$SCRIPT_DIR/lib.sh")
+_assert_eq "file /srv/Caddyfile" "$mroot" "file layout single-Caddyfile resolution"
+
+# Layout resolution: unrelated mounts and non-file sub-paths fail closed with
 # remediation guidance pointing at a directory mount.
 _assert_fail bash -c '
     source "$0"
-    _docker() { printf "bind\t/etc/caddy/Caddyfile\t/srv/Caddyfile\t\n"; }
-    docker_caddy_mount_root caddy
-' "$SCRIPT_DIR/lib.sh"
-_assert_fail bash -c '
-    source "$0"
     _docker() { printf "volume\t/data\t/var/lib/docker/volumes/other/_data\tother\n"; }
-    docker_caddy_mount_root caddy
+    docker_caddy_config_layout caddy
 ' "$SCRIPT_DIR/lib.sh"
 sf_msg=$(bash -c '
     source "$0"
-    _docker() { printf "bind\t/etc/caddy/Caddyfile\t/srv/Caddyfile\t\n"; }
-    docker_caddy_mount_root caddy
+    _docker() { printf "bind\t/etc/caddy/conf.d\t/srv/conf.d\t\n"; }
+    docker_caddy_config_layout caddy
 ' "$SCRIPT_DIR/lib.sh" 2>&1 || true)
 if [[ $sf_msg == *"-v /srv/caddy:/etc/caddy"* ]]; then PASS=$((PASS + 1)); else
-    FAIL=$((FAIL + 1)); printf 'FAIL: single-file mount error lacks remediation guidance: %s\n' "$sf_msg" >&2
+    FAIL=$((FAIL + 1)); printf 'FAIL: sub-path mount error lacks remediation guidance: %s\n' "$sf_msg" >&2
 fi
 if [[ $sf_msg == *"mounts only sub-paths under /etc/caddy"* ]]; then PASS=$((PASS + 1)); else
     FAIL=$((FAIL + 1)); printf 'FAIL: sub-path mount error misdiagnosed: %s\n' "$sf_msg" >&2
@@ -373,11 +380,93 @@ fi
 bad_msg=$(bash -c '
     source "$0"
     _docker() { printf "bind\t/etc/caddy\t/srv/proxyhub-test-definitely-absent\t\n"; }
-    docker_caddy_mount_root caddy
+    docker_caddy_config_layout caddy
 ' "$SCRIPT_DIR/lib.sh" 2>&1 || true)
 if [[ $bad_msg == *"not a usable persistent directory"* ]]; then PASS=$((PASS + 1)); else
     FAIL=$((FAIL + 1)); printf 'FAIL: unusable /etc/caddy mount misdiagnosed: %s\n' "$bad_msg" >&2
 fi
+
+# Site block splicing (file layout, ADR 0039): insert, idempotent replace,
+# and clean removal, leaving the operator's other content byte-identical.
+_sb_root=$(mktemp -d)
+cat > "$_sb_root/Caddyfile" <<'EOFCF'
+{
+	auto_https off
+}
+
+other.example.com {
+	respond 200
+}
+EOFCF
+_assert_ok env PROXYHUB_ROOT="$_sb_root" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    _docker() { printf "bind\t/etc/caddy/Caddyfile\t/Caddyfile\t\n"; }
+    write_caddy_siteblock proxy.example.com abcDEF123_-xYz 127.0.0.1:8080
+' "$SCRIPT_DIR/lib.sh"
+_assert_file_contains "$_sb_root/Caddyfile" "# >>> proxyhub managed"
+_assert_file_contains "$_sb_root/Caddyfile" "proxy.example.com {"
+_assert_file_contains "$_sb_root/Caddyfile" "reverse_proxy 127.0.0.1:8080"
+_assert_file_contains "$_sb_root/Caddyfile" "other.example.com {"
+# Replace with a new site path: exactly one managed block survives.
+_assert_ok env PROXYHUB_ROOT="$_sb_root" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    _docker() { printf "bind\t/etc/caddy/Caddyfile\t/Caddyfile\t\n"; }
+    write_caddy_siteblock proxy.example.com NEWpath999_-xYz 127.0.0.1:8080
+' "$SCRIPT_DIR/lib.sh"
+if [[ $(grep -c "^# >>> proxyhub managed" "$_sb_root/Caddyfile") == 1 ]] && \
+   [[ $(grep -c "^# <<< proxyhub managed" "$_sb_root/Caddyfile") == 1 ]] && \
+   grep -qF "NEWpath999_-xYz" "$_sb_root/Caddyfile" && \
+   ! grep -qF "abcDEF123_-xYz" "$_sb_root/Caddyfile" && \
+   grep -qF "other.example.com {" "$_sb_root/Caddyfile"; then
+    PASS=$((PASS + 1))
+else
+    FAIL=$((FAIL + 1)); printf 'FAIL: siteblock replace left inconsistent Caddyfile\n' >&2
+fi
+# Removal: block gone, operator content intact.
+_assert_ok env PROXYHUB_ROOT="$_sb_root" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    _docker() { printf "bind\t/etc/caddy/Caddyfile\t/Caddyfile\t\n"; }
+    remove_caddy_siteblock
+' "$SCRIPT_DIR/lib.sh"
+if ! grep -qF "proxyhub managed" "$_sb_root/Caddyfile" && grep -qF "other.example.com {" "$_sb_root/Caddyfile"; then
+    PASS=$((PASS + 1))
+else
+    FAIL=$((FAIL + 1)); printf 'FAIL: siteblock removal inconsistent\n' >&2
+fi
+rm -rf "$_sb_root"
+
+# Marker completeness guard (Check review): a dangling BEGIN fails closed on
+# both splice and removal instead of deleting to end-of-file.
+_dangle=$(mktemp -d)
+printf 'operator head\n# >>> proxyhub managed - do not edit between markers\nstray line\ntrailing operator content\n' \
+    > "$_dangle/Caddyfile"
+_assert_fail env PROXYHUB_ROOT="$_dangle" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    _docker() { printf "bind\t/etc/caddy/Caddyfile\t/Caddyfile\t\n"; }
+    write_caddy_siteblock proxy.example.com abcDEF123_-xYz 127.0.0.1:8080
+' "$SCRIPT_DIR/lib.sh"
+_assert_file_contains "$_dangle/Caddyfile" "trailing operator content"
+_assert_fail env PROXYHUB_ROOT="$_dangle" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    _docker() { printf "bind\t/etc/caddy/Caddyfile\t/Caddyfile\t\n"; }
+    remove_caddy_siteblock
+' "$SCRIPT_DIR/lib.sh"
+_assert_file_contains "$_dangle/Caddyfile" "trailing operator content"
+rm -rf "$_dangle"
+
+# Missing trailing newline: the begin marker must NOT glue onto the
+# operator's last line.
+_nonl=$(mktemp -d)
+printf 'last line no newline' > "$_nonl/Caddyfile"
+_assert_ok env PROXYHUB_ROOT="$_nonl" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    _docker() { printf "bind\t/etc/caddy/Caddyfile\t/Caddyfile\t\n"; }
+    write_caddy_siteblock proxy.example.com abcDEF123_-xYz 127.0.0.1:8080
+' "$SCRIPT_DIR/lib.sh"
+_assert_file_contains "$_nonl/Caddyfile" "last line no newline"
+_assert_eq "1" "$(grep -c '^# >>> proxyhub managed' "$_nonl/Caddyfile")" \
+    "begin marker on its own line despite missing trailing newline"
+rm -rf "$_nonl"
 
 # Port publishing: host networking is exempt; bridge must publish 80 and 443.
 _assert_ok bash -c '
@@ -444,7 +533,12 @@ DL="$TEST_ROOT/docker.calls"
 : >"$DL"
 _assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
     source "$0"
-    _docker() { printf "%s\n" "$*" >>"$PROXYHUB_ROOT/docker.calls"; }
+    mkdir -p "$PROXYHUB_ROOT/srv/caddy"
+    _docker() {
+        printf "%s\n" "$*" >>"$PROXYHUB_ROOT/docker.calls"
+        case $3 in *Mounts*) printf "bind\t/etc/caddy\t/srv/caddy\t\n" ;; esac
+        return 0
+    }
     caddy_fmt /host/side/proxyhub.caddy &&
         caddy_validate /host/side/Caddyfile &&
         caddy_reload
@@ -457,8 +551,10 @@ _assert_file_contains "$DL" "exec -- cad caddy reload --config /etc/caddy/Caddyf
 # interruption warning as the native systemctl restart fallback.
 _assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
     source "$0"
+    mkdir -p "$PROXYHUB_ROOT/srv/caddy"
     _docker() {
         printf "%s\n" "$*" >>"$PROXYHUB_ROOT/docker.calls"
+        case $3 in *Mounts*) printf "bind\t/etc/caddy\t/srv/caddy\t\n" ;; esac
         [[ $1 == exec ]] && return 1
         return 0
     }
@@ -466,6 +562,27 @@ _assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CA
 ' "$SCRIPT_DIR/lib.sh"
 _assert_file_contains "$DL" "restart -- cad"
 _assert_file_contains "$TEST_ROOT/reload.err" "brief interruption"
+
+# Docker channel, file layout: fmt is a no-op (validate/reload unchanged).
+DFL="$TEST_ROOT/docker-file.calls"
+: >"$DFL"
+_assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '
+    source "$0"
+    : > "$PROXYHUB_ROOT/srv/Caddyfile"
+    _docker() {
+        printf "%s\n" "$*" >>"$PROXYHUB_ROOT/docker-file.calls"
+        case $3 in *Mounts*) printf "bind\t/etc/caddy/Caddyfile\t/srv/Caddyfile\t\n" ;; esac
+        return 0
+    }
+    caddy_fmt /host/side/Caddyfile &&
+        caddy_validate /host/side/Caddyfile
+' "$SCRIPT_DIR/lib.sh"
+if grep -qF "caddy fmt" "$DFL"; then
+    FAIL=$((FAIL + 1)); printf 'FAIL: file layout unexpectedly ran caddy fmt\n' >&2
+else
+    PASS=$((PASS + 1))
+fi
+_assert_file_contains "$DFL" "exec -- cad caddy validate --config /etc/caddy/Caddyfile"
 
 # Docker channel: write_caddy_fragment lands on the host-side mount path.
 _assert_ok env PROXYHUB_ROOT="$TEST_ROOT" PROXYHUB_CADDY_MODE=docker PROXYHUB_CADDY_CONTAINER=cad bash -c '

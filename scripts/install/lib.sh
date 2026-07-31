@@ -759,14 +759,25 @@ _docker_mount_host_path() {
     esac
 }
 
-# docker_caddy_mount_root NAME - print the host-side path backing the
-# container's /etc/caddy mount. Fails closed with accurate remediation when
-# /etc/caddy itself is not a usable persistent directory: an /etc/caddy
-# mount whose Source is missing or of an unsupported type, mounts that only
-# cover sub-paths (e.g. a lone Caddyfile or conf.d), or no mount at all.
-# Config on the container layer would vanish on recreate.
-docker_caddy_mount_root() {
-    local name=$1 mounts mtype mdest msrc mname bad_root="" sub_mounts=""
+# Docker caddy config layouts (ADR 0039): how the container's Caddy
+# configuration is persistently mounted and therefore how ProxyHub delivers
+# its managed site block.
+#   root - a directory or named volume mounted at /etc/caddy; the managed
+#          fragment lands in <root>/conf.d and an import line is appended
+#          to <root>/Caddyfile.
+#   file - only /etc/caddy/Caddyfile is bind-mounted (the single most
+#          common tutorial shape); there is no persistent conf.d, so the
+#          managed site block is spliced INLINE into the Caddyfile between
+#          markers instead of writing a fragment.
+PROXYHUB_CADDY_LAYOUT="${PROXYHUB_CADDY_LAYOUT:-root}"
+
+# docker_caddy_config_layout NAME - print "LAYOUT HOST_PATH" for the
+# container's persistent caddy config: "root <dir>" when /etc/caddy is a
+# usable directory/volume mount, "file <caddyfile>" when only the Caddyfile
+# itself is a host file bind. Everything else fails closed with accurate
+# remediation (config on the container layer would vanish on recreate).
+docker_caddy_config_layout() {
+    local name=$1 mounts mtype mdest msrc mname bad_root="" caddyfile="" sub_mounts=""
     mounts=$(_docker inspect \
         --format '{{range .Mounts}}{{printf "%s\t%s\t%s\t%s\n" .Type .Destination .Source .Name}}{{end}}' \
         "$name") || {
@@ -776,20 +787,29 @@ docker_caddy_mount_root() {
     while IFS=$'\t' read -r mtype mdest msrc mname; do
         [[ $mdest == /etc/caddy || $mdest == /etc/caddy/* ]] || continue
         if [[ $mdest == /etc/caddy ]]; then
-            if _docker_mount_host_path "$mtype" "$msrc" "$mname"; then return 0; fi
+            if _docker_mount_host_path "$mtype" "$msrc" "$mname" >/dev/null; then
+                printf 'root %s\n' "$msrc"
+                return 0
+            fi
             bad_root="${mtype}:${msrc:-none}"
+        elif [[ $mdest == /etc/caddy/Caddyfile && $mtype == bind && -f $(root_path "$msrc") ]]; then
+            caddyfile=$msrc
         else
             sub_mounts+="${mdest} (${mtype}, from ${msrc:-unknown}) "
         fi
     done <<<"$mounts"
     if [[ -n $bad_root ]]; then
         _ph_err "container '${name}' mounts /etc/caddy but it is not a usable persistent directory (${bad_root})"
-        _ph_err "fix: mount a host directory (or named volume) at /etc/caddy instead, e.g. -v /srv/caddy:/etc/caddy"
+        _ph_err "fix: mount a host directory (or named volume) at /etc/caddy, e.g. -v /srv/caddy:/etc/caddy"
         return 1
     fi
+    if [[ -n $caddyfile ]]; then
+        printf 'file %s\n' "$caddyfile"
+        return 0
+    fi
     if [[ -n $sub_mounts ]]; then
-        _ph_err "container '${name}' mounts only sub-paths under /etc/caddy (${sub_mounts% }); ProxyHub manages fragments under /etc/caddy/conf.d/ and needs the whole directory"
-        _ph_err "fix: mount a host directory (or named volume) at /etc/caddy instead, e.g. -v /srv/caddy:/etc/caddy"
+        _ph_err "container '${name}' mounts only sub-paths under /etc/caddy (${sub_mounts% }); no persistent Caddyfile or config directory to manage"
+        _ph_err "fix: mount a host directory (or named volume) at /etc/caddy, e.g. -v /srv/caddy:/etc/caddy"
         return 1
     fi
     _ph_err "container '${name}' has no persistent /etc/caddy mount; configuration written to the container layer would vanish on recreate"
@@ -997,25 +1017,71 @@ _caddy_mode_fail() {
     return 1
 }
 
+# _caddy_docker_layout - resolve the docker config layout once per call and
+# cache the derived host paths in globals: PROXYHUB_CADDY_LAYOUT (root|file),
+# PROXYHUB_CADDYFILE_HOST (root_path'd Caddyfile), PROXYHUB_CADDY_ROOT
+# (root layout only: root_path'd mount root).
+_caddy_docker_layout() {
+    local info layout path
+    info=$(docker_caddy_config_layout "$PROXYHUB_CADDY_CONTAINER") || return 1
+    layout=${info%% *}
+    path=${info#* }
+    case $layout in
+        root)
+            PROXYHUB_CADDY_LAYOUT=root
+            PROXYHUB_CADDY_ROOT=$(root_path "$path")
+            PROXYHUB_CADDYFILE_HOST="$PROXYHUB_CADDY_ROOT/Caddyfile"
+            ;;
+        file)
+            PROXYHUB_CADDY_LAYOUT=file
+            PROXYHUB_CADDY_ROOT=""
+            PROXYHUB_CADDYFILE_HOST=$(root_path "$path")
+            ;;
+        *)
+            _ph_err "unexpected caddy layout '${layout}'"
+            return 1
+            ;;
+    esac
+    return 0
+}
+
 # caddy_config_dir - print the host-side Caddy config directory, resolved
 # through root_path: /etc/caddy natively, the container's /etc/caddy mount
-# root in docker mode.
+# root in the docker root layout. Fails in the docker file layout: there is
+# no config directory, only a Caddyfile (use caddy_caddyfile_path).
 caddy_config_dir() {
     case "$PROXYHUB_CADDY_MODE" in
         native | none) root_path /etc/caddy ;;
         docker)
-            local mroot
-            mroot=$(docker_caddy_mount_root "$PROXYHUB_CADDY_CONTAINER") || return 1
-            root_path "$mroot"
+            _caddy_docker_layout || return 1
+            if [[ $PROXYHUB_CADDY_LAYOUT == file ]]; then
+                _ph_err "the file caddy layout has no config directory (the site block lives inline in the Caddyfile)"
+                return 1
+            fi
+            printf '%s\n' "$PROXYHUB_CADDY_ROOT"
+            ;;
+        *) _caddy_mode_fail ;;
+    esac
+}
+
+# caddy_caddyfile_path - print the host-side Caddyfile path, resolved
+# through root_path in every mode and layout.
+caddy_caddyfile_path() {
+    case "$PROXYHUB_CADDY_MODE" in
+        native | none) root_path /etc/caddy/Caddyfile ;;
+        docker)
+            _caddy_docker_layout || return 1
+            printf '%s\n' "$PROXYHUB_CADDYFILE_HOST"
             ;;
         *) _caddy_mode_fail ;;
     esac
 }
 
 # caddy_fragment_path - print the managed fragment path, resolved through
-# root_path like every other host path in this library. In docker mode this
-# is the host-side path under the container's /etc/caddy mount; the container
-# always sees it at PROXYHUB_CADDY_FRAGMENT.
+# root_path like every other host path in this library. In the docker root
+# layout this is the host-side path under the container's /etc/caddy mount;
+# the container always sees it at PROXYHUB_CADDY_FRAGMENT. Fails in the file
+# layout: there is no fragment file.
 caddy_fragment_path() {
     case "$PROXYHUB_CADDY_MODE" in
         native | none) root_path "$PROXYHUB_CADDY_FRAGMENT" ;;
@@ -1028,13 +1094,37 @@ caddy_fragment_path() {
     esac
 }
 
+# caddy_managed_config_path - print the host path of the file that carries
+# the managed site block: the fragment in native and docker root layouts,
+# the Caddyfile in the docker file layout (ADR 0039). Callers that COPY the
+# managed config (backup/restore) must key the staged name off its basename.
+caddy_managed_config_path() {
+    if [[ $PROXYHUB_CADDY_MODE == docker ]]; then
+        _caddy_docker_layout || return 1
+        if [[ $PROXYHUB_CADDY_LAYOUT == file ]]; then
+            printf '%s\n' "$PROXYHUB_CADDYFILE_HOST"
+            return 0
+        fi
+    fi
+    caddy_fragment_path
+}
+
 # caddy_fmt FRAGMENT - format the fragment in place (caddy fmt --overwrite).
-# The docker branch ignores the host-side FRAGMENT argument: the container
-# always sees the fragment at the constant container path.
+# The docker root-layout branch ignores the host-side FRAGMENT argument: the
+# container always sees the fragment at the constant container path. The file
+# layout is a no-op: formatting the user's whole Caddyfile would rewrite
+# their unrelated content, and validate already covers syntax.
 caddy_fmt() {
     case "$PROXYHUB_CADDY_MODE" in
         native) _caddy_bin fmt --overwrite "$1" ;;
-        docker) _docker exec -- "$PROXYHUB_CADDY_CONTAINER" caddy fmt --overwrite "$PROXYHUB_CADDY_FRAGMENT" ;;
+        docker)
+            _caddy_docker_layout || return 1
+            if [[ $PROXYHUB_CADDY_LAYOUT == file ]]; then
+                _ph_log "file caddy layout: skipping fmt (would rewrite user content in the Caddyfile)"
+                return 0
+            fi
+            _docker exec -- "$PROXYHUB_CADDY_CONTAINER" caddy fmt --overwrite "$PROXYHUB_CADDY_FRAGMENT"
+            ;;
         none) return 0 ;;
         *) _caddy_mode_fail ;;
     esac
@@ -1086,35 +1176,24 @@ caddy_reload() {
 # host.docker.internal in the docker bridge topology - caddy_upstream_addr),
 # and returns a plain 404 for / and everything else. The embedded Xray
 # data-plane is reached only through ProxyHub; no Xray port is exposed.
-write_caddy_fragment() {
-    local domain="${1:-}"
-    local site_path="${2:-}"
-    validate_domain "$domain" || return 1
-    validate_site_path "$site_path" || return 1
-
-    local upstream
-    upstream=$(caddy_upstream_addr)
-    local frag_path
-    frag_path=$(caddy_fragment_path) || return 1
-    local frag_dir
-    frag_dir=$(dirname "$frag_path")
-    if ! mkdir -p "$frag_dir"; then
-        _ph_err "failed to create directory ${frag_dir}"
-        return 1
-    fi
-    local tmp
-    tmp="${frag_path}.tmp.$$"
-    if ! cat > "$tmp" <<EOF
-# ProxyHub site fragment - managed by the ProxyHub installer. Do not edit.
-${domain} {
-	@proxyhub path /${site_path} /${site_path}/*
+# _caddy_site_block DOMAIN SITE_PATH UPSTREAM - print the ProxyHub site
+# block. Terminates TLS for DOMAIN (Caddy automatic HTTPS), proxies
+# /<site-path>/ (including /<site-path>/dist/) to the ProxyHub listener
+# (loopback, or host.docker.internal in the docker bridge topology -
+# caddy_upstream_addr), and returns a plain 404 for / and everything else.
+# The embedded Xray data-plane is reached only through ProxyHub; no Xray
+# port is exposed.
+_caddy_site_block() {
+    cat <<EOF
+${1} {
+	@proxyhub path /${2} /${2}/*
 	handle @proxyhub {
 		# Replace (not append) forwarding headers: ProxyHub trusts XFF only from
 		# its declared peers (loopback, or the narrowed bridge subnet), so a
 		# caller-supplied X-Forwarded-For must never survive the proxy hop -
 		# otherwise IP2Ban / honeypot / captcha / blacklist can all be bypassed
 		# by spoofing a trusted source.
-		reverse_proxy ${upstream} {
+		reverse_proxy ${3} {
 			header_up X-Forwarded-For {remote_host}
 			header_up X-Real-IP {remote_host}
 		}
@@ -1125,7 +1204,40 @@ ${domain} {
 	}
 }
 EOF
-    then
+}
+
+# write_caddy_fragment DOMAIN SITE_PATH - write the Caddy v2 site fragment.
+# In the docker file layout there is no persistent conf.d, so the block is
+# spliced inline into the Caddyfile instead (write_caddy_siteblock, ADR 0039).
+write_caddy_fragment() {
+    local domain="${1:-}"
+    local site_path="${2:-}"
+    validate_domain "$domain" || return 1
+    validate_site_path "$site_path" || return 1
+
+    local upstream
+    upstream=$(caddy_upstream_addr)
+    if [[ $PROXYHUB_CADDY_MODE == docker ]]; then
+        _caddy_docker_layout || return 1
+        if [[ $PROXYHUB_CADDY_LAYOUT == file ]]; then
+            write_caddy_siteblock "$domain" "$site_path" "$upstream" || return 1
+            return 0
+        fi
+    fi
+    local frag_path
+    frag_path=$(caddy_fragment_path) || return 1
+    local frag_dir
+    frag_dir=$(dirname "$frag_path")
+    if ! mkdir -p "$frag_dir"; then
+        _ph_err "failed to create directory ${frag_dir}"
+        return 1
+    fi
+    local tmp
+    tmp="${frag_path}.tmp.$$"
+    if ! {
+        printf '# ProxyHub site fragment - managed by the ProxyHub installer. Do not edit.\n'
+        _caddy_site_block "$domain" "$site_path" "$upstream"
+    } > "$tmp"; then
         _ph_err "failed to write ${tmp}"
         rm -f "$tmp"
         return 1
@@ -1141,5 +1253,115 @@ EOF
         return 1
     fi
     _ph_log "wrote ${frag_path}"
+    return 0
+}
+
+# Marker pair delimiting the managed inline site block (file layout).
+readonly PROXYHUB_SITEBLOCK_BEGIN='# >>> proxyhub managed - do not edit between markers'
+readonly PROXYHUB_SITEBLOCK_END='# <<< proxyhub managed'
+
+# _siteblock_block_is_complete FILE - true when the managed-block markers
+# are well-formed: no markers at all, or every BEGIN followed by its END in
+# order. A dangling BEGIN fails closed: the sed range used for removal would
+# otherwise silently delete from BEGIN to end-of-file.
+_siteblock_block_is_complete() {
+    awk '
+        /^# >>> proxyhub managed/ { if (open) code=2; else open=1; next }
+        /^# <<< proxyhub managed/ { if (!open) code=3; else open=0; next }
+        END { if (code) exit code; exit(open ? 2 : 0) }
+    ' "$1"
+}
+
+# write_caddy_siteblock DOMAIN SITE_PATH UPSTREAM - splice the managed site
+# block into the host Caddyfile between markers (docker file layout, ADR
+# 0039): any previous managed block is replaced, the rest of the operator's
+# Caddyfile is left byte-identical. Writes happen IN PLACE (cat >, never
+# rename): a single-file bind mount pins the inode, so an atomic-rename
+# would silently leave the container serving the old file. Safety comes
+# from the caller's backup + validate + rollback chain, from the marker
+# completeness check (no dangling BEGIN), and from a full staged copy kept
+# at TMP on a doubly-failed write.
+write_caddy_siteblock() {
+    local domain=$1 site_path=$2 upstream=$3 caddyfile tmp staged
+    caddyfile=$(caddy_caddyfile_path) || return 1
+    if [[ ! -f $caddyfile ]]; then
+        _ph_err "Caddyfile not found at ${caddyfile}"
+        return 1
+    fi
+    if ! _siteblock_block_is_complete "$caddyfile"; then
+        _ph_err "managed-block markers in ${caddyfile} are incomplete or out of order; refusing to splice (a dangling begin marker would delete to end-of-file)"
+        _ph_err "fix: repair or remove the '# >>> proxyhub managed' / '# <<< proxyhub managed' lines manually and re-run"
+        return 1
+    fi
+    staged=$(mktemp) || return 1
+    if grep -q '^# >>> proxyhub managed' "$caddyfile"; then
+        sed "/^# >>> proxyhub managed/,/^# <<< proxyhub managed/d" "$caddyfile" >"$staged" || {
+            _ph_err "failed to strip the old managed block from ${caddyfile}"
+            rm -f "$staged"
+            return 1
+        }
+    else
+        cat "$caddyfile" >"$staged" || {
+            _ph_err "failed to read ${caddyfile}"
+            rm -f "$staged"
+            return 1
+        }
+    fi
+    tmp=$(mktemp) || { rm -f "$staged"; return 1; }
+    if ! {
+        cat "$staged"
+        # A file without a trailing newline would glue the marker onto the
+        # operator's last line.
+        [[ ! -s $staged || -z $(tail -c 1 "$staged") ]] || printf '\n'
+        printf '%s\n' "$PROXYHUB_SITEBLOCK_BEGIN"
+        _caddy_site_block "$domain" "$site_path" "$upstream"
+        printf '%s\n' "$PROXYHUB_SITEBLOCK_END"
+    } > "$tmp"; then
+        _ph_err "failed to stage Caddyfile content in ${tmp}"
+        rm -f "$tmp" "$staged"
+        return 1
+    fi
+    rm -f "$staged"
+    if ! cat "$tmp" >"$caddyfile"; then
+        _ph_err "in-place write to ${caddyfile} failed; retrying once"
+        if ! cat "$tmp" >"$caddyfile"; then
+            _ph_err "in-place write to ${caddyfile} failed twice; the complete intended content is preserved at ${tmp} - restore it manually"
+            return 1
+        fi
+    fi
+    rm -f "$tmp"
+    _ph_log "spliced managed site block into ${caddyfile}"
+    return 0
+}
+
+# remove_caddy_siteblock - delete the managed inline block from the host
+# Caddyfile (file layout uninstall); a no-op when the block is absent.
+# Backs up before splicing (this path has no other copy), refuses dangling
+# markers, and restores the backup if the in-place write fails.
+remove_caddy_siteblock() {
+    local caddyfile tmp backup
+    caddyfile=$(caddy_caddyfile_path) || return 1
+    [[ -f $caddyfile ]] || return 0
+    grep -q '^# >>> proxyhub managed' "$caddyfile" || return 0
+    if ! _siteblock_block_is_complete "$caddyfile"; then
+        _ph_err "managed-block markers in ${caddyfile} are incomplete or out of order; refusing to remove (a dangling begin marker would delete to end-of-file)"
+        _ph_err "fix: repair or remove the markers manually - the managed block stays live until then"
+        return 1
+    fi
+    backup="${caddyfile}.proxyhub-rmbak-$$"
+    cp -a "$caddyfile" "$backup" || {
+        _ph_err "failed to back up ${caddyfile} before block removal"
+        return 1
+    }
+    tmp=$(mktemp) || return 1
+    if ! sed "/^# >>> proxyhub managed/,/^# <<< proxyhub managed/d" "$caddyfile" >"$tmp" ||
+        ! cat "$tmp" >"$caddyfile"; then
+        _ph_err "failed to rewrite ${caddyfile}; restored the backup ${backup}"
+        cp -a "$backup" "$caddyfile" || true
+        rm -f "$tmp"
+        return 1
+    fi
+    rm -f "$tmp"
+    _ph_log "removed managed site block from ${caddyfile} (backup: ${backup})"
     return 0
 }

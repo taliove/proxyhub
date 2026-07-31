@@ -546,6 +546,53 @@ if grep -qF "trust boundary" "$DOCK_SBX/stdout.log"; then
 else _pass; fi
 
 # --------------------------------------------------------------------------
+# Docker file layout (single-file Caddyfile bind, ADR 0039)
+# --------------------------------------------------------------------------
+
+# mock_docker_file_caddy - _docker answers for a host-network caddy container
+# with only /etc/caddy/Caddyfile bind-mounted from /srv/Caddyfile.
+mock_docker_file_caddy() {
+    _docker() {
+        if [[ $1 == inspect ]]; then
+            case $3 in
+                *State.Running*) printf 'true\n' ;;
+                *Config.Image*) printf 'caddy:2\n' ;;
+                *HostConfig.NetworkMode*) printf 'host\n' ;;
+                *Mounts*) printf 'bind\t/etc/caddy/Caddyfile\t/srv/Caddyfile\t\n' ;;
+            esac
+        fi
+        return 0
+    }
+}
+
+# File layout happy path: the managed block is spliced into the Caddyfile,
+# no conf.d fragment, no import line, everything else as usual.
+filehappy=$(
+    setup_sandbox
+    mock_host
+    mock_docker_file_caddy
+    mkdir -p "$SBX/srv"
+    printf '{\n\tauto_https off\n}\n' >"$SBX/srv/Caddyfile"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --caddy-docker caddy \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+file_rc=$(printf '%s\n' "$filehappy" | sed -n 's/^RC=//p')
+FILE_SBX=$(printf '%s\n' "$filehappy" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$FILE_SBX")
+
+_assert_eq 0 "$file_rc" "file layout install exit code"
+_assert_file_contains "$FILE_SBX/srv/Caddyfile" "# >>> proxyhub managed"
+_assert_file_contains "$FILE_SBX/srv/Caddyfile" "proxy.example.com {"
+_assert_file_contains "$FILE_SBX/srv/Caddyfile" "reverse_proxy 127.0.0.1:8080"
+_assert_file_contains "$FILE_SBX/srv/Caddyfile" "auto_https off"
+_assert_file_not_contains "$FILE_SBX/srv/Caddyfile" "import /etc/caddy/conf.d"
+[[ ! -e $FILE_SBX/srv/caddy/conf.d/proxyhub.caddy ]] && _pass || _fail "file layout wrote a conf.d fragment"
+_assert_file_contains "$FILE_SBX/etc/proxyhub/config.yaml" 'host: "127.0.0.1"'
+_assert_file_contains "$FILE_SBX/root/.proxyhub-install-info" "CADDY_MODE=docker"
+
+# --------------------------------------------------------------------------
 # Docker bridge topology (ADR 0035, ticket 03/#18)
 # --------------------------------------------------------------------------
 
@@ -830,6 +877,43 @@ _assert_eq 1 "$rb_rc" "docker rollback exit code"
 [[ ! -e $RB_SBX/srv/caddy/conf.d/proxyhub.caddy ]] && _pass || _fail "fragment survives rollback"
 _assert_eq "# existing caddyfile" "$(cat "$RB_SBX/srv/caddy/Caddyfile")" "Caddyfile restored from backup"
 _assert_file_contains "$RB_SBX/err.log" "rolled back the Caddy changes"
+
+# Rollback, file layout (ADR 0039): a failing in-container validate restores
+# the pre-splice Caddyfile from the backup - no managed block survives.
+filerb=$(
+    SBX=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-docker-filerb.XXXXXX")
+    export PROXYHUB_ROOT=$SBX
+    mkdir -p "$SBX/srv"
+    printf '# existing caddyfile\n' >"$SBX/srv/Caddyfile"
+    PROXYHUB_CADDY_MODE=docker
+    PROXYHUB_CADDY_CONTAINER=caddy
+    DOMAIN=proxy.example.com
+    SITE_PATH="aB3_validSitePath_000"
+    EMAIL=""
+    TIMESTAMP=20260730000000
+    _is_test_mode() { return 1; }
+    _docker() {
+        if [[ $1 == inspect ]]; then
+            case $3 in *Mounts*) printf 'bind\t/etc/caddy/Caddyfile\t/srv/Caddyfile\t\n' ;; esac
+        elif [[ $1 == exec && $* == *"caddy validate"* ]]; then
+            return 1 # in-container caddy validate fails
+        fi
+        return 0
+    }
+    rc=0
+    _configure_caddy 2>"$SBX/err.log" || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+filerb_rc=$(printf '%s\n' "$filerb" | sed -n 's/^RC=//p')
+FRB_SBX=$(printf '%s\n' "$filerb" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$FRB_SBX")
+
+_assert_eq 1 "$filerb_rc" "file layout rollback exit code"
+_assert_eq "# existing caddyfile" "$(cat "$FRB_SBX/srv/Caddyfile")" \
+    "file layout: Caddyfile restored from backup"
+[[ -e $FRB_SBX/srv/Caddyfile.proxyhub-bak-20260730000000 ]] && _pass ||
+    _fail "file layout: backup missing after rollback"
+_assert_file_contains "$FRB_SBX/err.log" "rolled back the Caddy changes"
 
 # Import idempotency: re-running _ensure_caddy_import must not duplicate the
 # import line (docker mode, bind mount).

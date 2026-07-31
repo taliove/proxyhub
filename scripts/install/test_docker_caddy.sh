@@ -485,27 +485,71 @@ case_multi_containers() {
 # any file is written.
 # --------------------------------------------------------------------------
 case_single_file_mount() {
-    printf '==> case: single-file mount fail closed\n'
+    printf '==> case: single-file mount (file layout) install\n'
     new_scratch
-    write_caddyfile "$SBX/Caddyfile.single" 0 ""
+    # File layout fixture: the Caddyfile bind-mount source, plus the same
+    # symlink trick so root_path(real source) resolves into the real file.
+    mkdir -p "$SBX/srv"
+    write_caddyfile "$SBX/srv/Caddyfile" 0 ""
+    mkdir -p "$SBX$SBX/srv"
+    ln -s "$SBX/srv/Caddyfile" "$SBX$SBX/srv/Caddyfile"
     local name=phdc-sfile
     if ! start_caddy "$name" \
         --add-host host.docker.internal:host-gateway \
         -p 127.0.0.1:18083:80 -p 127.0.0.1:18446:443 \
-        -v "$SBX/Caddyfile.single:/etc/caddy/Caddyfile"; then
+        -v "$SBX/srv/Caddyfile:/etc/caddy/Caddyfile"; then
         _fail "container start failed: $name"
         return
     fi
-    wait_running "$name" || _fail "$name not running"
+    wait_admin "$name" || _fail "admin API never came up: $name"
 
     local rc
     rc=$(drive_install --caddy-docker "$name" | tail -1)
-    _assert_eq "RC=1" "$rc" "single-file mount rc"
-    _assert_out_contains "$SBX/install.err" "mounts only sub-paths under /etc/caddy" "single-file message"
-    _assert_out_contains "$SBX/install.err" "fix: mount a host directory" "single-file guidance"
-    if [[ ! -e $SBX/etc/proxyhub/config.yaml && ! -e $SBX/usr/local/bin/proxyhub ]]; then
+    _assert_eq "RC=0" "$rc" "file layout install rc"
+    # The managed block is spliced inline, host-side and container-visible;
+    # no import line is appended and no conf.d fragment is created.
+    _assert_file_contains "$SBX/srv/Caddyfile" "# >>> proxyhub managed"
+    _assert_file_contains "$SBX/srv/Caddyfile" "$TEST_DOMAIN {"
+    _assert_file_contains "$SBX/srv/Caddyfile" "reverse_proxy host.docker.internal:8080"
+    if grep -qF "import /etc/caddy/conf.d" "$SBX/srv/Caddyfile"; then
+        _fail "file layout unexpectedly gained a conf.d import line"
+    else _pass; fi
+    if docker exec "$name" grep -qF "proxyhub managed" /etc/caddy/Caddyfile; then
         _pass
-    else _fail "files written despite single-file mount refusal"; fi
+    else _fail "managed block not visible inside the container"; fi
+    if docker exec "$name" test ! -e /etc/caddy/conf.d/proxyhub.caddy; then
+        _pass
+    else _fail "file layout unexpectedly wrote a conf.d fragment"; fi
+    if admin_config "$name" | grep -qF "$TEST_DOMAIN"; then
+        _pass
+    else _fail "active caddy config does not serve $TEST_DOMAIN after file-layout install"; fi
+
+    # Uninstall in file layout: the block is spliced OUT, the operator's
+    # Caddyfile survives, and the reload drops the route. Same lib-copy seam
+    # override as case_uninstall: real docker channel for proxyhubctl.
+    mkdir -p "$SBX/scripts/install"
+    cp "$SCRIPT_DIR/lib.sh" "$SBX/scripts/install/lib.sh"
+    cat >>"$SBX/scripts/install/lib.sh" <<'EOF'
+
+# Appended by test_docker_caddy.sh: real docker seam and non-test mode so
+# proxyhubctl uninstall exercises the real caddy reload channel.
+_docker() { command docker "$@"; }
+_is_test_mode() { return 1; }
+EOF
+    local urc=0
+    PROXYHUB_ROOT=$SBX PROXYHUB_ALLOW_NON_ROOT=1 \
+        bash "$SCRIPT_DIR/proxyhubctl" uninstall --yes \
+        >"$SBX/uninstall.out" 2>"$SBX/uninstall.err" || urc=$?
+    _assert_eq 0 "$urc" "file layout uninstall rc"
+    if [[ -f $SBX/srv/Caddyfile ]]; then
+        _pass
+    else _fail "uninstall deleted the operator Caddyfile"; fi
+    if grep -qF "proxyhub managed" "$SBX/srv/Caddyfile"; then
+        _fail "managed block not removed by uninstall"
+    else _pass; fi
+    if admin_config "$name" | grep -qF "$TEST_DOMAIN"; then
+        _fail "active caddy config still serves $TEST_DOMAIN after file-layout uninstall"
+    else _pass; fi
     _stop_case_containers
 }
 

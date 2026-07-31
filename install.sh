@@ -300,7 +300,7 @@ _select_docker_caddy() {
     local name=$1
     docker_validate_caddy_container "$name" || return 1
     docker_caddy_ports_published "$name" || return 1
-    docker_caddy_mount_root "$name" >/dev/null || return 1
+    docker_caddy_config_layout "$name" >/dev/null || return 1
     docker_caddy_prepare_topology "$name" || return 1
     PROXYHUB_CADDY_CONTAINER=$name
     PROXYHUB_CADDY_MODE=docker
@@ -327,7 +327,7 @@ _autodetect_docker_caddy() {
     PROXYHUB_CADDY_MODE=docker
     _ph_log "auto-selected the only running caddy container '${candidates}' (docker caddy mode; override with --caddy-docker)"
     docker_caddy_ports_published "$candidates" || return 2
-    docker_caddy_mount_root "$candidates" >/dev/null || return 2
+    docker_caddy_config_layout "$candidates" >/dev/null || return 2
     docker_caddy_prepare_topology "$candidates" || return 2
     _note_bridge_listen_override
     return 0
@@ -573,30 +573,63 @@ _ensure_caddy_import() {
 _reload_caddy() { caddy_reload; }
 
 _configure_caddy() {
-    local caddy_dir frag hit
-    caddy_dir=$(caddy_config_dir) || return 1
-    frag=$(caddy_fragment_path) || return 1
-    if [[ -d $caddy_dir ]]; then
-        hit=$(grep -RIlF -- "$DOMAIN" "$caddy_dir" 2>/dev/null | grep -v "^${frag}$" | head -1 || true)
-        [[ -z $hit ]] ||
-            _ph_fail \
-                "domain '${DOMAIN}' already appears in an existing Caddy config: ${hit}" \
-                "refusing to create a conflicting site block; remove or rename the existing site and re-run" || return 1
+    local layout=root caddy_dir="" frag="" main hit
+    if [[ $PROXYHUB_CADDY_MODE == docker ]]; then
+        _caddy_docker_layout || return 1
+        layout=$PROXYHUB_CADDY_LAYOUT
     fi
-    write_caddy_fragment "$DOMAIN" "$SITE_PATH" || return 1
-    _ensure_caddy_import || return 1
+    main=$(caddy_caddyfile_path) || return 1
+    if [[ $layout == root ]]; then
+        caddy_dir=$(caddy_config_dir) || return 1
+        frag=$(caddy_fragment_path) || return 1
+        if [[ -d $caddy_dir ]]; then
+            hit=$(grep -RIlF -- "$DOMAIN" "$caddy_dir" 2>/dev/null | grep -v "^${frag}$" | head -1 || true)
+            [[ -z $hit ]] ||
+                _ph_fail \
+                    "domain '${DOMAIN}' already appears in an existing Caddy config: ${hit}" \
+                    "refusing to create a conflicting site block; remove or rename the existing site and re-run" || return 1
+        fi
+    elif [[ -f $main ]]; then
+        # File layout: scan the Caddyfile with our own managed block scrubbed
+        # out - otherwise a re-run would "conflict" with ProxyHub itself.
+        if sed "/^# >>> proxyhub managed/,/^# <<< proxyhub managed/d" "$main" | grep -qF "$DOMAIN"; then
+            _ph_fail \
+                "domain '${DOMAIN}' already appears in the Caddyfile: ${main}" \
+                "refusing to create a conflicting site block; remove or rename the existing site and re-run" || return 1
+        fi
+    fi
+    # File layout: the managed block is spliced INTO the Caddyfile, so back
+    # it up before the first splice (root layout backs up inside
+    # _ensure_caddy_import; native likewise).
+    CADDY_BACKUP=""
+    if [[ $layout == file && -f $main ]]; then
+        CADDY_BACKUP="${main}.proxyhub-bak-${TIMESTAMP}"
+        cp -a "$main" "$CADDY_BACKUP" || { CADDY_BACKUP=""; _ph_fail "failed to back up ${main}"; return 1; }
+    fi
+    write_caddy_fragment "$DOMAIN" "$SITE_PATH" || {
+        # File layout: the splice may have truncated the Caddyfile in place;
+        # the backup taken before the write restores it.
+        if [[ $layout == file && -n $CADDY_BACKUP && -f $CADDY_BACKUP ]]; then
+            _ph_err "site block write failed - restored the Caddyfile from ${CADDY_BACKUP}"
+            cp -a "$CADDY_BACKUP" "$main" || true
+        fi
+        return 1
+    }
+    if [[ $layout == root ]]; then
+        _ensure_caddy_import || return 1
+    fi
     local rc=0
     if _is_test_mode; then
         _ph_log "test mode: caddy fmt/validate/reload"
     else
         caddy_fmt "$frag" >/dev/null &&
-            caddy_validate "${caddy_dir}/Caddyfile" &&
+            caddy_validate "$main" &&
             _reload_caddy || rc=$?
     fi
     if ((rc != 0)); then
         _ph_err "caddy fmt/validate/reload failed - rolled back the Caddy changes (inspect with: journalctl -u caddy -n 50)"
-        rm -f "$frag"
-        [[ -z $CADDY_BACKUP || ! -f $CADDY_BACKUP ]] || cp -a "$CADDY_BACKUP" "${caddy_dir}/Caddyfile" || true
+        [[ -z $frag ]] || rm -f "$frag"
+        [[ -z $CADDY_BACKUP || ! -f $CADDY_BACKUP ]] || cp -a "$CADDY_BACKUP" "$main" || true
         return 1
     fi
     _ph_log "Caddy configured for https://${DOMAIN}/${SITE_PATH}/"

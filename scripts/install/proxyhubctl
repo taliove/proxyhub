@@ -190,7 +190,7 @@ cmd_backup() {
     local state_dir config_dir caddy_frag install_info
     state_dir=$(root_path "$PROXYHUB_STATE_DIR")
     config_dir=$(root_path "$PROXYHUB_CONFIG_DIR")
-    caddy_frag=$(caddy_fragment_path) || return 1
+    caddy_frag=$(caddy_managed_config_path) || return 1
     install_info=$(root_path "$PROXYHUB_INSTALL_INFO")
 
     if [[ -d "$state_dir" ]]; then
@@ -327,7 +327,7 @@ cmd_restore() {
     local state_dir config_dir caddy_frag install_info binary_path
     state_dir=$(root_path "$PROXYHUB_STATE_DIR")
     config_dir=$(root_path "$PROXYHUB_CONFIG_DIR")
-    caddy_frag=$(caddy_fragment_path) || return 1
+    caddy_frag=$(caddy_managed_config_path) || return 1
     install_info=$(root_path "$PROXYHUB_INSTALL_INFO")
     binary_path=$(root_path "$PROXYHUB_BINARY")
 
@@ -353,8 +353,8 @@ cmd_restore() {
             failed=1
         fi
     fi
-    if [[ -f "${staging_dir}/caddy/proxyhub.caddy" ]] && (( failed == 0 )); then
-        if ! cp -a "${staging_dir}/caddy/proxyhub.caddy" "$caddy_frag"; then
+    if [[ -f "${staging_dir}/caddy/$(basename "$caddy_frag")" ]] && (( failed == 0 )); then
+        if ! cp -a "${staging_dir}/caddy/$(basename "$caddy_frag")" "$caddy_frag"; then
             _ph_err "failed to restore Caddy fragment"
             failed=1
         fi
@@ -391,7 +391,7 @@ cmd_restore() {
         _ph_err "restore failed, rolling back"
         [[ -d "${rollback_dir}/state" ]] && { rm -rf "$state_dir"; cp -a "${rollback_dir}/state" "$state_dir"; }
         [[ -d "${rollback_dir}/config" ]] && { rm -rf "$config_dir"; cp -a "${rollback_dir}/config" "$config_dir"; }
-        [[ -f "${rollback_dir}/caddy/proxyhub.caddy" ]] && cp -a "${rollback_dir}/caddy/proxyhub.caddy" "$caddy_frag"
+        [[ -f "${rollback_dir}/caddy/$(basename "$caddy_frag")" ]] && cp -a "${rollback_dir}/caddy/$(basename "$caddy_frag")" "$caddy_frag"
         [[ -f "${rollback_dir}/.proxyhub-install-info" ]] && cp -a "${rollback_dir}/.proxyhub-install-info" "$install_info"
         [[ -f "${rollback_dir}/bin/proxyhub" ]] && cp -a "${rollback_dir}/bin/proxyhub" "$binary_path"
 
@@ -521,7 +521,7 @@ cmd_rotate_path() {
 
     # Backup current Caddy fragment for rollback.
     local caddy_frag
-    caddy_frag=$(caddy_fragment_path) || return 1
+    caddy_frag=$(caddy_managed_config_path) || return 1
     local rollback_frag="${caddy_frag}.rollback.$$"
     if [[ -f "$caddy_frag" ]]; then
         cp -a "$caddy_frag" "$rollback_frag" || {
@@ -534,6 +534,11 @@ cmd_rotate_path() {
     # Write new Caddy fragment.
     if ! write_caddy_fragment "$domain" "$new_path"; then
         _ph_err "failed to write new Caddy fragment"
+        # File layout: an in-place write may have truncated the Caddyfile;
+        # the rollback copy taken before the write restores it.
+        if [[ -f "$rollback_frag" ]]; then
+            cp -a "$rollback_frag" "$caddy_frag" || true
+        fi
         return 1
     fi
 
@@ -1023,16 +1028,33 @@ cmd_uninstall() {
         systemctl daemon-reload || true
     fi
 
-    # Remove Caddy fragment and reload.
-    local caddy_frag
-    caddy_frag=$(caddy_fragment_path) || return 1
-    if [[ -f "$caddy_frag" ]]; then
-        rm -f "$caddy_frag"
-        _ph_log "removed Caddy fragment"
-        if ! _is_test_mode; then
-            # Best-effort: with 'admin off' a plain reload silently no-ops and
-            # the stale route would survive until the next Caddy restart.
-            caddy_reload >/dev/null 2>&1 || true
+    # Remove the managed Caddy config and reload. File layout: splice the
+    # managed block OUT of the Caddyfile (never delete the operator's file).
+    # Everything else: delete the fragment, keep the import line.
+    local layout_handled=0
+    if [[ $PROXYHUB_CADDY_MODE == docker ]]; then
+        _caddy_docker_layout || return 1
+        if [[ $PROXYHUB_CADDY_LAYOUT == file ]]; then
+            layout_handled=1
+            if ! remove_caddy_siteblock; then
+                _ph_err "managed site block NOT removed from the Caddyfile; the stale route may still be live - remove it manually"
+                return 1
+            fi
+            _ph_log "removed managed site block from the Caddyfile"
+            _is_test_mode || caddy_reload >/dev/null 2>&1 || true
+        fi
+    fi
+    if ((layout_handled == 0)); then
+        local caddy_frag
+        caddy_frag=$(caddy_managed_config_path) || return 1
+        if [[ -f "$caddy_frag" ]]; then
+            rm -f "$caddy_frag"
+            _ph_log "removed Caddy fragment"
+            if ! _is_test_mode; then
+                # Best-effort: with 'admin off' a plain reload silently no-ops and
+                # the stale route would survive until the next Caddy restart.
+                caddy_reload >/dev/null 2>&1 || true
+            fi
         fi
     fi
 

@@ -524,6 +524,110 @@ test_rotate_path_docker_bridge() {
     teardown_test
 }
 
+# setup_docker_file_install - docker-mode install in the FILE layout (ADR
+# 0039): record the mode fields and seed a single-file Caddyfile on the
+# mocked mount, carrying an old managed block plus operator content.
+setup_docker_file_install() {
+    cat >>"$(root_path /root/.proxyhub-install-info)" <<'EOF'
+CADDY_MODE=docker
+CADDY_CONTAINER=caddy
+EOF
+    mkdir -p "$(root_path /srv)"
+    cat >"$(root_path /srv/Caddyfile)" <<'EOFCF'
+{
+	auto_https off
+}
+
+other.example.com {
+	respond 200
+}
+# >>> proxyhub managed - do not edit between markers
+proxy.example.com {
+	@proxyhub path /old_secure_path_12345678 /old_secure_path_12345678/*
+	handle @proxyhub {
+		reverse_proxy 127.0.0.1:8080 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		respond 404
+	}
+}
+# <<< proxyhub managed
+EOFCF
+    : >"$PROXYHUB_ROOT/docker.calls"
+}
+
+# mock_docker_alive_file - _docker answers for a running host-network caddy
+# container with only /etc/caddy/Caddyfile bind-mounted (file layout).
+mock_docker_alive_file() {
+    mock_docker_lib <<'MOCK'
+_docker() {
+    printf '%s\n' "$*" >>"$PROXYHUB_ROOT/docker.calls"
+    if [[ $1 == inspect ]]; then
+        case $3 in
+            *State.Running*) printf 'true\n' ;;
+            *HostConfig.NetworkMode*) printf 'host\n' ;;
+            *Mounts*) printf 'bind\t/etc/caddy/Caddyfile\t/srv/Caddyfile\t\n' ;;
+        esac
+    fi
+    return 0
+}
+MOCK
+}
+
+# test_rotate_path_docker_file - file layout: rotate-path rewrites the
+# managed block inline, operator content survives, exactly one block.
+test_rotate_path_docker_file() {
+    echo "==> test_rotate_path_docker_file"
+    setup_test
+    setup_docker_file_install
+    mock_docker_alive_file
+
+    "$PROXYHUBCTL" rotate-path --yes
+
+    local cf
+    cf=$(root_path /srv/Caddyfile)
+    local new_path
+    new_path=$(sed -n 's/^SITE_PATH=//p' "$(root_path /root/.proxyhub-install-info)")
+
+    assert_contains "$cf" "path /${new_path}" \
+        "managed block carries the new Site Path"
+    assert_true "! grep -qF 'old_secure_path_12345678' '$cf'" \
+        "old Site Path gone from the Caddyfile"
+    assert_contains "$cf" "other.example.com {" \
+        "operator content untouched by the rewrite"
+    assert_true "[[ \$(grep -c '^# >>> proxyhub managed' '$cf') -eq 1 ]]" \
+        "exactly one managed block after rotate"
+    assert_true "head -1 '$PROXYHUB_ROOT/docker.calls' | grep -q 'State.Running'" \
+        "liveness preflight is the first docker call"
+
+    teardown_test
+}
+
+# test_uninstall_docker_file - file layout uninstall: the managed block is
+# spliced OUT; the operator's Caddyfile itself must survive.
+test_uninstall_docker_file() {
+    echo "==> test_uninstall_docker_file"
+    setup_test
+    setup_docker_file_install
+    mock_docker_alive_file
+
+    "$PROXYHUBCTL" uninstall --yes
+
+    local cf
+    cf=$(root_path /srv/Caddyfile)
+    assert_file_exists "$cf" "operator Caddyfile survives uninstall"
+    assert_true "! grep -qF 'proxyhub managed' '$cf'" \
+        "managed block removed from the Caddyfile"
+    assert_contains "$cf" "other.example.com {" \
+        "operator content untouched by uninstall"
+
+    teardown_test
+}
+
 # test_rotate_path_docker_lost - a lost recorded container fails closed:
 # neither the install record nor the fragment is touched.
 test_rotate_path_docker_lost() {
@@ -621,8 +725,10 @@ main() {
     test_require_running_unit
     test_rotate_path_docker_host
     test_rotate_path_docker_bridge
+    test_rotate_path_docker_file
     test_rotate_path_docker_lost
     test_uninstall_docker
+    test_uninstall_docker_file
     test_uninstall_docker_lost
 
     printf '\n'

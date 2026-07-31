@@ -276,6 +276,72 @@ EOF
     : >"$PROXYHUB_ROOT/docker.calls"
 }
 
+# setup_docker_file_install - docker mode in the FILE layout (ADR 0039):
+# seed a single-file Caddyfile on the mocked mount, carrying a managed
+# block plus operator content.
+setup_docker_file_install() {
+    cat >>"$(root_path /root/.proxyhub-install-info)" <<'EOF'
+CADDY_MODE=docker
+CADDY_CONTAINER=caddy
+EOF
+    mkdir -p "$(root_path /srv)"
+    cat >"$(root_path /srv/Caddyfile)" <<'EOFCF'
+other.example.com {
+	respond 200
+}
+# >>> proxyhub managed - do not edit between markers
+proxy.example.com {
+	respond 404
+}
+# <<< proxyhub managed
+EOFCF
+    : >"$PROXYHUB_ROOT/docker.calls"
+}
+
+# mock_docker_alive_file - _docker answers for a running caddy container
+# with only /etc/caddy/Caddyfile bind-mounted (file layout).
+mock_docker_alive_file() {
+    mock_docker_lib <<'MOCK'
+_docker() {
+    printf '%s\n' "$*" >>"$PROXYHUB_ROOT/docker.calls"
+    if [[ $1 == inspect ]]; then
+        case $3 in
+            *State.Running*) printf 'true\n' ;;
+            *Mounts*) printf 'bind\t/etc/caddy/Caddyfile\t/srv/Caddyfile\t\n' ;;
+        esac
+    fi
+    return 0
+}
+MOCK
+}
+
+# test_backup_docker_file - backup in the file layout stages the Caddyfile
+# (basename-aware), not a conf.d fragment.
+test_backup_docker_file() {
+    echo "==> test_backup_docker_file"
+    setup_test
+    setup_docker_file_install
+    mock_docker_alive_file
+
+    "$PROXYHUBCTL" backup
+
+    local archive_path
+    archive_path=$(find "$(root_path /var/backups/proxyhub)" -name 'proxyhub-backup-*.tar.gz' | head -1)
+    local extract_dir
+    extract_dir=$(mktemp -d)
+    tar -xzf "$archive_path" -C "$extract_dir"
+
+    assert_file_exists "${extract_dir}/caddy/Caddyfile" \
+        "archive stages the Caddyfile in the file layout"
+    assert_true "grep -qF 'proxyhub managed' '${extract_dir}/caddy/Caddyfile'" \
+        "archived Caddyfile carries the managed block"
+    assert_true "grep -qF 'other.example.com {' '${extract_dir}/caddy/Caddyfile'" \
+        "archived Caddyfile keeps operator content"
+
+    rm -rf "$extract_dir"
+    teardown_test
+}
+
 # mock_docker_alive - _docker answers for a running caddy container with a
 # bind mount at /srv/caddy, logging every call. Pass LOST=1 to answer as if
 # the recorded container were gone.
@@ -420,6 +486,7 @@ main() {
     test_restore_missing_archive
     test_backup_filename_format
     test_backup_docker
+    test_backup_docker_file
     test_restore_docker
     test_backup_docker_lost
     test_restore_docker_lost
