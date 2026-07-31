@@ -82,15 +82,13 @@ cp config.example.yaml config.yaml   # 默认配置即可使用,后续在 Web �
 bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/install.sh)
 ```
 
-国内用户：GitHub 并非一律不可达，**先试上面的默认命令**；有本地代理就加 `https_proxy` 前缀（安装器内部下载同样走代理）。仅当 GitHub 完全不可达时，才走 jsDelivr 入口 + 镜像下载基：
+国内用户：GitHub 并非一律不可达，**先试上面的默认命令**；有本地代理就加 `https_proxy` 前缀（安装器内部下载同样走代理）。GitHub 完全不可达时这条命令照样能跑——安装器自动回退到内置直通前缀，制品经 minisign 验签：
 
 ```bash
-bash <(curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh) \
-  --non-interactive --domain <你的域名> --version <版本> \
-  --download-base https://<镜像>/taliove/proxyhub/releases/download
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh)
 ```
 
-制品经 minisign 签名，镜像下载同样可验证真伪。详见 [国内部署](docs/DEPLOY.md#国内部署网络受限环境)。
+详见 [国内部署](docs/DEPLOY.md#国内部署网络受限环境)（含隐私告知与自建镜像的 `--download-base` 用法）。
 
 安装后使用 `proxyhubctl` 运维：`status` / `logs` / `backup` / `update` / `rotate-path`。
 

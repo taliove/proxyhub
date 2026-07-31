@@ -962,6 +962,129 @@ _assert_file_contains "$DEF_SBX/curl.calls" "https://github.com/taliove/proxyhub
 _assert_file_contains "$DEF_SBX/root/.proxyhub-install-info" \
     "DOWNLOAD_BASE=https://github.com/taliove/proxyhub/releases/download"
 _assert_file_contains "$DEF_SBX/stderr.log" "signature verified"
+_assert_file_not_contains "$DEF_SBX/curl.calls" "gh-proxy.com"
+
+# --------------------------------------------------------------------------
+# Pass-through prefix auto-fallback (ADR 0037)
+# --------------------------------------------------------------------------
+
+# mock_github_down - _curl answers as if github.com were unreachable while
+# pass-through prefixes and the jsDelivr data API work. Artifact URLs are
+# served by suffix, so both official and prefixed bases resolve.
+mock_github_down() {
+    _curl() {
+        local out=/dev/null url=""
+        while (($#)); do
+            case $1 in
+                -o) out=$2; shift 2 ;;
+                -*) shift ;;
+                *) url=$1; shift ;;
+            esac
+        done
+        [[ -z ${CURL_CALLS:-} || -z $url ]] || printf '%s\n' "$url" >>"$CURL_CALLS"
+        case $url in
+            https://github.com | https://github.com/*) return 1 ;;
+            *data.jsdelivr.com*)
+                # Multi-line shape mirroring the real API (parser anchors on
+                # line-leading "version": fields).
+                printf '{\n  "versions": [\n    {\n      "version": "%s"\n    },\n    {\n      "version": "0.4.0"\n    }\n  ]\n}\n' "${TEST_TAG#v}"
+                ;;
+            *.minisig) cp "$FIX_DIR/SHA256SUMS.minisig" "$out" ;;
+            */SHA256SUMS) cp "$FIX_DIR/SHA256SUMS" "$out" ;;
+            *.tar.gz) cp "$FIX_DIR/$TEST_ASSET" "$out" ;;
+            *) : ;;
+        esac
+        return 0
+    }
+}
+
+# Auto-fallback: github.com down, no explicit base -> the curated prefix
+# takes over, every artifact flows through it, the log says so, the record
+# carries the prefixed base.
+autofb=$(
+    setup_sandbox
+    mock_host
+    mock_github_down
+    export CURL_CALLS="$SBX/curl.calls"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --version 9.9.9 \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+autofb_rc=$(printf '%s\n' "$autofb" | sed -n 's/^RC=//p')
+AFB_SBX=$(printf '%s\n' "$autofb" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$AFB_SBX")
+
+_assert_eq 0 "$autofb_rc" "prefix auto-fallback install exit code"
+_assert_file_contains "$AFB_SBX/stderr.log" "falling back to pass-through prefix"
+_assert_file_contains "$AFB_SBX/curl.calls" \
+    "https://gh-proxy.com/https://github.com/taliove/proxyhub/releases/download/v9.9.9/SHA256SUMS.minisig"
+_assert_file_contains "$AFB_SBX/root/.proxyhub-install-info" \
+    "DOWNLOAD_BASE=https://gh-proxy.com/https://github.com/taliove/proxyhub/releases/download"
+
+# Auto-fallback + latest: jsDelivr data API resolves the version when
+# GitHub redirects are unreachable.
+autolat=$(
+    setup_sandbox
+    mock_host
+    mock_github_down
+    rc=0
+    ( main --non-interactive --domain proxy.example.com \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+autolat_rc=$(printf '%s\n' "$autolat" | sed -n 's/^RC=//p')
+ALAT_SBX=$(printf '%s\n' "$autolat" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$ALAT_SBX")
+
+_assert_eq 0 "$autolat_rc" "prefix fallback + latest install exit code"
+_assert_file_contains "$ALAT_SBX/stderr.log" "resolved latest release v9.9.9 via the jsDelivr data API"
+_assert_file_contains "$ALAT_SBX/root/.proxyhub-install-info" "VERSION=v9.9.9"
+
+# jsDelivr failure branch: prefix reachable but the data API returns garbage
+# (error page / no usable stable version) -> fail closed with guidance, and
+# the original GitHub error is preserved ahead of the jsDelivr one.
+jsbad=$(
+    setup_sandbox
+    mock_host
+    _curl() {
+        local url=""
+        while (($#)); do
+            case $1 in
+                -o) shift 2 ;;
+                -*) shift ;;
+                *) url=$1; shift ;;
+            esac
+        done
+        case $url in
+            https://github.com | https://github.com/*) return 1 ;;
+            *data.jsdelivr.com*) printf '<html><body>Bad Gateway</body></html>' ;;
+        esac
+        return 0
+    }
+    rc=0
+    out=$(main --non-interactive --domain proxy.example.com 2>&1) || rc=$?
+    printf 'RC=%d\n%s\n' "$rc" "$out"
+)
+[[ $jsbad == *"RC=1"* ]] && _pass || _fail "jsDelivr garbage must fail closed: $jsbad"
+[[ $jsbad == *"no usable stable version"* ]] && _pass || _fail "jsDelivr garbage message: $jsbad"
+[[ $jsbad == *"could not resolve the latest release"* ]] && _pass ||
+    _fail "original GitHub error not preserved: $jsbad"
+[[ $jsbad == *"--version"* ]] && _pass || _fail "jsDelivr garbage guidance missing: $jsbad"
+
+# Everything down: official probe and every prefix fail -> fail closed with
+# the --download-base guidance.
+alldown=$(
+    setup_sandbox
+    mock_host
+    _curl() { return 1; }
+    rc=0
+    out=$(main --non-interactive --domain proxy.example.com --version 9.9.9 2>&1) || rc=$?
+    printf 'RC=%d\n%s\n' "$rc" "$out"
+)
+[[ $alldown == *"RC=1"* ]] && _pass || _fail "all-probes-down must fail closed: $alldown"
+[[ $alldown == *"no pass-through prefix is reachable"* ]] && _pass || _fail "all-down message: $alldown"
+[[ $alldown == *"--download-base"* ]] && _pass || _fail "all-down guidance missing: $alldown"
 
 # Probe tolerance: a bare mirror base answering 404 (real curl -f would exit
 # 22) must NOT fail the connectivity check - the probe proves transport
