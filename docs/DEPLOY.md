@@ -140,15 +140,27 @@ bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/instal
 
 ## 国内部署（网络受限环境）
 
-GitHub（raw.githubusercontent.com、github.com/releases）在国内大面积不可达，默认安装入口与制品下载都会卡住。本节给出完整替代路径：入口脚本走 jsDelivr CDN，制品下载走 `--download-base` 指向的镜像。安全性不依赖镜像可信，见下文「签名信任锚」。
-
-### 入口：jsDelivr
+GitHub 在国内并非一律不可达——多数情况是特定域名被污染或线路不稳。**先试默认命令，大概率直接能跑**：
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh | bash
+bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/install.sh)
 ```
 
-安装器运行期拉取伴侣库（lib.sh、proxyhubctl）同样 jsDelivr 优先、raw.githubusercontent 后备，两者都失败才报错退出。注意：jsDelivr 只解决「脚本入口」，制品（tarball）默认仍从 GitHub releases 下载——GitHub 整体不可达的机器还必须配合下面的镜像下载基。另请注意 jsDelivr 的 `@main` 缓存最长约 12 小时：刚发布的版本（尤其公钥轮换后的首个版本）经 jsDelivr 入口可能拿到旧脚本，此时改用 raw.githubusercontent 入口或等缓存过期。
+按实际姿势选择路径：
+
+1. **GitHub 直通**（含本机已有透明代理）：默认命令即可，与国外无异，本页余下内容都不用看；
+2. **有本地代理客户端**（Clash 等）：给命令加代理环境变量即可——curl 原生识别 `https_proxy`，安装器内部的全部下载（伴侣库、latest 解析、制品）都走代理，无需任何额外参数：
+   ```bash
+   https_proxy=http://127.0.0.1:7890 bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/install.sh)
+   ```
+3. **入口脚本被污染、其余可通**：只换入口为 jsDelivr，其余不变（伴侣库拉取已内置 jsDelivr 优先）：
+   ```bash
+   bash <(curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh)
+   ```
+   注意 jsDelivr 的 `@main` 缓存最长约 12 小时：刚发布的版本（尤其公钥轮换后的首个版本）可能拿到旧脚本，此时改用 raw.githubusercontent 入口或等缓存过期；
+4. **GitHub 完全不可达**：jsDelivr 入口 + `--download-base` 镜像下载基（见下节）。安全性不依赖镜像可信，见下文「签名信任锚」。
+
+只有姿势 4 需要继续往下看。
 
 ### 制品走镜像：--download-base
 

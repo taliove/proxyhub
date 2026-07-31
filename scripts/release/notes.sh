@@ -62,11 +62,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/${repo}/main/install.sh)
 
 自动配置 systemd 服务、Caddy HTTPS 反代与 \`proxyhubctl\` 运维工具。详见 [生产部署指南](https://github.com/${repo}/blob/main/docs/DEPLOY.md)。
 
-### 国内用户（jsDelivr 入口 + 镜像下载基）
+### 国内用户
+
+GitHub 并非一律不可达，**先试上面的一键安装命令**；有本地代理就在命令前加 \`https_proxy=http://127.0.0.1:7890\`（安装器内部下载同样走代理）。仅当 GitHub 完全不可达时，走 jsDelivr 入口 + 镜像下载基：
 
 \`\`\`bash
-curl -fsSL https://cdn.jsdelivr.net/gh/${repo}@main/install.sh -o install.sh
-bash install.sh --non-interactive --domain <你的域名> --version ${version} \\
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/${repo}@main/install.sh) \\
+  --non-interactive --domain <你的域名> --version ${version} \\
   --download-base https://<镜像>/${repo}/releases/download
 \`\`\`
 
