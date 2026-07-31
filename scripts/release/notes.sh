@@ -13,6 +13,12 @@ repo="${GITHUB_REPOSITORY:-taliove/proxyhub}"
 version="${tag#v}"
 
 prev_tag=$(git tag --sort=-creatordate | grep -v "^$tag\$" | head -1 || true)
+if [[ -z $prev_tag ]]; then
+    # Fallback for checkouts where only this tag is present (e.g. shallow
+    # clones): derive the previous tag from history. Without any fallback the
+    # changelog range collapses to the tag commit itself.
+    prev_tag=$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)
+fi
 if [[ -n $prev_tag ]]; then
     range="${prev_tag}..${tag}"
     compare="https://github.com/${repo}/compare/${prev_tag}...${tag}"
@@ -33,7 +39,7 @@ while IFS= read -r subject; do
         test:*|test\(*\):*) tests+=("${subject}") ;;
         chore:*|chore\(*\):*|ci:*|ci\(*\):*) chores+=("${subject}") ;;
     esac
-done < <(git log --pretty=%s "$range" | head -100)
+done < <(git log --no-merges --pretty=%s "$range" | head -100)
 
 emit_group() { # TITLE ITEMS...
     local title=$1; shift
@@ -44,11 +50,11 @@ emit_group() { # TITLE ITEMS...
 }
 
 cat <<EOF
-把多个机场订阅聚合成一个统一订阅地址 —— 自动筛选最优节点,一个链接喂饱所有设备。
+把多个机场订阅聚合成一个统一订阅地址 —— 自动筛选最优节点，一个链接喂饱所有设备。
 
 ## 安装
 
-### 一键安装(生产环境,Ubuntu/Debian)
+### 一键安装（生产环境，Ubuntu/Debian）
 
 \`\`\`bash
 bash <(curl -fsSL https://raw.githubusercontent.com/${repo}/main/install.sh)
@@ -56,11 +62,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/${repo}/main/install.sh)
 
 自动配置 systemd 服务、Caddy HTTPS 反代与 \`proxyhubctl\` 运维工具。详见 [生产部署指南](https://github.com/${repo}/blob/main/docs/DEPLOY.md)。
 
+### 国内用户（jsDelivr 入口 + 镜像下载基）
+
+\`\`\`bash
+curl -fsSL https://cdn.jsdelivr.net/gh/${repo}@main/install.sh -o install.sh
+bash install.sh --non-interactive --domain <你的域名> --version ${version} \\
+  --download-base https://<镜像>/${repo}/releases/download
+\`\`\`
+
+镜像模式必须显式版本（上方已带 \`--version ${version}\`）；制品经 minisign 签名，镜像下载同样可验证真伪。详见 [国内部署](https://github.com/${repo}/blob/main/docs/DEPLOY.md#国内部署网络受限环境)。
+
 ### 直接下载
 
-发布包命名 \`proxyhub_${version}_<os>_<arch>.tar.gz\`,含可执行文件与示例配置。解包后 \`./proxyhub\` 启动,访问 \`http://localhost:8080\` 完成初始化向导。制品版本可用 \`./proxyhub version\` 核对。
+发布包命名 \`proxyhub_${version}_<os>_<arch>.tar.gz\`，含可执行文件与示例配置。解包后 \`./proxyhub\` 启动，访问 \`http://localhost:8080\` 完成初始化向导。制品版本可用 \`./proxyhub version\` 核对。
 
-### Docker(开发/测试)
+### Docker（开发/测试）
 
 \`\`\`bash
 docker run -d -p 127.0.0.1:8080:8080 -v ./data:/data --name proxyhub ghcr.io/${repo}:${tag}
@@ -68,11 +84,13 @@ docker run -d -p 127.0.0.1:8080:8080 -v ./data:/data --name proxyhub ghcr.io/${r
 
 ## 校验
 
+发布资产含 \`SHA256SUMS.minisig\`（发布方 minisign 签名）——verify.sh 会用内嵌公钥自动验签，失败即拒绝信任制品：
+
 \`\`\`bash
-# 校验制品完整性
+# 校验制品签名（minisign）与完整性（SHA256）
 bash scripts/release/verify.sh <下载目录>
 
-# 校验构建溯源(SLSA provenance)
+# 校验构建溯源（SLSA provenance）
 gh attestation verify proxyhub_${version}_linux_amd64.tar.gz --repo ${repo}
 \`\`\`
 
