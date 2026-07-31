@@ -388,9 +388,9 @@ _fetch() {
     return 1
 }
 
-# _resolve_latest_tag REPO -> stdout tag. Latest resolution is anchored on
-# GitHub redirects BY DESIGN (ADR 0036): mirrors cannot reliably proxy it,
-# which is why a custom download base requires an explicit --version instead.
+# _resolve_latest_tag REPO -> stdout tag. GitHub-redirect channel of latest
+# resolution; callers should normally use resolve_latest_version, which adds
+# the jsDelivr data API fallback (ADR 0037/0038).
 _resolve_latest_tag() { # REPO -> stdout tag
     local effective tag
     effective=$(_curl -fsSIL --max-time 15 -o /dev/null -w '%{url_effective}' \

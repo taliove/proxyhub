@@ -461,7 +461,8 @@ _generate_credentials() {
 # Download + verify (HTTPS verification is never disabled). The fetch
 # pipeline (SHA256SUMS + .minisig download, signature verification, checksum,
 # unpack) and latest-version resolution live in lib.sh (fetch_release_and_verify,
-# resolve_latest_version) so `proxyhubctl update` walks the same chain (ADR 0036).
+# resolve_latest_version) so `proxyhubctl update` walks the same chain
+# (ADR 0036/0037/0038).
 
 # Install steps
 _write_config() {

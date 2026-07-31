@@ -83,9 +83,10 @@ EOFBIN
     export PATH="${PROXYHUB_ROOT}/bin:${PATH}"
     mkdir -p "${PROXYHUB_ROOT}/bin"
     
-    # Mock curl: logs every invocation to curl.calls, serves the
-    # api.github.com latest-release JSON, the signed fixture SHA256SUMS and
-    # its .minisig, and a freshly built mock tarball for any .tar.gz URL.
+    # Mock curl: logs every invocation to curl.calls, serves the GitHub
+    # latest-release redirect (or failure when github-down marker exists),
+    # the jsDelivr data API, the signed fixture SHA256SUMS and its .minisig,
+    # and a freshly built mock tarball for any .tar.gz URL.
     cat > "${PROXYHUB_ROOT}/bin/curl" <<'EOFCURL'
 #!/usr/bin/env bash
 # Mock curl for testing.
@@ -96,8 +97,17 @@ for arg in "$@"; do
     if [[ "$prev_arg" == "-o" ]]; then out="$arg"; fi
     prev_arg="$arg"
 done
-if [[ "$*" == *"api.github.com/repos"*"/releases/latest"* ]]; then
-    echo '{"tag_name":"v1.1.0","prerelease":false}'
+# GitHub latest-release redirect (resolve_latest_version channel 1); the
+# github-down marker simulates GitHub being unreachable.
+if [[ "$*" == *"releases/latest"* ]]; then
+    if [[ -f "${PROXYHUB_ROOT}/github-down" ]]; then exit 1; fi
+    echo "https://github.com/taliove/proxyhub/releases/tag/v1.1.0"
+    exit 0
+fi
+# jsDelivr data API (channel 2); the jsdelivr-down marker simulates failure.
+if [[ "$*" == *"data.jsdelivr.com"* ]]; then
+    if [[ -f "${PROXYHUB_ROOT}/jsdelivr-down" ]]; then exit 1; fi
+    printf '{\n  "versions": [\n    {\n      "version": "1.1.0"\n    }\n  ]\n}\n'
     exit 0
 fi
 if [[ "$*" == *"SHA256SUMS.minisig"* ]]; then
@@ -384,24 +394,62 @@ test_update_old_record_defaults_github() {
     teardown_test
 }
 
-test_update_mirror_requires_explicit_version() {
-    echo "==> test_update_mirror_requires_explicit_version"
+test_update_mirror_latest_via_github() {
+    echo "==> test_update_mirror_latest_via_github"
     setup_test
 
+    # Mirror record + no explicit version: GitHub redirect answers, latest
+    # resolves through it and the update proceeds (ADR 0037 two-channel).
     printf 'DOWNLOAD_BASE=https://mirror.example.com/dl\n' \
         >>"$(root_path /root/.proxyhub-install-info)"
 
-    local rc=0 output
-    output=$("$PROXYHUBCTL" update 2>&1) || rc=$?
-
-    assert_true "[[ $rc -eq 2 ]]" "mirror + no explicit version exits 2"
-    printf '%s' "$output" >"$PROXYHUB_ROOT/out.log"
-    assert_true "grep -qF 'custom download base requires an explicit --version (latest resolution needs GitHub)' '$PROXYHUB_ROOT/out.log'" \
-        "guidance matches install.sh wording"
-    assert_true "[[ ! -e '$PROXYHUB_ROOT/curl.calls' ]]" "no network call before the refusal"
+    local rc=0
+    "$PROXYHUBCTL" update --yes >"$PROXYHUB_ROOT/out.log" 2>&1 || rc=$?
+    assert_true "[[ $rc -eq 0 ]]" "mirror + no version: update proceeds (GitHub channel)"
     local version
     version=$(grep '^VERSION=' "$(root_path /root/.proxyhub-install-info)" | cut -d= -f2)
-    assert_true "[[ '$version' == 'v1.0.0' ]]" "version unchanged after refusal"
+    assert_true "[[ '$version' == 'v1.1.0' ]]" "mirror + no version: bumped to latest"
+
+    teardown_test
+}
+
+test_update_mirror_latest_jsdelivr_fallback() {
+    echo "==> test_update_mirror_latest_jsdelivr_fallback"
+    setup_test
+
+    # Same but GitHub unreachable: latest resolves via the jsDelivr data API
+    # and the update still proceeds from the recorded mirror.
+    printf 'DOWNLOAD_BASE=https://mirror.example.com/dl\n' \
+        >>"$(root_path /root/.proxyhub-install-info)"
+    : >"$PROXYHUB_ROOT/github-down"
+
+    local rc=0
+    "$PROXYHUBCTL" update --yes >"$PROXYHUB_ROOT/out.log" 2>&1 || rc=$?
+    assert_true "[[ $rc -eq 0 ]]" "github down: update proceeds via jsDelivr"
+    assert_true "grep -qF 'via the jsDelivr data API' '$PROXYHUB_ROOT/out.log'" \
+        "jsDelivr fallback logged"
+    assert_true "grep -qF 'https://mirror.example.com/dl/v1.1.0/proxyhub_1.1.0_linux_amd64.tar.gz' '$PROXYHUB_ROOT/curl.calls'" \
+        "tarball still from the recorded mirror"
+
+    teardown_test
+}
+
+test_update_latest_both_channels_down() {
+    echo "==> test_update_latest_both_channels_down"
+    setup_test
+
+    # GitHub AND jsDelivr unreachable, no explicit version: fail closed with
+    # the explicit-version guidance; the live install is untouched.
+    : >"$PROXYHUB_ROOT/github-down"
+    : >"$PROXYHUB_ROOT/jsdelivr-down"
+    mark_live_binary
+
+    local rc=0
+    "$PROXYHUBCTL" update --yes >"$PROXYHUB_ROOT/out.log" 2>&1 || rc=$?
+    assert_true "[[ $rc -eq 1 ]]" "both channels down: update fails closed"
+    assert_true "grep -qF -- '--version' '$PROXYHUB_ROOT/out.log'" \
+        "explicit-version guidance present"
+    assert_install_untouched "both channels down"
 
     teardown_test
 }
@@ -564,7 +612,9 @@ main() {
     test_update_mirror_record_base
     test_update_explicit_download_base_wins
     test_update_old_record_defaults_github
-    test_update_mirror_requires_explicit_version
+    test_update_mirror_latest_via_github
+    test_update_mirror_latest_jsdelivr_fallback
+    test_update_latest_both_channels_down
     test_update_missing_minisig_fails_closed
     test_update_bad_signature_fails_closed
     test_update_docker_happy

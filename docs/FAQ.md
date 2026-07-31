@@ -200,13 +200,13 @@ A: 安全性不靠镜像自觉，靠密码学验签。发布方用私钥给校�
 
 ### Q: 国内装的实例，`proxyhubctl update` 怎么用？
 
-A: 安装时的下载基记在 `/root/.proxyhub-install-info` 的 `DOWNLOAD_BASE` 字段，update 自动沿用——当初走镜像装的，升级时不必再传 `--download-base`：
+A: 直接裸跑即可：
 
 ```bash
-proxyhubctl update --version <目标版本号>
+proxyhubctl update
 ```
 
-镜像模式必须显式 `--version`（latest 解析依赖 GitHub）。要换镜像时显式给 `--download-base`，显式参数优先于档案里的值。
+安装时的下载基记在 `/root/.proxyhub-install-info` 的 `DOWNLOAD_BASE` 字段，update 自动沿用——当初走镜像装的，升级时不必再传 `--download-base`；latest 解析在 GitHub 不通时自动回退 jsDelivr 数据 API（与安装器同一条链）。两路都不通时会报错并提示，此时显式给版本：`proxyhubctl update --version <目标版本号>`。要换镜像时显式给 `--download-base`，显式参数优先于档案里的值。
 
 ## 订阅与节点
 

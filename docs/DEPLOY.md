@@ -197,9 +197,9 @@ release 资产除 tarball 与 SHA256SUMS 外还包含 `SHA256SUMS.minisig`——
 
 ### 更新沿用下载基
 
-安装时生效的下载基写入安装档案（`/root/.proxyhub-install-info` 的 `DOWNLOAD_BASE=` 字段），`proxyhubctl update` 自动沿用，升级不必重记镜像参数；显式 `--download-base` 优先于档案值，是换镜像时的确定性覆盖手段。镜像模式下 update 同样需要显式 `--version`。
+安装时生效的下载基写入安装档案（`/root/.proxyhub-install-info` 的 `DOWNLOAD_BASE=` 字段），`proxyhubctl update` 自动沿用，升级不必重记镜像参数；显式 `--download-base` 优先于档案值，是换镜像时的确定性覆盖手段。latest 解析与安装器同一条链：GitHub 不通时自动回退 jsDelivr 数据 API，所以裸 `proxyhubctl update` 在国内镜像模式下也能直接跑通。
 
-> **注意**：镜像模式的安装不宜启用自动更新（`proxyhubctl auto-update enable`）——自动更新不带显式版本，按镜像版本纪律会被拒绝；请定期手动 `proxyhubctl update --version <版本>`。
+> **注意**：镜像模式下自动更新（`proxyhubctl auto-update enable`）依赖 jsDelivr 数据 API 解析 latest；它也不可达时自动更新会失败，请定期手动 `proxyhubctl update --version <版本>`。
 
 ### Caddy 镜像：Docker 加速器
 

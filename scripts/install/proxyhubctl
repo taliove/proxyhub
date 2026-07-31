@@ -676,30 +676,13 @@ cmd_update() {
         download_base=$(resolve_download_base "$repo" "$record_base") || return 1
     fi
 
-    # Mirror version discipline: latest resolution is anchored on GitHub
-    # (ADR 0036) and mirrors cannot reliably proxy it, so a custom download
-    # base requires an explicit version (same wording as install.sh).
-    if [[ -z $target && $download_base != "$(default_download_base "$repo")" ]]; then
-        _ph_err "custom download base requires an explicit --version (latest resolution needs GitHub)"
-        return 2
-    fi
-
     # Resolve the target version: explicit argument, or the latest release.
-    local api_prerelease=false
+    # Latest walks the two-channel chain (GitHub redirect, then the jsDelivr
+    # data API - ADR 0037), so mirror-mode updates without an explicit
+    # version work wherever jsDelivr is reachable. Both channels return
+    # stable releases only, so the name-shape check alone gates prereleases.
     if [[ -z "$target" ]]; then
-        local api_json
-        api_json=$(curl -fsSL --max-time 30 \
-            "https://api.github.com/repos/${repo}/releases/latest" 2>&1) || {
-            _ph_err "failed to query latest release for ${repo}"
-            return 1
-        }
-        target=$(printf '%s' "$api_json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-        api_prerelease=$(printf '%s' "$api_json" | sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' | head -1)
-        api_prerelease="${api_prerelease:-false}"
-        if [[ -z "$target" ]]; then
-            _ph_err "could not parse latest release tag for ${repo}"
-            return 1
-        fi
+        target=$(resolve_latest_version "$repo") || return 1
     fi
     validate_version "$target" || return 1
     target="v${target#v}"
@@ -707,7 +690,7 @@ cmd_update() {
     # Prerelease gating: explicit --prerelease required; --stable-only never
     # allows prereleases (used by the unattended auto-update timer).
     local is_prerelease=0
-    if [[ "$target" == *-* ]] || [[ "$api_prerelease" == "true" ]]; then
+    if [[ "$target" == *-* ]]; then
         is_prerelease=1
     fi
     if (( is_prerelease == 1 && stable_only == 1 )); then
@@ -1285,8 +1268,9 @@ Commands:
                       Guarded update: backup, signature + checksum +
                       state-fingerprint verification, automatic rollback on
                       failure. Downloads follow the install record's
-                      DOWNLOAD_BASE; --download-base overrides it (a custom
-                      base requires an explicit VERSION)
+                      DOWNLOAD_BASE; --download-base overrides it. Without
+                      VERSION the latest stable release is resolved (GitHub,
+                      with a jsDelivr fallback - ADR 0037)
   rotate-path [PATH] [--yes]
                       Rotate to a new Site Path (high-risk, requires --yes)
   reset-mfa --username NAME [--yes]

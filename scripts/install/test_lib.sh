@@ -737,6 +737,59 @@ _assert_fail env PATH=/nonexistent bash -c \
     "$SCRIPT_DIR/lib.sh" "$SIGN_ROOT/SHA256SUMS" "$SIGN_ROOT/SHA256SUMS.minisig" "$TEST_PUBKEY_B64"
 
 # --------------------------------------------------------------------------
+# resolve_latest_version: two-channel latest resolution (ADR 0037/0038)
+# --------------------------------------------------------------------------
+
+# Garbage GitHub redirect (non-version tag) -> jsDelivr channel resolves.
+rv=$(bash -c '
+    source "$0"
+    _curl() {
+        local url=""
+        while (($#)); do
+            case $1 in -o) shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac
+        done
+        case $url in
+            *releases/latest*) printf "https://github.com/o/r/releases/tag/not-a-version\n" ;;
+            *data.jsdelivr.com*) printf "{\n \"versions\": [\n  {\n    \"version\": \"2.0.0\"\n  }\n ]\n}\n" ;;
+        esac
+        return 0
+    }
+    resolve_latest_version o/r
+' "$SCRIPT_DIR/lib.sh" 2>/dev/null)
+_assert_eq "v2.0.0" "$rv" "garbage redirect falls through to jsDelivr"
+
+# jsDelivr list with only prereleases -> fail closed, no usable version.
+_assert_fail bash -c '
+    source "$0"
+    _curl() {
+        local url=""
+        while (($#)); do
+            case $1 in -o) shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac
+        done
+        case $url in
+            *releases/latest*) return 1 ;;
+            *data.jsdelivr.com*) printf "{\n \"versions\": [\n  {\n    \"version\": \"2.0.0-rc.1\"\n  },\n  {\n    \"version\": \"1.0.0-beta\"\n  }\n ]\n}\n" ;;
+        esac
+        return 0
+    }
+    resolve_latest_version o/r
+' "$SCRIPT_DIR/lib.sh" >/dev/null 2>&1
+
+# Both channels down -> rc 1, and stderr preserves the GitHub error FIRST
+# and the jsDelivr failure second (diagnosis never misattributes).
+both_err=$(bash -c '
+    source "$0"
+    _curl() { return 1; }
+    resolve_latest_version o/r
+' "$SCRIPT_DIR/lib.sh" 2>&1 >/dev/null || true)
+if [[ $both_err == *"could not resolve the latest release"* && $both_err == *"jsDelivr data API as well"* ]] && \
+   [[ ${both_err%%jsDelivr*} == *"could not resolve"* ]]; then
+    PASS=$((PASS + 1))
+else
+    FAIL=$((FAIL + 1)); printf 'FAIL: dual-channel failure misattributed: %s\n' "$both_err" >&2
+fi
+
+# --------------------------------------------------------------------------
 
 printf 'passed: %d, failed: %d\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
