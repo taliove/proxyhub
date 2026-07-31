@@ -907,6 +907,32 @@ else
 fi
 
 # --------------------------------------------------------------------------
+# release_base_candidates (ADR 0036/0037 fetch-level prefix fallback)
+
+# Default official base, not explicit -> official first, prefix follows.
+cand=$(release_base_candidates \
+    "https://github.com/taliove/proxyhub/releases/download" "taliove/proxyhub" 0)
+_assert_eq "https://github.com/taliove/proxyhub/releases/download
+https://gh-proxy.com/https://github.com/taliove/proxyhub/releases/download" \
+    "$cand" "candidates: default base yields official + prefix"
+
+# Explicit base -> single candidate, no fallback (operator owns the mirror).
+cand=$(release_base_candidates \
+    "https://github.com/taliove/proxyhub/releases/download" "taliove/proxyhub" 1)
+_assert_eq "https://github.com/taliove/proxyhub/releases/download" \
+    "$cand" "candidates: explicit flag suppresses prefix"
+
+# Custom (non-official) base -> single candidate even without explicit flag.
+cand=$(release_base_candidates "https://mirror.example.com/dl" "taliove/proxyhub" 0)
+_assert_eq "https://mirror.example.com/dl" "$cand" "candidates: custom base never gains prefixes"
+
+# Already-prefixed base (probe fell back) -> single candidate, no double-wrap.
+cand=$(release_base_candidates \
+    "https://gh-proxy.com/https://github.com/taliove/proxyhub/releases/download" "taliove/proxyhub" 0)
+_assert_eq "https://gh-proxy.com/https://github.com/taliove/proxyhub/releases/download" \
+    "$cand" "candidates: prefixed base does not re-wrap"
+
+# --------------------------------------------------------------------------
 
 printf 'passed: %d, failed: %d\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))

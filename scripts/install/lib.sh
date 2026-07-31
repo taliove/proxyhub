@@ -346,6 +346,26 @@ probe_download_base() {
     return 1
 }
 
+# release_base_candidates BASE REPO EXPLICIT - print the ordered download
+# bases to attempt for the release artifacts: BASE first; when EXPLICIT != 1
+# and BASE is the official GitHub base, every curated pass-through prefix
+# follows. probe_download_base proves github.com answers - not that it can
+# sustain a 20MB transfer; throttled-but-reachable networks pass the probe
+# and then stall mid-asset. A failed release download therefore retries
+# through the prefixes before giving up. Artifact trust is transport-
+# independent (minisign + sha256, ADR 0036), so a prefix retry never weakens
+# verification.
+release_base_candidates() {
+    local base=$1 repo=$2 explicit=${3:-0} official prefix
+    printf '%s\n' "$base"
+    [[ $explicit == 1 ]] && return 0
+    official=$(default_download_base "$repo")
+    [[ $base == "$official" ]] || return 0
+    for prefix in "${PROXYHUB_GH_PREFIXES[@]}"; do
+        printf '%s%s\n' "$prefix" "$official"
+    done
+}
+
 # fetch_first_ok DEST OVERRIDE CANDIDATES... - download to DEST. An explicit
 # OVERRIDE wins over everything and never falls through to the built-in
 # candidates (no silent fallback); without an override each candidate is
@@ -382,8 +402,13 @@ fetch_first_ok() {
 _curl() { command curl "$@"; }
 
 # _fetch URL DEST - download URL to DEST (HTTPS verification never disabled).
+# The time budget is stall-based, not a hard cap: a big asset on a slow but
+# alive link may legitimately take tens of minutes (the old fixed --max-time
+# aborted exactly those transfers), so the download dies only when the
+# connect stalls (15s) or throughput collapses (<10KB/s for 20s).
 _fetch() {
-    _curl -fsSL --max-time 120 -o "$2" "$1" && return 0
+    _curl -fsSL --connect-timeout 15 --speed-time 20 --speed-limit 10240 \
+        --retry 2 -o "$2" "$1" && return 0
     _ph_err "download failed: $1"
     return 1
 }

@@ -147,7 +147,9 @@ BEHAVIOR
   touches DNS, firewalls, or security groups. Downloads the release tarball +
   SHA256SUMS + SHA256SUMS.minisig over verified HTTPS; the minisign signature
   over SHA256SUMS is verified against the embedded release public key BEFORE
-  the tarball checksum, which is verified BEFORE unpacking (ADR 0036). Installs
+  the tarball checksum, which is verified BEFORE unpacking (ADR 0036). When
+  the default source is unreachable - or reachable but too slow to sustain
+  the transfer - curated pass-through mirrors are tried automatically. Installs
   the binary, proxyhub user, directories, config.yaml, systemd unit; generates
   admin credentials passed to `proxyhub init` via stdin (never argv); writes,
   validates and reloads the Caddy fragment; verifies BOTH the loopback and the
@@ -781,8 +783,27 @@ main() {
 
     TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
     WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/proxyhub-install.XXXXXX") || _die "cannot create a temporary workspace"
-    fetch_release_and_verify "$WORKDIR" "$DOWNLOAD_BASE" "$VERSION_TAG" \
-        "proxyhub_${VERSION_TAG#v}_${DETECTED_OS}_${DETECTED_ARCH}.tar.gz" ||
+    # Release download with prefix fallback (ADR 0036/0037): the resolved
+    # base is tried first; a stalled or failed download on the default
+    # official base retries through the curated pass-through prefixes
+    # (throttled-but-reachable networks pass the reachability probe and then
+    # die mid-asset). On a fallback win, DOWNLOAD_BASE is re-pointed so the
+    # install record - and later proxyhubctl update - keeps using the
+    # channel that actually worked.
+    _ph_asset="proxyhub_${VERSION_TAG#v}_${DETECTED_OS}_${DETECTED_ARCH}.tar.gz"
+    _ph_release_ok=0
+    while IFS= read -r _ph_base; do
+        if fetch_release_and_verify "$WORKDIR" "$_ph_base" "$VERSION_TAG" "$_ph_asset"; then
+            _ph_release_ok=1
+            if [[ $_ph_base != "$DOWNLOAD_BASE" ]]; then
+                _ph_log "release download succeeded via pass-through prefix; recording it as the download base"
+                DOWNLOAD_BASE=$_ph_base
+            fi
+            break
+        fi
+        _ph_err "release download failed via ${_ph_base}"
+    done < <(release_base_candidates "$DOWNLOAD_BASE" "$REPO" "$DOWNLOAD_BASE_EXPLICIT")
+    [[ $_ph_release_ok == 1 ]] ||
         _die "release download or signature/checksum verification failed"
     if ! mkdir -p "$(dirname "$(root_path "$PROXYHUB_BINARY")")" ||
         ! install -m 0755 "${WORKDIR}/extract/proxyhub" "$(root_path "$PROXYHUB_BINARY")"; then

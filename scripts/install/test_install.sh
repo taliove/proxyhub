@@ -1106,6 +1106,56 @@ _assert_file_contains "$AFB_SBX/curl.calls" \
 _assert_file_contains "$AFB_SBX/root/.proxyhub-install-info" \
     "DOWNLOAD_BASE=https://gh-proxy.com/https://github.com/taliove/proxyhub/releases/download"
 
+# Fetch-level fallback (throttled-but-reachable, ADR 0036/0037): github.com
+# answers the reachability probe, but artifact downloads from the official
+# base fail (the "reachable yet throttled" network shape). The installer
+# must retry through the curated prefix and record the base that worked.
+mock_official_stalls() {
+    _curl() {
+        local out=/dev/null url=""
+        while (($#)); do
+            case $1 in
+                -o) out=$2; shift 2 ;;
+                -*) shift ;;
+                *) url=$1; shift ;;
+            esac
+        done
+        [[ -z ${CURL_CALLS:-} || -z $url ]] || printf '%s\n' "$url" >>"$CURL_CALLS"
+        case $url in
+            https://github.com) return 0 ;; # probe passes
+            https://github.com/*/releases/download/*) return 1 ;; # official artifacts stall
+            *.minisig) cp "$FIX_DIR/SHA256SUMS.minisig" "$out" ;;
+            */SHA256SUMS) cp "$FIX_DIR/SHA256SUMS" "$out" ;;
+            *.tar.gz) cp "$FIX_DIR/$TEST_ASSET" "$out" ;;
+            *) : ;;
+        esac
+        return 0
+    }
+}
+
+stallfb=$(
+    setup_sandbox
+    mock_host
+    mock_official_stalls
+    export CURL_CALLS="$SBX/curl.calls"
+    rc=0
+    ( main --non-interactive --domain proxy.example.com --version 9.9.9 \
+        >"$SBX/stdout.log" 2>"$SBX/stderr.log" ) || rc=$?
+    printf 'RC=%d\nSBX=%s\n' "$rc" "$SBX"
+)
+stallfb_rc=$(printf '%s\n' "$stallfb" | sed -n 's/^RC=//p')
+STALL_SBX=$(printf '%s\n' "$stallfb" | sed -n 's/^SBX=//p')
+TEST_DIRS+=("$STALL_SBX")
+
+_assert_eq 0 "$stallfb_rc" "throttled-official prefix fallback install exit code"
+_assert_file_contains "$STALL_SBX/curl.calls" \
+    "https://github.com/taliove/proxyhub/releases/download/v9.9.9/SHA256SUMS"
+_assert_file_contains "$STALL_SBX/curl.calls" \
+    "https://gh-proxy.com/https://github.com/taliove/proxyhub/releases/download/v9.9.9/SHA256SUMS.minisig"
+_assert_file_contains "$STALL_SBX/stderr.log" "release download succeeded via pass-through prefix"
+_assert_file_contains "$STALL_SBX/root/.proxyhub-install-info" \
+    "DOWNLOAD_BASE=https://gh-proxy.com/https://github.com/taliove/proxyhub/releases/download"
+
 # Auto-fallback + latest: jsDelivr data API resolves the version when
 # GitHub redirects are unreachable.
 autolat=$(
