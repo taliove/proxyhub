@@ -82,6 +82,16 @@ cp config.example.yaml config.yaml   # 默认配置即可使用,后续在 Web �
 bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/install.sh)
 ```
 
+国内用户（GitHub 不可达）走 jsDelivr 入口 + 镜像下载基：
+
+```bash
+curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh -o install.sh
+bash install.sh --non-interactive --domain <你的域名> --version <版本> \
+  --download-base https://<镜像>/taliove/proxyhub/releases/download
+```
+
+制品经 minisign 签名，镜像下载同样可验证真伪。详见 [国内部署](docs/DEPLOY.md#国内部署网络受限环境)。
+
 安装后使用 `proxyhubctl` 运维：`status` / `logs` / `backup` / `update` / `rotate-path`。
 
 详细安装、备份、更新、卸载流程见 **[生产部署指南](docs/DEPLOY.md)**。
@@ -106,9 +116,9 @@ docker run -d \
 ## 常见问题
 
 - **支持哪些代理协议？** VMess、VLess、Trojan、Shadowsocks(内嵌 mihomo 内核)。
-- **订阅拉取失败 "no available nodes"?** 等待首次健康检查完成（启动后约 15 分钟）。
+- **订阅拉取失败 "no available nodes"？** 等待首次健康检查完成（启动后约 15 分钟）。
 - **忘记管理员密码？** 可通过备份恢复或手动重置数据库。
-- **如何添加自建节点？** 管理后台"系统设置"中配置。
+- **如何添加自建节点？** 管理后台「系统设置」中配置。
 
 更多问题见 **[FAQ](docs/FAQ.md)**。
 
