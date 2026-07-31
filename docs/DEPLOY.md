@@ -158,9 +158,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/taliove/proxyhub/main/instal
    bash <(curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh)
    ```
    注意 jsDelivr 的 `@main` 缓存最长约 12 小时：刚发布的版本（尤其公钥轮换后的首个版本）可能拿到旧脚本，此时改用 raw.githubusercontent 入口或等缓存过期；
-4. **GitHub 完全不可达**：jsDelivr 入口 + `--download-base` 镜像下载基（见下节）。安全性不依赖镜像可信，见下文「签名信任锚」。
+4. **GitHub 完全不可达**：直接跑下面这条——入口走 jsDelivr，安装器自检发现 GitHub 不通后**自动回退到内置直通前缀**（gh-proxy.com），latest 解析随之回退 jsDelivr 数据 API，全程无需任何额外参数，与国外入口同形：
+   ```bash
+   bash <(curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh)
+   ```
+   自动回退全程日志明示当前下载基，制品照常经 minisign 验签（见下文「签名信任锚」）。
+   > **隐私告知**：自动回退的下载流量经过第三方前缀运营方（其可见你的 IP 与下载行为）。介意者请显式 `--download-base` 指向你自建的反代（见下节），或回到姿势 ①②。前缀列表会过期，失效时安装器报错并指引显式 `--download-base`。
 
-只有姿势 4 需要继续往下看。
+只有想自定义镜像时才需要继续看下节；姿势 4 的其余内容（显式 `--download-base` 契约）是给自建反代/指定镜像的人准备的。
 
 ### 制品走镜像：--download-base
 

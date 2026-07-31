@@ -64,15 +64,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/${repo}/main/install.sh)
 
 ### 国内用户
 
-GitHub 并非一律不可达，**先试上面的一键安装命令**；有本地代理就在命令前加 \`https_proxy=http://127.0.0.1:7890\`（安装器内部下载同样走代理）。仅当 GitHub 完全不可达时，走 jsDelivr 入口 + 镜像下载基：
+GitHub 并非一律不可达，**先试上面的一键安装命令**；有本地代理就在命令前加 \`https_proxy=http://127.0.0.1:7890\`（安装器内部下载同样走代理）。GitHub 完全不可达时这条命令照样能跑——安装器自动回退到内置直通前缀（gh-proxy.com），latest 解析回退 jsDelivr 数据 API，制品经 minisign 验签：
 
 \`\`\`bash
-bash <(curl -fsSL https://cdn.jsdelivr.net/gh/${repo}@main/install.sh) \\
-  --non-interactive --domain <你的域名> --version ${version} \\
-  --download-base https://<镜像>/${repo}/releases/download
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/${repo}@main/install.sh)
 \`\`\`
 
-镜像模式必须显式版本（上方已带 \`--version ${version}\`）；制品经 minisign 签名，镜像下载同样可验证真伪。详见 [国内部署](https://github.com/${repo}/blob/main/docs/DEPLOY.md#国内部署网络受限环境)。
+详见 [国内部署](https://github.com/${repo}/blob/main/docs/DEPLOY.md#国内部署网络受限环境)（含隐私告知与自建镜像的 --download-base 用法）。
 
 ### 直接下载
 
