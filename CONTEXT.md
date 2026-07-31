@@ -201,7 +201,7 @@ _区别_: 校验和(SHA256SUMS)只防传输损坏,同源下发时防不了源被
 _Avoid_: 反代模式、部署模式
 
 **Docker Caddy 模式 (Docker Caddy Mode)**:
-Caddy 模式的一种:目标机的 Caddy v2 跑在 Docker 容器里,安装器识别并集成它(ProxyHub 本体仍是 systemd 裸机安装)。容器选择混合制:`--caddy-docker <容器名>` 显式指定,不指定时恰好一个运行中的 caddy 镜像容器自动选用并明示,零个/多个 fail closed。配置投递解析容器 `/etc/caddy` 持久挂载(bind mount 或 named volume,经宿主机路径写 fragment、追加容器路径语义的 import 行;单文件挂载等形态 fail closed)。回连拓扑自动识别:`network_mode: host` 容器零改动(loopback 原样);桥接容器绑定该网桥网关 IP、`trusted_proxies` 收窄到网桥子网、fragment 用 `host.docker.internal`(校验 host-gateway 映射)。**安全降级有界且明示**:桥接模式下管理面信任边界从 loopback 扩到该 docker 网桥——同网桥任意容器可直连管理面(无 TLS)且可伪造 XFF;桥接上回连流量为明文 HTTP,Site Path 可被网桥内嗅探者被动获取(Site Path 保密对网桥对端不成立),XFF 替换仍在(见 ADR 0035)。
+Caddy 模式的一种:目标机的 Caddy v2 跑在 Docker 容器里,安装器识别并集成它(ProxyHub 本体仍是 systemd 裸机安装)。容器选择混合制:`--caddy-docker <容器名>` 显式指定,不指定时恰好一个运行中的 caddy 镜像容器自动选用并明示,零个/多个 fail closed。配置投递按容器挂载形状分两种**布局**(ADR 0039):`root`(/etc/caddy 目录或卷挂载,fragment 写入 conf.d 并追加容器路径语义的 import 行)与 `file`(仅 /etc/caddy/Caddyfile 文件挂载,受管站点块以 `# >>> proxyhub managed` 标记段**内联**进该文件,原位写入——单文件 bind pin 住 inode,rename 会让容器读旧内容)。布局不落档案,每次 Caddy 触点从活容器重推导;无挂载等其余形态 fail closed。回连拓扑自动识别:`network_mode: host` 容器零改动(loopback 原样);桥接容器绑定该网桥网关 IP、`trusted_proxies` 收窄到网桥子网、fragment 用 `host.docker.internal`(校验 host-gateway 映射)。**安全降级有界且明示**:桥接模式下管理面信任边界从 loopback 扩到该 docker 网桥——同网桥任意容器可直连管理面(无 TLS)且可伪造 XFF;桥接上回连流量为明文 HTTP,Site Path 可被网桥内嗅探者被动获取(Site Path 保密对网桥对端不成立),XFF 替换仍在(见 ADR 0035)。
 _Avoid_: 容器部署(ProxyHub 本体仍裸机,不是全容器化编排)
 
 **用户 (User)**:
