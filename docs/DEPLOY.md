@@ -62,7 +62,7 @@ systemctl status caddy
 安装器逐项校验，任一不满足即拒绝安装（fail closed）并打印修复指引：
 
 1. 容器存在且处于运行中；
-2. `/etc/caddy` 是持久挂载：bind mount 或 named volume 均可，安装器解析到宿主机路径写入配置。**单文件挂载**（如只挂 Caddyfile）或无挂载会被拒绝——写在容器层上的配置重建即丢；
+2. `/etc/caddy` 的配置有持久落点，两种形态均可：**目录挂载**（bind mount 或 named volume,fragment 写入 `conf.d/` 并追加 import 行）或**只挂载 Caddyfile 单文件**（受管站点块以 `# >>> proxyhub managed` 标记段内联进该文件，容器重建不丢）。无挂载会被拒绝——写在容器层上的配置重建即丢；
 3. 桥接网络的容器：已发布 TCP 80 与 443（host 网络容器豁免，它直接绑定宿主机端口）；
 4. 桥接网络的容器：具备 `host.docker.internal:host-gateway` 映射（`docker run` 加 `--add-host host.docker.internal:host-gateway`,compose 用 `extra_hosts`）。
 

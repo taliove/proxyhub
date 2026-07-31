@@ -157,20 +157,17 @@ bash install.sh --non-interactive --domain proxy.example.com \
 
 恰好只有一个运行中的 caddy 镜像容器时，安装器才会自动选用（安装日志会明示选的是哪个）；给了 `--caddy-docker` 则以你指定的为准。注意 `--caddy-docker` 与 `--no-caddy` 互斥，同给即报错退出。
 
-### Q: 为什么只挂载 Caddyfile 单文件的 caddy 容器被安装器拒绝？
+### Q: 只挂载 Caddyfile 单文件的 caddy 容器能用吗？
 
-A: 安装器要把配置片段写进 `/etc/caddy/conf.d/` 并在 Caddyfile 里追加 import 行，这要求 `/etc/caddy` 整个目录是持久挂载（bind mount 或 named volume）。只挂载单个 Caddyfile 时，写进容器层的 conf.d 会在容器重建时丢失，与"受管安装"的持久性承诺冲突，所以 fail closed。改造方法（以 bind mount 为例）：
+A: 能。这是 Docker 部署 Caddy 最常见的形态，安装器按 **file 布局**处理：不再要求 `/etc/caddy` 目录挂载，而是把受管站点块以标记段内联进你的 Caddyfile——
 
-```bash
-mkdir -p /srv/caddy
-docker cp <容器名>:/etc/caddy/. /srv/caddy/   # 搬出现有配置
-# 重建容器:把单文件挂载换成目录挂载
-docker run -d --name caddy \
-  -p 80:80 -p 443:443 \
-  -v /srv/caddy:/etc/caddy \
-  --add-host host.docker.internal:host-gateway \
-  caddy:2
 ```
+# >>> proxyhub managed - do not edit between markers
+<你的域名> { ...反代规则... }
+# <<< proxyhub managed
+```
+
+安装、rotate-path、uninstall 都只动标记段内的内容，你的其他配置原样保留；容器重建不丢（配置就在你挂载的这个文件里）。注意两点：不要手工编辑两个标记行之间的内容（下次 rotate-path 会整段重写）；uninstall 只摘除标记段，不会删除你的 Caddyfile。如果你更想要目录挂载的 conf.d 管理风格，改成目录挂载即可，安装器会自动识别为另一种布局。
 
 ### Q: caddy 容器重建后，ProxyHub 的反代配置还在吗？
 
@@ -183,11 +180,17 @@ A: 在——只要重建后的容器仍然挂载同一个 `/etc/caddy` 持久目
 
 ### Q: 国内服务器（GitHub 不可达）怎么装 ProxyHub？
 
-A: 三步：入口脚本走 jsDelivr CDN，制品下载用 `--download-base` 指向一个你可达的镜像，并且**必须显式 `--version`**（镜像模式下 latest 自动解析不可用，安装器会直接拒绝）：
+A: 先试这条——入口走 jsDelivr CDN，安装器发现 GitHub 不通会**自动回退**到内置直通前缀，latest 解析回退 jsDelivr 数据 API，全程无需额外参数：
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh -o install.sh
-bash install.sh --non-interactive --domain proxy.example.com \
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh)
+```
+
+自动回退的下载流量经第三方前缀运营方（可见你的 IP 与下载行为，制品本身经 minisign 验签）。介意者、或自动回退不可达时，改用显式镜像（**必须同时显式 `--version`**）：
+
+```bash
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/taliove/proxyhub@main/install.sh) \
+  --non-interactive --domain proxy.example.com \
   --version <已发布版本号> \
   --download-base https://<镜像>/taliove/proxyhub/releases/download
 ```
