@@ -128,6 +128,13 @@ func (n *Node) AvailabilitySource() string {
 	}
 }
 
+// Unchecked reports whether the node has never been detected (DetectionKind == "").
+// Unchecked nodes are shippable: FilterAvailable admits them, but latency
+// comparisons treat them as +infinity so they rank after all detected nodes.
+func (n *Node) Unchecked() bool {
+	return n.DetectionKind == ""
+}
+
 // EffectiveName 返回下发订阅时应使用的节点名:标准化名(DisplayName)非空则用它,
 // 否则回退机场原名(Name)。生成器统一通过此方法取名,兼容"未启用标准化"场景。
 func (n *Node) EffectiveName() string {

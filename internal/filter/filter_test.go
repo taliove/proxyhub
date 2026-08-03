@@ -72,9 +72,9 @@ func TestSelectBestByRegion(t *testing.T) {
 
 func TestSortByLatency(t *testing.T) {
 	nodes := []*subscription.Node{
-		{Name: "Node-3", Latency: 300},
-		{Name: "Node-1", Latency: 100},
-		{Name: "Node-2", Latency: 200},
+		{Name: "Node-3", Latency: 300, DetectionKind: subscription.DetectionKindHealth},
+		{Name: "Node-1", Latency: 100, DetectionKind: subscription.DetectionKindHealth},
+		{Name: "Node-2", Latency: 200, DetectionKind: subscription.DetectionKindHealth},
 	}
 
 	f := NewFilter(10, false)
@@ -88,14 +88,14 @@ func TestSortByLatency(t *testing.T) {
 func TestApply_FullPipeline(t *testing.T) {
 	nodes := []*subscription.Node{
 		// 香港：5 个节点，其中 2 个重复
-		{Name: "HK-1", Server: "1.1.1.1", Port: 443, Region: "HK", Latency: 50, Available: true},
-		{Name: "HK-1-dup", Server: "1.1.1.1", Port: 443, Region: "HK", Latency: 60, Available: true},
-		{Name: "HK-2", Server: "1.1.1.2", Port: 443, Region: "HK", Latency: 80, Available: true},
-		{Name: "HK-3", Server: "1.1.1.3", Port: 443, Region: "HK", Latency: 100, Available: true},
-		{Name: "HK-4", Server: "1.1.1.4", Port: 443, Region: "HK", Latency: 120, Available: true},
+		{Name: "HK-1", Server: "1.1.1.1", Port: 443, Region: "HK", Latency: 50, Available: true, DetectionKind: subscription.DetectionKindHealth},
+		{Name: "HK-1-dup", Server: "1.1.1.1", Port: 443, Region: "HK", Latency: 60, Available: true, DetectionKind: subscription.DetectionKindHealth},
+		{Name: "HK-2", Server: "1.1.1.2", Port: 443, Region: "HK", Latency: 80, Available: true, DetectionKind: subscription.DetectionKindHealth},
+		{Name: "HK-3", Server: "1.1.1.3", Port: 443, Region: "HK", Latency: 100, Available: true, DetectionKind: subscription.DetectionKindHealth},
+		{Name: "HK-4", Server: "1.1.1.4", Port: 443, Region: "HK", Latency: 120, Available: true, DetectionKind: subscription.DetectionKindHealth},
 		// 日本：2 个节点
-		{Name: "JP-1", Server: "2.2.2.1", Port: 443, Region: "JP", Latency: 70, Available: true},
-		{Name: "JP-2", Server: "2.2.2.2", Port: 443, Region: "JP", Latency: 90, Available: true},
+		{Name: "JP-1", Server: "2.2.2.1", Port: 443, Region: "JP", Latency: 70, Available: true, DetectionKind: subscription.DetectionKindHealth},
+		{Name: "JP-2", Server: "2.2.2.2", Port: 443, Region: "JP", Latency: 90, Available: true, DetectionKind: subscription.DetectionKindHealth},
 	}
 
 	f := NewFilter(3, true) // 去重 + 每个地区保留 3 个
@@ -123,7 +123,7 @@ func TestApply_FullPipeline(t *testing.T) {
 func TestFilterAvailable(t *testing.T) {
 	nodes := []*subscription.Node{
 		{Name: "Node-1", Available: true},
-		{Name: "Node-2", Available: false},
+		{Name: "Node-2", Available: false, DetectionKind: subscription.DetectionKindHealth}, // 已确认死亡
 		{Name: "Node-3", Available: true},
 	}
 

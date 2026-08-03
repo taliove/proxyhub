@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"math"
 	"sort"
 
 	"github.com/taliove/proxyhub/internal/subscription"
@@ -32,6 +33,25 @@ func (f *Filter) Apply(nodes []*subscription.Node) []*subscription.Node {
 	return nodes
 }
 
+// cmpLatency 返回排序比较用的延迟：未检测节点视为 +∞，恒排在已检测节点之后；
+// 只改比较，节点的 Latency 字段原样保留。
+func cmpLatency(n *subscription.Node) int {
+	if n.Unchecked() {
+		return math.MaxInt
+	}
+	return n.Latency
+}
+
+// lessNode 报告 a 是否应排在 b 前：先比 cmpLatency，平局按 NodeKey 字典序（确定性
+// 次级键）；完全平局返回 false，稳定序下先出现者胜（与去重历史严格 < 语义一致）。
+func lessNode(a, b *subscription.Node) bool {
+	la, lb := cmpLatency(a), cmpLatency(b)
+	if la != lb {
+		return la < lb
+	}
+	return a.NodeKey() < b.NodeKey()
+}
+
 // deduplicateNodes 去重（相同 IP+端口只保留一个，保留延迟更低的）。
 // 自建节点（SourceSelfHosted）豁免：始终原样保留，避免与机场节点 NodeKey 碰撞时被并掉。
 func (f *Filter) deduplicateNodes(nodes []*subscription.Node) []*subscription.Node {
@@ -46,7 +66,7 @@ func (f *Filter) deduplicateNodes(nodes []*subscription.Node) []*subscription.No
 		key := node.NodeKey()
 		existing, exists := seen[key]
 
-		if !exists || node.Latency < existing.Latency {
+		if !exists || lessNode(node, existing) {
 			seen[key] = node
 		}
 	}
@@ -83,11 +103,12 @@ func (f *Filter) selectBestByRegion(nodes []*subscription.Node) []*subscription.
 		byRegion[region] = append(byRegion[region], node)
 	}
 
-	// 每个地区按延迟排序，取前 N 个
+	// 每个地区按延迟排序，取前 N 个（未检测节点视为 +∞ 垫后；SliceStable 保证
+	// 同 cmpLatency 时先出现者胜，行为可测）
 	var result []*subscription.Node
 	for _, regionNodes := range byRegion {
-		sort.Slice(regionNodes, func(i, j int) bool {
-			return regionNodes[i].Latency < regionNodes[j].Latency
+		sort.SliceStable(regionNodes, func(i, j int) bool {
+			return lessNode(regionNodes[i], regionNodes[j])
 		})
 
 		limit := f.nodesPerRegion
@@ -101,19 +122,22 @@ func (f *Filter) selectBestByRegion(nodes []*subscription.Node) []*subscription.
 	return append(result, selfHosted...)
 }
 
-// sortByLatency 按延迟从低到高排序
+// sortByLatency 按延迟从低到高排序（未检测节点视为 +∞ 垫后；SliceStable 保证
+// 同 cmpLatency 时相对序确定，行为可测）
 func (f *Filter) sortByLatency(nodes []*subscription.Node) {
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].Latency < nodes[j].Latency
+	sort.SliceStable(nodes, func(i, j int) bool {
+		return lessNode(nodes[i], nodes[j])
 	})
 }
 
 // FilterAvailable 只保留可用节点。
+// 三态语义:已确认死亡(DetectionKind 非空且 Available=false)被过滤;未检测节点
+// (DetectionKind=="")放行,由后续排位逻辑垫后。
 // 自建节点（SourceSelfHosted）豁免：即使检测为不可用也保留（常驻安全网）。
 func FilterAvailable(nodes []*subscription.Node) []*subscription.Node {
 	var result []*subscription.Node
 	for _, node := range nodes {
-		if node.Source == subscription.SourceSelfHosted || node.Available {
+		if node.Source == subscription.SourceSelfHosted || node.Available || node.Unchecked() {
 			result = append(result, node)
 		}
 	}

@@ -27,7 +27,7 @@ func TestFilterAvailable_ExemptsSelfHosted(t *testing.T) {
 	down.Available = false // 检测为不可用
 	nodes := []*subscription.Node{
 		{Name: "airport-up", Available: true},
-		{Name: "airport-down", Available: false},
+		{Name: "airport-down", Available: false, DetectionKind: subscription.DetectionKindHealth}, // 已确认死亡
 		down,
 	}
 
