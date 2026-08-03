@@ -1,9 +1,9 @@
 ---
 name: ops
-description: ProxyHub 运维领域——服务运行生命周期(start/stop/restart/status/日志验证)与发布管理(版本纪律、发布前演练、打 tag、GitHub Actions 发布、发布后验证与回滚)
+description: ProxyHub 运维领域——服务运行生命周期(start/stop/restart/status/日志验证)、发布管理(版本纪律、发布前演练、打 tag、GitHub Actions 发布、发布后验证与回滚)与生产部署(install.sh 预检/执行/验证/分诊,含国内网络与 docker caddy 集成)
 ---
 
-# 运维(ops):运行生命周期 + 发布管理
+# 运维(ops):运行生命周期 + 发布管理 + 生产部署
 
 ## Part 1 — 运行生命周期
 
@@ -94,6 +94,48 @@ bash scripts/release/verify.sh /tmp/ph-verify
 ### 5. 首次推送前(一次性)
 
 走 `pre-push` skill 全项,额外确认:仓库可见性(private/public)、LICENSE 文件、`secrets.GITHUB_TOKEN` 权限(contents: write / packages: write / attestations 由 workflow 声明,无需手动配)。
+
+## Part 3 — 生产部署(install.sh)
+
+用户向步骤归 `docs/DEPLOY.md`(链接入口、镜像契约);本部分是**代用户执行部署**的操作规程,全部条目都在真机(国内网络 + docker caddy 自建镜像,2026-08)验证过。
+
+### 1. 预检清单(按序,任何一项不满足先解决再装)
+
+1. SSH 免密 + `sudo -n true` 免密;Ubuntu 22.04/24.04、systemd、无既有安装(`ls /usr/local/bin/proxyhub` + `sudo ls /root/.proxyhub-install-info`)。
+2. **80/443 占用者定性**:`sudo ss -tlnp | grep -E ':(80|443) '`——原生 caddy / docker caddy 容器 / 他物(他物占用即冲突,先清)。
+3. **DNS 与入站**:域名解析结果 == 本机公网 IP(`curl ifconfig.me`);**云安全组/防火墙必须放行 443(DNS-01 场景)或 80+443(HTTP-01 场景)的入站**——出站正常不代表入站通,这是生产部署最常见的失败点(LE 报 "Timeout during connect (likely firewall problem)")。预检时从一台外部机器实测 `curl --max-time 8 https://<domain>/`。
+4. **出站探测**:`curl --max-time 10 -o /dev/null https://github.com`(决定制品走官方源还是自动回退 gh-proxy.com)、`https://data.jsdelivr.com`(latest 解析回退通道)。
+5. **已有 caddy 摸底**:容器镜像名(官方 `caddy:*` 还是自建如 `caddy-dnspod:*`)、网络模式(host/bridge)、配置布局(单文件 Caddyfile 挂载 / conf.d 目录)、`admin` 是否 off(reload 会降级为容器重启,其他站点瞬断,先告知用户)、**当前 ACME CA 是生产还是 staging**(自定义镜像可能把默认 patch 成 staging——staging 证书不被公开信任,签下来也是废的;查 `docker logs` 里 `acme_client` 的 `"ca"` 字段)。
+
+### 2. 国内网络三定律
+
+1. 入口脚本走 jsDelivr;制品下载 github 不可达自动回退 gh-proxy.com,**可达但限速**(探针过、大文件 stall)也会失败后自动回退——都不需要手动 `--download-base`。
+2. **生产一律显式 `--version`**:latest 解析依赖 GitHub 重定向 + jsDelivr 数据 API 双通道,国内都不稳;显式版本同时换来可复现部署。
+3. jsDelivr `@main` 有缓存(最长约 12h):**刚推送的安装器修复不会立刻生效**。精确部署用 `@<commit-sha>` 入口,或 scp `install.sh` + `scripts/install/{lib.sh,proxyhubctl}` 到目标机按目录布局跑(SCRIPT_DIR 相邻即免下载)。
+
+### 3. Docker caddy 集成要点
+
+- 自动检测只认官方镜像名;自建插件镜像(caddy-dnspod 等)必须显式 `--caddy-docker NAME`(容器内 `caddy version` 功能探针兜底)。
+- host networking 免除 80/443 发布检查且管理面拓扑不变;bridge 需发布 80/443 + host-gateway 映射,且管理面信任域扩到网桥(摘要会警告)。
+- **DNS-01 场景的安全组只需 443**:`acme_dns dnspod` 写在**全局块**而非托管站点块(托管块会被安装器/rotate-path 重写);v0.0.4 的 dnspod provider 只收**单参** `ID,Token`(老式 LoginToken),用 `{env.X},{env.Y}` 从容器环境变量拼;改完全局块必须 `caddy validate` + 重启容器,语法错误会让容器 crash-loop 拖死所有站点——先 `cp` 备份,出错秒级恢复。
+- staging CA 修复同样写全局块:`acme_ca https://acme-v02.api.letsencrypt.org/directory`。
+
+### 4. 执行与验证
+
+```bash
+sudo bash -c "umask 077; nohup bash install.sh --non-interactive \
+  --domain <domain> --version <x.y.z> [--caddy-docker <name>] \
+  >/root/proxyhub-install.log 2>&1 &"
+```
+
+- 日志含一次性凭证,必须 root-only;监控用轮询日志 + `kill -0 <pid>`。
+- 失败分层读日志:下载层(falling back / download failed)→ 校验层(minisign/checksum)→ 服务层(journalctl -u proxyhub)→ 边缘层(公网健康检查 = DNS/安全组/ACME,安装器本体此时已全部就绪)。
+- 部署后验证:`systemctl is-active proxyhub`、`proxyhubctl status`、环回 healthz、**从外部机器**验 `https://<domain>/<site-path>/healthz`(本机自测公网域名可能因 hairpin NAT 误报)、证书 issuer 是生产 LE。
+
+### 5. 两条铁律
+
+1. **凭证只在完全成功的一次性摘要里出现**(管理员密码不落日志、不落安装记录)。安装中途失败 = 密码未交付,不要翻日志找(找不到);修复卡点后用 `proxyhubctl uninstall` 完整卸载再重装,走正规流程拿凭证。
+2. **安装记录写在健康检查之后**:健康检查失败的安装没有 `/root/.proxyhub-install-info`,proxyhubctl 不认识这次安装——重装前必须 uninstall 清干净(service、配置、caddy 托管块)。
 
 ## 完成标准
 
