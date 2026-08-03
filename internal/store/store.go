@@ -98,6 +98,17 @@ CREATE TABLE IF NOT EXISTS ip_geo (
 	resolved_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 节点 Server 的 GeoIP 缓存(issue #37 三层识别 L3):host(域名)主键,全局维度
+-- (server→country 与用户无关,不做 per-user);country_code 存 ISO 3166-1 alpha-2,
+-- 空串 = 负缓存(DNS 失败/无记录,短 TTL 防每轮刷新重试)。不复用 ip_geo:
+-- 主键维度不同(IP vs 域名)且其 country 列存中文名,语义是 pull_logs 来源地理。
+-- 新库由本 schema 建出;既有库靠 migrateNodeServerGeo 幂等建表(同 pull_logs.status 双路径)。
+CREATE TABLE IF NOT EXISTS node_server_geo (
+	host         TEXT PRIMARY KEY,
+	country_code TEXT NOT NULL DEFAULT '',
+	resolved_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS banned_ips (
 	ip           TEXT PRIMARY KEY,
 	fail_count   INTEGER NOT NULL DEFAULT 0,
@@ -471,6 +482,12 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	// datetime() 能读(ADR 0010)。读路径已双格式兼容,故此处尽力而为:
 	// 失败只 warn 不返回错误,永不阻断启动。
 	s.migrateBannedIPTimeFormat()
+
+	// 节点 Server GeoIP 缓存表(issue #37):新库已由上方 schema 建出,
+	// 既有库在此幂等补建(双路径,同 pull_logs.status 注释模式)。
+	if err := s.migrateNodeServerGeo(); err != nil {
+		return err
+	}
 
 	// 初始化地区识别规则表
 	return s.InitRegionRules()

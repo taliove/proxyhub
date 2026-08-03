@@ -123,7 +123,7 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 	// 池写串行化已由 poolops 包内 upsertMu 保证(UpsertAirportNodes 是
 	// "读全池-改本机场-写全池",串行代价低);不同机场的单机场刷新拉取仍并行。
 	upsertErr := func() error {
-		if err := k.agg.poolOps.UpsertAirportNodes(airport.Name, sub.Nodes); err != nil {
+		if err := k.agg.poolOps.UpsertAirportNodes(ctx, airport.Name, sub.Nodes); err != nil {
 			return err
 		}
 		// 内存池回填(DB 已是新状态;读失败不阻断,下轮全量刷新自愈)

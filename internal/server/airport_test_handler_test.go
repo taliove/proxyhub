@@ -42,7 +42,7 @@ func (f *fakePoolOps) LoadPoolBySource(_ string) ([]*subscription.Node, error) {
 	return f.nodes, nil
 }
 
-func (f *fakePoolOps) UpsertAirportNodes(_ string, fetched []*subscription.Node) error {
+func (f *fakePoolOps) UpsertAirportNodes(_ context.Context, _ string, fetched []*subscription.Node) error {
 	f.upserted = fetched
 	f.nodes = append(f.nodes, fetched...)
 	return nil

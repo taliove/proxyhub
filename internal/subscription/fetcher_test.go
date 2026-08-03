@@ -25,7 +25,6 @@ func TestParseShadowsocksNode(t *testing.T) {
 				Cipher:     "aes-128-gcm",
 				Plugin:     "simple-obfs",
 				PluginOpts: "obfs=http;obfs-host=obfs.example.com",
-				Region:     "HK",
 			},
 		},
 		{
@@ -40,7 +39,6 @@ func TestParseShadowsocksNode(t *testing.T) {
 				Cipher:     "aes-128-gcm",
 				Plugin:     "simple-obfs",
 				PluginOpts: "obfs=http;obfs-host=obfs.example.com",
-				Region:     "HK",
 			},
 		},
 	}
@@ -100,7 +98,6 @@ func TestParseAnyTLSNode(t *testing.T) {
 				SNI:      "sni.example.com",
 				Insecure: true,
 				TLS:      true,
-				Region:   "HK",
 			},
 		},
 	}
@@ -152,8 +149,10 @@ func TestParseSkipsMetadataLines(t *testing.T) {
 	if len(nodes) != 1 {
 		t.Fatalf("parse() = %d nodes, want 1 (metadata line must be skipped)", len(nodes))
 	}
-	if nodes[0].Name == "" || nodes[0].Region != "HK" {
-		t.Errorf("expected 香港01 node kept, got name=%q region=%q", nodes[0].Name, nodes[0].Region)
+	if nodes[0].Name == "" || nodes[0].Region != "" {
+		// 解析期不再填 Region(issue #37:地区识别统一收口到 region.Recognizer 三层链,
+		// 入池时填充);这里只验证真实节点被保留、伪节点被跳过。
+		t.Errorf("expected 香港01 node kept with empty parse-time region, got name=%q region=%q", nodes[0].Name, nodes[0].Region)
 	}
 }
 
@@ -202,54 +201,4 @@ func TestParseSubscription(t *testing.T) {
 	}
 	t.Logf("✓ Parsed %d nodes", len(nodes))
 	t.Logf("First node: %s | %s:%d", nodes[0].Name, nodes[0].Server, nodes[0].Port)
-}
-
-func TestExtractRegion_EmojiFlags(t *testing.T) {
-	tests := []struct{ name, want string }{
-		{"🇭🇰 香港01", "HK"},
-		{"🇧🇩 孟加拉", "BD"},
-		{"🇰🇿 哈萨克斯坦", "KZ"},
-		{"🇮🇶 伊拉克", "IQ"},
-		{"🇰🇭 柬埔寨", "KH"},
-		{"🇪🇬 埃及", "EG"},
-		{"🇹🇷 土耳其", "TR"},
-		{"🇮🇱 以色列", "IL"},
-		{"🇵🇰 巴基斯坦", "PK"},
-		{"🇬🇷 希腊", "GR"},
-		{"🇪🇸 西班牙", "ES"},
-		{"🇳🇴 挪威", "NO"},
-		{"🇫🇷 法国", "FR"},
-		{"🇳🇬 尼日利亚02", "NG"},
-		{"🇬🇧 英国家宽", "GB"},
-		{"🇨🇳 台湾家宽", "TW"},
-		{"🇩🇪 德国", "DE"},
-		{"🇰🇷 韩国01", "KR"},
-		{"🇦🇺 澳大利亚01", "AU"},
-		{"🇷🇺 莫斯科", "RU"},
-		{"🇨🇦 加拿大", "CA"},
-		{"🇺🇸 美国原生01", "US"},
-		{"🇯🇵 日本原生", "JP"},
-		{"🇸🇬 新加坡原生", "SG"},
-	}
-	for _, tt := range tests {
-		got := extractRegion(tt.name)
-		if got != tt.want {
-			t.Errorf("extractRegion(%q) = %q, want %q", tt.name, got, tt.want)
-		}
-	}
-}
-
-func TestExtractRegion_ChineseNames(t *testing.T) {
-	tests := []struct{ name, want string }{
-		{"孟加拉国节点", "BD"},
-		{"哈萨克斯坦-01", "KZ"},
-		{"伊拉克专线", "IQ"},
-		{"柬埔寨高速", "KH"},
-	}
-	for _, tt := range tests {
-		got := extractRegion(tt.name)
-		if got != tt.want {
-			t.Errorf("extractRegion(%q) = %q, want %q", tt.name, got, tt.want)
-		}
-	}
 }

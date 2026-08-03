@@ -183,7 +183,7 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 				return run, nil
 			}
 			// URL通且有节点:upsert入池
-			if err := o.poolOps.UpsertAirportNodes(airportName, fetchedNodes); err != nil {
+			if err := o.poolOps.UpsertAirportNodes(ctx, airportName, fetchedNodes); err != nil {
 				return nil, fmt.Errorf("upsert airport nodes: %w", err)
 			}
 			nodesToTest = fetchedNodes

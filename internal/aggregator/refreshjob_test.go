@@ -1,6 +1,7 @@
 package aggregator
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -364,7 +365,7 @@ func TestMergePartialOnCancel_UnfetchedAirportsNotMarkedStale(t *testing.T) {
 		preserve: map[string]bool{"机场Y": true},
 	}
 
-	agg.mergePartialOnCancel(&runLog{}, fetched)
+	agg.mergePartialOnCancel(context.Background(), &runLog{}, fetched)
 
 	// Y(未拉取):旧节点原样保留且不 stale(取消 ≠ 机场消失)
 	var nodeY *subscription.Node

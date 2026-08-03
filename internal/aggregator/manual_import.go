@@ -1,6 +1,7 @@
 package aggregator
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/taliove/proxyhub/internal/store"
@@ -15,7 +16,8 @@ import (
 // 互斥语义与单机场刷新一致:refreshStartMu 临界区内做冲突检查 + upsert,
 // 全量刷新、同机场单机场刷新、同机场机场测试任一在跑即 ErrRefreshConflict(409)。
 // upsert 语义同单机场刷新:该机场旧节点 carry-forward,其他机场不动,不跑健康检查。
-func (a *Aggregator) ImportManualAirportNodes(airport *store.Airport, nodes []*subscription.Node) error {
+// ctx 透传给地区识别 L3 的 DNS(请求取消即中断,识别 best-effort 不阻断导入)。
+func (a *Aggregator) ImportManualAirportNodes(ctx context.Context, airport *store.Airport, nodes []*subscription.Node) error {
 	a.refreshStartMu.Lock()
 	defer a.refreshStartMu.Unlock()
 
@@ -39,7 +41,7 @@ func (a *Aggregator) ImportManualAirportNodes(airport *store.Airport, nodes []*s
 		}
 	}
 
-	if err := a.poolOps.UpsertAirportNodes(airport.Name, nodes); err != nil {
+	if err := a.poolOps.UpsertAirportNodes(ctx, airport.Name, nodes); err != nil {
 		return fmt.Errorf("upsert airport nodes: %w", err)
 	}
 	// 内存池回填(DB 已是新状态;读失败不阻断,下轮全量刷新自愈)

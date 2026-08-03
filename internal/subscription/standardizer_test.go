@@ -130,6 +130,29 @@ func TestRegionEmoji(t *testing.T) {
 	}
 }
 
+func TestRegionCodeFromEmoji(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"🇭🇰 香港01", "HK"},
+		{"🇧🇩 孟加拉专线", "BD"},       // 小众地区:规则表未覆盖,emoji 反解兜底
+		{"前缀 🇲🇻 马尔代夫", "MV"},     // 国旗在名称中间
+		{"🇺🇸🇯🇵 美中继", "US"},       // 多面旗确定取第一个(入口标注)
+		{"node 🇸🇬🇭🇰 02", "SG"},   // 混杂文本 + 多面旗
+		{"\U0001F1ED 单只指示符", ""}, // 落单指示符忽略
+		{"\U0001F1EDx🇯🇵", "JP"},  // 非法对跳过,继续扫到合法旗
+		{"🚀🚀🚀", ""},              // 非区域指示符 emoji 不算
+		{"香港01", ""},             // 无国旗
+		{"", ""},                 // 空串
+	}
+	for _, tt := range tests {
+		if got := RegionCodeFromEmoji(tt.name); got != tt.want {
+			t.Errorf("RegionCodeFromEmoji(%q) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestExtractKeyName(t *testing.T) {
 	cases := map[string]string{
 		"✨专线-A1":           "专线",

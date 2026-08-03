@@ -135,6 +135,24 @@ func extractKeyName(raw string) string {
 	return strings.TrimSpace(sb.String())
 }
 
+// RegionCodeFromEmoji 国旗 emoji 反解(RegionEmoji 正向算法可逆,issue #37 第二层兜底):
+// 从左到右扫描名称中的区域指示符对(U+1F1E6..U+1F1FF x2),把第一面旗反解为两位
+// ISO 代码。多面旗确定取第一个(入口标注习惯);非法/落单指示符忽略;无国旗返回空串。
+func RegionCodeFromEmoji(name string) string {
+	runes := []rune(name)
+	for i := 0; i+1 < len(runes); i++ {
+		a, b := runes[i], runes[i+1]
+		if a < 0x1F1E6 || a > 0x1F1FF {
+			continue
+		}
+		if b < 0x1F1E6 || b > 0x1F1FF {
+			continue // 落单指示符:忽略它,继续向后扫描
+		}
+		return string(rune('A'+a-0x1F1E6)) + string(rune('A'+b-0x1F1E6))
+	}
+	return ""
+}
+
 // RegionEmoji 把两位地区代码转换为国旗 emoji(区域指示符),如 HK → 🇭🇰。
 // 非两位字母的代码(Unknown、空等)返回地球 🌐。
 func RegionEmoji(code string) string {

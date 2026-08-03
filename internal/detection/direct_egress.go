@@ -231,6 +231,29 @@ func hasGlobalIPv4(ifi *net.Interface) bool {
 	return false
 }
 
+// NewHostResolver 导出"只解析域名"的薄 seam(issue #37 地区识别层复用 DoH):
+// 复用 dohResolver 的 TTL 缓存 + singleflight,把 host 解析为 IP 字符串列表,
+// 不带拨号器/网卡绑定语义(识别层不拨号,无需 DirectDialer)。
+// 与检测链路严格模式的语义差异:本 seam 只保证"失败返回错误",是否降级由
+// 调用方决定——识别层是 best-effort,任何失败静默降级,绝不阻断主流程。
+func NewHostResolver(cfg DirectEgressConfig) (func(ctx context.Context, host string) ([]string, error), error) {
+	r, err := newDoHResolver(cfg.DoHURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, host string) ([]string, error) {
+		ips, err := r.resolve(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(ips))
+		for _, ip := range ips {
+			out = append(out, ip.String())
+		}
+		return out, nil
+	}, nil
+}
+
 // DoH 解析缓存 TTL 的钳制区间(尊重上游 TTL 但防过短抖动/过长陈旧)。
 const (
 	dohCacheMinTTL = 15 * time.Second

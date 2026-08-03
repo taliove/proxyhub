@@ -26,6 +26,7 @@ import (
 	"github.com/taliove/proxyhub/internal/healthcheck"
 	"github.com/taliove/proxyhub/internal/jobs"
 	"github.com/taliove/proxyhub/internal/poolops"
+	"github.com/taliove/proxyhub/internal/region"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 	"github.com/taliove/proxyhub/internal/xraymgr"
@@ -76,7 +77,8 @@ type NodeSource interface {
 	// ImportManualAirportNodes 手动机场粘贴导入入池(同步,非任务;
 	// 凭证红线:粘贴内容不进 jobs params/日志/落库,见 aggregator 实现)。
 	// 与进行中的全量/同机场刷新或机场测试冲突时返回 aggregator.ErrRefreshConflict。
-	ImportManualAirportNodes(airport *store.Airport, nodes []*subscription.Node) error
+	// ctx 透传给地区识别 L3 的 DNS(请求取消即中断)。
+	ImportManualAirportNodes(ctx context.Context, airport *store.Airport, nodes []*subscription.Node) error
 }
 
 // Server HTTP 服务
@@ -241,7 +243,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS fs.FS, log
 	)
 	samplingChecker.SetDirectEgressConfigProvider(st.GetDirectEgressConfig)
 	healthChecker := NewHealthCheckAdapter(samplingChecker)
-	poolOps := poolops.NewStoreAdapter(st)
+	poolOps := poolops.NewStoreAdapter(st, region.NewFromStore(st, logger))
 	s.testOrchestrator = airporttest.NewOrchestratorWithPoolOps(storeAdapter, healthChecker, nodes, poolOps)
 
 	// 机场测试任务运行时(issue 0025:迁入 jobs,ADR 0019 收口):

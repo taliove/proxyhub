@@ -257,6 +257,37 @@ func TestDirectDialer_ListPacket_Binds(t *testing.T) {
 	pc.Close()
 }
 
+// TestNewHostResolver_RoundTrip 识别层"只解析" seam:假 DoH 端点 round-trip,
+// example.com 解析出 IP 字符串;与拨号器不同,无需网卡绑定。
+func TestNewHostResolver_RoundTrip(t *testing.T) {
+	dohURL := dohFixture(t, nil)
+	resolve, err := NewHostResolver(DirectEgressConfig{Enabled: true, DoHURL: dohURL})
+	if err != nil {
+		t.Fatalf("NewHostResolver() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ips, err := resolve(ctx, "example.com")
+	if err != nil {
+		t.Fatalf("resolve() error = %v", err)
+	}
+	if len(ips) == 0 || ips[0] != "127.0.0.1" {
+		t.Errorf("resolve() = %v, want [127.0.0.1]", ips)
+	}
+}
+
+// TestNewHostResolver_DoHURLHostMustBeIPLiteral 与拨号器同一约束:
+// 域名 host 的 DoH 端点构造期拒绝(会落回被劫持的系统 DNS)。
+func TestNewHostResolver_DoHURLHostMustBeIPLiteral(t *testing.T) {
+	_, err := NewHostResolver(DirectEgressConfig{Enabled: true, DoHURL: "https://dns.example.com/dns-query"})
+	if err == nil {
+		t.Fatal("NewHostResolver() expected error for domain DoH host, got nil")
+	}
+	if !strings.Contains(err.Error(), "IP literal") {
+		t.Errorf("error = %v, want IP-literal constraint message", err)
+	}
+}
+
 func TestDetectPhysicalInterface_ExcludesVirtual(t *testing.T) {
 	// 自动识别:结果不得是虚拟网卡;沙箱无物理网卡时跳过而非失败。
 	iface, err := detectPhysicalInterface()

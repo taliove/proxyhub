@@ -260,8 +260,8 @@ func TestRunTestWithPool_PoolEmpty_URLUnreachable(t *testing.T) {
 
 // MockPoolOperations mocks pool loading and single-airport upsert
 type MockPoolOperations struct {
-	ExistingPool []*subscription.Node
-	UpsertCalled bool
+	ExistingPool  []*subscription.Node
+	UpsertCalled  bool
 	UpsertedNodes []*subscription.Node
 }
 
@@ -275,7 +275,7 @@ func (m *MockPoolOperations) LoadPoolBySource(source string) ([]*subscription.No
 	return result, nil
 }
 
-func (m *MockPoolOperations) UpsertAirportNodes(airportName string, nodes []*subscription.Node) error {
+func (m *MockPoolOperations) UpsertAirportNodes(_ context.Context, airportName string, nodes []*subscription.Node) error {
 	m.UpsertCalled = true
 	m.UpsertedNodes = nodes
 	return nil
@@ -284,7 +284,7 @@ func (m *MockPoolOperations) UpsertAirportNodes(airportName string, nodes []*sub
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
 		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-		 indexOf(s, substr) >= 0))
+			indexOf(s, substr) >= 0))
 }
 
 func indexOf(s, substr string) int {

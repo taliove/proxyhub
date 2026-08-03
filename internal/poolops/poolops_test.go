@@ -1,6 +1,7 @@
 package poolops
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -19,7 +20,8 @@ func newTestAdapter(t *testing.T) (*StoreAdapter, *store.Store) {
 		t.Fatalf("store.Open() error = %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return NewStoreAdapter(st), st
+	// nil 识别器:跳过地区识别,这些测试只关心池合并语义(地区填充有专测)。
+	return NewStoreAdapter(st, nil), st
 }
 
 // makeNodes 构造 n 个属于 source 的节点,NodeKey 以 keyPrefix 区分批次。
@@ -68,7 +70,7 @@ func TestUpsertAirportNodes_ConcurrentDistinctAirports_NoLostUpdate(t *testing.T
 		go func(i int) {
 			defer wg.Done()
 			name := fmt.Sprintf("airport-%d", i)
-			if err := adapter.UpsertAirportNodes(name, makeNodes(name, fmt.Sprintf("%d.0", i), nodesPerAirport)); err != nil {
+			if err := adapter.UpsertAirportNodes(context.Background(), name, makeNodes(name, fmt.Sprintf("%d.0", i), nodesPerAirport)); err != nil {
 				t.Errorf("UpsertAirportNodes(%s) error = %v", name, err)
 			}
 		}(i)
@@ -104,7 +106,7 @@ func TestUpsertAirportNodes_ConcurrentSameAirport_Serialized(t *testing.T) {
 		wg.Add(1)
 		go func(i int, setKey string) {
 			defer wg.Done()
-			if err := adapter.UpsertAirportNodes("airport-a", makeNodes("airport-a", setKey, nodesPerWriter)); err != nil {
+			if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", makeNodes("airport-a", setKey, nodesPerWriter)); err != nil {
 				t.Errorf("UpsertAirportNodes() error = %v", err)
 			}
 		}(i, setKey)
@@ -174,7 +176,7 @@ func TestUpsertAirportNodes_MergeCarryForward(t *testing.T) {
 		Source: "airport-a",
 	}
 	added := makeNodes("airport-a", "9.9", 1)
-	if err := adapter.UpsertAirportNodes("airport-a", append([]*subscription.Node{fresh}, added...)); err != nil {
+	if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", append([]*subscription.Node{fresh}, added...)); err != nil {
 		t.Fatalf("UpsertAirportNodes() error = %v", err)
 	}
 

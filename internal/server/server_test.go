@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -57,7 +58,7 @@ func (f *fakeNodes) NodesForUser(userID int64) []*subscription.Node {
 	}
 	return out
 }
-func (f *fakeNodes) LastUpdateForUser(userID int64) time.Time       { return time.Now() }
+func (f *fakeNodes) LastUpdateForUser(userID int64) time.Time { return time.Now() }
 
 func (f *fakeNodes) StartRefreshJob(trigger string) (int64, string, bool, error) {
 	f.lastTrigger = trigger
@@ -170,7 +171,7 @@ func (f *fakeNodes) PurgeAirportNodesForUser(userID int64) (int, error) {
 }
 
 // ImportManualAirportNodes 测试 mock:追加节点入池,模拟真实 Aggregator 的 upsert 语义。
-func (f *fakeNodes) ImportManualAirportNodes(airport *store.Airport, nodes []*subscription.Node) error {
+func (f *fakeNodes) ImportManualAirportNodes(_ context.Context, airport *store.Airport, nodes []*subscription.Node) error {
 	if f.importErr != nil {
 		return f.importErr
 	}

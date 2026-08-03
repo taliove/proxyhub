@@ -1,6 +1,7 @@
 package aggregator
 
 import (
+	"context"
 	"testing"
 
 	"github.com/taliove/proxyhub/internal/subscription"
@@ -38,7 +39,7 @@ func TestMergePartialOnCancel_SelfHostedSurvives(t *testing.T) {
 		preserve:     map[string]bool{},
 	}
 
-	agg.mergePartialOnCancel(&runLog{}, fetched)
+	agg.mergePartialOnCancel(context.Background(), &runLog{}, fetched)
 
 	var mem *subscription.Node
 	for _, n := range agg.Nodes() {

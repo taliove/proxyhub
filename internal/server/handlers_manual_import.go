@@ -126,7 +126,7 @@ func (s *Server) handleImportAirport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.nodes.ImportManualAirportNodes(airport, nodes); err != nil {
+	if err := s.nodes.ImportManualAirportNodes(r.Context(), airport, nodes); err != nil {
 		if errors.Is(err, aggregator.ErrRefreshConflict) {
 			http.Error(w, "conflicts with a running refresh or airport test", http.StatusConflict)
 			return

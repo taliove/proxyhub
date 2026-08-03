@@ -256,8 +256,6 @@ func (f *Fetcher) parseVMessNode(line, source string) (*Node, error) {
 	port := f.parsePort(vmess.Port)
 	alterID := f.parseInt(vmess.Aid)
 
-	region := extractRegion(vmess.PS)
-
 	return &Node{
 		Name:      vmess.PS,
 		Type:      "vmess",
@@ -267,7 +265,6 @@ func (f *Fetcher) parseVMessNode(line, source string) (*Node, error) {
 		AlterID:   alterID,
 		Network:   vmess.Net,
 		TLS:       vmess.TLS == "tls",
-		Region:    region,
 		Source:    source,
 		Available: false,
 	}, nil
@@ -323,8 +320,6 @@ func (f *Fetcher) parseVLessNode(line, source string) (*Node, error) {
 	}
 	security := query.Get("security")
 
-	region := extractRegion(name)
-
 	return &Node{
 		Name:      name,
 		Type:      "vless",
@@ -333,7 +328,6 @@ func (f *Fetcher) parseVLessNode(line, source string) (*Node, error) {
 		UUID:      uuid,
 		Network:   network,
 		TLS:       security == "tls",
-		Region:    region,
 		Source:    source,
 		Available: false,
 	}, nil
@@ -374,8 +368,6 @@ func (f *Fetcher) parseTrojanNode(line, source string) (*Node, error) {
 		return nil, fmt.Errorf("invalid port: %w", err)
 	}
 
-	region := extractRegion(name)
-
 	return &Node{
 		Name:      name,
 		Type:      "trojan",
@@ -383,7 +375,6 @@ func (f *Fetcher) parseTrojanNode(line, source string) (*Node, error) {
 		Port:      port,
 		Password:  password,
 		TLS:       true, // Trojan 默认使用 TLS
-		Region:    region,
 		Source:    source,
 		Available: false,
 	}, nil
@@ -431,8 +422,6 @@ func (f *Fetcher) parseAnyTLSNode(line, source string) (*Node, error) {
 	sni := query.Get("sni")
 	insecure := query.Get("insecure") == "1" || query.Get("insecure") == "true"
 
-	region := extractRegion(name)
-
 	return &Node{
 		Name:      name,
 		Type:      "anytls",
@@ -442,7 +431,6 @@ func (f *Fetcher) parseAnyTLSNode(line, source string) (*Node, error) {
 		SNI:       sni,
 		Insecure:  insecure,
 		TLS:       true, // AnyTLS 始终基于 TLS
-		Region:    region,
 		Source:    source,
 		Available: false,
 	}, nil
@@ -576,8 +564,6 @@ func (f *Fetcher) parseShadowsocksNode(line, source string) (*Node, error) {
 		}
 	}
 
-	region := extractRegion(name)
-
 	return &Node{
 		Name:       name,
 		Type:       "ss",
@@ -587,7 +573,6 @@ func (f *Fetcher) parseShadowsocksNode(line, source string) (*Node, error) {
 		Cipher:     method,
 		Plugin:     plugin,
 		PluginOpts: pluginOpts,
-		Region:     region,
 		Source:     source,
 		Available:  false,
 	}, nil
@@ -614,122 +599,6 @@ func parseSSPlugin(query string) (string, string) {
 	}
 	name, opts, _ := strings.Cut(decoded, ";")
 	return name, opts
-}
-
-// extractRegion 从节点名称提取地区
-// extractRegion 从节点名称提取地区代码。支持中文名、英文名、emoji 国旗、ISO 代码。
-// 匹配优先级:台湾/香港等敏感词优先(避免被 🇨🇳 误盖),再 emoji,再一般中英文名,最后 ISO 代码。
-func extractRegion(name string) string {
-	nameUpper := strings.ToUpper(name)
-
-	// 优先级0: 台湾/香港/澳门等显式文字(避免被 🇨🇳 emoji 误覆盖)
-	priorityRegions := map[string]string{
-		"台湾": "TW", "TAIWAN": "TW",
-		"香港": "HK", "HONG KONG": "HK", "HONGKONG": "HK",
-		"澳门": "MO", "MACAO": "MO", "MACAU": "MO",
-	}
-	for key, code := range priorityRegions {
-		if strings.Contains(nameUpper, key) {
-			return code
-		}
-	}
-
-	// 优先级1: emoji 国旗(Unicode 区域指示符,两个字符组成一面旗)
-	// 🇭🇰 = U+1F1ED U+1F1F0 (Regional Indicator H + K)
-	emojiFlags := map[string]string{
-		"🇭🇰": "HK", "🇲🇴": "MO", "🇹🇼": "TW", "🇨🇳": "CN",
-		"🇯🇵": "JP", "🇰🇷": "KR", "🇸🇬": "SG", "🇹🇭": "TH",
-		"🇻🇳": "VN", "🇲🇾": "MY", "🇵🇭": "PH", "🇮🇩": "ID",
-		"🇮🇳": "IN", "🇵🇰": "PK", "🇧🇩": "BD", "🇱🇰": "LK",
-		"🇲🇲": "MM", "🇰🇭": "KH", "🇱🇦": "LA", "🇦🇪": "AE",
-		"🇸🇦": "SA", "🇮🇷": "IR", "🇮🇶": "IQ", "🇮🇱": "IL",
-		"🇹🇷": "TR", "🇰🇿": "KZ", "🇺🇿": "UZ", "🇦🇲": "AM",
-		"🇺🇸": "US", "🇨🇦": "CA", "🇲🇽": "MX", "🇧🇷": "BR",
-		"🇦🇷": "AR", "🇨🇱": "CL", "🇨🇴": "CO", "🇵🇪": "PE",
-		"🇬🇧": "GB", "🇩🇪": "DE", "🇫🇷": "FR", "🇮🇹": "IT",
-		"🇪🇸": "ES", "🇳🇱": "NL", "🇨🇭": "CH", "🇸🇪": "SE",
-		"🇳🇴": "NO", "🇩🇰": "DK", "🇫🇮": "FI", "🇵🇱": "PL",
-		"🇷🇺": "RU", "🇺🇦": "UA", "🇬🇷": "GR", "🇵🇹": "PT",
-		"🇦🇺": "AU", "🇳🇿": "NZ", "🇿🇦": "ZA", "🇪🇬": "EG",
-		"🇳🇬": "NG", "🇰🇪": "KE", "🇪🇹": "ET", "🇲🇦": "MA",
-	}
-	for emoji, code := range emojiFlags {
-		if strings.Contains(name, emoji) {
-			return code
-		}
-	}
-
-	// 优先级2: 其他中英文全名(子串匹配,不区分大小写)
-	regionNames := map[string]string{
-		"日本": "JP", "JAPAN": "JP",
-		"韩国": "KR", "KOREA": "KR", "首尔": "KR", "SEOUL": "KR",
-		"新加坡": "SG", "SINGAPORE": "SG",
-		"泰国": "TH", "THAILAND": "TH", "曼谷": "TH",
-		"越南": "VN", "VIETNAM": "VN",
-		"马来西亚": "MY", "MALAYSIA": "MY",
-		"菲律宾": "PH", "PHILIPPINES": "PH",
-		"印度尼西亚": "ID", "INDONESIA": "ID",
-		"印度": "IN", "INDIA": "IN",
-		"巴基斯坦": "PK", "PAKISTAN": "PK",
-		"孟加拉": "BD", "BANGLADESH": "BD",
-		"缅甸": "MM", "MYANMAR": "MM",
-		"柬埔寨": "KH", "CAMBODIA": "KH",
-		"迪拜": "AE", "DUBAI": "AE",
-		"沙特": "SA", "SAUDI": "SA",
-		"伊拉克": "IQ", "IRAQ": "IQ",
-		"以色列": "IL", "ISRAEL": "IL",
-		"土耳其": "TR", "TURKEY": "TR",
-		"哈萨克斯坦": "KZ", "KAZAKHSTAN": "KZ",
-		"美国": "US", "UNITED STATES": "US", "USA": "US", "AMERICA": "US",
-		"加拿大": "CA", "CANADA": "CA",
-		"墨西哥": "MX", "MEXICO": "MX",
-		"巴西": "BR", "BRAZIL": "BR",
-		"阿根廷": "AR", "ARGENTINA": "AR", "ARGENTINE": "AR",
-		"智利": "CL", "CHILE": "CL",
-		"哥伦比亚": "CO", "COLOMBIA": "CO",
-		"英国": "GB", "UNITED KINGDOM": "GB", "UK": "GB", "BRITAIN": "GB",
-		"德国": "DE", "GERMANY": "DE",
-		"法国": "FR", "FRANCE": "FR",
-		"意大利": "IT", "ITALY": "IT",
-		"西班牙": "ES", "SPAIN": "ES",
-		"荷兰": "NL", "NETHERLANDS": "NL",
-		"瑞士": "CH", "SWITZERLAND": "CH",
-		"瑞典": "SE", "SWEDEN": "SE",
-		"挪威": "NO", "NORWAY": "NO",
-		"丹麦": "DK", "DENMARK": "DK",
-		"芬兰": "FI", "FINLAND": "FI",
-		"波兰": "PL", "POLAND": "PL",
-		"俄罗斯": "RU", "RUSSIA": "RU", "莫斯科": "RU", "MOSCOW": "RU",
-		"乌克兰": "UA", "UKRAINE": "UA",
-		"希腊": "GR", "GREECE": "GR",
-		"葡萄牙": "PT", "PORTUGAL": "PT",
-		"澳大利亚": "AU", "AUSTRALIA": "AU", "悉尼": "AU", "SYDNEY": "AU",
-		"新西兰": "NZ", "NEW ZEALAND": "NZ",
-		"南非": "ZA", "SOUTH AFRICA": "ZA",
-		"埃及": "EG", "EGYPT": "EG",
-		"尼日利亚": "NG", "NIGERIA": "NG",
-	}
-	for key, code := range regionNames {
-		if strings.Contains(nameUpper, key) {
-			return code
-		}
-	}
-
-	// 优先级3: ISO 两字母代码(最后匹配,避免误命中 HKBN、USDT 之类)
-	isoCodes := []string{
-		"HK", "MO", "TW", "CN", "JP", "KR", "SG", "TH", "VN", "MY",
-		"PH", "ID", "IN", "PK", "BD", "MM", "KH", "AE", "SA", "IQ",
-		"IL", "TR", "KZ", "US", "CA", "MX", "BR", "AR", "CL", "CO",
-		"GB", "DE", "FR", "IT", "ES", "NL", "CH", "SE", "NO", "DK",
-		"FI", "PL", "RU", "UA", "GR", "PT", "AU", "NZ", "ZA", "EG", "NG",
-	}
-	for _, code := range isoCodes {
-		if strings.Contains(nameUpper, code) {
-			return code
-		}
-	}
-
-	return "Unknown"
 }
 
 // parsePort 解析端口（支持字符串和数字）

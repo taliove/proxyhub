@@ -13,6 +13,9 @@ import (
 	"time"
 
 	"github.com/taliove/proxyhub/internal/config"
+	"github.com/taliove/proxyhub/internal/geoip"
+	"github.com/taliove/proxyhub/internal/poolops"
+	"github.com/taliove/proxyhub/internal/region"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
@@ -39,7 +42,26 @@ func newTestAggregatorWithStore(t *testing.T, st *store.Store) *Aggregator {
 	cfg.Filter.Deduplicate = true
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(cfg, nil, st, logger)
+	agg := New(cfg, nil, st, logger)
+	// 覆盖为密闭识别器:L1 规则表/L2 emoji 反解与生产一致,L3 只留离线 GeoIP
+	// (IP 字面量),不注入 DNS——测试夹具里的 example.com 域名不得触发真实 DoH。
+	agg.regionRec = hermeticRegionRecognizer(t, st)
+	agg.poolOps = poolops.NewStoreAdapter(st, agg.regionRec)
+	return agg
+}
+
+// hermeticRegionRecognizer 测试用三层识别器:无 DNS(LookupHost nil),
+// 域名节点 L3 直接降级 Unknown,IP 字面量仍走真实离线 GeoIP(零网络)。
+func hermeticRegionRecognizer(t *testing.T, st *store.Store) *region.Recognizer {
+	t.Helper()
+	nameRec, err := st.NewRegionRecognizer()
+	if err != nil {
+		t.Fatalf("NewRegionRecognizer() error = %v", err)
+	}
+	return region.New(region.Deps{
+		RecognizeName: nameRec.Recognize,
+		LookupCountry: geoip.LookupCountry,
+	})
 }
 
 // subscriptionServer 返回一个提供有效订阅（1 个 trojan 节点）的测试服务器

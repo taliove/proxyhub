@@ -6,10 +6,11 @@
 package poolops
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
-	"github.com/taliove/proxyhub/internal/geoip"
+	"github.com/taliove/proxyhub/internal/region"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
@@ -26,17 +27,21 @@ type Operations interface {
 	LoadPoolBySource(source string) ([]*subscription.Node, error)
 	// UpsertAirportNodes 把新拉取的节点合并进池(单机场范围):
 	// 该机场旧节点走 MergePool carry-forward,其他机场节点不动。
-	UpsertAirportNodes(airportName string, fetchedNodes []*subscription.Node) error
+	// ctx 用于地区识别 L3 的 DNS(取消即中断,识别 best-effort 不阻断入池)。
+	UpsertAirportNodes(ctx context.Context, airportName string, fetchedNodes []*subscription.Node) error
 }
 
 // StoreAdapter 以 store.Store 为底的 Operations 实现。
 type StoreAdapter struct {
 	store *store.Store
+	rec   *region.Recognizer // 统一三层地区识别器(issue #37);nil = 跳过识别
 }
 
 // NewStoreAdapter 创建基于 store 的池操作适配器。
-func NewStoreAdapter(st *store.Store) *StoreAdapter {
-	return &StoreAdapter{store: st}
+// rec 为统一地区识别器,与 aggregator 全量刷新共用同一实例同一口径;
+// 传 nil 跳过地区识别(仅测试)。
+func NewStoreAdapter(st *store.Store, rec *region.Recognizer) *StoreAdapter {
+	return &StoreAdapter{store: st, rec: rec}
 }
 
 // LoadPoolBySource 返回池中匹配来源(机场名)的节点,排除 stale。
@@ -57,14 +62,18 @@ func (a *StoreAdapter) LoadPoolBySource(source string) ([]*subscription.Node, er
 
 // UpsertAirportNodes 单机场 upsert:复用全局刷新口径(地区识别 + MergePool + SaveNodePool)。
 // 池的读-改-写段由包级 upsertMu 串行,调用方无需自带锁。
-func (a *StoreAdapter) UpsertAirportNodes(airportName string, fetchedNodes []*subscription.Node) error {
-	// 第一步:地区识别(有离线 GeoIP 则兜底,不阻断)。
+func (a *StoreAdapter) UpsertAirportNodes(ctx context.Context, airportName string, fetchedNodes []*subscription.Node) error {
+	// 第一步:统一三层地区识别(issue #37,与全量刷新同一识别器同一口径:
+	// 名称规则 -> 国旗 emoji 反解 -> GeoIP 兜底,best-effort 失败降级 Unknown)。
 	// 只改调用方自己的 fetchedNodes,不触碰共享池,留在临界区外缩短持锁时间。
-	for _, node := range fetchedNodes {
-		if node.Region == "" {
-			if country, err := geoip.LookupCountry(node.Server); err == nil {
-				node.Region = country
-			}
+	if a.rec != nil {
+		reqs := make([]region.Request, len(fetchedNodes))
+		for i, node := range fetchedNodes {
+			reqs[i] = region.Request{Name: node.Name, Server: node.Server}
+		}
+		codes := a.rec.RecognizeBatch(ctx, reqs)
+		for i, node := range fetchedNodes {
+			node.Region = codes[i]
 		}
 	}
 

@@ -17,6 +17,7 @@ import (
 	"github.com/taliove/proxyhub/internal/healthcheck"
 	"github.com/taliove/proxyhub/internal/jobs"
 	"github.com/taliove/proxyhub/internal/poolops"
+	"github.com/taliove/proxyhub/internal/region"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
@@ -44,14 +45,14 @@ type Notifier interface {
 
 // Aggregator 订阅聚合调度器：拉取 → 检查 → 过滤 → 更新节点池 → 告警
 type Aggregator struct {
-	cfg        *config.Config
-	fetcher    *subscription.Fetcher
-	checker    *healthcheck.Checker
-	filt       *filter.Filter
-	alerter    Notifier
-	st         *store.Store
-	logger     *slog.Logger
-	recognizer *store.RegionRecognizer // 地区识别器
+	cfg       *config.Config
+	fetcher   *subscription.Fetcher
+	checker   *healthcheck.Checker
+	filt      *filter.Filter
+	alerter   Notifier
+	st        *store.Store
+	logger    *slog.Logger
+	regionRec *region.Recognizer // 统一三层地区识别器(issue #37)
 
 	mu sync.RWMutex
 	// pools 按属主用户分片的内存节点池(ticket 07):map[userID] -> 该用户的节点。
@@ -105,11 +106,9 @@ func (a *Aggregator) ownerUserID(rowUserID int64) int64 {
 // New 创建聚合器。会从库里回填上一次成功聚合的节点池快照，
 // 使进程重启后立即有节点可用，无需等待一轮刷新（见 ADR 0008）。
 func New(cfg *config.Config, alerter Notifier, st *store.Store, logger *slog.Logger) *Aggregator {
-	// 创建地区识别器
-	recognizer, err := st.NewRegionRecognizer()
-	if err != nil {
-		logger.Warn("failed to load region recognizer, region recognition disabled", "error", err)
-	}
+	// 统一三层地区识别器(issue #37):名称规则 -> 国旗 emoji 反解 -> GeoIP。
+	// 各层构造失败只降级不报错;全量刷新与单机场 upsert 共用同一实例同一口径。
+	regionRec := region.NewFromStore(st, logger)
 
 	// 健康检查器:直连出口配置热读(settings 改后下一轮检查即生效,与检测主链路同一开关)。
 	checker := healthcheck.NewChecker(
@@ -121,20 +120,20 @@ func New(cfg *config.Config, alerter Notifier, st *store.Store, logger *slog.Log
 	checker.SetDirectEgressConfigProvider(st.GetDirectEgressConfig)
 
 	a := &Aggregator{
-		cfg:        cfg,
-		fetcher:    subscription.NewFetcher(30 * time.Second),
-		checker:    checker,
-		filt:       filter.NewFilter(cfg.Filter.NodesPerRegion, cfg.Filter.Deduplicate),
-		alerter:    alerter,
-		st:         st,
-		logger:     logger,
-		recognizer: recognizer,
-		pools:      make(map[int64][]*subscription.Node),
-		alerted:    make(map[string]bool),
+		cfg:       cfg,
+		fetcher:   subscription.NewFetcher(30 * time.Second),
+		checker:   checker,
+		filt:      filter.NewFilter(cfg.Filter.NodesPerRegion, cfg.Filter.Deduplicate),
+		alerter:   alerter,
+		st:        st,
+		logger:    logger,
+		regionRec: regionRec,
+		pools:     make(map[int64][]*subscription.Node),
+		alerted:   make(map[string]bool),
 	}
 	// 刷新任务运行时:注册 refresh kind,恢复遗留 running 为 interrupted。
 	// 用 RecoverOwn 而非 Recover:多 Manager 共存,不误标其他运行时续跑的任务。
-	a.poolOps = poolops.NewStoreAdapter(st)
+	a.poolOps = poolops.NewStoreAdapter(st, regionRec)
 	a.refreshJobs = jobs.NewManager(
 		st.Jobs(),
 		jobs.WithErrorHandler(func(err error) {
@@ -551,12 +550,12 @@ func (a *Aggregator) executeForUser(ctx context.Context, rl *runLog, progress fu
 	// 取消:只对成功拉取的机场做 MergePool 入池,未拉取的机场节点原样保留。
 	// 直接走全量 MergePool 会把未拉取机场的节点全部标 stale(见 code-review 发现)。
 	if ctx.Err() != nil {
-		a.mergePartialOnCancel(rl, fetched)
+		a.mergePartialOnCancel(ctx, rl, fetched)
 		return
 	}
 
 	// 地区识别：从节点名提取地区代码，填充 Region 字段
-	a.recognizeRegions(rl, fetched.allNodes)
+	a.recognizeRegions(ctx, rl, fetched.allNodes)
 
 	// 注入自建节点(常驻安全网)。放在健康检查之前，使其与机场节点一起被检测——
 	// 自建节点的延迟/可用性才能反映真实状态，而非恒为「可用、延迟 0」。
@@ -923,15 +922,24 @@ func (a *Aggregator) checkAlerts(airportNodes map[string][]*subscription.Node, a
 	}
 }
 
-// recognizeRegions 识别全部节点的地区代码，填充 Region 字段
-func (a *Aggregator) recognizeRegions(rl *runLog, nodes []*subscription.Node) {
-	if a.recognizer == nil {
-		return // 识别器加载失败，跳过
+// recognizeRegions 识别全部节点的地区代码，填充 Region 字段。
+// 统一三层识别(issue #37):名称规则 -> 国旗 emoji 反解 -> GeoIP 兜底,
+// 与 poolops 单机场 upsert 同一识别器同一口径;ctx 从刷新任务透传,
+// L3 内部有界并发 + 短超时 + 持久缓存,失败静默降级 Unknown。
+func (a *Aggregator) recognizeRegions(ctx context.Context, rl *runLog, nodes []*subscription.Node) {
+	if a.regionRec == nil {
+		return // 识别器缺失(不应发生),跳过
 	}
 
+	reqs := make([]region.Request, len(nodes))
+	for i, node := range nodes {
+		reqs[i] = region.Request{Name: node.Name, Server: node.Server}
+	}
+	codes := a.regionRec.RecognizeBatch(ctx, reqs)
+
 	regionStats := make(map[string]int)
-	for _, node := range nodes {
-		node.Region = a.recognizer.Recognize(node.Name)
+	for i, node := range nodes {
+		node.Region = codes[i]
 		regionStats[node.Region]++
 	}
 
@@ -1030,8 +1038,8 @@ func mergePerSource(oldPool, newNodes []*subscription.Node, fetched *fetchResult
 // mergePartialOnCancel 取消时的部分入池:只对成功拉取的机场做 MergePool
 // (carry-forward + stale 标记只作用于这些机场),未拉取的机场节点原样保留——
 // 取消不等于"那些机场消失了",标 stale 会让整个池在订阅里消失。
-func (a *Aggregator) mergePartialOnCancel(rl *runLog, fetched *fetchResult) {
-	a.recognizeRegions(rl, fetched.allNodes)
+func (a *Aggregator) mergePartialOnCancel(ctx context.Context, rl *runLog, fetched *fetchResult) {
+	a.recognizeRegions(ctx, rl, fetched.allNodes)
 
 	owner := fetched.owner
 	a.mu.RLock()
