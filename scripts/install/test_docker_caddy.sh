@@ -242,15 +242,24 @@ drive_install() {
 # start_placeholder PORT DIR BIND_ADDR - serve DIR on BIND_ADDR:PORT. The
 # bridge case passes the gateway address: reachable both from the host and,
 # through the host-gateway mapping, from bridge containers - never 0.0.0.0.
+# Readiness is content-checked (the marker body), never bare connectability:
+# a foreign service squatting on the port must not be mistaken for our
+# placeholder.
 start_placeholder() {
     (cd "$2" && exec python3 -m http.server "$1" --bind "$3" >/dev/null 2>&1) &
     PLACEHOLDER_PID=$!
     local i
     for i in $(seq 1 20); do
-        curl -fsS -o /dev/null "http://$3:$1/" 2>/dev/null && return 0
+        [[ $(curl -fsS --max-time 2 "http://$3:$1/" 2>/dev/null) == proxyhub-placeholder-ok ]] && return 0
         sleep 0.5
     done
     return 1
+}
+
+# free_port - print a currently-free TCP port for the placeholder (dev
+# machines run other services; a hardcoded port collides eventually).
+free_port() {
+    python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()'
 }
 
 # bridge_facts NAME - print "GATEWAY SUBNET" of the container's bridge.
@@ -319,12 +328,14 @@ case_auto_detect_bridge() {
     if ((HAVE_PYTHON3 == 1)); then
         mkdir -p "$SBX/www"
         printf 'proxyhub-placeholder-ok' >"$SBX/www/index.html"
-        if start_placeholder 18099 "$SBX/www" "$gw"; then
+        local ph_port
+        ph_port=$(free_port)
+        if start_placeholder "$ph_port" "$SBX/www" "$gw"; then
             local host_side container_side
-            host_side=$(curl -fsS --max-time 5 "http://$gw:18099/" 2>/dev/null || true)
+            host_side=$(curl -fsS --max-time 5 "http://$gw:$ph_port/" 2>/dev/null || true)
             _assert_eq "proxyhub-placeholder-ok" "$host_side" "gateway-address listener reachable from host"
             container_side=$(docker exec "$name" wget -q -O- --timeout=5 \
-                "http://host.docker.internal:18099/" 2>/dev/null || true)
+                "http://host.docker.internal:$ph_port/" 2>/dev/null || true)
             _assert_eq "proxyhub-placeholder-ok" "$container_side" \
                 "container reaches host listener via host.docker.internal"
             _stop_placeholder
