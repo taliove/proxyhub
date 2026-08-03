@@ -47,6 +47,12 @@ INSERT INTO endpoints (alias, path, token) VALUES ('存量设备', 'legacypath00
 	if err := s.migrateEndpointGeo(); err != nil {
 		t.Fatalf("migrateEndpointGeo: %v", err)
 	}
+	// A real upgrade runs the whole migrate chain; the read path now also
+	// selects public_name (issue #38), so the staged legacy table must gain it
+	// the same way production would.
+	if err := s.migrateEndpointPublicName(); err != nil {
+		t.Fatalf("migrateEndpointPublicName: %v", err)
+	}
 
 	ep, err := s.GetEndpointByPath("legacypath000000")
 	if err != nil {

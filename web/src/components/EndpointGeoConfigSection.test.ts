@@ -144,6 +144,7 @@ const endpoint: Endpoint = {
   name_template: '',
   conditions: '',
   template_name: '',
+  public_name: '',
   geo_mode: 'off',
   geo_countries: '',
   geo_provinces: ''

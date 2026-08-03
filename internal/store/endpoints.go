@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // ErrNotFound 记录不存在
@@ -50,6 +52,11 @@ type Endpoint struct {
 	GeoMode      string `json:"geo_mode"`
 	GeoCountries string `json:"geo_countries"`
 	GeoProvinces string `json:"geo_provinces"`
+
+	// PublicName 订阅 profile 公开名称(issue #38):非空时 /sub 响应头下发
+	// "ProxyHub · <public_name>";空串=未设,下发裸品牌名。与私有 alias 相对,
+	// 是可下发到订阅客户端的人类可读名。
+	PublicName string `json:"public_name"`
 }
 
 // URL 返回订阅地址的相对路径
@@ -67,7 +74,8 @@ func randomHex(bytes int) (string, error) {
 }
 
 // endpointColumns 查询列表共用的列清单(ticket 07 起带 user_id,读取侧三处保持一致)。
-const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name, geo_mode, geo_countries, geo_provinces`
+// 与 scanEndpointFrom 的 Scan 目标顺序一一对应,加列必须双处同步。
+const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name, geo_mode, geo_countries, geo_provinces, public_name`
 
 // CreateEndpoint 创建订阅地址（随机 Path + Token）。
 // 未指定属主(旧调用/直接库调用)时归一到首个 super_admin(ticket 07 Invariant B);
@@ -275,6 +283,56 @@ func (s *Store) UpdateEndpointConditionsForUser(userID, id int64, conditions str
 	return checkAffected(res)
 }
 
+// maxPublicNameRunes 公开名称的 rune 上限(issue #38):展示卫生,防超长串
+// 撑爆客户端配置列表;不是安全闸门(/sub 头值整体 base64/percent-encode,
+// CRLF 结构性进不去)。
+const maxPublicNameRunes = 50
+
+// sanitizePublicName 公开名称的边界归一:trim 首尾空白、剔除控制字符、
+// 截断到 maxPublicNameRunes。空串合法(=清除公开名)。
+func sanitizePublicName(name string) string {
+	name = strings.TrimSpace(name)
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	runes := []rune(b.String())
+	if len(runes) > maxPublicNameRunes {
+		runes = runes[:maxPublicNameRunes]
+	}
+	return string(runes)
+}
+
+// UpdateEndpointPublicName 设置订阅地址的公开名称(issue #38)。空串=清除。
+// 入库前做 sanitizePublicName 归一(trim/去控制字符/50 rune 截断),在边界
+// 处归一,不让脏数据落库(与 UpdateEndpointConditions 的 json.Valid 同哲学)。
+func (s *Store) UpdateEndpointPublicName(id int64, name string) error {
+	res, err := s.db.Exec(`UPDATE endpoints SET public_name = ? WHERE id = ?`,
+		sanitizePublicName(name), id)
+	if err != nil {
+		return fmt.Errorf("update endpoint public name: %w", err)
+	}
+	return checkAffected(res)
+}
+
+// UpdateEndpointPublicNameForUser 按属主更新公开名称;行属他人时 ErrNotFound。
+// userID=0 = 全局视角(测试逃生舱/超管未切换时使用),属主校验跳过。
+func (s *Store) UpdateEndpointPublicNameForUser(userID, id int64, name string) error {
+	if userID == 0 {
+		return s.UpdateEndpointPublicName(id, name)
+	}
+	res, err := s.db.Exec(`UPDATE endpoints SET public_name = ? WHERE id = ? AND user_id = ?`,
+		sanitizePublicName(name), id, userID)
+	if err != nil {
+		return fmt.Errorf("update endpoint public name: %w", err)
+	}
+	return checkAffected(res)
+}
+
 // UpdateEndpointTemplate binds an endpoint to a template from the user's library.
 // Empty templateName clears the binding (follow default). Non-empty name must exist
 // in the user's template library, otherwise returns error "template not found" (fail-fast validation).
@@ -340,7 +398,7 @@ func scanEndpointFrom(r rowScanner) (*Endpoint, error) {
 	var enabled int
 	if err := r.Scan(&ep.ID, &ep.Alias, &ep.Path, &ep.Token, &enabled, &ep.CreatedAt,
 		&ep.NameMode, &ep.NameTemplate, &ep.Conditions, &ep.UserID, &ep.TemplateName,
-		&ep.GeoMode, &ep.GeoCountries, &ep.GeoProvinces); err != nil {
+		&ep.GeoMode, &ep.GeoCountries, &ep.GeoProvinces, &ep.PublicName); err != nil {
 		return nil, err
 	}
 	ep.Enabled = enabled != 0

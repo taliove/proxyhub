@@ -83,6 +83,7 @@ const endpoint: Endpoint = {
   name_template: '',
   conditions: '',
   template_name: '',
+  public_name: '',
   availability: { available: 3, total: 5 }
 }
 

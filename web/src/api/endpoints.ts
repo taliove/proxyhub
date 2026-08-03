@@ -34,3 +34,17 @@ export function updateEndpointGeoConfig(
     geo_provinces: geoProvinces
   })
 }
+
+export interface UpdateEndpointPublicNameRequest {
+  public_name: string // Empty string clears the name (bare brand title)
+}
+
+// Update endpoint public name (subscription profile title, issue #38)
+export function updateEndpointPublicName(
+  id: number,
+  publicName: string
+): Promise<{ ok: boolean }> {
+  return client.put<unknown, { ok: boolean }>(`/endpoints/${id}/public-name`, {
+    public_name: publicName
+  })
+}

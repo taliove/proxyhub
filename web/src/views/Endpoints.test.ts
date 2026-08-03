@@ -27,7 +27,15 @@ const DrawerStub = defineComponent({
     endpoint: { type: Object, default: null },
     subscriptionUrl: { type: String, default: '' }
   },
-  emits: ['update:modelValue', 'toggle', 'name-config', 'conditions', 'delete', 'qrcode'],
+  emits: [
+    'update:modelValue',
+    'toggle',
+    'name-config',
+    'public-name',
+    'conditions',
+    'delete',
+    'qrcode'
+  ],
   setup(props, { emit }) {
     return () =>
       props.modelValue
@@ -42,6 +50,14 @@ const DrawerStub = defineComponent({
                 'button',
                 { class: 'drawer-toggle-btn', onClick: () => emit('toggle', props.endpoint) },
                 '抽屉启停'
+              ),
+              h(
+                'button',
+                {
+                  class: 'drawer-publicname-btn',
+                  onClick: () => emit('public-name', props.endpoint)
+                },
+                '抽屉公开名称'
               ),
               h(
                 'button',
@@ -77,14 +93,21 @@ const ElTableColumnStub = defineComponent({
       ])
   }
 })
-// el-input 桩:渲染值与 append 槽(URL 列复制/二维码按钮在 append 槽内)
+// el-input 桩:渲染值与 append 槽(URL 列复制/二维码按钮在 append 槽内);
+// 内嵌真实 input 以支持 v-model 写入(表单测试用)
 const ElInputStub = defineComponent({
   name: 'ElInput',
   props: { value: { type: String, default: '' }, modelValue: { type: String, default: '' } },
-  setup(props, { slots }) {
+  emits: ['update:modelValue'],
+  setup(props, { slots, emit }) {
     return () =>
       h('div', { class: 'el-input-stub' }, [
         h('span', { class: 'input-value' }, props.value || props.modelValue),
+        h('input', {
+          class: 'el-input-inner',
+          value: props.value || props.modelValue,
+          onInput: (e: Event) => emit('update:modelValue', (e.target as HTMLInputElement).value)
+        }),
         slots.append?.(),
         slots.default?.()
       ])
@@ -134,6 +157,7 @@ const endpoint: Endpoint = {
   name_template: '',
   conditions: '',
   template_name: '',
+  public_name: '',
   availability: { available: 3, total: 5 }
 }
 
@@ -231,5 +255,84 @@ describe('Endpoints(行内极简 + 详情抽屉)', () => {
     expect(vi.mocked(client.delete)).toHaveBeenCalledWith('/endpoints/7')
     // 抽屉内删除后抽屉关闭
     expect(wrapper.find('.endpoint-drawer-stub').exists()).toBe(false)
+  })
+
+  it('新建表单携带可选公开名称(issue #38)', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '新建订阅地址')!
+      .trigger('click')
+    await flushPromises()
+
+    // 新建对话框内输入框顺序:别名、公开名称(配置模板是 select)
+    const dialog = wrapper.find('.ElDialog-stub')
+    const inputs = dialog.findAll('input.el-input-inner')
+    expect(inputs.length).toBe(2)
+    await inputs[0].setValue('老爸的手机')
+    await inputs[1].setValue('家里宽带')
+
+    await dialog
+      .findAll('button')
+      .find((b) => b.text() === '创建')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(client.post)).toHaveBeenCalledWith('/endpoints', {
+      alias: '老爸的手机',
+      public_name: '家里宽带'
+    })
+  })
+
+  it('新建表单公开名称留空则不下发该字段', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '新建订阅地址')!
+      .trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.find('.ElDialog-stub')
+    await dialog.findAll('input.el-input-inner')[0].setValue('老爸的手机')
+    await dialog
+      .findAll('button')
+      .find((b) => b.text() === '创建')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(client.post)).toHaveBeenCalledWith('/endpoints', { alias: '老爸的手机' })
+  })
+
+  it('抽屉公开名称按钮走 对话框 → PUT → 刷新 链路(照命名设置形制)', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '详情')!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper.find('.drawer-publicname-btn').trigger('click')
+    await flushPromises()
+
+    // 公开名称对话框打开,初始值为当前 public_name(空)
+    const dialog = wrapper.find('.ElDialog-stub')
+    expect(dialog.text()).toContain('公开名称')
+    await dialog.find('input.el-input-inner').setValue('新公开名')
+    await dialog
+      .findAll('button')
+      .find((b) => b.text() === '保存')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(client.put)).toHaveBeenCalledWith('/endpoints/7/public-name', {
+      public_name: '新公开名'
+    })
+    // 保存后刷新列表
+    expect(vi.mocked(client.get)).toHaveBeenCalledWith('/endpoints')
   })
 })

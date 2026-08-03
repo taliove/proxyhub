@@ -597,6 +597,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/endpoints/{id}/template", guard(s.handleUpdateEndpointTemplate))
 	mux.HandleFunc("PUT /api/endpoints/{id}/conditions", guard(s.handleUpdateEndpointConditions))
 	mux.HandleFunc("PUT /api/endpoints/{id}/geo-config", guard(s.handleUpdateEndpointGeoConfig))
+	mux.HandleFunc("PUT /api/endpoints/{id}/public-name", guard(s.handleUpdateEndpointPublicName))
 	mux.HandleFunc("POST /api/endpoints/preview-conditions", guard(s.handlePreviewConditions))
 	mux.HandleFunc("DELETE /api/endpoints/{id}", guard(s.handleDeleteEndpoint))
 	mux.HandleFunc("GET /api/endpoints/{id}/stats", guard(s.handleEndpointStats))
@@ -1028,6 +1029,9 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Profile-Update-Interval", "1") // 建议客户端每小时更新
+	// profile 命名头(issue #38):与 Content-Type 同处,即守卫链之后、
+	// 成功下发路径;404/429/403 各守卫出口绝不经过这里。
+	setSubscriptionProfileHeaders(w, ep)
 	w.Write(data)
 }
 
@@ -1444,6 +1448,8 @@ func (s *Server) handleCreateEndpoint(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Alias        string `json:"alias"`
 		TemplateName string `json:"template_name"`
+		// PublicName 可选公开名称(issue #38);空=未设,/sub 头回退裸品牌名。
+		PublicName string `json:"public_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Alias) == "" {
 		http.Error(w, "alias is required", http.StatusBadRequest)
@@ -1474,6 +1480,15 @@ func (s *Server) handleCreateEndpoint(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Reload to get updated template_name
+		ep, _ = s.st.GetEndpointByIDForUser(effUID, ep.ID)
+	}
+
+	// Set the public name if specified (issue #38; store boundary sanitises).
+	if req.PublicName != "" {
+		if err := s.st.UpdateEndpointPublicNameForUser(effUID, ep.ID, req.PublicName); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 		ep, _ = s.st.GetEndpointByIDForUser(effUID, ep.ID)
 	}
 
@@ -1578,6 +1593,44 @@ func (s *Server) handleUpdateEndpointGeoConfig(w http.ResponseWriter, r *http.Re
 	err = s.st.UpdateEndpointGeoConfigForUser(
 		EffectiveUserID(scope), id, req.GeoMode, req.GeoCountries, req.GeoProvinces)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleUpdateEndpointPublicName sets the subscription profile public name
+// (issue #38). PUT /api/endpoints/{id}/public-name with {public_name}.
+//
+// Full-replace semantics like the other per-aspect endpoint writers: an empty
+// string clears the name (the /sub handler then falls back to the bare brand
+// title). Sanitising (trim / control-character strip / 50-rune cap) happens at
+// the store boundary, so any wire value that survives JSON decoding lands
+// cleaned; there is no "invalid" name to 400 on.
+func (s *Server) handleUpdateEndpointPublicName(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		PublicName string `json:"public_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.st.UpdateEndpointPublicNameForUser(EffectiveUserID(scope), id, req.PublicName); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
 			return

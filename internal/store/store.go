@@ -69,7 +69,10 @@ CREATE TABLE IF NOT EXISTS endpoints (
 	-- 新库由本 schema 建出;既有库靠 migrateEndpointGeo 幂等补列(同 pull_logs.status 双路径)。
 	geo_mode      TEXT NOT NULL DEFAULT 'off',
 	geo_countries TEXT NOT NULL DEFAULT '',
-	geo_provinces TEXT NOT NULL DEFAULT ''
+	geo_provinces TEXT NOT NULL DEFAULT '',
+	-- 订阅 profile 公开名称(issue #38):空串=未设,/sub 回退裸品牌名。
+	-- 新库由本 schema 建出;既有库靠 migrateEndpointPublicName 幂等补列。
+	public_name   TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS pull_logs (
@@ -454,6 +457,12 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	// 订阅地址地域白名单(拉取防护 ticket 07):endpoints 补 geo_mode/geo_countries/
 	// geo_provinces 三列,默认 off + 双空列表 = 存量订阅行为不变。
 	if err := s.migrateEndpointGeo(); err != nil {
+		return err
+	}
+
+	// 订阅 profile 公开名称(issue #38):endpoints 补 public_name 列,
+	// 默认空串 = 未设,/sub 头回退为裸品牌名。
+	if err := s.migrateEndpointPublicName(); err != nil {
 		return err
 	}
 

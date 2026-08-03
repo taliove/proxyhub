@@ -18,6 +18,9 @@
               {{ nameModeLabel(endpoint.name_mode) }}
             </el-tag>
           </el-descriptions-item>
+          <el-descriptions-item label="公开名称">
+            <span>{{ endpoint.public_name || '未设置(客户端显示 ProxyHub)' }}</span>
+          </el-descriptions-item>
           <el-descriptions-item label="节点范围">
             <el-tag :type="hasConditions(endpoint.conditions) ? 'warning' : 'info'" size="small">
               {{ hasConditions(endpoint.conditions) ? '自定义' : '全量' }}
@@ -40,6 +43,7 @@
             {{ endpoint.enabled ? '禁用' : '启用' }}
           </el-button>
           <el-button size="small" @click="emit('name-config', endpoint)">命名设置</el-button>
+          <el-button size="small" @click="emit('public-name', endpoint)">公开名称</el-button>
           <el-button size="small" @click="emit('conditions', endpoint)">节点范围</el-button>
           <el-button size="small" @click="openTemplateConfig">配置模板</el-button>
           <el-button size="small" type="danger" @click="emit('delete', endpoint)">删除</el-button>
@@ -186,6 +190,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'toggle', endpoint: Endpoint): void
   (e: 'name-config', endpoint: Endpoint): void
+  (e: 'public-name', endpoint: Endpoint): void
   (e: 'conditions', endpoint: Endpoint): void
   (e: 'delete', endpoint: Endpoint): void
   (e: 'qrcode', endpoint: Endpoint): void

@@ -18,6 +18,9 @@ export interface Endpoint {
   geo_mode?: 'off' | 'observe' | 'enforce'
   geo_countries?: string
   geo_provinces?: string
+  // 订阅 profile 公开名称(issue #38):非空时客户端显示「ProxyHub · <公开名>」,
+  // 空串=未设=裸品牌名;与私有 alias(绝不下发)相对。
+  public_name: string
   // 会下发集合的可用性汇总(列表接口加性附加,池状态实时算,见 ADR 0028 决策 2)
   availability?: { available: number; total: number }
 }

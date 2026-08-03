@@ -79,6 +79,13 @@
           </el-select>
           <div class="cfg-hint">留空则使用用户默认模板(用户级模板库四级回退链)</div>
         </el-form-item>
+        <el-form-item label="公开名称">
+          <el-input v-model="form.public_name" placeholder="例如：家里宽带" maxlength="50" />
+          <div class="cfg-hint">
+            随订阅下发,客户端配置列表显示「ProxyHub · 公开名称」;留空则显示「ProxyHub」。
+            别名为私有信息,绝不下发。
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -113,6 +120,26 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="publicNameVisible" title="公开名称" width="460px">
+      <el-form label-width="90px">
+        <el-form-item label="公开名称">
+          <el-input
+            v-model="publicNameForm.public_name"
+            placeholder="例如：家里宽带"
+            maxlength="50"
+          />
+          <div class="cfg-hint">
+            随订阅下发,客户端配置列表显示「ProxyHub · 公开名称」;留空则显示「ProxyHub」。
+            别名为私有信息,绝不下发。
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="publicNameVisible = false">取消</el-button>
+        <el-button type="primary" @click="savePublicName">保存</el-button>
+      </template>
+    </el-dialog>
+
     <EndpointConditionsDialog
       v-model="conditionsVisible"
       :endpoint="conditionsEndpoint"
@@ -127,6 +154,7 @@
       :subscription-url="detailEndpoint ? getSubscriptionUrl(detailEndpoint) : ''"
       @toggle="toggleEndpoint"
       @name-config="openNameConfig"
+      @public-name="openPublicName"
       @conditions="openConditions"
       @delete="deleteEndpoint"
       @qrcode="showSubscriptionQR"
@@ -148,6 +176,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Endpoint } from '@/types'
 import client from '@/api/client'
+import { updateEndpointPublicName } from '@/api/endpoints'
 import { appBase } from '@/utils/base'
 import PageHeader from '@/components/PageHeader.vue'
 import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
@@ -160,7 +189,7 @@ import { useTemplateList } from '@/composables/useTemplateList'
 const endpoints = ref<Endpoint[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
-const form = ref({ alias: '', template_name: '' })
+const form = ref({ alias: '', template_name: '', public_name: '' })
 const { templates, loadTemplates } = useTemplateList()
 
 // 详情抽屉状态:行内「详情」打开;抽屉内动作复用本页既有处理函数(事件上抛)。
@@ -192,14 +221,19 @@ const copyUrl = (row: Endpoint) => {
 }
 
 const createEndpoint = async () => {
-  const payload: { alias: string; template_name?: string } = { alias: form.value.alias }
+  const payload: { alias: string; template_name?: string; public_name?: string } = {
+    alias: form.value.alias
+  }
   if (form.value.template_name) {
     payload.template_name = form.value.template_name
+  }
+  if (form.value.public_name.trim()) {
+    payload.public_name = form.value.public_name.trim()
   }
   await client.post('/endpoints', payload)
   ElMessage.success('创建成功')
   dialogVisible.value = false
-  form.value = { alias: '', template_name: '' }
+  form.value = { alias: '', template_name: '', public_name: '' }
   loadEndpoints()
 }
 
@@ -241,6 +275,27 @@ const saveNameConfig = async () => {
   nameConfigVisible.value = false
   loadEndpoints()
 }
+
+// 公开名称编辑(issue #38):照 name-config 链路,抽屉按钮 emit → 本页对话框 →
+// PUT → 刷新。空串=清除,回到裸品牌名。
+const publicNameVisible = ref(false)
+const publicNameId = ref<number | null>(null)
+const publicNameForm = ref({ public_name: '' })
+
+const openPublicName = (row: Endpoint) => {
+  publicNameId.value = row.id
+  publicNameForm.value = { public_name: row.public_name || '' }
+  publicNameVisible.value = true
+}
+
+const savePublicName = async () => {
+  if (publicNameId.value == null) return
+  await updateEndpointPublicName(publicNameId.value, publicNameForm.value.public_name)
+  ElMessage.success('公开名称已保存')
+  publicNameVisible.value = false
+  loadEndpoints()
+}
+
 const conditionsVisible = ref(false)
 const conditionsEndpoint = ref<Endpoint | null>(null)
 

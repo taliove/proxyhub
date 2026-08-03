@@ -172,6 +172,7 @@ const endpoint: Endpoint = {
   name_template: '',
   conditions: '',
   template_name: '',
+  public_name: '家里宽带',
   availability: { available: 3, total: 5 }
 }
 
@@ -257,7 +258,7 @@ describe('EndpointDetailDrawer', () => {
     expect(vi.mocked(client.get)).not.toHaveBeenCalled()
   })
 
-  it('概况段展示端点信息,轻管理动作全部上抛(启停/命名设置/节点范围/删除/二维码)', async () => {
+  it('概况段展示端点信息,轻管理动作全部上抛(启停/命名设置/公开名称/节点范围/删除/二维码)', async () => {
     const wrapper = mountDrawer(true)
     await flushPromises()
 
@@ -266,10 +267,13 @@ describe('EndpointDetailDrawer', () => {
     expect(text).toContain(subscriptionUrl)
     expect(text).toContain('跟随全局')
     expect(text).toContain('全量')
+    // 公开名称(issue #38):概况段展示当前值
+    expect(text).toContain('家里宽带')
 
     const cases: Array<[string, string]> = [
       ['禁用', 'toggle'],
       ['命名设置', 'name-config'],
+      ['公开名称', 'public-name'],
       ['节点范围', 'conditions'],
       ['删除', 'delete'],
       ['二维码', 'qrcode']
