@@ -718,7 +718,13 @@ docker_caddy_candidates() {
 }
 
 # docker_validate_caddy_container NAME - explicit --caddy-docker selection
-# checks: the container must exist, be running, and run a caddy image.
+# checks: the container must exist, be running, and run caddy. The image
+# name check accepts the official image's reference forms; custom builds
+# (plugin-baked images like caddy-dnspod, common where DNS-01 needs a
+# provider plugin) fail the name check BY DESIGN (lookalikes must not
+# auto-qualify) - but for an explicit operator pick, a functional probe is
+# stronger evidence than a name string: the container must answer
+# `caddy version` with a v2.x banner.
 docker_validate_caddy_container() {
     local name=$1 running image
     running=$(_docker inspect --format '{{.State.Running}}' "$name" 2>/dev/null) || {
@@ -733,9 +739,17 @@ docker_validate_caddy_container() {
     fi
     image=$(_docker inspect --format '{{.Config.Image}}' "$name") || return 1
     if ! _docker_image_is_caddy "$image"; then
-        _ph_err "container '${name}' runs image '${image}', not a caddy image"
-        _ph_err "point --caddy-docker at a container running the caddy image"
-        return 1
+        local ver
+        ver=$(_docker exec "$name" caddy version 2>/dev/null) || {
+            _ph_err "container '${name}' runs image '${image}', not a recognized caddy image, and 'caddy version' failed inside it"
+            _ph_err "point --caddy-docker at a container running caddy (official image or custom build)"
+            return 1
+        }
+        [[ $ver == v2.* ]] || {
+            _ph_err "container '${name}' (image '${image}') reports an unexpected 'caddy version': ${ver}"
+            return 1
+        }
+        _ph_log "container '${name}' runs custom image '${image}'; caddy verified functionally (${ver%% *})"
     fi
     return 0
 }

@@ -808,16 +808,21 @@ pm=$(
 )
 [[ $pm == *"RC=1"* && $pm == *"'stopped' is not running"* ]] && _pass || _fail "stopped container: $pm"
 
-# Explicit selection: non-caddy image fails closed.
+# Explicit selection: non-caddy image whose container cannot prove caddy
+# functionally (the exec probe fails, as it would on e.g. nginx) fails closed.
 pm=$(
     _is_test_mode() { return 1; }
     ARG_CADDY_DOCKER=web
-    _docker() { case $3 in *State.Running*) printf 'true\n' ;; *Config.Image*) printf 'nginx:latest\n' ;; esac; return 0; }
+    _docker() {
+        [[ $1 == exec ]] && return 1
+        case $3 in *State.Running*) printf 'true\n' ;; *Config.Image*) printf 'nginx:latest\n' ;; esac
+        return 0
+    }
     rc=0
     out=$(_check_caddy 2>&1) || rc=$?
     printf 'RC=%d\n%s\n' "$rc" "$out"
 )
-[[ $pm == *"RC=1"* && $pm == *"not a caddy image"* ]] && _pass || _fail "non-caddy image: $pm"
+[[ $pm == *"RC=1"* && $pm == *"not a recognized caddy image"* ]] && _pass || _fail "non-caddy image: $pm"
 
 # Explicit selection: bridge container without published 80/443 fails closed.
 pm=$(

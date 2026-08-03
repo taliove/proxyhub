@@ -125,14 +125,18 @@ OPTIONS
                          skip the 80/443 requirement; writes ready-to-adapt
                          Caddy and nginx examples to /etc/proxyhub/.
   --caddy-docker NAME    Integrate an existing dockerized Caddy (ADR 0035):
-                         NAME must be a running container of the caddy image
-                         with a persistent /etc/caddy mount (bind or named
-                         volume). Bridge-network containers must additionally
-                         publish TCP 80/443 and map
-                         host.docker.internal:host-gateway; the admin plane
-                         then binds the bridge gateway with trusted_proxies
-                         narrowed to the bridge subnet (summary warns).
-                         Mutually exclusive with --no-caddy.
+                         NAME must be a running caddy container with a
+                         persistent /etc/caddy mount (bind or named volume).
+                         Official caddy images are accepted by name; custom
+                         plugin-baked images (e.g. caddy-dnspod) are accepted
+                         after a functional `caddy version` probe inside the
+                         container (auto-detect stays name-strict - pass the
+                         name explicitly for custom builds). Bridge-network
+                         containers must additionally publish TCP 80/443 and
+                         map host.docker.internal:host-gateway; the admin
+                         plane then binds the bridge gateway with
+                         trusted_proxies narrowed to the bridge subnet
+                         (summary warns). Mutually exclusive with --no-caddy.
   --skip-dns-check       Skip DNS resolution check (CDN / private networks).
   -h, --help             Show this help.
 

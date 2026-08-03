@@ -933,6 +933,57 @@ _assert_eq "https://gh-proxy.com/https://github.com/taliove/proxyhub/releases/do
     "$cand" "candidates: prefixed base does not re-wrap"
 
 # --------------------------------------------------------------------------
+# docker_validate_caddy_container (custom plugin-baked images, ADR 0035)
+
+eval "_docker_orig() $(declare -f _docker | tail -n +2)"
+MOCK_IMAGE=""
+MOCK_EXEC_VER=""
+_docker() {
+    case $1 in
+        inspect)
+            case $3 in
+                *Running*) printf 'true\n' ;;
+                *Image*) printf '%s\n' "$MOCK_IMAGE" ;;
+            esac
+            return 0
+            ;;
+        exec)
+            if [[ -n $MOCK_EXEC_VER ]]; then
+                printf '%s\n' "$MOCK_EXEC_VER"
+                return 0
+            fi
+            return 1
+            ;;
+    esac
+    return 1
+}
+
+# Official image passes by name (no functional probe needed).
+MOCK_IMAGE="caddy:2.11.4"
+_assert_ok docker_validate_caddy_container caddy
+# Registry-prefixed official image passes by name.
+MOCK_IMAGE="registry.example.com/team/caddy:2"
+_assert_ok docker_validate_caddy_container caddy
+# Custom plugin-baked image passes via functional `caddy version` probe.
+MOCK_IMAGE="caddy-dnspod:2.11.4-fb7cc31-fix1"
+MOCK_EXEC_VER="v2.11.4 h1:abcdef"
+_assert_ok docker_validate_caddy_container caddy
+# Custom image whose binary does not answer fails closed.
+MOCK_EXEC_VER=""
+_assert_fail docker_validate_caddy_container caddy
+# Lookalike with a bogus banner fails closed.
+MOCK_IMAGE="team/caddy-proxy:1"
+MOCK_EXEC_VER="caddy-fork build x"
+_assert_fail docker_validate_caddy_container caddy
+# v1-era banner (wrong major) fails closed.
+MOCK_IMAGE="caddy-custom:1"
+MOCK_EXEC_VER="v1.0.0"
+_assert_fail docker_validate_caddy_container caddy
+
+eval "_docker() $(declare -f _docker_orig | tail -n +2)"
+unset -f _docker_orig MOCK_IMAGE MOCK_EXEC_VER
+
+# --------------------------------------------------------------------------
 
 printf 'passed: %d, failed: %d\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
