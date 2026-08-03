@@ -79,19 +79,19 @@ const loadData = async () => {
   loading.value = true
   try {
     // 加载可用地区列表（注意：axios 拦截器返回 response.data，所以这里直接是数据对象）
-    const regionsData = await client.get<unknown, { regions?: Region[] }>('/api/settings/regions')
+    const regionsData = await client.get<unknown, { regions?: Region[] }>('/settings/regions')
     availableRegions.value = regionsData.regions || []
 
     // 加载当前白名单配置
     const whitelistData = await client.get<unknown, { whitelist?: string[] }>(
-      '/api/settings/region-whitelist'
+      '/settings/region-whitelist'
     )
     selectedRegions.value = whitelistData.whitelist || []
 
     // 加载节点池统计
     try {
       const statsData = await client.get<unknown, { byRegion?: Record<string, number> }>(
-        '/api/stats/global'
+        '/stats/global'
       )
       nodeStats.value = statsData.byRegion || {}
     } catch (e) {
@@ -108,7 +108,7 @@ const loadData = async () => {
 const save = async () => {
   saving.value = true
   try {
-    await client.post('/api/settings/region-whitelist', {
+    await client.post('/settings/region-whitelist', {
       whitelist: selectedRegions.value
     })
     ElMessage.success('保存成功')

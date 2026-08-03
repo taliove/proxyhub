@@ -61,6 +61,23 @@ describe('runSpeedtest (passthrough)', () => {
     expect(urls.some((u) => u.includes('node_key='))).toBe(true)
   })
 
+  it('should prefix passthrough URLs with the site path (window.__PH_BASE__)', async () => {
+    // Site Path 部署:裸 '/api' 会被反代 404,所有透传 URL 必须带部署前缀。
+    window.__PH_BASE__ = '/sp-test'
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValue(mockFetchResponse(new ArrayBuffer(1000)))
+    try {
+      await runSpeedtest('node.example.com:443')
+      const urls = fetchMock.mock.calls.map((c) => c[0] as string)
+      expect(urls.length).toBeGreaterThan(0)
+      for (const u of urls) {
+        expect(u.startsWith('/sp-test/api/speedtest/')).toBe(true)
+      }
+    } finally {
+      delete window.__PH_BASE__
+    }
+  })
+
   it('should measure latency from 8 passthrough probes', async () => {
     const fetchMock = vi.mocked(fetch)
     fetchMock.mockResolvedValue(mockFetchResponse(new ArrayBuffer(1000)))

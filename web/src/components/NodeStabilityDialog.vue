@@ -42,6 +42,7 @@ import type {
 } from '@/types'
 import { mergeEgress } from './exam/egress'
 import { ExamStream } from './exam/examstream'
+import { appBase } from '@/utils/base'
 import type { ExamStreamStatus, EventSourceLike } from './exam/examstream'
 import EgressSection from './exam/EgressSection.vue'
 import StabilitySection from './exam/StabilitySection.vue'
@@ -134,7 +135,7 @@ const runCheck = (force = false) => {
   )
   const params = buildParams()
   if (force) params.set('force', '1')
-  stream.start(`/api/nodes/stability/stream?${params}`)
+  stream.start(`${appBase()}/api/nodes/stability/stream?${params}`)
 }
 
 const onFrame = (frame: ExamEvent) => {
@@ -161,7 +162,7 @@ const onTerminal = (frame: ExamEvent) => {
 const cancel = () => {
   if (!stream || cancelling.value) return
   cancelling.value = true
-  stream.cancel(`/api/nodes/stability/cancel?${buildParams()}`).catch((err) => {
+  stream.cancel(`${appBase()}/api/nodes/stability/cancel?${buildParams()}`).catch((err) => {
     console.error('cancel stability error', err)
     cancelling.value = false
   })

@@ -26,12 +26,15 @@ export interface SpeedtestOutcome {
 // 测速端点(ProxyHub 透传:浏览器 ← ProxyHub ← 节点 ← Cloudflare)。
 // 浏览器 fetch 透传端点,后端经选中节点(node_key)访问 Cloudflare 并流式转发。
 // 流量经浏览器(Network 可见大 Size),且经用户下拉选定节点(不依赖客户端代理选择)。
+// 一律经 appBase() 拼接:Site Path 部署下裸 '/api' 会逃出前缀被反代 404。
+import { appBase } from '@/utils/base'
+
 const proxyDownloadURL = (nodeKey: string, i: number) =>
-  `/api/speedtest/proxy-download/stream?${nodeKey ? `node_key=${encodeURIComponent(nodeKey)}&` : ''}i=${i}`
+  `${appBase()}/api/speedtest/proxy-download/stream?${nodeKey ? `node_key=${encodeURIComponent(nodeKey)}&` : ''}i=${i}`
 const proxyLatencyURL = (nodeKey: string, seq: number) =>
-  `/api/speedtest/proxy-latency?${nodeKey ? `node_key=${encodeURIComponent(nodeKey)}&` : ''}seq=${seq}`
+  `${appBase()}/api/speedtest/proxy-latency?${nodeKey ? `node_key=${encodeURIComponent(nodeKey)}&` : ''}seq=${seq}`
 const proxyUploadURL = (nodeKey: string, i: number) =>
-  `/api/speedtest/proxy-upload/stream?${nodeKey ? `node_key=${encodeURIComponent(nodeKey)}&` : ''}i=${i}`
+  `${appBase()}/api/speedtest/proxy-upload/stream?${nodeKey ? `node_key=${encodeURIComponent(nodeKey)}&` : ''}i=${i}`
 
 // 默认参数
 const PARALLEL_CONNECTIONS = 8

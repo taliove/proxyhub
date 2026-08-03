@@ -80,6 +80,7 @@ import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { use } from 'echarts/core'
 import { LineChart } from 'echarts/charts'
+import { appBase } from '@/utils/base'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
@@ -198,7 +199,7 @@ const runTest = () => {
   // 快速测速档:显式带 mode=speedtest 切基准口径(__down/__up);缺省仍走 legacy 端点。
   if (testMode.value === 'speedtest') params.set('mode', 'speedtest')
 
-  es = new EventSource(`/api/nodes/test/stream?${params}`, { withCredentials: true })
+  es = new EventSource(`${appBase()}/api/nodes/test/stream?${params}`, { withCredentials: true })
 
   es.onmessage = (e) => {
     try {

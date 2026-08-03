@@ -68,6 +68,7 @@ import { mergeEgress } from './exam/egress'
 import { regionSectionComplete, egressSectionComplete } from './exam/examrows'
 import { ExamStream } from './exam/examstream'
 import type { ExamStreamStatus, EventSourceLike } from './exam/examstream'
+import { appBase } from '@/utils/base'
 import ExamReportLayout from './exam/ExamReportLayout.vue'
 import ExamShareDialog from './exam/ExamShareDialog.vue'
 import type { ExamReport } from '@/types'
@@ -199,7 +200,7 @@ const runExam = (force = false) => {
   )
   const params = buildParams()
   if (force) params.set('force', '1') // 重新体检:已收口的旧任务强制重开,不回放上次结果
-  stream.start(`/api/nodes/exam/stream?${params}`)
+  stream.start(`${appBase()}/api/nodes/exam/stream?${params}`)
 }
 
 const onFrame = (frame: ExamEvent) => {
@@ -233,7 +234,7 @@ const onTerminal = (frame: ExamEvent) => {
 const cancel = () => {
   if (!stream || cancelling.value) return
   cancelling.value = true
-  stream.cancel(`/api/nodes/exam/cancel?${buildParams()}`).catch((err) => {
+  stream.cancel(`${appBase()}/api/nodes/exam/cancel?${buildParams()}`).catch((err) => {
     console.error('cancel exam error', err)
     cancelling.value = false
   })
