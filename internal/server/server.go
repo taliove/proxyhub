@@ -1008,8 +1008,8 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 
 	// 格式：显式参数优先，否则按 User-Agent 猜测，默认 Clash
 	format := r.URL.Query().Get("format")
+	ua := strings.ToLower(r.Header.Get("User-Agent"))
 	if format == "" {
-		ua := strings.ToLower(r.Header.Get("User-Agent"))
 		if strings.Contains(ua, "v2ray") || strings.Contains(ua, "shadowrocket") {
 			format = "v2ray"
 		} else {
@@ -1022,6 +1022,12 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("generate subscription failed", "format", format, "error", err)
 		http.Error(w, "generate subscription failed", http.StatusInternalServerError)
 		return
+	}
+
+	// 小火箭订阅命名(issue #39):只给 Shadowrocket UA 的 v2ray 格式注入
+	// REMARKS 行;其他客户端原样(Clash 系走下面的命名响应头,v2ray 系无此约定)。
+	if format == "v2ray" && strings.Contains(ua, "shadowrocket") {
+		data = injectShadowrocketRemarks(data, ep)
 	}
 
 	// 记录拉取统计:内容已生成成功,本次为真实下发。

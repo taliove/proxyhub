@@ -56,3 +56,19 @@ func setSubscriptionProfileHeaders(w http.ResponseWriter, ep *store.Endpoint) {
 	w.Header().Set("Profile-Title", base64.StdEncoding.EncodeToString([]byte(title)))
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+rfc5987Encode(title))
 }
+
+// injectShadowrocketRemarks 小火箭的订阅命名通道(issue #39,QA 实测确认):
+// 小火箭不读 Profile-Title/Content-Disposition,也不按规范剥离 URL fragment,
+// 只认 base64(v2ray 格式)订阅明文开头的 REMARKS=<名称> 行。这里解开明文、
+// 注入 REMARKS 行(与 Profile-Title 同一 profileTitle 合成规则)后整体重新编码。
+//
+// 名称校验(trim/去控制字符/50 rune)在 store 边界,REMARKS 行结构性不可能
+// 携带 CRLF;解码失败理论不可达(GenerateV2Ray 输出恒为合法 base64),原样返回。
+func injectShadowrocketRemarks(data []byte, ep *store.Endpoint) []byte {
+	plain, err := base64.StdEncoding.DecodeString(string(data))
+	if err != nil {
+		return data
+	}
+	titled := "REMARKS=" + profileTitle(ep) + "\n" + string(plain)
+	return []byte(base64.StdEncoding.EncodeToString([]byte(titled)))
+}

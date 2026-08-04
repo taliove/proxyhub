@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -159,6 +160,115 @@ func TestSubscription_ProfileHeaders_GuardPathsOmitHeaders(t *testing.T) {
 		t.Fatalf("geo miss: status = %d, want 403", w3.Code)
 	}
 	assertNoProfileHeaders(t, "403 geo block", w3)
+}
+
+// decodeSubBody 解开 base64(v2ray 格式)订阅体明文;非 base64 直接原样返回
+// (clash YAML 路径),便于统一断言。
+func decodeSubBody(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	if plain, err := base64.StdEncoding.DecodeString(w.Body.String()); err == nil {
+		return string(plain)
+	}
+	return w.Body.String()
+}
+
+// TestSubscription_ShadowrocketRemarks 小火箭的订阅命名通道(issue #39,QA 实测
+// 确认):Shadowrocket UA 拉 base64(v2ray 格式)订阅时,明文开头注入
+// REMARKS=<profile 标题> 行;其余节点链接原样保留。
+func TestSubscription_ShadowrocketRemarks(t *testing.T) {
+	srv, st := newTestServer(t, pullLogNodes())
+	h := srv.Handler()
+	ep, _ := st.CreateEndpoint("example.com")
+	if err := st.UpdateEndpointPublicName(ep.ID, "家里宽带"); err != nil {
+		t.Fatalf("UpdateEndpointPublicName: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token, nil)
+	req.RemoteAddr = "5.6.7.8:1234"
+	req.Header.Set("User-Agent", "Shadowrocket/3378")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	}
+	plain := decodeSubBody(t, w)
+	lines := strings.Split(plain, "\n")
+	if len(lines) != 2 || lines[0] != "REMARKS=ProxyHub · 家里宽带" || !strings.HasPrefix(lines[1], "ss://") {
+		t.Errorf("want exactly [REMARKS 行, ss 链接], got %d 行:\n%s", len(lines), plain)
+	}
+}
+
+// TestSubscription_ShadowrocketRemarks_NoPublicName 未设公开名称时 REMARKS
+// 回退裸品牌名,与 Profile-Title 同一合成规则。
+func TestSubscription_ShadowrocketRemarks_NoPublicName(t *testing.T) {
+	srv, st := newTestServer(t, pullLogNodes())
+	h := srv.Handler()
+	ep, _ := st.CreateEndpoint("example.com")
+
+	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token, nil)
+	req.RemoteAddr = "5.6.7.8:1234"
+	req.Header.Set("User-Agent", "Shadowrocket/3378")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	}
+	firstLine, _, _ := strings.Cut(decodeSubBody(t, w), "\n")
+	if firstLine != "REMARKS=ProxyHub" {
+		t.Errorf("first line = %q, want REMARKS=ProxyHub", firstLine)
+	}
+}
+
+// TestSubscription_RemarksOnlyForShadowrocket 注入是小火箭专属通道:其他
+// UA(含同样走 v2ray 格式的 v2rayNG、走 clash 的 mihomo)的订阅体都不含
+// REMARKS 行;私有 alias 也绝不借 REMARKS 泄漏。
+func TestSubscription_RemarksOnlyForShadowrocket(t *testing.T) {
+	const alias = "李总的私有备注"
+	for _, tc := range []struct {
+		label string
+		ua    string
+	}{
+		{"v2rayNG", "v2rayNG/1.8.5"},
+		{"clash(mihomo)", "mihomo/v1.18.0"},
+		{"no UA", ""},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			srv, st := newTestServer(t, pullLogNodes())
+			h := srv.Handler()
+			ep, _ := st.CreateEndpoint(alias)
+			if err := st.UpdateEndpointPublicName(ep.ID, "office"); err != nil {
+				t.Fatalf("UpdateEndpointPublicName: %v", err)
+			}
+			req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token, nil)
+			req.RemoteAddr = "5.6.7.8:1234"
+			if tc.ua != "" {
+				req.Header.Set("User-Agent", tc.ua)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+			}
+			plain := decodeSubBody(t, w)
+			if strings.Contains(plain, "REMARKS=") {
+				t.Errorf("UA %q must not get a REMARKS line, body head: %.80s", tc.ua, plain)
+			}
+			if strings.Contains(plain, alias) {
+				t.Errorf("UA %q body leaks the private alias", tc.ua)
+			}
+		})
+	}
+}
+
+// TestInjectShadowrocketRemarks_InvalidBase64 解码失败的 fallback 契约:坏输入
+// 原样返回(线上不可达——GenerateV2Ray 输出恒为合法 base64,这里直接钉函数契约)。
+func TestInjectShadowrocketRemarks_InvalidBase64(t *testing.T) {
+	bad := []byte("%%%")
+	ep := &store.Endpoint{}
+	got := injectShadowrocketRemarks(bad, ep)
+	if string(got) != string(bad) {
+		t.Errorf("invalid base64 should pass through unchanged, got %q", got)
+	}
 }
 
 // TestRFC5987Encode pins the attr-char whitelist: unreserved bytes pass
