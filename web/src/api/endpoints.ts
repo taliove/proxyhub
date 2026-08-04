@@ -40,10 +40,7 @@ export interface UpdateEndpointPublicNameRequest {
 }
 
 // Update endpoint public name (subscription profile title, issue #38)
-export function updateEndpointPublicName(
-  id: number,
-  publicName: string
-): Promise<{ ok: boolean }> {
+export function updateEndpointPublicName(id: number, publicName: string): Promise<{ ok: boolean }> {
   return client.put<unknown, { ok: boolean }>(`/endpoints/${id}/public-name`, {
     public_name: publicName
   })
