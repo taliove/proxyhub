@@ -538,9 +538,10 @@ func (a *Aggregator) executeForUser(ctx context.Context, rl *runLog, progress fu
 		a.mu.RUnlock()
 
 		errMsg := fmt.Sprintf("%d/%d 机场拉取失败", fetched.failed, fetched.enabled)
-		a.logger.Error("aggregation aborted: all airports failed, retaining existing pool",
+		// WARN 而非 ERROR:机场订阅封锁服务器出口(403)是常态拒绝,不是系统故障(ADR 0042 上下文)
+		a.logger.Warn("aggregation aborted: all airports failed, retaining existing pool",
 			"failed", fetched.failed, "enabled", fetched.enabled, "retained", retained)
-		rl.event(levelError, stageFetch,
+		rl.event(levelWarn, stageFetch,
 			fmt.Sprintf("全部机场拉取失败，保留现有 %d 个节点，本轮不更新", retained),
 			map[string]any{"retained": retained})
 		rl.finish(store.RefreshStatusFailed, 0, 0, retained, errMsg)
