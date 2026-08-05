@@ -63,6 +63,16 @@ func (s *Server) handleCreateSelfNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// 身份查重(issue #53):同 server/port/protocol 的节点拒绝重复创建,
+	// 从源头杜绝重复行(重复行会让展示/删除体验断裂)。
+	if dup, dErr := s.st.SelfHostedNodeIdentityExists(EffectiveUserID(scope), n.Server, n.Port, n.Protocol, 0); dErr != nil {
+		s.logger.Error("check self node identity failed", "error", dErr)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	} else if dup {
+		http.Error(w, "该节点已存在(相同服务器/端口/协议)", http.StatusConflict)
+		return
+	}
 	n.Enabled = true
 	n.RegionCode = s.resolveSelfNodeRegion(n)
 	if err := applySelfNodeNameFallback(n); err != nil {
@@ -96,6 +106,15 @@ func (s *Server) handleUpdateSelfNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n.ID = id
+	// 身份查重(issue #53):编辑改成与他人重复的身份同样拒绝,排除自身。
+	if dup, dErr := s.st.SelfHostedNodeIdentityExists(EffectiveUserID(scope), n.Server, n.Port, n.Protocol, id); dErr != nil {
+		s.logger.Error("check self node identity failed", "error", dErr)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	} else if dup {
+		http.Error(w, "该节点已存在(相同服务器/端口/协议)", http.StatusConflict)
+		return
+	}
 	n.RegionCode = s.resolveSelfNodeRegion(n)
 	if err := applySelfNodeNameFallback(n); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

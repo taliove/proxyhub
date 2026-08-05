@@ -90,3 +90,24 @@ func (s *Store) ListAllSelfHostedNodesByUser(userID int64) ([]*SelfHostedNode, e
 
 	return scanSelfHostedNodes(rows)
 }
+
+// SelfHostedNodeIdentityExists 按属主 + 身份(server/port/protocol)查重(issue #53:
+// 重复导入产生重复行,展示层无法区分,删除体验断裂)。excludeID>0 时排除该行
+// (编辑场景:不能把"没改身份"误判为撞车)。userID<=0 退化为全局查重(测试/内部路径)。
+func (s *Store) SelfHostedNodeIdentityExists(userID int64, server string, port int, protocol string, excludeID int64) (bool, error) {
+	query := `SELECT COUNT(1) FROM self_hosted_nodes WHERE server = ? AND port = ? AND protocol = ?`
+	args := []any{server, port, protocol}
+	if userID > 0 {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	if excludeID > 0 {
+		query += ` AND id != ?`
+		args = append(args, excludeID)
+	}
+	var n int
+	if err := s.db.QueryRow(query, args...).Scan(&n); err != nil {
+		return false, fmt.Errorf("check self hosted node identity: %w", err)
+	}
+	return n > 0, nil
+}
