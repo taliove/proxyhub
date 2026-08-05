@@ -177,3 +177,49 @@ func TestSetAirportUsageForUser_WebPageSchemeWhitelist(t *testing.T) {
 		t.Errorf("fetch path WebPageURL = %q, want empty", got.WebPageURL)
 	}
 }
+
+// TestSetAirportWebPageURLForUser 拉取型机场官网手填:只动 web_page_url,
+// 用量列(响应头捕获)不被触碰;行属他人 ErrNotFound;非 http/https 归空串。
+func TestSetAirportWebPageURLForUser(t *testing.T) {
+	s := newTestStore(t)
+	a, err := s.CreateAirportForUser(7, "拉取A", "https://example.com/sub")
+	if err != nil {
+		t.Fatalf("create url airport: %v", err)
+	}
+	// 模拟响应头捕获的用量
+	if err := s.UpdateAirportUsage(a.ID, &subscription.UsageInfo{Download: 500, Total: 1000}); err != nil {
+		t.Fatalf("seed usage: %v", err)
+	}
+
+	if err := s.SetAirportWebPageURLForUser(8, a.ID, "https://example.com"); err != ErrNotFound {
+		t.Errorf("SetAirportWebPageURLForUser(other) error = %v, want ErrNotFound", err)
+	}
+	if err := s.SetAirportWebPageURLForUser(7, a.ID, "https://example.com"); err != nil {
+		t.Fatalf("SetAirportWebPageURLForUser(owner) error = %v", err)
+	}
+	got, _ := s.GetAirportByID(a.ID)
+	if got.WebPageURL != "https://example.com" {
+		t.Errorf("WebPageURL = %q, want set", got.WebPageURL)
+	}
+	if got.UsageDownload != 500 || got.UsageTotal != 1000 {
+		t.Errorf("usage = %d/%d, want 500/1000 (用量列不被官网覆写触碰)", got.UsageDownload, got.UsageTotal)
+	}
+
+	// 显式清空
+	if err := s.SetAirportWebPageURLForUser(7, a.ID, ""); err != nil {
+		t.Fatalf("clear error = %v", err)
+	}
+	got, _ = s.GetAirportByID(a.ID)
+	if got.WebPageURL != "" {
+		t.Errorf("after clear WebPageURL = %q, want empty", got.WebPageURL)
+	}
+
+	// scheme 白名单
+	if err := s.SetAirportWebPageURLForUser(7, a.ID, "javascript:alert(1)"); err != nil {
+		t.Fatalf("sanitize error = %v", err)
+	}
+	got, _ = s.GetAirportByID(a.ID)
+	if got.WebPageURL != "" {
+		t.Errorf("sanitize WebPageURL = %q, want empty", got.WebPageURL)
+	}
+}

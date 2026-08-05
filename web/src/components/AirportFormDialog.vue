@@ -35,6 +35,8 @@
           </div>
         </el-form-item>
       </template>
+      <!-- 拉取型机场:官网手填(可选;用量由订阅响应头自动捕获,不开放手填) -->
+      <AirportUsageFields v-else v-model="usageForm" web-page-only />
     </el-form>
     <template #footer>
       <el-button @click="visible = false">取消</el-button>
@@ -58,7 +60,8 @@ import {
 } from '@/views/airport-utils'
 
 // 机场添加/编辑对话框(ticket 0036 行内收敛后从 Airports.vue 抽出,文件行数门禁)。
-// 编辑时来源类型不可变;手动机场隐藏 URL、展示用量手填字段。
+// 编辑时来源类型不可变;手动机场隐藏 URL、展示用量手填字段;
+// 拉取型机场展示官网手填(用量由订阅响应头自动捕获,不开放)。
 const visible = defineModel<boolean>({ required: true })
 
 const props = defineProps<{
@@ -96,7 +99,7 @@ watch(
       usageForm.value =
         props.airport.source_type === 'manual'
           ? usageFormFromAirport(props.airport)
-          : emptyUsageForm()
+          : { ...emptyUsageForm(), webPageUrl: props.airport.web_page_url ?? '' }
       // 已有简称视为用户自定义,避免被自动建议覆盖
       abbrDirty.value = !!props.airport.abbr
     } else {
@@ -135,11 +138,15 @@ const {
 const submitForm = async () => {
   const isManual = form.value.sourceType === 'manual'
   // 编辑模式全空也发零值(显式清空必须到达后端);创建模式全空省略(新行本就无用量)
+  // 拉取型机场只发官网:编辑始终发(空串 = 显式清空),创建非空才发;
+  // 用量三项由订阅响应头自动捕获,绝不随表单提交(后端也只接 web_page_url)。
   const usagePayload = isManual
     ? props.airport
       ? usageFormToPayloadOrZero(usageForm.value)
       : (usageFormToPayload(usageForm.value) ?? {})
-    : {}
+    : props.airport || usageForm.value.webPageUrl.trim()
+      ? { web_page_url: usageForm.value.webPageUrl.trim() }
+      : {}
   if (props.airport) {
     const updated = await client.put<unknown, Airport>(`/airports/${props.airport.id}`, {
       name: form.value.name,

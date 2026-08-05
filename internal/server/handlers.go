@@ -146,7 +146,8 @@ func (s *Server) handleListAirports(w http.ResponseWriter, r *http.Request) {
 
 // handleCreateAirport 添加机场(ticket 07:归属当前有效用户)。
 // 来源二选一(spec-manual-airport-import):拉取型(默认,URL)/ 手动机场(粘贴导入,
-// url 空串,创建后由 /import 端点显式粘贴入池);用量信息字段仅对手动机场生效。
+// url 空串,创建后由 /import 端点显式粘贴入池);用量信息字段仅对手动机场生效,
+// 拉取型仅接受 web_page_url 手填(用量由订阅响应头自动捕获)。
 func (s *Server) handleCreateAirport(w http.ResponseWriter, r *http.Request) {
 	scope, ok := s.mustUserScope(w, r)
 	if !ok {
@@ -221,6 +222,14 @@ func (s *Server) handleCreateAirport(w http.ResponseWriter, r *http.Request) {
 			airport.UsageTotal = usage.Total
 			airport.UsageExpire = usage.Expire
 			airport.WebPageURL = usage.WebPageURL
+		}
+	}
+	// 拉取型机场的官网手填(可选;用量列由订阅响应头自动捕获,不在此触碰)。
+	if sourceType == store.AirportSourceURL && req.WebPageURL != nil {
+		if err := s.st.SetAirportWebPageURLForUser(effUID, airport.ID, *req.WebPageURL); err != nil {
+			s.logger.Warn("set airport web page url failed", "id", airport.ID, "error", err)
+		} else {
+			airport.WebPageURL = subscription.SanitizeWebPageURL(*req.WebPageURL)
 		}
 	}
 
@@ -512,7 +521,8 @@ func writeRefreshJobResponse(w http.ResponseWriter, jobID int64, key string, sta
 
 // handleUpdateAirport 更新机场信息(ticket 07:校验属主,行属他人 404)。
 // 来源类型创建后不可变;手动机场忽略载荷中的 url(恒为空串),
-// 用量信息字段仅对手动机场生效(spec-manual-airport-import)。
+// 用量信息字段仅对手动机场生效(spec-manual-airport-import);
+// 拉取型仅接受 web_page_url 手填覆写(用量列保持响应头捕获值)。
 func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 	scope, ok := s.mustUserScope(w, r)
 	if !ok {
@@ -581,6 +591,14 @@ func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 	if existing.SourceType == store.AirportSourceManual && req.provided() {
 		if err := s.st.SetAirportUsageForUser(effUID, id, req.toUsageInfo()); err != nil {
 			s.logger.Error("update airport usage failed", "id", id, "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
+	// 拉取型机场官网手填覆写(提供才动,空串 = 显式清空;用量列保持响应头捕获值)
+	if existing.SourceType == store.AirportSourceURL && req.WebPageURL != nil {
+		if err := s.st.SetAirportWebPageURLForUser(effUID, id, *req.WebPageURL); err != nil {
+			s.logger.Error("update airport web page url failed", "id", id, "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}

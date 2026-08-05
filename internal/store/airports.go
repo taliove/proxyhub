@@ -274,6 +274,22 @@ func (s *Store) SetAirportUsageForUser(userID, id int64, u *subscription.UsageIn
 	return err
 }
 
+// SetAirportWebPageURLForUser 按属主只覆写官网地址(拉取型机场手填路径:
+// 用量列由订阅响应头自动捕获,绝不能随官网一并覆写,故独立成方法)。
+// 空串 = 显式清空;非 http/https 归一为空串(scheme 白名单,XSS 防线)。
+// 行属他人时 ErrNotFound;userID=0 跳过属主校验。
+func (s *Store) SetAirportWebPageURLForUser(userID, id int64, url string) error {
+	if userID > 0 {
+		if _, err := s.GetAirportByIDForUser(userID, id); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.Exec(
+		`UPDATE airports SET web_page_url = ? WHERE id = ?`,
+		subscription.SanitizeWebPageURL(url), id)
+	return err
+}
+
 // ManualAirportNames 返回手动机场名集合(来源匹配键)。userID>0 限定该用户名下,
 // =0 跨用户全量(机场节点清空豁免手动机场节点用,无 URL 可拉,清空后永不回来)。
 func (s *Store) ManualAirportNames(userID int64) (map[string]bool, error) {

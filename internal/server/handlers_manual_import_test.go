@@ -386,3 +386,79 @@ func TestUpdateAirport_ManualUsageEdit(t *testing.T) {
 func formatID(id int64) string {
 	return strconv.FormatInt(id, 10)
 }
+
+// 拉取型机场创建时接受官网手填(可选);未提供则为空。
+func TestCreateAirport_URLWebPageURL(t *testing.T) {
+	s, _ := newTestServer(t, nil)
+
+	body, _ := json.Marshal(map[string]any{
+		"name": "拉取机场", "url": "https://example.com/sub", "web_page_url": "https://example.com",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/airports", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleCreateAirport(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var ap store.Airport
+	if err := json.Unmarshal(w.Body.Bytes(), &ap); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ap.WebPageURL != "https://example.com" {
+		t.Fatalf("WebPageURL = %q, want set", ap.WebPageURL)
+	}
+	persisted, _ := s.st.GetAirportByID(ap.ID)
+	if persisted.WebPageURL != "https://example.com" {
+		t.Errorf("persisted WebPageURL = %q, want set", persisted.WebPageURL)
+	}
+}
+
+// 拉取型机场编辑:web_page_url 提供才覆写(空串 = 显式清空),未提供不动;
+// 用量列(响应头捕获)全程不被官网覆写触碰。
+func TestUpdateAirport_URLWebPageURLEdit(t *testing.T) {
+	s, _ := newTestServer(t, nil)
+	ap, err := s.st.CreateAirportForUser(0, "拉取机场", "https://example.com/sub")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// 模拟响应头捕获的用量
+	if err := s.st.UpdateAirportUsage(ap.ID, &subscription.UsageInfo{Download: 500, Total: 1000}); err != nil {
+		t.Fatalf("seed usage: %v", err)
+	}
+
+	put := func(payload map[string]any) {
+		t.Helper()
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest(http.MethodPut, "/airports/1", bytes.NewReader(body))
+		req.SetPathValue("id", formatID(ap.ID))
+		w := httptest.NewRecorder()
+		s.handleUpdateAirport(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+		}
+	}
+
+	// 提供 web_page_url → 覆写;用量列不动
+	put(map[string]any{"name": "拉取机场", "url": "https://example.com/sub", "web_page_url": "https://example.com"})
+	got, _ := s.st.GetAirportByID(ap.ID)
+	if got.WebPageURL != "https://example.com" {
+		t.Errorf("WebPageURL = %q, want set", got.WebPageURL)
+	}
+	if got.UsageDownload != 500 || got.UsageTotal != 1000 {
+		t.Errorf("usage = %d/%d, want 500/1000 (用量列不被官网覆写触碰)", got.UsageDownload, got.UsageTotal)
+	}
+
+	// 未提供 web_page_url → 保留既有值
+	put(map[string]any{"name": "拉取机场", "url": "https://example.com/sub"})
+	got, _ = s.st.GetAirportByID(ap.ID)
+	if got.WebPageURL != "https://example.com" {
+		t.Errorf("after omit WebPageURL = %q, want kept", got.WebPageURL)
+	}
+
+	// 空串 = 显式清空
+	put(map[string]any{"name": "拉取机场", "url": "https://example.com/sub", "web_page_url": ""})
+	got, _ = s.st.GetAirportByID(ap.ID)
+	if got.WebPageURL != "" {
+		t.Errorf("after clear WebPageURL = %q, want empty", got.WebPageURL)
+	}
+}
