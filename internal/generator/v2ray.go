@@ -117,7 +117,27 @@ func vlessLink(node *subscription.Node) string {
 		network = "tcp"
 	}
 	params.Set("type", network)
-	if node.TLS {
+	// reality 节点(判定与解析层一致:RealityPublicKey 非空,见 spec #58)按结构化
+	// 字段重造完整链接,v2rayN 等客户端导入即可连;缺 fp 兜底 chrome。
+	if node.RealityPublicKey != "" {
+		params.Set("security", "reality")
+		params.Set("encryption", "none")
+		params.Set("pbk", node.RealityPublicKey)
+		fp := node.ClientFingerprint
+		if fp == "" {
+			fp = "chrome"
+		}
+		params.Set("fp", fp)
+		if node.Flow != "" {
+			params.Set("flow", node.Flow)
+		}
+		if node.SNI != "" {
+			params.Set("sni", node.SNI)
+		}
+		if node.RealityShortID != "" {
+			params.Set("sid", node.RealityShortID)
+		}
+	} else if node.TLS {
 		params.Set("security", "tls")
 	}
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s",
