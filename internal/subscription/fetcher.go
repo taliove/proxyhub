@@ -15,7 +15,8 @@ import (
 )
 
 // subscriptionUserAgent 订阅拉取 UA。
-// 必须用 v2rayN 系 UA:机场按 UA 决定返回格式,Clash 系 UA 会返回 YAML(本解析器不支持),
+// 必须用 v2rayN 系 UA:机场按 UA 决定返回格式,Clash 系 UA 会返回 YAML
+// (spec #64 起解析已支持,但链接列表形态信息损耗最小,仍为首选),
 // 而 Go 默认 UA(Go-http-client)常被机场直接拒绝(401/403)。
 const subscriptionUserAgent = "v2rayN/6.23"
 

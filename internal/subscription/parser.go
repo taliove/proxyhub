@@ -43,7 +43,15 @@ func DedupeByNodeKey(nodes []*Node) []*Node {
 
 // ParseWithStats parses subscription content and returns nodes with statistics.
 // Skips empty lines, metadata pseudo-nodes, and unparseable lines, counting failures.
+//
+// 顶部为 Clash YAML 内容嗅探(spec #64):DecodeSubscription 之后、行解析之前的共享
+// 边界,fetcher/airporttest/手动粘贴三入口共用此函数,一次接入全部受益。未命中
+// (base64 链接列表等)完全走既有行解析,逐字节零回归。
 func ParseWithStats(content, source string) *ParseResult {
+	if result, ok := parseClashYAML(content, source); ok {
+		return result
+	}
+
 	lines := strings.Split(content, "\n")
 	result := &ParseResult{
 		TotalLines: 0,
