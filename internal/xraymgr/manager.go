@@ -560,7 +560,11 @@ func nodeToOutbound(n *subscription.Node, idx int) map[string]any {
 	tag := fmt.Sprintf("node-%d", idx)
 	switch n.Type {
 	case "vless":
-		return map[string]any{
+		user := map[string]any{
+			"id":         n.UUID,
+			"encryption": "none",
+		}
+		ob := map[string]any{
 			"tag":      tag,
 			"protocol": "vless",
 			"settings": map[string]any{
@@ -568,16 +572,13 @@ func nodeToOutbound(n *subscription.Node, idx int) map[string]any {
 					{
 						"address": n.Server,
 						"port":    n.Port,
-						"users": []map[string]any{
-							{
-								"id":         n.UUID,
-								"encryption": "none",
-							},
-						},
+						"users":   []map[string]any{user},
 					},
 				},
 			},
 		}
+		applyVlessReality(n, user, ob)
+		return ob
 	case "vmess":
 		return map[string]any{
 			"tag":      tag,
@@ -629,5 +630,43 @@ func nodeToOutbound(n *subscription.Node, idx int) map[string]any {
 		}
 	default:
 		return nil
+	}
+}
+
+// applyVlessReality 为 reality 节点(RealityPublicKey 非空,判定与解析层一致,
+// 见 spec #58)补 streamSettings{security: reality, realitySettings{...}} 与
+// user 级 flow;非 reality 不动。fp 缺省 chrome,network 缺省 tcp;
+// flow/sid/serverName 空则不输出(与 clash/v2ray 两处空值约定对齐)。
+// 注:reality 输出仅对 tcp 完整保证;reality+grpc 等组合的 grpcSettings
+// 缺口属 spec #58 Out of Scope(其余 transport 的 xray 数据面补全)。
+func applyVlessReality(n *subscription.Node, user, ob map[string]any) {
+	if n.RealityPublicKey == "" {
+		return
+	}
+	if n.Flow != "" {
+		user["flow"] = n.Flow
+	}
+	network := n.Network
+	if network == "" {
+		network = "tcp"
+	}
+	fingerprint := n.ClientFingerprint
+	if fingerprint == "" {
+		fingerprint = "chrome"
+	}
+	realitySettings := map[string]any{
+		"publicKey":   n.RealityPublicKey,
+		"fingerprint": fingerprint,
+	}
+	if n.SNI != "" {
+		realitySettings["serverName"] = n.SNI
+	}
+	if n.RealityShortID != "" {
+		realitySettings["shortId"] = n.RealityShortID
+	}
+	ob["streamSettings"] = map[string]any{
+		"network":         network,
+		"security":        "reality",
+		"realitySettings": realitySettings,
 	}
 }
