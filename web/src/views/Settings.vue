@@ -86,7 +86,8 @@
                 inactive-value="false"
               />
               <span class="hint">
-                关闭后仅「手动刷新」会拉取机场。注意：关闭并重启后节点池为空,订阅暂时返回 503。
+                默认关闭:机场节点仅由「手动刷新」与粘贴/文件导入更新(机场订阅被服务器侧封锁 403
+                是常见现象,定时外打多为无效请求)。开启后按健康检查间隔定时拉取全部启用机场。
               </span>
             </el-form-item>
 
@@ -294,7 +295,7 @@ const settings = ref<Record<string, string | number>>({
   captcha_trigger_threshold: CAPTCHA_TRIGGER_THRESHOLD_DEFAULT,
   feishu_webhook: '',
   min_available_nodes: 10,
-  scheduled_refresh_enabled: 'true',
+  scheduled_refresh_enabled: 'false',
   fetch_concurrency: 4,
   filter_keywords: '',
   filter_whitelist: '',

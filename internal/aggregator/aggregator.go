@@ -332,7 +332,7 @@ func (a *Aggregator) UpdateNodeIdentityForUser(userID int64, nodeKey, name, regi
 // 回退全局默认)生效者各自发起一轮 StartRefreshJobForUser;开关每 tick 重读,
 // 运行时切换下一个 tick 即生效。
 func (a *Aggregator) Run(ctx context.Context) {
-	// 启动时立即跑一轮（除非“定时刷新”已关闭，见 ADR 0004）
+	// 启动时立即跑一轮（仅限“定时刷新”开启者;默认关,见 ADR 0004/0042）
 	a.startScheduledRefreshes(store.RefreshTriggerStartup)
 
 	ticker := time.NewTicker(a.cfg.HealthCheck.Interval)
@@ -379,25 +379,26 @@ func (a *Aggregator) startScheduledRefreshes(trigger string) {
 	}
 }
 
-// autoRefreshEnabled 读取“定时刷新”全局开关（默认开）。只有显式设为 "false" 才关闭；
-// 读取设置失败时按开处理（fail-open：宁可多刷一轮，也不因设置读不出而让刷新永久停摆）。
+// autoRefreshEnabled 读取“定时刷新”全局开关（默认关,ADR 0042)。只有显式设为 "true" 才开启；
+// 读取设置失败时按关处理（fail-closed:机场订阅被服务器出口封锁(403)是常态,
+// 宁可不刷,也不默认定时外打机场 URL;节点更新由手动刷新/粘贴导入驱动）。
 func (a *Aggregator) autoRefreshEnabled() bool {
 	settings, err := a.st.GetSystemSettings()
 	if err != nil {
-		a.logger.Warn("get system settings failed, assuming scheduled refresh enabled", "error", err)
-		return true
+		a.logger.Warn("get system settings failed, assuming scheduled refresh disabled", "error", err)
+		return false
 	}
-	return settings["scheduled_refresh_enabled"] != "false"
+	return settings["scheduled_refresh_enabled"] == "true"
 }
 
 // autoRefreshEnabledForUser 读取指定用户的定时刷新开关(租户级设置,回退全局默认):
-// 用户未覆盖时跟随全局 autoRefreshEnabled;同样 fail-open。
+// 用户未覆盖时跟随全局 autoRefreshEnabled;同样 fail-closed(ADR 0042)。
 func (a *Aggregator) autoRefreshEnabledForUser(userID int64) bool {
 	val, err := a.st.GetSettingForUser(userID, "scheduled_refresh_enabled")
 	if err != nil {
-		return true
+		return false
 	}
-	return val != "false"
+	return val == "true"
 }
 
 // RunOnce 同步执行一轮完整的聚合流水线，并写入刷新记录。

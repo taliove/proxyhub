@@ -207,10 +207,10 @@ func TestRunOnce_AllFailed_PreservesPool(t *testing.T) {
 	}
 }
 
-func TestAutoRefreshEnabled_DefaultsOn(t *testing.T) {
+func TestAutoRefreshEnabled_DefaultsOff(t *testing.T) {
 	agg, _ := newTestAggregator(t)
-	if !agg.autoRefreshEnabled() {
-		t.Error("scheduled refresh should default ON when the setting is absent")
+	if agg.autoRefreshEnabled() {
+		t.Error("scheduled refresh should default OFF when the setting is absent (ADR 0042)")
 	}
 }
 
@@ -220,10 +220,10 @@ func TestAutoRefreshEnabled_RespectsSetting(t *testing.T) {
 		val  string
 		want bool
 	}{
-		{"true", true},
-		{"false", false}, // 只有显式 "false" 关闭
-		{"", true},       // 空值视为默认开
-		{"yes", true},    // 非 "false" 一律视为开
+		{"true", true},   // 只有显式 "true" 开启
+		{"false", false}, //
+		{"", false},      // 空值视为默认关
+		{"yes", false},   // 非 "true" 一律视为关
 	}
 	for _, c := range cases {
 		if err := st.SaveSystemSettings(map[string]string{"scheduled_refresh_enabled": c.val}); err != nil {
