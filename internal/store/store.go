@@ -303,6 +303,19 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// VLESS Reality 参数列(022_vless_reality_params.sql, spec #58):
+	// 快照表随刷新重建,既有行默认 ''(非 reality),无需 backfill。
+	for _, col := range [][2]string{
+		{"flow", "TEXT NOT NULL DEFAULT ''"},
+		{"reality_public_key", "TEXT NOT NULL DEFAULT ''"},
+		{"reality_short_id", "TEXT NOT NULL DEFAULT ''"},
+		{"client_fingerprint", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.addColumnIfMissing("nodes", col[0], col[1]); err != nil {
+			return err
+		}
+	}
+
 	// node_health 带宽列
 	if err := s.addColumnIfMissing("node_health", "down_mbps", "REAL NOT NULL DEFAULT 0"); err != nil {
 		return err

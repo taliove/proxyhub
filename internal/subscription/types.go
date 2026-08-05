@@ -50,6 +50,14 @@ type Node struct {
 	Insecure        bool   `json:"insecure,omitempty"`          // 跳过证书校验（对应订阅里的 insecure=1）
 	GrpcServiceName string `json:"grpc_service_name,omitempty"` // gRPC service name (vless/vmess over grpc)
 
+	// VLESS Reality 参数(见 spec #58):分享链接里的 flow/pbk/sid/fp 必须全链路
+	// 保真,丢失会让节点被当成普通明文 VLESS、与真实服务器握手必然失败。
+	// reality 判定:RealityPublicKey 非空(不引入单独的 security 枚举)。
+	Flow              string `json:"flow,omitempty"`               // xtls-rprx-vision
+	RealityPublicKey  string `json:"reality_public_key,omitempty"` // 分享链接 pbk(公钥性质,可展示)
+	RealityShortID    string `json:"reality_short_id,omitempty"`   // 分享链接 sid
+	ClientFingerprint string `json:"client_fingerprint,omitempty"` // 分享链接 fp,如 chrome
+
 	// 元数据
 	Region string `json:"region"` // 地区：香港、日本、美国等
 	Source string `json:"source"` // 来源机场名称

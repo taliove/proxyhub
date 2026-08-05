@@ -59,8 +59,9 @@ func (s *Store) SaveNodePoolForUser(userID int64, nodes []*subscription.Node) er
 			node_key, name, type, server, port, uuid, password, alter_id, cipher, network, tls,
 			sni, grpc_service_name, region, source, available, latency_ms, position, stale, last_seen,
 			detection_last_check, bandwidth_down, bandwidth_up, bandwidth_check, plugin, plugin_opts,
-			detection_kind, detection_fail_reason, detection_fail_detail, user_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			detection_kind, detection_fail_reason, detection_fail_detail, user_id,
+			flow, reality_public_key, reality_short_id, client_fingerprint
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(node_key) DO UPDATE SET
 			name = excluded.name,
 			type = excluded.type,
@@ -90,7 +91,11 @@ func (s *Store) SaveNodePoolForUser(userID int64, nodes []*subscription.Node) er
 			detection_kind = excluded.detection_kind,
 			detection_fail_reason = excluded.detection_fail_reason,
 			detection_fail_detail = excluded.detection_fail_detail,
-			user_id = excluded.user_id
+			user_id = excluded.user_id,
+			flow = excluded.flow,
+			reality_public_key = excluded.reality_public_key,
+			reality_short_id = excluded.reality_short_id,
+			client_fingerprint = excluded.client_fingerprint
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare upsert: %w", err)
@@ -108,6 +113,7 @@ func (s *Store) SaveNodePoolForUser(userID int64, nodes []*subscription.Node) er
 			n.BandwidthDownMbps, n.BandwidthUpMbps, timeOrNull(n.BandwidthCheck),
 			n.Plugin, n.PluginOpts, n.DetectionKind, n.DetectionFailReason, n.DetectionFailDetail,
 			n.UserID,
+			n.Flow, n.RealityPublicKey, n.RealityShortID, n.ClientFingerprint,
 		); err != nil {
 			return fmt.Errorf("upsert node %s: %w", key, err)
 		}
@@ -226,7 +232,8 @@ func (s *Store) LoadNodePool() ([]*subscription.Node, error) {
 	return s.loadNodePoolQuery(`SELECT node_key, name, type, server, port, uuid, password, alter_id, cipher, network, tls,
 	       sni, grpc_service_name, region, source, available, latency_ms, stale, last_seen,
 	       detection_last_check, bandwidth_down, bandwidth_up, bandwidth_check, plugin, plugin_opts,
-	       detection_kind, detection_fail_reason, detection_fail_detail, user_id
+	       detection_kind, detection_fail_reason, detection_fail_detail, user_id,
+	       flow, reality_public_key, reality_short_id, client_fingerprint
 		FROM nodes
 		ORDER BY position`)
 }
@@ -238,7 +245,8 @@ func (s *Store) LoadNodePoolByUser(userID int64) ([]*subscription.Node, error) {
 	return s.loadNodePoolQuery(`SELECT node_key, name, type, server, port, uuid, password, alter_id, cipher, network, tls,
 	       sni, grpc_service_name, region, source, available, latency_ms, stale, last_seen,
 	       detection_last_check, bandwidth_down, bandwidth_up, bandwidth_check, plugin, plugin_opts,
-	       detection_kind, detection_fail_reason, detection_fail_detail, user_id
+	       detection_kind, detection_fail_reason, detection_fail_detail, user_id,
+	       flow, reality_public_key, reality_short_id, client_fingerprint
 		FROM nodes
 		WHERE user_id = ?
 		ORDER BY position`, userID)
@@ -264,6 +272,7 @@ func (s *Store) loadNodePoolQuery(query string, args ...any) ([]*subscription.No
 			&detectionLastCheck, &n.BandwidthDownMbps, &n.BandwidthUpMbps, &bandwidthCheck,
 			&n.Plugin, &n.PluginOpts, &n.DetectionKind, &n.DetectionFailReason, &n.DetectionFailDetail,
 			&n.UserID,
+			&n.Flow, &n.RealityPublicKey, &n.RealityShortID, &n.ClientFingerprint,
 		); err != nil {
 			return nil, fmt.Errorf("scan node: %w", err)
 		}

@@ -320,16 +320,30 @@ func (f *Fetcher) parseVLessNode(line, source string) (*Node, error) {
 	}
 	security := query.Get("security")
 
+	// SNI:机场两种参数名(sni / servername)并存,sni 优先
+	sni := query.Get("sni")
+	if sni == "" {
+		sni = query.Get("servername")
+	}
+
+	// Reality 参数(spec #58):flow/pbk/sid/fp 全链路保真;reality 判定
+	// 交给下游(RealityPublicKey 非空),解析层只负责不丢参数。
+	// security=reality 语义上仍走 TLS 握手,TLS 记 true。
 	return &Node{
-		Name:      name,
-		Type:      "vless",
-		Server:    server,
-		Port:      port,
-		UUID:      uuid,
-		Network:   network,
-		TLS:       security == "tls",
-		Source:    source,
-		Available: false,
+		Name:              name,
+		Type:              "vless",
+		Server:            server,
+		Port:              port,
+		UUID:              uuid,
+		Network:           network,
+		TLS:               security == "tls" || security == "reality",
+		SNI:               sni,
+		Flow:              query.Get("flow"),
+		RealityPublicKey:  query.Get("pbk"),
+		RealityShortID:    query.Get("sid"),
+		ClientFingerprint: query.Get("fp"),
+		Source:            source,
+		Available:         false,
 	}, nil
 }
 
