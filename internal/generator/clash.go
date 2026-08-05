@@ -60,6 +60,32 @@ func ClashProxy(node *subscription.Node, name string) (map[string]any, error) {
 				"grpc-service-name": node.GrpcServiceName,
 			}
 		}
+		// reality 节点(spec #58 / issue #60):RealityPublicKey 非空即 reality,
+		// 补齐 mihomo/Clash Meta 直连所需的完整 reality 配置。
+		// 空值字段遵循本文件既有约定省略(fp 例外,缺省补 chrome)。
+		if node.RealityPublicKey != "" {
+			// reality-opts 必须配合 tls: true 才生效;强制写 true,
+			// 与 v2ray/xray 两处强制 security=reality 的口径对齐,
+			// 防止 pbk 非空但 TLS=false 的畸形节点在 clash 侧静默退化为明文。
+			base["tls"] = true
+			if node.Flow != "" {
+				base["flow"] = node.Flow
+			}
+			if node.SNI != "" {
+				base["servername"] = node.SNI
+			}
+			fp := node.ClientFingerprint
+			if fp == "" {
+				fp = "chrome"
+			}
+			base["client-fingerprint"] = fp
+			realityOpts := map[string]any{"public-key": node.RealityPublicKey}
+			if node.RealityShortID != "" {
+				realityOpts["short-id"] = node.RealityShortID
+			}
+			base["reality-opts"] = realityOpts
+			base["udp"] = true
+		}
 	case "trojan":
 		base["type"] = "trojan"
 		base["password"] = node.Password
