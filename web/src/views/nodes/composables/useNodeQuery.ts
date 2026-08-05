@@ -81,6 +81,7 @@ export function useNodeQuery(rows: Ref<UnifiedNode[]>) {
     sort,
     pagination,
     total,
+    filtered,
     pagedNodes,
     filteredKeys,
     onSortChange,

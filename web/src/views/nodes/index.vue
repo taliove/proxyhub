@@ -27,8 +27,8 @@
       />
 
       <NodeBatchBar
-        v-if="selection.length > 0"
-        :count="selection.length"
+        v-if="effectiveSelection.length > 0"
+        :count="effectiveSelection.length"
         :blockable-count="selectableSelection.length"
         :actions="batchActions"
         @block="blockSelected"
@@ -37,6 +37,16 @@
         @start="onBatchStart"
         @cancel="onBatchCancel"
         @more-command="onMoreCommand"
+      />
+
+      <!-- Gmail 式提示条(issue #52):选中全部筛选结果入口;翻页不清除,改筛选条件自动退出 -->
+      <SelectAllBar
+        v-if="selectAllPromptVisible"
+        :all-filtered="allFilteredSelected"
+        :page-count="selection.length"
+        :total="total"
+        @enter="enterAllFiltered"
+        @exit="exitAllFiltered"
       />
 
       <NodeTable
@@ -112,6 +122,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import NodeFilterBar from './components/NodeFilterBar.vue'
 import NodeBatchBar from './components/NodeBatchBar.vue'
+import SelectAllBar from './components/SelectAllBar.vue'
 import NodeTable from './components/NodeTable.vue'
 import type { TestCommand } from './components/node-table-utils'
 import NodeDetailDrawer from './components/NodeDetailDrawer.vue'
@@ -126,12 +137,13 @@ import { useNodeQuery } from './composables/useNodeQuery'
 import { useNodeUrlState } from './composables/useNodeUrlState'
 import { useNodeBatch } from './composables/useNodeBatch'
 import { useNodeBatchActions } from './composables/useNodeBatchActions'
+import { useSelectAllFiltered } from './composables/useSelectAllFiltered'
+import { useSelfNodeForm } from './composables/useSelfNodeForm'
 import { useSelfNodes } from './composables/useSelfNodes'
 import { useExamSummaries } from './composables/useExamSummaries'
 import { useRunningExams } from './composables/useRunningExams'
 import { buildUnifiedRows, selfNodeIndex, type UnifiedNode } from './selfmerge'
 import { tagsOf, unlockTargetsOf } from './nodecells'
-import { emptyForm, type SelfNodeForm } from './self-node-utils'
 import { formatTime, SELF_HOSTED } from './utils'
 import { copyNodeLink, getNodeShareLink } from '@/composables/useNodeShare'
 
@@ -172,23 +184,33 @@ const tagOptions = computed(() => tagsOf(unifiedRows.value))
 const unlockTargets = computed(() => unlockTargetsOf(unifiedRows.value))
 
 // 客户端筛选/排序/分页(谓词见 predicates.ts)。
-const { criteria, pagination, total, pagedNodes, onSortChange, setPage, setPageSize } =
+const { criteria, pagination, total, filtered, pagedNodes, onSortChange, setPage, setPageSize } =
   useNodeQuery(unifiedRows)
+
+// 跨页"选中全部筛选结果"作用域(issue #52):selection 是表格勾选行(当前页子集),
+// effectiveSelection 是批量操作的唯一作用域(全集口径或勾选口径)。
+const {
+  selection,
+  allFiltered: allFilteredSelected,
+  promptVisible: selectAllPromptVisible,
+  effectiveSelection,
+  onSelectionChange,
+  enter: enterAllFiltered,
+  exit: exitAllFiltered
+} = useSelectAllFiltered({ filtered, pagedNodes, criteria })
 
 // 可见页节点的体检派生摘要(稳定性/出网/体检时间)。
 const { summaries: examSummaries, reload: reloadExam } = useExamSummaries(pagedNodes)
 
 const {
-  selection,
   selectableSelection,
-  onSelectionChange,
   blockNode,
   unblockNode,
   blockSelected,
   unblockSelected,
   refreshNamesSelected,
   refreshNameOne
-} = useNodeBatch(reload)
+} = useNodeBatch(reload, effectiveSelection)
 
 // 4 个检查动作(出网快速检测 / 出网+稳定性 / 快速测速 / 深度体检)的统一编排:
 // 单节点(detectOne)与批量(onBatchStart/onBatchCancel/batchActions)共用同一套启动器。
@@ -200,7 +222,7 @@ const {
   batchActions,
   onBatchStart,
   onBatchCancel
-} = useNodeBatchActions(selection, reload, reloadExam)
+} = useNodeBatchActions(effectiveSelection, reload, reloadExam)
 
 // 进行中的 exam 任务:轮询任务中心,提取 kind=exam + status=running 的 key 集合。
 // 用于在节点行显示"查看进度"而非"深度体检"按钮。
@@ -274,70 +296,20 @@ const runNodeAction = (row: UnifiedNode, cmd: TestCommand) => {
 const runTest = runNodeAction
 const onNodeAction = runNodeAction
 
-// 自建节点管理:添加 / 导入 / 编辑 / 启停 / 删除。
-const selfDialogVisible = ref(false)
-const selfEditMode = ref(false)
-const selfEditingId = ref<number | null>(null)
-const selfForm = ref<SelfNodeForm>(emptyForm())
-const selfSubmitting = ref(false)
-const importDialogVisible = ref(false)
+// 自建节点管理:添加 / 导入 / 编辑对话框状态机(启停 / 删除仍在下方,直走 useSelfNodes)。
+const {
+  selfDialogVisible,
+  selfEditMode,
+  selfForm,
+  selfSubmitting,
+  importDialogVisible,
+  openAddSelf,
+  openEditSelf,
+  submitSelfForm,
+  openImport,
+  onImported
+} = useSelfNodeForm({ selfIndex, saveSelf, reloadPool: loadPool })
 
-const openAddSelf = () => {
-  selfEditMode.value = false
-  selfEditingId.value = null
-  selfForm.value = emptyForm()
-  selfDialogVisible.value = true
-}
-const openEditSelf = (row: UnifiedNode) => {
-  if (row.self_node_id == null) return
-  const sn = selfIndex.value.get(row.self_node_id)
-  if (!sn) return
-  const { name, protocol, server, port, uuid, password, cipher } = sn
-  const { alter_id, network, tls, grpc_service_name, enabled } = sn
-  selfEditMode.value = true
-  selfEditingId.value = sn.id
-  selfForm.value = {
-    name,
-    protocol,
-    server,
-    port,
-    uuid,
-    password,
-    cipher,
-    alter_id,
-    network,
-    tls,
-    grpc_service_name,
-    enabled
-  }
-  selfDialogVisible.value = true
-}
-const submitSelfForm = async () => {
-  if (selfSubmitting.value) return
-  selfSubmitting.value = true
-  try {
-    const ok = await saveSelf(selfForm.value, selfEditMode.value ? selfEditingId.value : null)
-    if (ok) {
-      selfDialogVisible.value = false
-      await loadPool()
-    }
-  } finally {
-    selfSubmitting.value = false
-  }
-}
-const openImport = () => {
-  importDialogVisible.value = true
-}
-// 导入结果填充表单,关闭导入框后以新建模式打开编辑框(延迟避免同时开关)
-const onImported = (parsed: Partial<SelfNodeForm>) => {
-  selfForm.value = { ...emptyForm(), ...parsed }
-  importDialogVisible.value = false
-  selfEditMode.value = false
-  selfEditingId.value = null
-  setTimeout(() => {
-    selfDialogVisible.value = true
-  }, 100)
-}
 const onToggleSelf = async (row: UnifiedNode) => {
   if (row.self_node_id == null) return
   const sn = selfIndex.value.get(row.self_node_id)

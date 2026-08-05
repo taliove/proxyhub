@@ -1,21 +1,19 @@
-import { computed, ref } from 'vue'
+import { computed, type Ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Node } from '@/types'
 import client from '@/api/client'
 import { isSelfHosted } from '../utils'
 
-// Selection state and batch operations. Self-hosted nodes are exempt from block/unblock
-// (see CONTEXT.md), so block operations only apply to selectableSelection (airport nodes).
-// Other operations (refresh-names, detect, exam) apply to all selected nodes uniformly.
-export function useNodeBatch(reload: () => void) {
-  const selection = ref<Node[]>([])
-
-  const onSelectionChange = (rows: Node[]) => {
-    selection.value = rows
-  }
-
-  // Airport-only selection for block operations
-  const selectableSelection = computed(() => selection.value.filter((n) => !isSelfHosted(n)))
+// Batch operations on the effective selection (issue #52): the caller passes the effective
+// scope (table checkboxes, or all filtered rows when the select-all-filtered scope is active,
+// see useSelectAllFiltered). Self-hosted nodes are exempt from block/unblock (see CONTEXT.md),
+// so block operations only apply to selectableSelection (airport nodes within the scope).
+// Other operations (refresh-names) apply to all nodes in the scope uniformly.
+export function useNodeBatch(reload: () => void, effectiveSelection: Ref<Node[]>) {
+  // Airport-only subset of the effective scope, for block operations
+  const selectableSelection = computed(() =>
+    effectiveSelection.value.filter((n) => !isSelfHosted(n))
+  )
 
   const blockNode = async (row: Node) => {
     await client.post('/nodes/block', { node_key: row.node_key })
@@ -48,8 +46,8 @@ export function useNodeBatch(reload: () => void) {
   }
 
   const refreshNamesSelected = async () => {
-    // Refresh names applies to all selected nodes (both airport and self-hosted)
-    const keys = selection.value.map((n) => n.node_key)
+    // Refresh names applies to all nodes in scope (both airport and self-hosted)
+    const keys = effectiveSelection.value.map((n) => n.node_key)
     if (keys.length === 0) {
       ElMessage.warning('请先选择节点')
       return
@@ -88,9 +86,7 @@ export function useNodeBatch(reload: () => void) {
   }
 
   return {
-    selection,
     selectableSelection,
-    onSelectionChange,
     blockNode,
     unblockNode,
     blockSelected,
