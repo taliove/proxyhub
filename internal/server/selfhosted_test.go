@@ -1,6 +1,11 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/taliove/proxyhub/internal/store"
@@ -109,5 +114,95 @@ func TestMergeSelfHosted_KeepsAirportNodes(t *testing.T) {
 	out := srv.mergeSelfHosted(pool, 0)
 	if len(out) != 1 || out[0].Source != "机场X" {
 		t.Fatalf("airport node not preserved: %+v", out)
+	}
+}
+
+// listNodesSelfHostedCount 调 GET /api/nodes 统计自建来源行数(大 page_size 一次拉全)。
+func listNodesSelfHostedCount(t *testing.T, h http.Handler, cookie *http.Cookie) int {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/nodes?page_size=100000", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list nodes status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Nodes []struct {
+			Source string `json:"source"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	n := 0
+	for _, node := range resp.Nodes {
+		if node.Source == subscription.SourceSelfHosted {
+			n++
+		}
+	}
+	return n
+}
+
+// 自建节点不经聚合也应在节点管理列表立即可见(handleListNodes serve-time 合并兜底):
+// 池中没有任何节点(模拟聚合失败/未刷新)时,创建即出现在 /api/nodes;
+// 禁用、删除即时消失——坐实生产线「创建后搜不到」的修复。
+func TestHandleListNodes_MergesSelfHostedWithoutAggregation(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+
+	// 经 API 创建,保证属主与列表查询的有效用户一致
+	body, _ := json.Marshal(map[string]any{
+		"name": "自建HK", "protocol": "vless", "server": "1.2.3.4", "port": 443, "uuid": "00000000-0000-0000-0000-000000000000",
+	})
+	req := httptest.NewRequest("POST", "/api/self-nodes", bytes.NewReader(body))
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+
+	if got := listNodesSelfHostedCount(t, h, cookie); got != 1 {
+		t.Fatalf("after create: self-hosted rows = %d, want 1 (serve-time merge, no aggregation)", got)
+	}
+
+	// 禁用即从列表消失(管理界面经 /self-nodes 另补禁用行,池视图只含启用)
+	id := listSelfNodesFirstID(t, h, cookie, 1)
+	tg, _ := json.Marshal(map[string]bool{"enabled": false})
+	req = httptest.NewRequest("POST", "/api/self-nodes/"+strconv.FormatInt(id, 10)+"/toggle", bytes.NewReader(tg))
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("toggle status = %d, want 200", w.Code)
+	}
+	if got := listNodesSelfHostedCount(t, h, cookie); got != 0 {
+		t.Fatalf("after disable: self-hosted rows = %d, want 0", got)
+	}
+
+	// 重新启用恢复可见;删除后消失
+	tg, _ = json.Marshal(map[string]bool{"enabled": true})
+	req = httptest.NewRequest("POST", "/api/self-nodes/"+strconv.FormatInt(id, 10)+"/toggle", bytes.NewReader(tg))
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("re-enable status = %d, want 200", w.Code)
+	}
+	if got := listNodesSelfHostedCount(t, h, cookie); got != 1 {
+		t.Fatalf("after re-enable: self-hosted rows = %d, want 1", got)
+	}
+
+	req = httptest.NewRequest("DELETE", "/api/self-nodes/"+strconv.FormatInt(id, 10), nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200", w.Code)
+	}
+	if got := listNodesSelfHostedCount(t, h, cookie); got != 0 {
+		t.Fatalf("after delete: self-hosted rows = %d, want 0", got)
 	}
 }

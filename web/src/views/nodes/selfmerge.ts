@@ -2,7 +2,8 @@ import type { Node, SelfNode } from '@/types'
 import { SELF_HOSTED } from './utils'
 
 // 统一节点表把两处数据源合成一张表:
-//   1. 节点池 /nodes——含机场节点与"已启用"的自建节点(后端 mergeSelfHosted 仅注入 enabled=1);
+//   1. 节点池 /nodes——含机场节点与"已启用"的自建节点(后端 handleListNodes 经
+//      mergeSelfHosted 以库为准 serve-time 合并,不依赖聚合刷新是否成功);
 //   2. /self-nodes——自建节点全量(含已禁用),用于:
 //      a) 给池中自建行补上 self_node_id / enabled(池视图不含这些字段),使内联编辑/启停/删除可用;
 //      b) 把"已禁用"自建节点(不在池中)补进表格,否则禁用后将从界面消失、无法再管理(回归)。

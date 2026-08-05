@@ -1880,7 +1880,9 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 
 	// 管理页展示全量池（含不可用/被屏蔽）并附标准化名，便于原名↔标准名对比（见 ADR 0012/0013）。
 	// 管理列表无端点上下文,用全局配置。
-	nodes := s.standardizeNodesForEndpoint(s.nodes.NodesForUser(effUID), nil, effUID)
+	// serve-time 合并自建节点(同订阅下发路径):新建/编辑/禁用/删除即时可见,
+	// 不依赖下一轮聚合注入——聚合失败(如机场全挂)时自建节点照样出现在列表。
+	nodes := s.standardizeNodesForEndpoint(s.mergeSelfHosted(s.nodes.NodesForUser(effUID), effUID), nil, effUID)
 	q := parseNodeQuery(r)
 	res := QueryNodes(nodes, blocked, q)
 
