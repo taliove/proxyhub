@@ -248,6 +248,10 @@ _assert_file_contains "$CADDY" "header_up X-Forwarded-For {remote_host}"
 _assert_file_contains "$CADDY" "header_up X-Real-IP {remote_host}"
 _assert_file_contains "$CADDY" "path /$SITE /$SITE/*"
 _assert_file_contains "$CADDY" "respond 404"
+# 压缩(zstd 优先,gzip 兜底)与 hash 静态资源长缓存(2026-08-05 性能优化)
+_assert_file_contains "$CADDY" "encode zstd gzip"
+_assert_file_contains "$CADDY" "@assets path /$SITE/assets/*"
+_assert_file_contains "$CADDY" 'Cache-Control "public, max-age=31536000, immutable"'
 
 # Rejects invalid inputs and does not write.
 rm -f "$CADDY"

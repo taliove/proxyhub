@@ -1225,8 +1225,17 @@ caddy_reload() {
 _caddy_site_block() {
     cat <<EOF
 ${1} {
+	# Compression: zstd preferred (Caddy 2.7+), gzip fallback. The admin SPA
+	# bundle (~3MB) and large JSON list responses compress to roughly a third.
+	encode zstd gzip
+
 	@proxyhub path /${2} /${2}/*
 	handle @proxyhub {
+		# Hashed Vite assets are immutable across releases: cache a year.
+		# index.html / API responses stay uncached (names are build-stamped).
+		@assets path /${2}/assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+
 		# Replace (not append) forwarding headers: ProxyHub trusts XFF only from
 		# its declared peers (loopback, or the narrowed bridge subnet), so a
 		# caller-supplied X-Forwarded-For must never survive the proxy hop -
