@@ -48,9 +48,9 @@
           <el-button size="small" :loading="refreshing" @click="emit('refresh', airport)">
             {{ isManual ? '重新粘贴' : '刷新' }}
           </el-button>
-          <!-- 拉取型机场也可粘贴导入(一次性,下次 URL 刷新成功覆盖回来) -->
+          <!-- 拉取型机场也可粘贴/文件导入(一次性,下次 URL 刷新成功覆盖回来) -->
           <el-button v-if="!isManual" size="small" @click="emit('import', airport)">
-            粘贴导入
+            导入节点
           </el-button>
           <el-button size="small" @click="emit('test', airport)">测试</el-button>
           <el-button v-if="!isManual" size="small" @click="emit('qrcode', airport)"

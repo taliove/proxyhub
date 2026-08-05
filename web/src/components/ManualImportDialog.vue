@@ -1,24 +1,36 @@
 <template>
   <el-dialog
     v-model="visible"
-    :title="`粘贴导入 - ${airport?.name ?? ''}`"
+    :title="`导入节点 - ${airport?.name ?? ''}`"
     width="640px"
     :close-on-click-modal="false"
     @closed="reset"
   >
     <template v-if="airport">
       <div class="guide">
-        在机场面板导出订阅内容(通常为 base64 整段),粘贴到下方;也支持明文多行分享链接。
-        系统不保存粘贴原文,导入即对该机场做一次单机场入池(同单机场刷新语义,不跑健康检查)。
+        在机场面板导出订阅内容(通常为 base64 整段),粘贴到下方,或选择本地订阅文件读入;
+        也支持明文多行分享链接。
+        系统不保存导入原文,导入即对该机场做一次单机场入池(同单机场刷新语义,不跑健康检查)。
         <template v-if="!isManual">
           <br />这是一次性导入:下次该机场 URL 刷新成功后,节点以 URL 拉取内容为准。
         </template>
+      </div>
+      <div class="file-row">
+        <el-button size="small" @click="fileInput?.click()">选择文件</el-button>
+        <span v-if="fileName" class="file-name">{{ fileName }}</span>
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".txt,.list,.sub,.yaml,.yml,text/plain"
+          class="file-input"
+          @change="onFilePicked"
+        />
       </div>
       <el-input
         v-model="content"
         type="textarea"
         :rows="8"
-        placeholder="粘贴机场面板导出的订阅内容(base64 整段或明文多行 ss:// vless:// vmess:// trojan:// anytls://)"
+        placeholder="粘贴机场面板导出的订阅内容(base64 整段或明文多行 ss:// vless:// vmess:// trojan:// anytls://),或点上方「选择文件」读入"
         class="paste-box"
       />
 
@@ -81,7 +93,8 @@ import {
   type UsageFormValue
 } from '@/views/airport-utils'
 
-// 粘贴导入对话框(手动机场创建后引导/重新粘贴 + 拉取型机场一次性导入共用)。
+// 导入节点对话框(手动机场创建后引导/重新粘贴 + 拉取型机场一次性导入共用)。
+// 两种录入方式:直接粘贴,或选择本地订阅文件由前端读入同一粘贴框(零后端改动)。
 // 凭证红线:粘贴内容只发本次请求,不落本地存储、不进日志。
 const visible = defineModel<boolean>({ required: true })
 
@@ -95,7 +108,12 @@ const emit = defineEmits<{
 
 const isManual = computed(() => props.airport?.source_type === 'manual')
 
+// 文件读入上限与后端 manualImportMaxBytes(1MiB)对齐:超限直接拦截,不发请求
+const MAX_IMPORT_BYTES = 1 << 20
+
 const content = ref('')
+const fileInput = ref<HTMLInputElement | null>(null)
+const fileName = ref('')
 const usage = ref<UsageFormValue>({
   remainingGb: null,
   totalGb: null,
@@ -128,6 +146,27 @@ const reset = () => {
   content.value = ''
   result.value = null
   importing.value = false
+  fileName.value = ''
+  if (fileInput.value) fileInput.value.value = ''
+}
+
+// 选择本地订阅文件读入粘贴框(覆盖现有内容;凭证红线不变:内容只随导入请求发出)
+const onFilePicked = (e: Event) => {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (file.size > MAX_IMPORT_BYTES) {
+    ElMessage.warning('文件过大(上限 1MiB),请拆分后分批导入')
+    input.value = ''
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    content.value = typeof reader.result === 'string' ? reader.result : ''
+    fileName.value = file.name
+  }
+  reader.onerror = () => ElMessage.error('文件读取失败,请重试或直接粘贴内容')
+  reader.readAsText(file)
 }
 
 const doImport = async () => {
@@ -175,6 +214,19 @@ const doImport = async () => {
 }
 .paste-box {
   margin-bottom: var(--ph-space-4);
+}
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+  margin-bottom: var(--ph-space-2);
+}
+.file-name {
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-xs);
+}
+.file-input {
+  display: none;
 }
 .usage-title {
   font-weight: 600;

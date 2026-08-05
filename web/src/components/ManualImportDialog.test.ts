@@ -215,3 +215,41 @@ describe('ManualImportDialog 确认流程(用户实测拍板)', () => {
     expect(wrapper.emitted('imported')).toBeUndefined()
   })
 })
+
+describe('ManualImportDialog 文件导入', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  // 触发文件选择:input.files 在 jsdom 只读,defineProperty 注入后派发 change
+  const pickFile = async (wrapper: ReturnType<typeof mountDialog>, file: File) => {
+    const input = wrapper.find('input.file-input')
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+    // FileReader 回调是独立任务,flushPromises 覆盖不到
+    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
+  }
+
+  it('读入本地订阅文件:内容填入粘贴框并展示文件名', async () => {
+    const wrapper = mountDialog(manualAirport)
+    await pickFile(
+      wrapper,
+      new File(['ss://x@node1.example.com:8388#HK 01'], 'sub.txt', { type: 'text/plain' })
+    )
+
+    expect(wrapper.findComponent(ElInputStub).props('modelValue')).toBe(
+      'ss://x@node1.example.com:8388#HK 01'
+    )
+    expect(wrapper.text()).toContain('sub.txt')
+  })
+
+  it('超限文件(>1MiB):警告拦截,不读入、不发请求', async () => {
+    const wrapper = mountDialog(manualAirport)
+    await pickFile(wrapper, new File(['x'.repeat((1 << 20) + 1)], 'big.txt'))
+
+    expect(ElMessage.warning).toHaveBeenCalledWith('文件过大(上限 1MiB),请拆分后分批导入')
+    expect(wrapper.findComponent(ElInputStub).props('modelValue')).toBe('')
+    expect(client.post).not.toHaveBeenCalled()
+  })
+})
