@@ -214,7 +214,8 @@ func (a *Aggregator) SetNodesForUser(userID int64, nodes []*subscription.Node) {
 	a.lastUpdate = time.Now()
 }
 
-// LastUpdate 返回最近一次成功更新时间
+// LastUpdate 返回最近一次池写入时间(含成功刷新/全挂健康续命/取消部分合并;
+// 拉取长期失败时请查刷新记录状态,此时间戳不区分写入来源)
 func (a *Aggregator) LastUpdate() time.Time {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -533,19 +534,47 @@ func (a *Aggregator) executeForUser(ctx context.Context, rl *runLog, progress fu
 	// 全量拉取失败 = 本轮没有任何数据,而非"节点都挂了"。此时保留现有节点池,
 	// 避免一次网络抖动 / 机场临时不可达就把所有节点清空(见用户反馈:刷新失败清空节点)。
 	if fetched.enabled > 0 && fetched.failed == fetched.enabled {
+		owner := fetched.owner
 		a.mu.RLock()
-		retained := len(a.pools[fetched.owner])
+		pool := a.pools[owner]
 		a.mu.RUnlock()
 
 		errMsg := fmt.Sprintf("%d/%d 机场拉取失败", fetched.failed, fetched.enabled)
 		// WARN 而非 ERROR:机场订阅封锁服务器出口(403)是常态拒绝,不是系统故障(ADR 0042 上下文)
-		a.logger.Warn("aggregation aborted: all airports failed, retaining existing pool",
-			"failed", fetched.failed, "enabled", fetched.enabled, "retained", retained)
+		a.logger.Warn("all airports failed, retaining pool and refreshing health only",
+			"failed", fetched.failed, "enabled", fetched.enabled, "retained", len(pool))
+
+		// 健康检查续命(ADR 0042):订阅地址被封 ≠ 节点死了——403 封的是拉取通道,
+		// 不是节点本身。对保留池跑健康检查,可用性/延迟/健康历史保持新鲜,
+		// 定时拉取关闭(默认)后健康数据不至于永久冻结。
+		// 克隆后检查再整体换分片:checkHealth 原地写字段,直接动在线池会与订阅读取竞态。
+		// 已知窗口:健康检查期间同分片的 UI 写回(单节点检测/重命名)可能被换片覆盖——
+		// 一次性丢失、下轮检测自愈,与成功路径的读-改-换同构(Check MEDIUM-1 记录在案)。
+		available := 0
+		if len(pool) > 0 {
+			cloned := make([]*subscription.Node, len(pool))
+			for i, n := range pool {
+				cp := *n
+				cloned[i] = &cp
+			}
+			available = len(a.checkHealth(ctx, rl, cloned))
+
+			a.mu.Lock()
+			a.pools[owner] = cloned
+			a.lastUpdate = time.Now()
+			a.mu.Unlock()
+
+			// 持久化刷新后的健康快照(写库失败仅告警,内存池已更新)
+			if err := a.st.SaveNodePoolForUser(owner, cloned); err != nil {
+				a.logger.Warn("persist node pool failed", "error", err)
+			}
+		}
+
 		rl.event(levelWarn, stageFetch,
-			fmt.Sprintf("全部机场拉取失败，保留现有 %d 个节点，本轮不更新", retained),
-			map[string]any{"retained": retained})
-		rl.finish(store.RefreshStatusFailed, 0, 0, retained, errMsg)
-		a.checkAlerts(fetched.airportNodes, 0)
+			fmt.Sprintf("全部机场拉取失败，保留现有 %d 个节点，仅更新健康状态", len(pool)),
+			map[string]any{"retained": len(pool), "available": available})
+		rl.finish(store.RefreshStatusFailed, 0, available, len(pool), errMsg)
+		a.checkAlerts(fetched.airportNodes, available)
 		return
 	}
 

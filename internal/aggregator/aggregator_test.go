@@ -207,6 +207,55 @@ func TestRunOnce_AllFailed_PreservesPool(t *testing.T) {
 	}
 }
 
+// TestRunOnce_AllFailed_RefreshesHealth 验证:全部机场拉取失败时不再整轮中止,
+// 而是对保留池跑健康检查(ADR 0042)——403 封的是订阅拉取通道,不是节点本身。
+// 断言:健康状态写回池(克隆换片,不污染原切片)、快照持久化、运行记录带可用数。
+func TestRunOnce_AllFailed_RefreshesHealth(t *testing.T) {
+	agg, st := newTestAggregator(t)
+
+	preset := []*subscription.Node{
+		{Name: "HK 01", Type: "trojan", Server: "1.2.3.4", Port: 443, Available: true},
+	}
+	agg.SetNodesForUser(0, preset)
+
+	if _, err := st.CreateAirport("坏机场", "http://127.0.0.1:1/sub"); err != nil {
+		t.Fatalf("CreateAirport: %v", err)
+	}
+	if err := agg.RunOnce(context.Background(), store.RefreshTriggerScheduled); err != nil {
+		t.Fatalf("RunOnce error = %v", err)
+	}
+
+	got := agg.Nodes()
+	if len(got) != 1 {
+		t.Fatalf("pool size = %d, want 1 preserved", len(got))
+	}
+	// 健康检查写回:LastCheck 落时间;TCP 不通(1.2.3.4 不可达)经降级逻辑置不可用
+	if got[0].LastCheck.IsZero() {
+		t.Error("LastCheck is zero: health check did not run on retained pool")
+	}
+	if got[0].Available {
+		t.Error("Available = true, want false after failed TCP check (降级判定)")
+	}
+	// 克隆语义:预置原切片不被原地改写(在线池读取无竞态)
+	if !preset[0].LastCheck.IsZero() || !preset[0].Available {
+		t.Error("preset node mutated in place: health check must run on clones, not the live pool")
+	}
+
+	// 快照持久化:重启回填能拿到刷新后的可用性(last_check 不在快照列内,见 LoadNodePool)
+	snap, err := st.LoadNodePool()
+	if err != nil || len(snap) != 1 || snap[0].Available {
+		t.Errorf("snapshot = %+v (err %v), want 1 node with Available=false persisted", snap, err)
+	}
+
+	runs, _ := st.ListRefreshRuns(1)
+	if runs[0].Status != store.RefreshStatusFailed {
+		t.Errorf("Status = %s, want failed (拉取失败的头条语义不变)", runs[0].Status)
+	}
+	if runs[0].AvailableNodes != 0 {
+		t.Errorf("run AvailableNodes = %d, want 0 (TCP 全不通)", runs[0].AvailableNodes)
+	}
+}
+
 func TestAutoRefreshEnabled_DefaultsOff(t *testing.T) {
 	agg, _ := newTestAggregator(t)
 	if agg.autoRefreshEnabled() {
