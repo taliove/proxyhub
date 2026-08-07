@@ -151,7 +151,7 @@ describe('Login 验证码', () => {
     expect(vi.mocked(issueCaptcha)).not.toHaveBeenCalled()
   })
 
-  it('正常登录路径请求体不含验证码字段,零多余请求', async () => {
+  it('正常登录路径请求体不含验证码字段，零多余请求', async () => {
     vi.mocked(login).mockResolvedValue({ user: { role: 'user', must_change_password: false } })
     const wrapper = mountView()
     await fillCredentials(wrapper)
@@ -219,7 +219,7 @@ describe('Login 验证码', () => {
     expect((wrapper.findAll('.el-input-stub')[2].element as HTMLInputElement).value).toBe('')
   })
 
-  it('答案为空时本地拦截,不打请求也不消耗失败计数', async () => {
+  it('答案为空时本地拦截，不打请求也不消耗失败计数', async () => {
     vi.mocked(login).mockRejectedValueOnce(captcha401('invalid credentials'))
     vi.mocked(issueCaptcha).mockResolvedValue({ challenge_id: 'c1', image_base64: 'data:x' })
 
@@ -258,7 +258,7 @@ describe('Login 验证码', () => {
     expect(routerPush).toHaveBeenCalledWith('/change-password')
   })
 
-  it('must_enroll_mfa 登录成功直接跳绑定页(ticket 08)', async () => {
+  it('must_enroll_mfa 登录成功直接跳绑定页（ticket 08）', async () => {
     vi.mocked(login).mockResolvedValue({
       user: { role: 'user', must_change_password: false, must_enroll_mfa: true }
     })
@@ -270,7 +270,7 @@ describe('Login 验证码', () => {
     expect(routerPush).not.toHaveBeenCalledWith('/')
   })
 
-  it('改密优先于绑定:两个标志都在时先去改密页', async () => {
+  it('改密优先于绑定：两个标志都在时先去改密页', async () => {
     vi.mocked(login).mockResolvedValue({
       user: { role: 'user', must_change_password: true, must_enroll_mfa: true }
     })
@@ -316,7 +316,7 @@ describe('Login 两步验证', () => {
     setActivePinia(createPinia())
   })
 
-  it('mfa_required 响应切换到验证码态,不再渲染凭据表单', async () => {
+  it('mfa_required 响应切换到验证码态，不再渲染凭据表单', async () => {
     const wrapper = mountView()
     await enterMFA(wrapper)
 
@@ -329,7 +329,7 @@ describe('Login 两步验证', () => {
     expect(routerPush).not.toHaveBeenCalled()
   })
 
-  it('TOTP 验证成功进入系统,请求带 pending token 且默认不带 trust_ip', async () => {
+  it('TOTP 验证成功进入系统，请求带 pending token 且默认不带 trust_ip', async () => {
     const wrapper = mountView()
     await enterMFA(wrapper)
 
@@ -460,7 +460,7 @@ describe('Login 两步验证', () => {
     expect(routerPush).not.toHaveBeenCalledWith('/')
   })
 
-  it('第一态验证码要求与第二态共存:MFA 态不显示验证码块,退回后仍在', async () => {
+  it('第一态验证码要求与第二态共存：MFA 态不显示验证码块，退回后仍在', async () => {
     vi.mocked(login).mockRejectedValueOnce(captcha401('invalid credentials'))
     vi.mocked(issueCaptcha).mockResolvedValue({ challenge_id: 'c1', image_base64: 'data:x' })
 

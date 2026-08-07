@@ -20,7 +20,7 @@
                 :precision="0"
               />
               <span class="hint">
-                同一 IP 登录失败达该次数后要求验证码。0 = 每次都要求,1 = 一次失败即要求(默认)。
+                同一 IP 登录失败达该次数后要求验证码。0 = 每次都要求，1 = 一次失败即要求（默认）。
               </span>
             </el-form-item>
             <el-form-item label="订阅拉取限频阈值">
@@ -32,7 +32,7 @@
                 :precision="0"
               />
               <span class="hint">
-                单 IP × 单订阅地址每小时允许拉取次数。0 = 关闭限频,默认
+                单 IP × 单订阅地址每小时允许拉取次数。0 = 关闭限频，默认
                 {{ PULL_RATE_LIMIT_DEFAULT }}。
               </span>
             </el-form-item>
@@ -51,7 +51,7 @@
             <el-form-item label="自动黑名单时长">
               <el-input v-model="settings.pull_blacklist_duration" placeholder="24h" />
               <span class="hint">
-                自动拉黑规则的有效期,格式如 1h/24h/168h。默认
+                自动拉黑规则的有效期，格式如 1h/24h/168h。默认
                 {{ PULL_BLACKLIST_DURATION_DEFAULT }}。
               </span>
             </el-form-item>
@@ -86,15 +86,15 @@
                 inactive-value="false"
               />
               <span class="hint">
-                默认关闭:机场节点仅由「手动刷新」与粘贴/文件导入更新(机场订阅被服务器侧封锁 403
-                是常见现象,定时外打多为无效请求)。开启后按健康检查间隔定时拉取全部启用机场。
+                默认关闭：机场节点仅由「手动刷新」与粘贴/文件导入更新（机场订阅被服务器侧封锁 403
+                是常见现象，定时外打多为无效请求）。开启后按健康检查间隔定时拉取全部启用机场。
               </span>
             </el-form-item>
 
             <el-form-item v-if="authStore.isSuperAdmin" label="机场拉取并行度">
               <el-input-number v-model="settings.fetch_concurrency" :min="1" :max="10" />
               <span class="hint">
-                全量刷新时同时拉取的机场数(1-10,默认 4)。只作用于拉取阶段。
+                全量刷新时同时拉取的机场数（1-10，默认 4）。只作用于拉取阶段。
               </span>
             </el-form-item>
             <el-form-item label="地区白名单">
@@ -111,7 +111,7 @@
                 inactive-value="false"
               />
               <span class="hint">
-                开启后,订阅生成时把机场原名统一为标准格式(如 🇭🇰 香港 JS-01)。
+                开启后，订阅生成时把机场原名统一为标准格式（如 🇭🇰 香港 JS-01）。
               </span>
             </el-form-item>
             <el-form-item v-if="settings.standardize_names === 'true'" label="名称模板">
@@ -138,10 +138,10 @@
                 v-model="settings.filter_whitelist"
                 type="textarea"
                 :rows="3"
-                placeholder="留空则不启用。非空时,只保留名称命中任一关键词的节点(自建节点豁免)。多个关键词用逗号或换行分隔。"
+                placeholder="留空则不启用。非空时，只保留名称命中任一关键词的节点（自建节点豁免）。多个关键词用逗号或换行分隔。"
               />
               <span class="hint"
-                >地区白名单优先(按地区代码精确筛选),关键词白名单次之(字符串匹配)。</span
+                >地区白名单优先（按地区代码精确筛选）,关键词白名单次之（字符串匹配）。</span
               >
             </el-form-item>
             <el-form-item label="订阅关键词过滤">
@@ -153,9 +153,9 @@
                 v-model="settings.filter_keywords"
                 type="textarea"
                 :rows="4"
-                placeholder="名称命中任一关键词的节点将被剔除(自建节点豁免)。多个关键词用逗号或换行分隔。"
+                placeholder="名称命中任一关键词的节点将被剔除（自建节点豁免）。多个关键词用逗号或换行分隔。"
               />
-              <span class="hint">子串匹配、不区分大小写;改动即时对下一次订阅生效。</span>
+              <span class="hint">子串匹配、不区分大小写；改动即时对下一次订阅生效。</span>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="saveSettings">保存</el-button>
@@ -169,9 +169,9 @@
               type="info"
               :closable="false"
               class="settings-alert"
-              title="采用固定时长测速：下行、上行各跑满「测速时长」(默认 10s)。数据量仅作上限。"
+              title="采用固定时长测速：下行、上行各跑满「测速时长」（默认 10s）。数据量仅作上限。"
             />
-            <el-form-item label="测速时长(秒/方向)">
+            <el-form-item label="测速时长（秒/方向）">
               <el-input v-model="settings.bandwidth_test_duration_sec" placeholder="10" />
             </el-form-item>
             <el-form-item label="下行探测 URL">
@@ -186,19 +186,19 @@
                 placeholder="https://speed.cloudflare.com/__up"
               />
             </el-form-item>
-            <el-form-item label="上行数据上限(字节)">
+            <el-form-item label="上行数据上限（字节）">
               <el-input v-model="settings.bandwidth_up_bytes" placeholder="1073741824 (1GB)" />
             </el-form-item>
-            <el-form-item label="单方向硬超时(秒)">
+            <el-form-item label="单方向硬超时（秒）">
               <el-input v-model="settings.bandwidth_dir_timeout_sec" placeholder="20" />
             </el-form-item>
-            <el-form-item label="整体超时(秒)">
+            <el-form-item label="整体超时（秒）">
               <el-input v-model="settings.bandwidth_timeout_sec" placeholder="60" />
             </el-form-item>
-            <el-form-item label="下行合格阈值(Mbps)">
+            <el-form-item label="下行合格阈值（Mbps）">
               <el-input v-model="settings.bandwidth_min_down_mbps" placeholder="1.0" />
             </el-form-item>
-            <el-form-item label="上行合格阈值(Mbps)">
+            <el-form-item label="上行合格阈值（Mbps）">
               <el-input v-model="settings.bandwidth_min_up_mbps" placeholder="1.0" />
             </el-form-item>
             <el-form-item>

@@ -174,7 +174,7 @@ describe('EndpointNodePicksDialog(issue #80;对象形态 #85;翻页/页签/全�
     vi.clearAllMocks()
   })
 
-  it('打开时拉取全量池节点(大 page_size,同 useNodePool)', async () => {
+  it('打开时拉取全量池节点（大 page_size，同 useNodePool）', async () => {
     mountDialog({ endpoint })
     await flushPromises()
     expect(vi.mocked(client.get)).toHaveBeenCalledWith('/nodes', {
@@ -182,7 +182,7 @@ describe('EndpointNodePicksDialog(issue #80;对象形态 #85;翻页/页签/全�
     })
   })
 
-  it('编辑模式回显已选(旧格式兼容);已消失的 key 标「已失效」且保存时保留', async () => {
+  it('编辑模式回显已选（旧格式兼容）;已消失的 key 标「已失效」且保存时保留', async () => {
     const ep: Endpoint = {
       ...endpoint,
       node_picks: '["hk1.example.com:443","gone.example.com:443"]'
@@ -209,7 +209,7 @@ describe('EndpointNodePicksDialog(issue #80;对象形态 #85;翻页/页签/全�
     expect(wrapper.emitted('saved')).toBeTruthy()
   })
 
-  it('从池中添加节点后保存,NodeKey 入精选数组(新格式)', async () => {
+  it('从池中添加节点后保存，NodeKey 入精选数组（新格式）', async () => {
     const wrapper = mountDialog({ endpoint })
     await flushPromises()
 
@@ -227,7 +227,7 @@ describe('EndpointNodePicksDialog(issue #80;对象形态 #85;翻页/页签/全�
     })
   })
 
-  it('别名回显与编辑(issue #85):新格式回显别名,改别名后随精选落库;trim 空串不落字段', async () => {
+  it('别名回显与编辑（issue #85）:新格式回显别名，改别名后随精选落库；trim 空串不落字段', async () => {
     const ep: Endpoint = {
       ...endpoint,
       node_picks:
@@ -257,7 +257,7 @@ describe('EndpointNodePicksDialog(issue #80;对象形态 #85;翻页/页签/全�
     })
   })
 
-  it('移除全部已选后保存为空数组(清空精选 = 恢复全量)', async () => {
+  it('移除全部已选后保存为空数组（清空精选 = 恢复全量）', async () => {
     const ep: Endpoint = { ...endpoint, node_picks: '["hk1.example.com:443"]' }
     const wrapper = mountDialog({ endpoint: ep })
     await flushPromises()
@@ -277,7 +277,7 @@ describe('EndpointNodePicksDialog(issue #80;对象形态 #85;翻页/页签/全�
     })
   })
 
-  it('关键词过滤池列表(名称/来源/地区子串,大小写不敏感)', async () => {
+  it('关键词过滤池列表（名称/来源/地区子串，大小写不敏感）', async () => {
     const wrapper = mountDialog({ endpoint })
     await flushPromises()
     expect(wrapper.findAll('button').filter((b) => b.text() === '添加').length).toBe(2)
@@ -290,7 +290,7 @@ describe('EndpointNodePicksDialog(issue #80;对象形态 #85;翻页/页签/全�
     expect(wrapper.text()).not.toContain('HK-01')
   })
 
-  it('全选当前过滤结果:过滤后一键并入已选并按 key 去重(issue #86)', async () => {
+  it('全选当前过滤结果：过滤后一键并入已选并按 key 去重（issue #86）', async () => {
     const wrapper = mountDialog({ endpoint })
     await flushPromises()
 
@@ -315,7 +315,7 @@ describe('EndpointNodePicksDialog(issue #80;对象形态 #85;翻页/页签/全�
     })
   })
 
-  it('新建暂存模式(endpoint=null):确定上抛 confirm,不发 PUT', async () => {
+  it('新建暂存模式（endpoint=null）:确定上抛 confirm,不发 PUT', async () => {
     const wrapper = mountDialog({
       endpoint: null,
       stagedPicks: [{ key: 'hk1.example.com:443' }]
@@ -327,7 +327,7 @@ describe('EndpointNodePicksDialog(issue #80;对象形态 #85;翻页/页签/全�
     await wrapper
       .findAll('button')
       .filter((b) => b.text() === '添加')[0]
-      .trigger('click') // 添加 HK-01(重复,应去重)
+      .trigger('click') // 添加 HK-01(重复，应去重)
     await wrapper
       .findAll('button')
       .filter((b) => b.text() === '添加')[1]

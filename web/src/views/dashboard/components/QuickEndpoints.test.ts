@@ -104,7 +104,7 @@ describe('QuickEndpoints', () => {
     expect(link.attributes('href')).toBe('/endpoints')
   })
 
-  it('请求失败时降级为失败提示(全局拦截器已 toast)', async () => {
+  it('请求失败时降级为失败提示（全局拦截器已 toast）', async () => {
     vi.mocked(client.get).mockRejectedValue(new Error('network'))
     const wrapper = mountQuickEndpoints()
     await flushPromises()

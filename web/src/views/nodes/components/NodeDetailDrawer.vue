@@ -42,7 +42,7 @@
             <!-- 可用:原因已随成功清空;从未检测:引导文案;失败:分类 + 短详情(ticket 0017) -->
             <span v-if="node.available" class="muted">—</span>
             <span v-else-if="node.availability_source === 'never'" class="muted">
-              从未检测;需真实检测后才会进入订阅
+              从未检测；需真实检测后才会进入订阅
             </span>
             <template v-else-if="node.detection_fail_reason">
               <span class="error-text">{{ failReasonText(node.detection_fail_reason) }}</span>
@@ -124,7 +124,7 @@
             </template>
           </el-table-column>
         </el-table>
-        <div v-else class="muted">该节点暂无检测记录,可点下方「出网快速检测」运行检测。</div>
+        <div v-else class="muted">该节点暂无检测记录，可点下方「出网快速检测」运行检测。</div>
       </div>
 
       <div v-if="node.bandwidth_down_mbps || node.bandwidth_up_mbps" class="drawer-block bw-detail">
@@ -155,12 +155,12 @@
           :disabled="detecting"
           @click="emit('action', node, 'detect')"
         >
-          {{ detecting ? '出网快速检测(进行中)' : '出网快速检测' }}
+          {{ detecting ? '出网快速检测（进行中）' : '出网快速检测' }}
         </el-button>
         <el-button size="small" @click="emit('action', node, 'stability')">出网+稳定性</el-button>
         <el-button size="small" @click="emit('action', node, 'speedtest')">快速测速</el-button>
         <el-button size="small" @click="emit('action', node, 'exam')">
-          {{ runningExamKeys.has(node.node_key) ? '深度体检(查看进度)' : '深度体检' }}
+          {{ runningExamKeys.has(node.node_key) ? '深度体检（查看进度）' : '深度体检' }}
         </el-button>
         <el-button size="small" @click="emit('action', node, 'client-speedtest')"
           >本机实测</el-button
@@ -230,7 +230,7 @@ const loadExamHistory = async (nodeKey: string) => {
   try {
     examEntries.value = await fetchExamHistory({ node_key: nodeKey })
   } catch {
-    examEntries.value = [] // 历史查询失败不阻塞抽屉,静默降级为空态
+    examEntries.value = [] // 历史查询失败不阻塞抽屉，静默降级为空态
   } finally {
     examLoading.value = false
   }

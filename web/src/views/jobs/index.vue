@@ -1,7 +1,7 @@
 <template>
   <div>
     <PageHeader>
-      <span v-if="polling" class="muted">运行中,自动刷新</span>
+      <span v-if="polling" class="muted">运行中，自动刷新</span>
       <el-select v-model="sourceFilter" class="source-filter" size="small">
         <el-option label="手动发起" value="手动" />
         <el-option label="定时" value="定时" />
@@ -110,7 +110,7 @@ const locateJob = async (raw: unknown) => {
   const idStr = Array.isArray(raw) ? raw[0] : raw
   const id = Number(idStr)
   if (typeof idStr !== 'string' || !Number.isInteger(id) || id <= 0) {
-    ElMessage.error('任务链接无效,已返回任务列表')
+    ElMessage.error('任务链接无效，已返回任务列表')
     clearLocateQuery()
     return
   }
@@ -119,7 +119,7 @@ const locateJob = async (raw: unknown) => {
     openDetail(job)
   } catch {
     // 全局拦截器已提示请求失败;此处补定位语义并落回列表
-    ElMessage.warning(`未找到任务 #${id},已返回任务列表`)
+    ElMessage.warning(`未找到任务 #${id}，已返回任务列表`)
     clearLocateQuery()
   }
 }

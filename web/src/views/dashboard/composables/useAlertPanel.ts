@@ -83,7 +83,7 @@ function buildAirportAlerts(airports: Airport[]): { items: AlertItem[]; untested
         key: `airport-${a.id}`,
         category: 'airport',
         severity: 'warning',
-        text: `机场「${a.name}」最近测试得分 ${Math.round(a.last_test_score)} 分,低于 ${LOW_SCORE_THRESHOLD} 分`,
+        text: `机场「${a.name}」最近测试得分 ${Math.round(a.last_test_score)} 分，低于 ${LOW_SCORE_THRESHOLD} 分`,
         route: 'Airports'
       })
     }
@@ -116,7 +116,7 @@ function buildBannedAlerts(banned: BannedIP[]): AlertItem[] {
       key: `banned-${b.ip}`,
       category: 'banned' as const,
       severity: 'danger' as const,
-      text: `IP ${b.ip} 已被封禁(累计失败 ${b.fail_count} 次)`,
+      text: `IP ${b.ip} 已被封禁（累计失败 ${b.fail_count} 次）`,
       route: 'Audit'
     }))
 }

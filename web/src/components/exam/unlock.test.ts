@@ -31,7 +31,7 @@ describe('unlockLabel', () => {
     expect(unlockLabel(res('X', { level: 'originals_only' }))).toBe('自制剧')
     expect(unlockLabel(res('X', { level: 'blocked' }))).toBe('封锁')
   })
-  it('unknown with error reads 不可用, otherwise 未知', () => {
+  it('unknown with error reads 不可用， otherwise 未知', () => {
     expect(unlockLabel(res('X', { level: undefined, error: 'boom', available: false }))).toBe(
       '不可用'
     )

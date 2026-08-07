@@ -111,7 +111,7 @@ describe('TopNodes', () => {
     Object.assign(navigator, { clipboard: { writeText } })
   })
 
-  it('按算分总分降序渲染,展示地区/分数/档位/来源', async () => {
+  it('按算分总分降序渲染，展示地区/分数/档位/来源', async () => {
     mockApi([
       makeEntry('b:2', '日本', 50), // 总分 80 良好
       makeEntry('a:1', '香港', 100), // 总分 100 极好
@@ -137,7 +137,7 @@ describe('TopNodes', () => {
     expect(wrapper.text()).toContain('机场A')
   })
 
-  it('Top 10 截断:第 11 名及以后不上榜', async () => {
+  it('Top 10 截断：第 11 名及以后不上榜', async () => {
     // 12 条:稳定性 100..,其中最后两条分数最低应被截断
     const entries = Array.from({ length: 12 }, (_, i) => makeEntry(`n${i}:1`, `R${i}`, 100 - i * 5))
     mockApi(entries)
@@ -152,7 +152,7 @@ describe('TopNodes', () => {
     expect(regionOrder(wrapper)[0]).toBe('R0')
   })
 
-  it('总分并列时稳定性分高者在前,再并列保持接口顺序', async () => {
+  it('总分并列时稳定性分高者在前，再并列保持接口顺序', async () => {
     // A:稳定性 100 + 解锁 blocked -> 总分 80,稳定性 100
     // B/C:稳定性 50 + 解锁 full -> 总分 80,稳定性 50(接口顺序 B 在 C 前)
     mockApi([
@@ -190,7 +190,7 @@ describe('TopNodes', () => {
     expect(wrapper.find('.tags-overflow').exists()).toBe(false)
   })
 
-  it('协议不支持时隐藏分享操作,支持的协议显示并可复制', async () => {
+  it('协议不支持时隐藏分享操作，支持的协议显示并可复制', async () => {
     mockApi([makeEntry('a:1', '香港', 100, { type: 'hysteria2' }), makeEntry('b:2', '日本', 50)])
     const wrapper = mountTopNodes()
     await flushPromises()
@@ -250,7 +250,7 @@ describe('TopNodes', () => {
     expect(wrapper.find('.panel-empty').text()).toBe('加载中...')
   })
 
-  it('请求失败时降级为失败提示(全局拦截器已 toast)', async () => {
+  it('请求失败时降级为失败提示（全局拦截器已 toast）', async () => {
     mockApi(new Error('network'))
     const wrapper = mountTopNodes()
     await flushPromises()

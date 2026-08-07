@@ -37,17 +37,17 @@ export function captchaRequiredFromError(err: unknown): boolean {
 // loginErrorMessage maps a failed login onto an actionable Chinese message.
 export function loginErrorMessage(err: unknown): string {
   const { status, text, captchaRequired } = errorShape(err)
-  if (status === undefined) return '网络异常,请检查连接后重试'
+  if (status === undefined) return '网络异常，请检查连接后重试'
   if (status === 401) {
     // "captcha required" is the captcha gate rejecting a missing/wrong answer;
     // anything else at 401 is a credential failure.
-    if (text.includes('captcha')) return '验证码错误或已过期,请重新输入'
-    return captchaRequired ? '用户名或密码错误,请输入验证码后重试' : '用户名或密码错误'
+    if (text.includes('captcha')) return '验证码错误或已过期，请重新输入'
+    return captchaRequired ? '用户名或密码错误，请输入验证码后重试' : '用户名或密码错误'
   }
   if (status === 403) {
-    if (text.includes('disabled')) return '账号已被禁用,请联系管理员'
-    if (text.includes('too many')) return '失败次数过多,该 IP 已被临时封禁,请稍后重试'
+    if (text.includes('disabled')) return '账号已被禁用，请联系管理员'
+    if (text.includes('too many')) return '失败次数过多，该 IP 已被临时封禁，请稍后重试'
   }
-  if (status === 429) return '请求过于频繁,请稍后重试'
-  return text || '登录失败,请稍后重试'
+  if (status === 429) return '请求过于频繁，请稍后重试'
+  return text || '登录失败，请稍后重试'
 }

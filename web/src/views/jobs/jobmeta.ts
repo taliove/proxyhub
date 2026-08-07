@@ -86,10 +86,10 @@ export function parseCursor(cursor: string | undefined): number | null {
 // JobParams 任务启动参数(jobs 表 params_json 的已知子集)。
 export interface JobParams {
   node_keys?: string[]
-  scope?: string // "all" / "query" / "selected"(2026-07 起写入;旧任务无此字段)
+  scope?: string // "all" / "query" / "selected"(2026-07 起写入；旧任务无此字段)
   trigger?: string // refresh kind: manual / scheduled / startup
   airport_id?: number // refresh 单机场
-  airport_name?: string // refresh 单机场(展示用)
+  airport_name?: string // refresh 单机场（展示用）
 }
 
 // parseJobParams 解析 params JSON 串;空/非法返回 null。

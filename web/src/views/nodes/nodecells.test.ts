@@ -36,13 +36,13 @@ const node = (over: Partial<Node> = {}): Node =>
 const unode = (over: Partial<UnifiedNode> = {}): UnifiedNode => ({ ...node(), ...over })
 
 describe('nameCell', () => {
-  it('标准名优先,原始名作副标题', () => {
+  it('标准名优先，原始名作副标题', () => {
     expect(nameCell(node({ name: 'HK-01', display_name: '香港01' }))).toEqual({
       primary: '香港01',
       secondary: 'HK-01'
     })
   })
-  it('无标准名时用原始名,不重复副标题', () => {
+  it('无标准名时用原始名，不重复副标题', () => {
     expect(nameCell(node({ name: 'HK-01', display_name: '' }))).toEqual({
       primary: 'HK-01',
       secondary: ''
@@ -63,7 +63,7 @@ describe('stateTags', () => {
       '禁用'
     ])
   })
-  it('不可用不出标签(由延迟列状态色点表达)', () => {
+  it('不可用不出标签（由延迟列状态色点表达）', () => {
     expect(stateTags(unode({ available: false }))).toEqual([])
   })
 })
@@ -73,15 +73,15 @@ describe('healthTone / healthLabel', () => {
     expect(healthTone(unode({ available: true, latency: 88 }))).toBe('success')
     expect(healthLabel(unode({ available: true, latency: 88 }))).toBe('可用')
   })
-  it('可用但无延迟为灰点(未检测)', () => {
+  it('可用但无延迟为灰点（未检测）', () => {
     expect(healthTone(unode({ available: true, latency: 0 }))).toBe('muted')
     expect(healthLabel(unode({ available: true, latency: 0 }))).toBe('未检测')
   })
-  it('不可用为红点(优先于延迟)', () => {
+  it('不可用为红点（优先于延迟）', () => {
     expect(healthTone(unode({ available: false, latency: 88 }))).toBe('danger')
     expect(healthLabel(unode({ available: false, latency: 88 }))).toBe('不可用')
   })
-  it('禁用为灰点(优先于可用性)', () => {
+  it('禁用为灰点（优先于可用性）', () => {
     expect(healthTone(unode({ enabled: false, available: false }))).toBe('muted')
     expect(healthLabel(unode({ enabled: false, available: false }))).toBe('已禁用')
   })
@@ -97,7 +97,7 @@ describe('latencyText', () => {
 })
 
 describe('tagsDisplay - 空态', () => {
-  it('缺省(票据 21 前)返回空数组', () => {
+  it('缺省（票据 21 前）返回空数组', () => {
     expect(tagsDisplay(node({ tags: undefined }))).toEqual([])
   })
   it('有标签原样返回', () => {
@@ -112,7 +112,7 @@ describe('examEgressCell', () => {
     expect(examEgressCell(undefined)).toBeNull()
     expect(examEgressCell(report(undefined))).toBeNull()
   })
-  it('仅国家码,无警示', () => {
+  it('仅国家码，无警示', () => {
     const c = examEgressCell(report({ ipv4: { country_code: 'us', proxy: false, hosting: false } }))
     expect(c).toEqual({ code: 'US', warn: false, reasons: [] })
   })

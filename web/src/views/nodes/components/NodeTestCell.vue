@@ -13,12 +13,12 @@
         <el-dropdown-menu>
           <!-- 4 个检查动作,与批量面同名同义(见 CONTEXT「检查动作」)。 -->
           <el-dropdown-item command="detect" :disabled="detecting">
-            {{ detecting ? '出网快速检测(进行中)' : '出网快速检测' }}
+            {{ detecting ? '出网快速检测（进行中）' : '出网快速检测' }}
           </el-dropdown-item>
           <el-dropdown-item command="stability">出网+稳定性</el-dropdown-item>
           <el-dropdown-item command="speedtest">快速测速</el-dropdown-item>
           <el-dropdown-item command="exam">
-            {{ runningExamKeys.has(row.node_key) ? '深度体检(查看进度)' : '深度体检' }}
+            {{ runningExamKeys.has(row.node_key) ? '深度体检（查看进度）' : '深度体检' }}
           </el-dropdown-item>
           <!-- 本机实测:浏览器端验收测量,跳转独立页并预填标注(ticket 0034) -->
           <el-dropdown-item command="client-speedtest" divided>本机实测</el-dropdown-item>

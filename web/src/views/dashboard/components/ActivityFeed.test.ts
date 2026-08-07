@@ -37,7 +37,7 @@ describe('ActivityFeed', () => {
     vi.clearAllMocks()
   })
 
-  it('running 任务全部在前,其后是非 running 最近 5 条(按 updated_at 倒序)', async () => {
+  it('running 任务全部在前，其后是非 running 最近 5 条（按 updated_at 倒序）', async () => {
     const finished = Array.from({ length: 7 }, (_, i) =>
       makeJob({
         id: i + 1,
@@ -72,7 +72,7 @@ describe('ActivityFeed', () => {
     ])
   })
 
-  it('条目渲染 kind 标签 / 状态 / 范围 / 触发源,点击直达任务详情', async () => {
+  it('条目渲染 kind 标签 / 状态 / 范围 / 触发源，点击直达任务详情', async () => {
     vi.mocked(listJobs).mockResolvedValue([
       makeJob({
         id: 1,
@@ -111,7 +111,7 @@ describe('ActivityFeed', () => {
     expect(wrapper.find('.panel-empty').text()).toBe('加载中...')
   })
 
-  it('请求失败时静默降级为空态(全局拦截器已提示)', async () => {
+  it('请求失败时静默降级为空态（全局拦截器已提示）', async () => {
     vi.mocked(listJobs).mockRejectedValue(new Error('network'))
     const wrapper = mountFeed()
     await flushPromises()

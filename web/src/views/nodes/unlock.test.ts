@@ -40,7 +40,7 @@ describe('classifyUnlock - 三档解锁着色', () => {
     expect(d.label).toBe('已封锁')
   })
 
-  it('三档互不相同(绿/黄/红)', () => {
+  it('三档互不相同（绿/黄/红）', () => {
     const types = ['full', 'originals_only', 'blocked'].map(
       (level) => classifyUnlock(result({ available: false, level }), 'Netflix').tagType
     )
@@ -49,7 +49,7 @@ describe('classifyUnlock - 三档解锁着色', () => {
 })
 
 describe('classifyUnlock - error 与 blocked 区分', () => {
-  it('解锁目标检测错误(无 level,有 error)-> info 灰,不误判为 blocked', () => {
+  it('解锁目标检测错误（无 level，有 error）-> info 灰，不误判为 blocked', () => {
     const d = classifyUnlock(result({ available: false, error: 'dial timeout' }), 'Netflix')
     expect(d.variant).toBe('error')
     expect(d.tagType).toBe('info')
@@ -67,14 +67,14 @@ describe('classifyUnlock - error 与 blocked 区分', () => {
 })
 
 describe('classifyUnlock - generic 零回归', () => {
-  it('通用探测(connectivity)可用 -> available/success,不进 error 档', () => {
+  it('通用探测（connectivity）可用 -> available/success,不进 error 档', () => {
     const d = classifyUnlock(result({ available: true }), 'connectivity')
     expect(d.variant).toBe('available')
     expect(d.tagType).toBe('success')
     expect(isGenericVariant(d.variant)).toBe(true)
   })
 
-  it('通用探测失败(带 error)仍为 unavailable/danger,不变灰', () => {
+  it('通用探测失败（带 error）仍为 unavailable/danger,不变灰', () => {
     const d = classifyUnlock(result({ available: false, error: 'timeout' }), 'connectivity')
     expect(d.variant).toBe('unavailable')
     expect(d.tagType).toBe('danger')
@@ -98,7 +98,7 @@ describe('normalizeRegion - 国家码徽标有无', () => {
     expect(normalizeRegion(' hk ')).toBe('HK')
   })
 
-  it('空/未定义/空白返回空串(不占位)', () => {
+  it('空/未定义/空白返回空串（不占位）', () => {
     expect(normalizeRegion('')).toBe('')
     expect(normalizeRegion(undefined)).toBe('')
     expect(normalizeRegion('   ')).toBe('')
@@ -137,7 +137,7 @@ describe('unlockDisplayRows - 展开并附带分档/徽标', () => {
   })
 })
 
-describe('unlockSummary - 通过数汇总(既有行为不回归)', () => {
+describe('unlockSummary - 通过数汇总（既有行为不回归）', () => {
   it('无结果返回占位符', () => {
     expect(unlockSummary(nodeWith(undefined))).toBe('—')
   })

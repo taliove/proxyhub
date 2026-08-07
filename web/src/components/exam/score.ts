@@ -20,7 +20,7 @@ const SPEED_ANCHORS: ReadonlyArray<{ mbps: number; score: number }> = [
 // 单项得分明细(分数 + 权重)。
 export interface ScoreItem {
   score: number | null // null 表示该段缺失
-  weight: number // 0..1 归一化权重(缺段时为 0)
+  weight: number // 0..1 归一化权重（缺段时为 0）
 }
 
 // 四项得分分解(稳定性 + 速度 + 解锁 + 出网)。
@@ -36,8 +36,8 @@ export interface ExamScoreResult {
   total: number // 0..100
   grade: ExamGrade
   breakdown: ExamScoreBreakdown
-  partial: boolean // true 表示有段缺失,UI 需标注"部分数据"
-  unreliable: boolean // true 表示分数不可信(出网全失败或缺出网段)
+  partial: boolean // true 表示有段缺失，UI 需标注"部分数据"
+  unreliable: boolean // true 表示分数不可信（出网全失败或缺出网段）
 }
 
 // gradeFromScore 由 0-100 总分映射到五档。
@@ -180,7 +180,7 @@ export function calculateExamScore(
   if (unlockScore !== null) totalWeight += defaultWeights.unlock
   if (egressScore !== null) totalWeight += defaultWeights.egress
 
-  const partial = totalWeight < 0.999 // 有段缺失(浮点容差)
+  const partial = totalWeight < 0.999 // 有段缺失（浮点容差）
 
   // normalized:权重和 <100% 时按比例放大到 100%(缺段被其余段补齐)。
   // progressive:归一化因子恒为 1,缺段的默认权重份额直接损失(计 0),分数由小到大爬升。

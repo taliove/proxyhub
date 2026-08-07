@@ -93,7 +93,7 @@
       ref="qrDialog"
       v-model="qrDialogVisible"
       title="机场订阅二维码"
-      hint="扫码导入该机场原始订阅(未经过 ProxyHub 聚合)"
+      hint="扫码导入该机场原始订阅（未经过 ProxyHub 聚合）"
     />
     <AirportDetailDrawer
       ref="detailDrawer"
@@ -224,11 +224,11 @@ const refreshNodes = async () => {
   refreshing.value = true
   try {
     await client.post('/aggregator/refresh')
-    ElMessage.success('刷新任务已启动,正在打开任务中心')
+    ElMessage.success('刷新任务已启动，正在打开任务中心')
     router.push({ name: 'Jobs' })
   } catch (error) {
     if ((error as { response?: { status?: number } })?.response?.status === 409) {
-      ElMessage.warning('与进行中的单机场刷新冲突,请稍候再试')
+      ElMessage.warning('与进行中的单机场刷新冲突，请稍候再试')
     } else {
       ElMessage.error('刷新失败')
     }
@@ -258,7 +258,7 @@ const refreshAirport = async (row: Airport) => {
     pollRefreshJob(row.id, resp.jobId, 0)
   } catch (error) {
     if ((error as { response?: { status?: number } })?.response?.status === 409) {
-      ElMessage.warning('全量刷新进行中,稍后再试')
+      ElMessage.warning('全量刷新进行中，稍后再试')
     } else {
       ElMessage.error('刷新失败')
     }
@@ -283,7 +283,7 @@ const pollRefreshJob = async (airportId: number, jobId: number, attempt: number)
       return
     }
     if (job.status === 'done') {
-      ElMessage.success('单机场刷新完成,节点已入池')
+      ElMessage.success('单机场刷新完成，节点已入池')
     } else if (job.status === 'failed') {
       ElMessage.error('刷新失败')
     } else if (job.status === 'interrupted') {

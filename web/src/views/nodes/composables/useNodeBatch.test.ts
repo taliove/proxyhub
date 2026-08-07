@@ -41,7 +41,7 @@ const setup = (selection: Node[] = []) => {
   return { reload, effectiveSelection, batch }
 }
 
-describe('useNodeBatch 行内屏蔽/解除屏蔽(issue #82)', () => {
+describe('useNodeBatch 行内屏蔽/解除屏蔽（issue #82）', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('blockNode:调 /nodes/block 带 node_key,提示后刷新列表', async () => {
@@ -51,7 +51,7 @@ describe('useNodeBatch 行内屏蔽/解除屏蔽(issue #82)', () => {
     await batch.blockNode(node({ node_key: 'k-block' }))
 
     expect(client.post).toHaveBeenCalledWith('/nodes/block', { node_key: 'k-block' })
-    expect(ElMessage.success).toHaveBeenCalledWith('已屏蔽,下次生成订阅生效')
+    expect(ElMessage.success).toHaveBeenCalledWith('已屏蔽，下次生成订阅生效')
     expect(reload).toHaveBeenCalledTimes(1)
   })
 
@@ -66,7 +66,7 @@ describe('useNodeBatch 行内屏蔽/解除屏蔽(issue #82)', () => {
     expect(reload).toHaveBeenCalledTimes(1)
   })
 
-  it('接口失败时不刷新列表(错误向上抛,由调用方/拦截器处理)', async () => {
+  it('接口失败时不刷新列表（错误向上抛，由调用方/拦截器处理）', async () => {
     const { reload, batch } = setup()
     vi.mocked(client.post).mockRejectedValue(new Error('network') as never)
 
@@ -74,7 +74,7 @@ describe('useNodeBatch 行内屏蔽/解除屏蔽(issue #82)', () => {
     expect(reload).not.toHaveBeenCalled()
   })
 
-  it('selectableSelection:自建节点被豁免,屏蔽作用域只含机场节点', () => {
+  it('selectableSelection:自建节点被豁免，屏蔽作用域只含机场节点', () => {
     const { batch } = setup([
       node({ node_key: 'k-airport' }),
       node({ node_key: 'k-self', source: SELF_HOSTED })

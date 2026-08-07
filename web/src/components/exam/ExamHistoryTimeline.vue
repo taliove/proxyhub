@@ -57,7 +57,7 @@
       <!-- 按需加载:历史上限 50 条,首屏只渲染一批,其余点开加载 -->
       <div v-if="hasMore" class="exam-timeline-more">
         <el-button link type="primary" size="small" @click="showMore">
-          加载更多({{ items.length - visibleCount }})
+          加载更多（{{ items.length - visibleCount }}）
         </el-button>
       </div>
     </template>

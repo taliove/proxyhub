@@ -90,7 +90,7 @@ describe('matchesFlag - 三态布尔', () => {
 })
 
 describe('matchesKeyword', () => {
-  it('命中名称/标准名/服务器,大小写不敏感', () => {
+  it('命中名称/标准名/服务器，大小写不敏感', () => {
     const n = node({ name: 'Tokyo-01', display_name: '日本东京', server: '203.0.113.9' })
     expect(matchesKeyword(n, 'tokyo')).toBe(true)
     expect(matchesKeyword(n, '东京')).toBe(true)
@@ -102,18 +102,18 @@ describe('matchesKeyword', () => {
   })
 })
 
-describe('matchesTags - AND 语义(与 Go subfilter 对齐)', () => {
+describe('matchesTags - AND 语义（与 Go subfilter 对齐）', () => {
   it('空条件匹配所有', () => {
     expect(matchesTags(node({ tags: [] }), [])).toBe(true)
   })
-  it('须带全所选标签才匹配(组合条件同时满足)', () => {
+  it('须带全所选标签才匹配（组合条件同时满足）', () => {
     const n = node({ tags: ['流媒体', '低延迟'] })
     expect(matchesTags(n, ['低延迟'])).toBe(true)
     expect(matchesTags(n, ['流媒体', '低延迟'])).toBe(true)
     expect(matchesTags(n, ['游戏', '低延迟'])).toBe(false)
     expect(matchesTags(n, ['游戏'])).toBe(false)
   })
-  it('节点无 tags 字段(票据 21 前)时,启用标签筛选不报错且不命中', () => {
+  it('节点无 tags 字段（票据 21 前）时，启用标签筛选不报错且不命中', () => {
     expect(matchesTags(node({ tags: undefined }), ['流媒体'])).toBe(false)
   })
 })
@@ -133,7 +133,7 @@ describe('matchesUnlock - AND 语义', () => {
     expect(matchesUnlock(n, ['Netflix', 'YouTube'])).toBe(true)
     expect(matchesUnlock(n, ['Netflix', 'Disney'])).toBe(false)
   })
-  it('无检测结果时,启用解锁筛选不命中', () => {
+  it('无检测结果时，启用解锁筛选不命中', () => {
     expect(matchesUnlock(node({ unlock_results: undefined }), ['Netflix'])).toBe(false)
   })
 })
@@ -158,7 +158,7 @@ describe('matchesNode / filterNodes - 组合', () => {
     expect(matchesNode(n, criteria({ source: '机场A', type: 'vmess' }))).toBe(false)
   })
 
-  it('filterNodes 返回新数组,不改入参', () => {
+  it('filterNodes 返回新数组，不改入参', () => {
     const nodes = [node({ node_key: 'a', region: 'HK' }), node({ node_key: 'b', region: 'US' })]
     const out = filterNodes(nodes, criteria({ region: 'HK' }))
     expect(out.map((n) => n.node_key)).toEqual(['a'])
@@ -184,7 +184,7 @@ describe('isActiveCriteria', () => {
     expect(isActiveCriteria(criteria({ tags: ['x'] }))).toBe(true)
     expect(isActiveCriteria(criteria({ keyword: '  ' }))).toBe(false)
   })
-  it('stale: 默认 false(仅在架)不算激活;主动筛已下架(true)算激活', () => {
+  it('stale: 默认 false(仅在架)不算激活；主动筛已下架（true）算激活', () => {
     expect(emptyCriteria().stale).toBe(false)
     expect(isActiveCriteria(criteria({ stale: false }))).toBe(false)
     expect(isActiveCriteria(criteria({ stale: true }))).toBe(true)
@@ -192,7 +192,7 @@ describe('isActiveCriteria', () => {
 })
 
 describe('stale 默认筛选', () => {
-  it('默认条件过滤掉下架节点,清空(null)则全部可见', () => {
+  it('默认条件过滤掉下架节点，清空（null）则全部可见', () => {
     const nodes = [node({ node_key: 'a', stale: false }), node({ node_key: 'b', stale: true })]
     expect(filterNodes(nodes, emptyCriteria()).map((n) => n.node_key)).toEqual(['a'])
     expect(filterNodes(nodes, criteria({ stale: null })).map((n) => n.node_key)).toEqual(['a', 'b'])
@@ -201,7 +201,7 @@ describe('stale 默认筛选', () => {
 })
 
 describe('sortNodes - 不原地改 + 稳定次级键', () => {
-  it('按延迟升序,node_key 作次级键', () => {
+  it('按延迟升序，node_key 作次级键', () => {
     const nodes = [
       node({ node_key: 'b', latency: 100 }),
       node({ node_key: 'a', latency: 100 }),

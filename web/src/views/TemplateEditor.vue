@@ -56,7 +56,7 @@
         :closable="false"
       >
         <template #title>
-          <span>预览版本 {{ previewingVersion }},未生效</span>
+          <span>预览版本 {{ previewingVersion }}，未生效</span>
           <el-button
             type="primary"
             size="small"

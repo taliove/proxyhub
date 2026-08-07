@@ -11,8 +11,8 @@ import { SELF_HOSTED } from './utils'
 
 // UnifiedNode 在只读节点视图上叠加自建管理所需字段。
 export interface UnifiedNode extends Node {
-  self_node_id?: number // 自建节点主键(机场节点为 undefined)
-  enabled?: boolean // 自建节点启停态(机场节点为 undefined)
+  self_node_id?: number // 自建节点主键（机场节点为 undefined）
+  enabled?: boolean // 自建节点启停态（机场节点为 undefined）
 }
 
 // 自建节点身份:服务器 + 端口 + 协议。用于把池中自建行反查回 SelfNode 记录。
@@ -32,10 +32,10 @@ export const selfNodeToRow = (sn: SelfNode): UnifiedNode => ({
   source: SELF_HOSTED,
   latency: 0,
   available: false,
-  node_key: `self-node:${sn.id}`, // 禁用节点不在池中,用稳定合成键避免与池键冲突
+  node_key: `self-node:${sn.id}`, // 禁用节点不在池中，用稳定合成键避免与池键冲突
   blocked: false,
   stale: false,
-  availability_source: 'never', // 禁用节点不在池中,从未参与检测
+  availability_source: 'never', // 禁用节点不在池中，从未参与检测
   self_node_id: sn.id,
   enabled: false
 })

@@ -6,7 +6,7 @@
       class="settings-alert"
       title="重新生成会作废当前全部恢复码"
     >
-      恢复码是丢失认证器时的唯一自助入口。重新生成后旧码立即失效,新码只显示这一次。
+      恢复码是丢失认证器时的唯一自助入口。重新生成后旧码立即失效，新码只显示这一次。
       恢复码疑似泄露、或已用掉大半时才需要这么做。
     </el-alert>
 
@@ -19,7 +19,7 @@
       width="420px"
       :close-on-click-modal="false"
     >
-      <p class="regen-hint">请输入认证器上的 6 位动态码,或任一未使用的恢复码,以确认本次操作：</p>
+      <p class="regen-hint">请输入认证器上的 6 位动态码，或任一未使用的恢复码，以确认本次操作：</p>
       <el-input
         v-model="confirmCode"
         placeholder="6 位动态码或恢复码"
@@ -49,7 +49,7 @@
       :show-close="false"
     >
       <el-alert type="error" :closable="false" class="settings-alert" title="恢复码只显示这一次">
-        请立刻抄写或存入密码管理器;旧恢复码已全部作废。离开本弹窗后无法再次查看。
+        请立刻抄写或存入密码管理器；旧恢复码已全部作废。离开本弹窗后无法再次查看。
       </el-alert>
 
       <ul class="regen-codes">
@@ -123,7 +123,7 @@ const copyRecoveryCodes = async () => {
     await navigator.clipboard.writeText(recoveryCodes.value.join('\n'))
     ElMessage.success('恢复码已复制')
   } catch {
-    ElMessage.warning('复制失败,请手动选择复制')
+    ElMessage.warning('复制失败，请手动选择复制')
   }
 }
 

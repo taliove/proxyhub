@@ -7,7 +7,7 @@
       v-model="importUrl"
       type="textarea"
       :rows="6"
-      placeholder="粘贴节点链接,例如：vless://uuid@server:port?..."
+      placeholder="粘贴节点链接，例如：vless://uuid@server:port?..."
     />
     <template #footer>
       <el-button @click="visible = false">取消</el-button>
@@ -43,11 +43,11 @@ const onImport = () => {
   try {
     const parsed = parseNodeUrl(url)
     if (!parsed) {
-      ElMessage.error('无法解析节点链接,请检查格式')
+      ElMessage.error('无法解析节点链接，请检查格式')
       return
     }
     emit('imported', parsed)
-    ElMessage.success('节点已导入,请检查并保存')
+    ElMessage.success('节点已导入，请检查并保存')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '导入失败')
   }

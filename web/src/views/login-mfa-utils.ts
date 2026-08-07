@@ -76,12 +76,12 @@ function errorShape(err: unknown): { status?: number; text: string } {
 // "back to password" affordance for the unrecoverable half.
 export function loginMFAErrorMessage(err: unknown): string {
   const { status, text } = errorShape(err)
-  if (status === undefined) return '网络异常,请检查连接后重试'
-  if (status === 401) return '验证码错误或已过期,请重新输入;若仍失败请返回重新登录'
+  if (status === undefined) return '网络异常，请检查连接后重试'
+  if (status === 401) return '验证码错误或已过期，请重新输入；若仍失败请返回重新登录'
   if (status === 400) return '请输入验证码'
-  if (status === 403) return '账号已被禁用,请联系管理员'
-  if (status === 429) return '请求过于频繁,请稍后重试'
-  return text || '验证失败,请稍后重试'
+  if (status === 403) return '账号已被禁用，请联系管理员'
+  if (status === 429) return '请求过于频繁，请稍后重试'
+  return text || '验证失败，请稍后重试'
 }
 
 // isLoginMFASessionLost marks the statuses where the handoff cannot be retried

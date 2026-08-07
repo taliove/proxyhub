@@ -22,7 +22,7 @@ describe('resolveRedirect: must_enroll_mfa', () => {
     expect(resolveRedirect({ path: '/' }, state({ mustEnrollMFA: true }))).toBe(FORCED_MFA_PATH)
   })
 
-  it('绑定页自身豁免,不产生重定向循环', () => {
+  it('绑定页自身豁免，不产生重定向循环', () => {
     expect(resolveRedirect({ path: FORCED_MFA_PATH }, state({ mustEnrollMFA: true }))).toBeNull()
   })
 
@@ -30,7 +30,7 @@ describe('resolveRedirect: must_enroll_mfa', () => {
     expect(resolveRedirect({ path: '/nodes' }, state({ mustEnrollMFA: false }))).toBeNull()
   })
 
-  it('超管也躲不过绑定(后端 adminGuard 同样 403)', () => {
+  it('超管也躲不过绑定（后端 adminGuard 同样 403）', () => {
     expect(
       resolveRedirect(
         { path: '/admin/users', requiresSuperAdmin: true },
@@ -41,13 +41,13 @@ describe('resolveRedirect: must_enroll_mfa', () => {
 })
 
 describe('resolveRedirect: 优先级', () => {
-  it('改密优先于绑定(与后端中间件嵌套一致)', () => {
+  it('改密优先于绑定（与后端中间件嵌套一致）', () => {
     expect(
       resolveRedirect({ path: '/nodes' }, state({ mustChangePassword: true, mustEnrollMFA: true }))
     ).toBe(FORCED_PASSWORD_PATH)
   })
 
-  it('欠改密时连绑定页也不放,先回改密页', () => {
+  it('欠改密时连绑定页也不放，先回改密页', () => {
     expect(
       resolveRedirect(
         { path: FORCED_MFA_PATH },
@@ -65,7 +65,7 @@ describe('resolveRedirect: 优先级', () => {
     ).toBe('/login')
   })
 
-  it('skipAuth 页(登录/初始化)始终放行', () => {
+  it('skipAuth 页（登录/初始化）始终放行', () => {
     expect(
       resolveRedirect(
         { path: '/login', skipAuth: true },
@@ -80,7 +80,7 @@ describe('resolveRedirect: 既有规则不回归', () => {
     expect(resolveRedirect({ path: '/nodes' }, state({ isAuthenticated: false }))).toBe('/login')
   })
 
-  it('欠改密时拦到改密页,改密页自身豁免', () => {
+  it('欠改密时拦到改密页，改密页自身豁免', () => {
     expect(resolveRedirect({ path: '/nodes' }, state({ mustChangePassword: true }))).toBe(
       FORCED_PASSWORD_PATH
     )

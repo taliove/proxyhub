@@ -112,12 +112,12 @@ const pasteAndImport = async (wrapper: ReturnType<typeof mountDialog>, content: 
   await flushPromises()
 }
 
-describe('ManualImportDialog 确认流程(用户实测拍板)', () => {
+describe('ManualImportDialog 确认流程（用户实测拍板）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('全部成功:ElMessage 成功提示 + 自动关闭 + imported 事件刷新列表', async () => {
+  it('全部成功：ElMessage 成功提示 + 自动关闭 + imported 事件刷新列表', async () => {
     vi.mocked(client.post).mockResolvedValue({ imported: 2, failures: [] })
     const wrapper = mountDialog(manualAirport)
 
@@ -130,7 +130,7 @@ describe('ManualImportDialog 确认流程(用户实测拍板)', () => {
     expect(wrapper.find('.ElAlert-stub').exists()).toBe(false)
   })
 
-  it('有失败行:对话框停留展示明细,导入禁用,完成变主按钮', async () => {
+  it('有失败行：对话框停留展示明细，导入禁用，完成变主按钮', async () => {
     vi.mocked(client.post).mockResolvedValue({
       imported: 1,
       failures: [{ line: 2, reason: 'unsupported protocol' }]
@@ -154,7 +154,7 @@ describe('ManualImportDialog 确认流程(用户实测拍板)', () => {
     expect(doneBtn?.props('type')).toBe('primary')
   })
 
-  it('修正内容后结果清除、导入恢复可用(Check LOW:不必关窗重贴)', async () => {
+  it('修正内容后结果清除、导入恢复可用（Check LOW:不必关窗重贴）', async () => {
     vi.mocked(client.post).mockResolvedValue({
       imported: 1,
       failures: [{ line: 2, reason: 'unsupported protocol' }]
@@ -179,7 +179,7 @@ describe('ManualImportDialog 确认流程(用户实测拍板)', () => {
     expect(ElMessage.success).toHaveBeenCalledWith('成功导入 2 条')
   })
 
-  it('拉取型机场:提示一次性导入语义,隐藏用量字段,不随贴用量', async () => {
+  it('拉取型机场：提示一次性导入语义，隐藏用量字段，不随贴用量', async () => {
     vi.mocked(client.post).mockResolvedValue({ imported: 1, failures: [] })
     const wrapper = mountDialog(urlAirport)
 
@@ -193,7 +193,7 @@ describe('ManualImportDialog 确认流程(用户实测拍板)', () => {
     expect(body.usage_remaining).toBeUndefined()
   })
 
-  it('手动机场:用量字段可见且随贴', async () => {
+  it('手动机场：用量字段可见且随贴', async () => {
     vi.mocked(client.post).mockResolvedValue({ imported: 1, failures: [] })
     const wrapper = mountDialog(manualAirport)
 
@@ -201,10 +201,10 @@ describe('ManualImportDialog 确认流程(用户实测拍板)', () => {
 
     await pasteAndImport(wrapper, 'ss://x@node1.example.com:8388#HK 01')
     const body = vi.mocked(client.post).mock.calls[0][1] as Record<string, unknown>
-    expect(body.usage_total).toBe(0) // 全空发零值(显式清空可达)
+    expect(body.usage_total).toBe(0) // 全空发零值（显式清空可达）
   })
 
-  it('409 冲突:警告提示且不关闭', async () => {
+  it('409 冲突：警告提示且不关闭', async () => {
     vi.mocked(client.post).mockRejectedValue({ response: { status: 409 } })
     const wrapper = mountDialog(manualAirport)
 
@@ -231,7 +231,7 @@ describe('ManualImportDialog 文件导入', () => {
     await flushPromises()
   }
 
-  it('读入本地订阅文件:内容填入粘贴框并展示文件名', async () => {
+  it('读入本地订阅文件：内容填入粘贴框并展示文件名', async () => {
     const wrapper = mountDialog(manualAirport)
     await pickFile(
       wrapper,
@@ -248,11 +248,11 @@ describe('ManualImportDialog 文件导入', () => {
     })
   })
 
-  it('超限文件(>1MiB):警告拦截,不读入、不发请求', async () => {
+  it('超限文件（>1MiB）:警告拦截，不读入、不发请求', async () => {
     const wrapper = mountDialog(manualAirport)
     await pickFile(wrapper, new File(['x'.repeat((1 << 20) + 1)], 'big.txt'))
 
-    expect(ElMessage.warning).toHaveBeenCalledWith('文件过大(上限 1MiB),请拆分后分批导入')
+    expect(ElMessage.warning).toHaveBeenCalledWith('文件过大（上限 1MiB）,请拆分后分批导入')
     expect(wrapper.findComponent(ElInputStub).props('modelValue')).toBe('')
     expect(client.post).not.toHaveBeenCalled()
   })

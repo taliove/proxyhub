@@ -54,13 +54,13 @@ describe('useSelfNodeForm', () => {
     expect(form.selfDialogVisible.value).toBe(true)
   })
 
-  it('openEditSelf:非自建行(无 self_node_id)不打开对话框', () => {
+  it('openEditSelf:非自建行（无 self_node_id）不打开对话框', () => {
     const { form } = setup()
     form.openEditSelf({ self_node_id: null } as unknown as UnifiedNode)
     expect(form.selfDialogVisible.value).toBe(false)
   })
 
-  it('submitSelfForm:保存成功关闭对话框并刷新池;新建传 null id', async () => {
+  it('submitSelfForm:保存成功关闭对话框并刷新池；新建传 null id', async () => {
     const { form, saveSelf, reloadPool } = setup()
     saveSelf.mockResolvedValue(true)
     form.openAddSelf()
@@ -80,7 +80,7 @@ describe('useSelfNodeForm', () => {
     expect(form.selfDialogVisible.value).toBe(true)
   })
 
-  it('onImported:导入结果填充表单,延迟以新建模式打开编辑框', () => {
+  it('onImported:导入结果填充表单，延迟以新建模式打开编辑框', () => {
     const { form } = setup()
     form.openImport()
     form.onImported({ name: 'imported', server: 'example.com' })

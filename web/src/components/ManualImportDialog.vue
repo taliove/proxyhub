@@ -8,11 +8,11 @@
   >
     <template v-if="airport">
       <div class="guide">
-        在机场面板导出订阅内容(通常为 base64 整段),粘贴到下方,或选择本地订阅文件读入;
+        在机场面板导出订阅内容（通常为 base64 整段）,粘贴到下方，或选择本地订阅文件读入；
         也支持明文多行分享链接。
-        系统不保存导入原文,导入即对该机场做一次单机场入池(同单机场刷新语义,不跑健康检查)。
+        系统不保存导入原文，导入即对该机场做一次单机场入池（同单机场刷新语义，不跑健康检查）。
         <template v-if="!isManual">
-          <br />这是一次性导入:下次该机场 URL 刷新成功后,节点以 URL 拉取内容为准。
+          <br />这是一次性导入：下次该机场 URL 刷新成功后，节点以 URL 拉取内容为准。
         </template>
       </div>
       <div class="file-row">
@@ -30,13 +30,13 @@
         v-model="content"
         type="textarea"
         :rows="8"
-        placeholder="粘贴机场面板导出的订阅内容(base64 整段或明文多行 ss:// vless:// vmess:// trojan:// anytls://),或点上方「选择文件」读入"
+        placeholder="粘贴机场面板导出的订阅内容（base64 整段或明文多行 ss:// vless:// vmess:// trojan:// anytls://）,或点上方「选择文件」读入"
         class="paste-box"
       />
 
       <!-- 用量手填仅手动机场可见;拉取型机场的用量由响应头自动捕获,无需手填 -->
       <template v-if="isManual">
-        <div class="usage-title">用量信息(可选)</div>
+        <div class="usage-title">用量信息（可选）</div>
         <el-form label-width="100px">
           <AirportUsageFields v-model="usage" />
         </el-form>
@@ -156,7 +156,7 @@ const onFilePicked = (e: Event) => {
   const file = input.files?.[0]
   if (!file) return
   if (file.size > MAX_IMPORT_BYTES) {
-    ElMessage.warning('文件过大(上限 1MiB),请拆分后分批导入')
+    ElMessage.warning('文件过大（上限 1MiB）,请拆分后分批导入')
     input.value = ''
     return
   }
@@ -165,7 +165,7 @@ const onFilePicked = (e: Event) => {
     content.value = typeof reader.result === 'string' ? reader.result : ''
     fileName.value = file.name
   }
-  reader.onerror = () => ElMessage.error('文件读取失败,请重试或直接粘贴内容')
+  reader.onerror = () => ElMessage.error('文件读取失败，请重试或直接粘贴内容')
   reader.readAsText(file)
 }
 
@@ -193,11 +193,11 @@ const doImport = async () => {
   } catch (error) {
     const status = (error as { response?: { status?: number } })?.response?.status
     if (status === 409) {
-      ElMessage.warning('与进行中的刷新或机场测试冲突,请稍候再试')
+      ElMessage.warning('与进行中的刷新或机场测试冲突，请稍候再试')
     } else if (status === 413) {
-      ElMessage.error('内容过大(上限 1MiB),请分批导入')
+      ElMessage.error('内容过大（上限 1MiB）,请分批导入')
     } else {
-      ElMessage.error('导入失败:内容中没有可识别的节点')
+      ElMessage.error('导入失败：内容中没有可识别的节点')
     }
   } finally {
     importing.value = false

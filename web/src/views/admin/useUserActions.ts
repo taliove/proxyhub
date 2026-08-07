@@ -30,7 +30,7 @@ export function useUserActions(reload: () => Promise<void>) {
 
   async function onDisable(row: AdminUser) {
     await ElMessageBox.confirm(
-      `确定禁用用户「${row.username}」吗?禁用后该用户无法登录,已建资源保留。`,
+      `确定禁用用户「${row.username}」吗？禁用后该用户无法登录，已建资源保留。`,
       '禁用确认',
       { type: 'warning', confirmButtonText: '禁用', cancelButtonText: '取消' }
     )
@@ -47,7 +47,7 @@ export function useUserActions(reload: () => Promise<void>) {
 
   async function onDelete(row: AdminUser) {
     await ElMessageBox.confirm(
-      `确定删除用户「${row.username}」吗?该用户的机场、节点、订阅地址将一并删除,不可恢复。`,
+      `确定删除用户「${row.username}」吗？该用户的机场、节点、订阅地址将一并删除，不可恢复。`,
       '删除确认',
       { type: 'error', confirmButtonText: '删除', cancelButtonText: '取消' }
     )
@@ -58,7 +58,7 @@ export function useUserActions(reload: () => Promise<void>) {
 
   async function onResetPassword(row: AdminUser) {
     await ElMessageBox.confirm(
-      `确定重置用户「${row.username}」的密码吗?重置后旧密码立即失效,用户需用新密码登录并改密。`,
+      `确定重置用户「${row.username}」的密码吗？重置后旧密码立即失效，用户需用新密码登录并改密。`,
       '重置密码确认',
       { type: 'warning', confirmButtonText: '重置', cancelButtonText: '取消' }
     )
@@ -71,7 +71,7 @@ export function useUserActions(reload: () => Promise<void>) {
   // 下次登录都要重新过 MFA。用于设备/网络疑似失陷。
   async function onClearTrustedIPs(row: AdminUser) {
     await ElMessageBox.confirm(
-      `确定清空用户「${row.username}」的受信 IP 吗?清空后该用户所有地址下次登录都需要重新完成 MFA 验证。`,
+      `确定清空用户「${row.username}」的受信 IP 吗？清空后该用户所有地址下次登录都需要重新完成 MFA 验证。`,
       '清空受信 IP 确认',
       { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消' }
     )
@@ -84,19 +84,19 @@ export function useUserActions(reload: () => Promise<void>) {
   // 对用户的第二因子是破坏性操作,确认文案必须把两个后果都写明。
   async function onResetMFA(row: AdminUser) {
     await ElMessageBox.confirm(
-      `确定重置用户「${row.username}」的 MFA 吗?将解除该用户的 TOTP 绑定并作废其恢复码,下次登录需重新绑定验证器。`,
+      `确定重置用户「${row.username}」的 MFA 吗？将解除该用户的 TOTP 绑定并作废其恢复码，下次登录需重新绑定验证器。`,
       '重置 MFA 确认',
       { type: 'warning', confirmButtonText: '重置', cancelButtonText: '取消' }
     )
     await resetUserMFA(row.id)
-    ElMessage.success(`已重置「${row.username}」的 MFA,该用户下次登录需重新绑定`)
+    ElMessage.success(`已重置「${row.username}」的 MFA，该用户下次登录需重新绑定`)
   }
 
   // onEnterSpace 切换到目标用户的空间(ticket 09)。服务端把 acting_user_id 落到
   // 会话上,前端镜像一份让导航栏出横幅,再整页重载让每个视图以被代理身份重取。
   async function onEnterSpace(row: AdminUser) {
     await ElMessageBox.confirm(
-      `确定进入用户「${row.username}」的空间吗?之后所有页面将以该用户身份展示与操作。`,
+      `确定进入用户「${row.username}」的空间吗？之后所有页面将以该用户身份展示与操作。`,
       '进入用户空间',
       { type: 'warning', confirmButtonText: '进入', cancelButtonText: '取消' }
     )

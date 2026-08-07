@@ -24,7 +24,7 @@ describe('regenerateErrorMessage', () => {
     expect(regenerateErrorMessage(undefined)).toContain('稍后重试')
   })
 
-  it('兼容 {message} 字段(后端错误字段不统一)', () => {
+  it('兼容 {message} 字段（后端错误字段不统一）', () => {
     expect(
       regenerateErrorMessage({
         response: { status: 400, data: { message: 'mfa is not enrolled' } }

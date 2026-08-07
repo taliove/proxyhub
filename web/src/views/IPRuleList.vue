@@ -11,14 +11,14 @@
       type="info"
       :closable="false"
       class="rules-alert"
-      title="整站拒止：该来源访问任何页面与接口都被拒;拉取黑名单：只掐订阅地址拉取,管理面不受影响。重复提交同一条规则会顺延到期时间。"
+      title="整站拒止：该来源访问任何页面与接口都被拒；拉取黑名单：只掐订阅地址拉取，管理面不受影响。重复提交同一条规则会顺延到期时间。"
     />
 
     <!-- 新增规则 -->
     <div class="rule-form">
       <el-input
         v-model="form.target"
-        placeholder="IP 或 CIDR,如 203.0.113.10 / 203.0.113.0/24"
+        placeholder="IP 或 CIDR，如 203.0.113.10 / 203.0.113.0/24"
         class="ctl-target"
         clearable
       />

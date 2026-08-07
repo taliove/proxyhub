@@ -27,7 +27,7 @@ const emit = defineEmits<{
 
 <style scoped>
 /* ticket 0046:el-dropdown 包装使 EP `.el-button + .el-button` 兄弟选择器不命中,
-   丢失 12px 间距;且 .el-dropdown 默认 vertical-align 造成基线偏移。
+   丢失 12px 间距；且 .el-dropdown 默认 vertical-align 造成基线偏移。
    补齐后与旁边「详情/刷新」裸 link 按钮静止/hover 观感一致 */
 .el-dropdown {
   margin-left: 12px;

@@ -16,7 +16,7 @@ describe('captchaRequiredFromError', () => {
     expect(captchaRequiredFromError(axiosErr(401, 'invalid credentials\n'))).toBe(false)
   })
 
-  it('无响应(网络错误)不带标记', () => {
+  it('无响应（网络错误）不带标记', () => {
     expect(captchaRequiredFromError(new Error('network'))).toBe(false)
   })
 })

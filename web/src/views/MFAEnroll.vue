@@ -18,11 +18,11 @@
           width="200"
           height="200"
         />
-        <el-empty v-else-if="!starting" description="二维码生成失败,请用下方密钥手动添加" />
+        <el-empty v-else-if="!starting" description="二维码生成失败，请用下方密钥手动添加" />
       </div>
 
       <p class="mfa-enroll__hint">
-        用 Google Authenticator、1Password、Authy 等任一认证器扫码,或手动输入密钥：
+        用 Google Authenticator、1Password、Authy 等任一认证器扫码，或手动输入密钥：
       </p>
 
       <div class="mfa-enroll__secret">
@@ -72,7 +72,7 @@
     <!-- ③ 恢复码:仅此一次可见,必须勾选确认后才放行 -->
     <template v-else>
       <el-alert type="error" :closable="false" class="mfa-enroll__alert" title="恢复码只显示这一次">
-        请立刻抄写或存入密码管理器。丢失认证器时,恢复码是你唯一的自助入口;它们离开本页后无法再次查看。
+        请立刻抄写或存入密码管理器。丢失认证器时，恢复码是你唯一的自助入口；它们离开本页后无法再次查看。
       </el-alert>
 
       <ul class="mfa-enroll__codes">
@@ -175,7 +175,7 @@ const requestSecret = async () => {
       qrDataUrl.value = await generateQRCode(data.otpauth_url)
     } catch {
       qrDataUrl.value = ''
-      ElMessage.warning('二维码生成失败,请用密钥手动添加')
+      ElMessage.warning('二维码生成失败，请用密钥手动添加')
     }
   } catch (err) {
     // 409 = 早已绑定,本地强制位是旧的:直接放行,别把用户锁死在这页。
@@ -219,7 +219,7 @@ const copySecret = async () => {
     await navigator.clipboard.writeText(secret.value)
     ElMessage.success('密钥已复制')
   } catch {
-    ElMessage.warning('复制失败,请手动选择复制')
+    ElMessage.warning('复制失败，请手动选择复制')
   }
 }
 
@@ -228,7 +228,7 @@ const copyRecoveryCodes = async () => {
     await navigator.clipboard.writeText(recoveryCodes.value.join('\n'))
     ElMessage.success('恢复码已复制')
   } catch {
-    ElMessage.warning('复制失败,请手动选择复制')
+    ElMessage.warning('复制失败，请手动选择复制')
   }
 }
 

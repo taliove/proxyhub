@@ -178,7 +178,7 @@ describe('EndpointGeoConfigSection', () => {
     vi.clearAllMocks()
   })
 
-  it('渲染三档模式选择:关闭/观察/拦截', () => {
+  it('渲染三档模式选择：关闭/观察/拦截', () => {
     const wrapper = mountSection()
     const text = wrapper.text()
     expect(text).toContain('关闭')
@@ -186,7 +186,7 @@ describe('EndpointGeoConfigSection', () => {
     expect(text).toContain('拦截')
   })
 
-  it('初始状态从端点 geo_mode 回显,默认 off', () => {
+  it('初始状态从端点 geo_mode 回显，默认 off', () => {
     const wrapper = mountSection()
     const radioGroup = wrapper.find('.el-radio-group-stub')
     expect(radioGroup.attributes('data-value')).toBe('off')
@@ -218,7 +218,7 @@ describe('EndpointGeoConfigSection', () => {
     expect(wrapper.findAll('.el-select-stub').length).toBeGreaterThan(0)
   })
 
-  it('国家选项包含常见国家(CN/HK/US/JP 等)', () => {
+  it('国家选项包含常见国家（CN/HK/US/JP 等）', () => {
     const wrapper = mountSection({ ...endpoint, geo_mode: 'enforce' })
     const text = wrapper.text()
     expect(text).toContain('中国')
@@ -227,7 +227,7 @@ describe('EndpointGeoConfigSection', () => {
     expect(text).toContain('HK')
   })
 
-  it('省份区折叠显示警告文案:当前内嵌库无省级数据', () => {
+  it('省份区折叠显示警告文案：当前内嵌库无省级数据', () => {
     const wrapper = mountSection({ ...endpoint, geo_mode: 'enforce' })
     const html = wrapper.html()
     expect(html).toContain('省份配置')
@@ -267,7 +267,7 @@ describe('EndpointGeoConfigSection', () => {
     expect(wrapper.find('.el-radio-group-stub').attributes('data-value')).toBe('off')
   })
 
-  it('API 失败时显示错误消息,不触发 saved 事件', async () => {
+  it('API 失败时显示错误消息，不触发 saved 事件', async () => {
     vi.mocked(endpointsApi.updateEndpointGeoConfig).mockRejectedValue(new Error('网络错误'))
     const wrapper = mountSection({ ...endpoint, geo_mode: 'observe' })
     await flushPromises()

@@ -51,7 +51,7 @@ describe('Sidebar 版本自报', () => {
     vi.clearAllMocks()
   })
 
-  it('展示 release 版本(加 v 前缀)', async () => {
+  it('展示 release 版本（加 v 前缀）', async () => {
     vi.mocked(client.get).mockResolvedValue({ initialized: true, version: '0.1.0-rc.1' })
     const wrapper = mountSidebar(false)
     await flushPromises()

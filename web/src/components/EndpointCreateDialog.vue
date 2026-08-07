@@ -21,13 +21,13 @@
         >
           <el-option v-for="tpl in templates" :key="tpl.name" :label="tpl.name" :value="tpl.name" />
         </el-select>
-        <div class="cfg-hint">留空则使用用户默认模板(用户级模板库四级回退链)</div>
+        <div class="cfg-hint">留空则使用用户默认模板（用户级模板库四级回退链）</div>
       </el-form-item>
       <el-form-item label="公开名称">
         <el-input v-model="form.public_name" placeholder="例如：家里宽带" maxlength="50" />
         <div class="cfg-hint">
-          随订阅下发,客户端配置列表显示「ProxyHub · 公开名称」;留空则显示「ProxyHub」。
-          别名为私有信息,绝不下发。
+          随订阅下发，客户端配置列表显示「ProxyHub · 公开名称」；留空则显示「ProxyHub」。
+          别名为私有信息，绝不下发。
         </div>
       </el-form-item>
       <el-form-item label="精选节点">
@@ -62,7 +62,7 @@ import { useTemplateList } from '@/composables/useTemplateList'
 defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
-  (e: 'created'): void // 创建成功(含暂存精选补 PUT),父级刷新列表
+  (e: 'created'): void // 创建成功（含暂存精选补 PUT）,父级刷新列表
 }>()
 
 const form = ref({ alias: '', template_name: '', public_name: '' })
@@ -72,7 +72,7 @@ const { templates, loadTemplates } = useTemplateList()
 const picksVisible = ref(false)
 const stagedPicks = ref<NodePick[]>([])
 const stagedLabel = computed(() =>
-  stagedPicks.value.length ? `精选 ${stagedPicks.value.length} 个节点` : '全量(不精选)'
+  stagedPicks.value.length ? `精选 ${stagedPicks.value.length} 个节点` : '全量（不精选）'
 )
 const onPicksConfirm = (picks: NodePick[]) => (stagedPicks.value = picks)
 

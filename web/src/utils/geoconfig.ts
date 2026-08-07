@@ -12,13 +12,13 @@ interface GeoModeMeta {
 
 // GEO_MODE_META 三档口径:off 默认不判,observe 先观察,enforce 强制拦截
 const GEO_MODE_META: Record<string, GeoModeMeta> = {
-  off: { label: '关闭', tag: 'info', desc: '不判定地域,所有位置可拉取' },
+  off: { label: '关闭', tag: 'info', desc: '不判定地域，所有位置可拉取' },
   observe: {
     label: '观察',
     tag: 'warning',
-    desc: '判定但不拦截,留痕记录「地域观察」状态用于确认规则准确性'
+    desc: '判定但不拦截，留痕记录「地域观察」状态用于确认规则准确性'
   },
-  enforce: { label: '拦截', tag: 'danger', desc: '不匹配白名单则拒绝拉取,记录「地域拦截」' }
+  enforce: { label: '拦截', tag: 'danger', desc: '不匹配白名单则拒绝拉取，记录「地域拦截」' }
 }
 
 /** geoModeLabel 返回 geo_mode 的中文展示名;空值归 off(后端默认)。 */

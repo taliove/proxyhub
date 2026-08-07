@@ -17,7 +17,7 @@
           filterable
           collapse-tags
           collapse-tags-tooltip
-          placeholder="不限(留空=全部机场)"
+          placeholder="不限（留空=全部机场）"
           @change="loadPreview"
         >
           <el-option v-for="a in airportOptions" :key="a" :label="a" :value="a" />
@@ -32,7 +32,7 @@
           filterable
           collapse-tags
           collapse-tags-tooltip
-          placeholder="不限(留空=全部地区)"
+          placeholder="不限（留空=全部地区）"
           @change="loadPreview"
         >
           <el-option
@@ -54,20 +54,20 @@
           default-first-option
           collapse-tags
           collapse-tags-tooltip
-          placeholder="不限;可自行输入 region:US 等动态标签"
+          placeholder="不限；可自行输入 region:US 等动态标签"
           @change="loadPreview"
         >
           <el-option-group v-for="g in tagGroups" :key="g.label" :label="g.label">
             <el-option v-for="t in g.tags" :key="t.value" :label="t.label" :value="t.value" />
           </el-option-group>
         </el-select>
-        <div class="cfg-hint">多个标签为「与」:节点需同时具备所有选中标签。</div>
+        <div class="cfg-hint">多个标签为「与」：节点需同时具备所有选中标签。</div>
       </el-form-item>
       <el-form-item label="关键词">
         <el-input
           v-model="form.keyword"
           clearable
-          placeholder="节点名包含(大小写不敏感)"
+          placeholder="节点名包含（大小写不敏感）"
           @input="loadPreview"
         />
       </el-form-item>
@@ -75,7 +75,7 @@
         <el-tag :type="preview.count > 0 ? 'success' : 'danger'">
           命中 {{ preview.count }} / 共 {{ preview.total }} 个节点
         </el-tag>
-        <span class="cfg-hint cond-hint-inline">按当前节点池实时求值,与订阅拉取一致。</span>
+        <span class="cfg-hint cond-hint-inline">按当前节点池实时求值，与订阅拉取一致。</span>
         <!-- 节点明细小表(前 20 个) -->
         <el-table
           v-if="preview.nodes && preview.nodes.length > 0"
@@ -86,7 +86,7 @@
         >
           <el-table-column prop="name" label="节点名" width="140" show-overflow-tooltip />
           <el-table-column prop="region" label="地区" width="70" />
-          <el-table-column prop="latency" label="延迟(ms)" width="90" />
+          <el-table-column prop="latency" label="延迟（ms）" width="90" />
           <el-table-column prop="source" label="来源" width="100" show-overflow-tooltip />
           <el-table-column label="带宽" width="100">
             <template #default="{ row }">
@@ -98,7 +98,7 @@
           </el-table-column>
         </el-table>
         <div v-if="preview.count > preview.nodes.length" class="cfg-hint">
-          仅展示前 {{ preview.nodes.length }} 个,共命中 {{ preview.count }} 个节点
+          仅展示前 {{ preview.nodes.length }} 个，共命中 {{ preview.count }} 个节点
         </div>
       </el-form-item>
     </el-form>

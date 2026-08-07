@@ -118,7 +118,7 @@ const clipboardSupported = () =>
 const onCopy = async () => {
   if (copying.value) return
   if (!clipboardSupported()) {
-    errorMsg.value = '当前浏览器不支持复制图片,请改用下载 PNG'
+    errorMsg.value = '当前浏览器不支持复制图片，请改用下载 PNG'
     return
   }
   copying.value = true

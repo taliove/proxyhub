@@ -16,7 +16,7 @@ vi.mock('element-plus', () => ({
 describe('useLoginMFA', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('初始休眠:不激活,提交是空操作', async () => {
+  it('初始休眠：不激活，提交是空操作', async () => {
     const mfa = useLoginMFA()
     expect(mfa.active.value).toBe(false)
     expect(await mfa.submit()).toBeNull()
@@ -33,7 +33,7 @@ describe('useLoginMFA', () => {
     expect(mfa.trustIP.value).toBe(false)
   })
 
-  it('码不完整时本地拦截:只提示,不消耗 5 次预算', async () => {
+  it('码不完整时本地拦截：只提示，不消耗 5 次预算', async () => {
     const mfa = useLoginMFA()
     mfa.start('tok')
     mfa.setCode('123')
@@ -43,7 +43,7 @@ describe('useLoginMFA', () => {
     expect(vi.mocked(ElMessage.warning)).toHaveBeenCalled()
   })
 
-  it('setCode 是唯一写入口:按当前码型归一化', () => {
+  it('setCode 是唯一写入口：按当前码型归一化', () => {
     const mfa = useLoginMFA()
     mfa.start('tok')
     mfa.setCode('12 34 56')
@@ -55,7 +55,7 @@ describe('useLoginMFA', () => {
     expect(mfa.codeComplete.value).toBe(true)
   })
 
-  it('切换码型清空输入;重复切换同一码型是空操作', () => {
+  it('切换码型清空输入；重复切换同一码型是空操作', () => {
     const mfa = useLoginMFA()
     mfa.start('tok')
     mfa.setCode('123456')
@@ -82,7 +82,7 @@ describe('useLoginMFA', () => {
     expect(mfa.trustIP.value).toBe(false)
   })
 
-  it('401 保留句柄可重试并清空码;403 直接退回休眠', async () => {
+  it('401 保留句柄可重试并清空码；403 直接退回休眠', async () => {
     const mfa = useLoginMFA()
     mfa.start('tok')
     mfa.setCode('123456')
@@ -99,7 +99,7 @@ describe('useLoginMFA', () => {
     expect(mfa.active.value).toBe(false)
   })
 
-  it('成功时原样返回登录响应,submitting 归位', async () => {
+  it('成功时原样返回登录响应，submitting 归位', async () => {
     const mfa = useLoginMFA()
     mfa.start('tok')
     mfa.setCode('123456')

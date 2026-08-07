@@ -4,15 +4,15 @@
       type="info"
       :closable="false"
       class="settings-alert"
-      :title="`受信 IP 在 ${ttlDays} 天内免二次验证;撤销后该 IP 下次登录重新要求 MFA。同一地址 30 天内 MFA 成功登录达 ${threshold} 次会出现在推荐列表。`"
+      :title="`受信 IP 在 ${ttlDays} 天内免二次验证；撤销后该 IP 下次登录重新要求 MFA。同一地址 30 天内 MFA 成功登录达 ${threshold} 次会出现在推荐列表。`"
     />
 
     <div class="auto-trust">
       <span class="auto-trust-label">自动信任</span>
       <el-switch v-model="autoTrust" :loading="savingAuto" @change="onToggleAuto" />
       <span class="hint">
-        开启后,达阈值的来源地址在下次 MFA
-        登录成功时自动进入受信列表;关闭则只出现在推荐列表,需手动采纳。
+        开启后，达阈值的来源地址在下次 MFA
+        登录成功时自动进入受信列表；关闭则只出现在推荐列表，需手动采纳。
       </span>
     </div>
 
@@ -56,7 +56,7 @@
     </el-table>
     <el-empty
       v-if="!loading && recommendations.length === 0"
-      description="暂无推荐(达阈值的来源地址会出现在这里)"
+      description="暂无推荐（达阈值的来源地址会出现在这里）"
       :image-size="60"
     />
   </div>
@@ -103,7 +103,7 @@ const load = async () => {
 
 const onRevoke = async (ip: string) => {
   await revokeTrustedIP(ip)
-  ElMessage.success('已撤销,该 IP 下次登录需重新验证')
+  ElMessage.success('已撤销，该 IP 下次登录需重新验证')
   await load()
 }
 

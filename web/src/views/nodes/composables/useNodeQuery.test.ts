@@ -21,8 +21,8 @@ const node = (over: Partial<UnifiedNode> = {}): UnifiedNode =>
     ...over
   }) as UnifiedNode
 
-describe('useNodeQuery - 稳定性分档筛选(端到端接线)', () => {
-  it('由节点 stability_score 派生分档并过滤(优 >=85)', () => {
+describe('useNodeQuery - 稳定性分档筛选（端到端接线）', () => {
+  it('由节点 stability_score 派生分档并过滤（优 >=85）', () => {
     const rows = ref<UnifiedNode[]>([
       node({ node_key: 'good', stability_score: 92 }),
       node({ node_key: 'fair', stability_score: 70 }),

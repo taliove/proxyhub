@@ -86,7 +86,7 @@
               <el-button @click="copyPassword(createForm.password)">复制</el-button>
             </template>
           </el-input>
-          <div class="form-hint">自动生成的随机密码,请复制后转交用户;首次登录需改密</div>
+          <div class="form-hint">自动生成的随机密码，请复制后转交用户；首次登录需改密</div>
         </el-form-item>
         <el-form-item label="机场配额">
           <el-input-number v-model="createForm.quota.max_airports" :min="0" />
@@ -136,7 +136,7 @@
 
     <!-- Reset-password result: shown once, must be copied now -->
     <el-dialog v-model="passwordResultVisible" title="密码已重置" width="460px">
-      <p class="form-hint">请将新密码复制并转交用户,关闭后无法再次查看：</p>
+      <p class="form-hint">请将新密码复制并转交用户，关闭后无法再次查看：</p>
       <el-input :model-value="passwordResult" readonly>
         <template #append>
           <el-button @click="copyPassword(passwordResult)">复制</el-button>

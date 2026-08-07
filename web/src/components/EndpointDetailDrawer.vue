@@ -19,7 +19,7 @@
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="公开名称">
-            <span>{{ endpoint.public_name || '未设置(客户端显示 ProxyHub)' }}</span>
+            <span>{{ endpoint.public_name || '未设置（客户端显示 ProxyHub）' }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="节点范围">
             <el-tag :type="hasConditions(endpoint.conditions) ? 'warning' : 'info'" size="small">
@@ -67,7 +67,7 @@
             <el-radio-button label="v2ray">V2Ray</el-radio-button>
           </el-radio-group>
           <span class="preview-hint">
-            共 {{ preview.count }} 个节点(已应用节点范围条件,与终端拉取到的完全一致)
+            共 {{ preview.count }} 个节点（已应用节点范围条件，与终端拉取到的完全一致）
           </span>
         </div>
         <el-table
@@ -149,7 +149,7 @@
             />
           </el-select>
           <div class="cfg-hint">
-            留空则跟随用户默认模板(四级回退：订阅地址 → 用户默认 → 超管全局 → 内嵌默认)
+            留空则跟随用户默认模板（四级回退：订阅地址 → 用户默认 → 超管全局 → 内嵌默认）
           </div>
         </el-form-item>
       </el-form>

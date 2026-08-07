@@ -97,13 +97,13 @@ const mountDialog = () =>
     }
   })
 
-describe('EndpointCreateDialog(新建订阅地址;公开名称 issue #38;暂存精选 issue #80/#85)', () => {
+describe('EndpointCreateDialog(新建订阅地址；公开名称 issue #38;暂存精选 issue #80/#85)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(client.post).mockResolvedValue({ id: 9 } as never)
   })
 
-  it('新建表单携带可选公开名称(issue #38)', async () => {
+  it('新建表单携带可选公开名称（issue #38）', async () => {
     const wrapper = mountDialog()
     await flushPromises()
 
@@ -140,14 +140,14 @@ describe('EndpointCreateDialog(新建订阅地址;公开名称 issue #38;暂存�
     expect(vi.mocked(client.post)).toHaveBeenCalledWith('/endpoints', { alias: '老爸的手机' })
   })
 
-  it('选择节点暂存后,创建成功补 PUT node-picks(新格式对象数组)', async () => {
+  it('选择节点暂存后，创建成功补 PUT node-picks(新格式对象数组)', async () => {
     const wrapper = mountDialog()
     await flushPromises()
 
     // 精选入口初始为「全量(不精选)」;点击打开暂存模式选择器
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === '全量(不精选)')!
+      .find((b) => b.text() === '全量（不精选）')!
       .trigger('click')
     await flushPromises()
     await wrapper.find('.picks-confirm-btn').trigger('click')
@@ -169,7 +169,7 @@ describe('EndpointCreateDialog(新建订阅地址;公开名称 issue #38;暂存�
     })
   })
 
-  it('未触碰精选:创建后不发 node-picks PUT(零回归)', async () => {
+  it('未触碰精选：创建后不发 node-picks PUT(零回归)', async () => {
     const wrapper = mountDialog()
     await flushPromises()
 

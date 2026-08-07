@@ -9,7 +9,7 @@
       <el-alert
         type="info"
         :closable="false"
-        title="作用于该机场当前的全部节点,下次生成订阅生效(刷新后依然保持)。"
+        title="作用于该机场当前的全部节点，下次生成订阅生效（刷新后依然保持）。"
       />
     </el-form>
     <template #footer>
@@ -44,7 +44,7 @@ const blockSource = async () => {
   const src = source.value
   try {
     await ElMessageBox.confirm(
-      `将屏蔽机场「${src}」当前的全部节点,下次生成订阅生效(刷新后依然保持)。确认?`,
+      `将屏蔽机场「${src}」当前的全部节点，下次生成订阅生效（刷新后依然保持）。确认？`,
       '按机场批量屏蔽',
       { type: 'warning', confirmButtonText: '确认屏蔽', cancelButtonText: '取消' }
     )

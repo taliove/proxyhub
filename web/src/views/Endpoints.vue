@@ -94,7 +94,7 @@
         <el-form-item v-if="nameConfigForm.name_mode !== 'off'" label="名称模板">
           <el-input
             v-model="nameConfigForm.name_template"
-            placeholder="留空则用全局模板,如 {emoji} {region} {source_abbr}-{index}"
+            placeholder="留空则用全局模板，如 {emoji} {region} {source_abbr}-{index}"
           />
           <div class="cfg-hint">
             变量：{emoji} {region} {region_code} {source} {source_abbr} {index}
@@ -117,8 +117,8 @@
             maxlength="50"
           />
           <div class="cfg-hint">
-            随订阅下发,客户端配置列表显示「ProxyHub · 公开名称」;留空则显示「ProxyHub」。
-            别名为私有信息,绝不下发。
+            随订阅下发，客户端配置列表显示「ProxyHub · 公开名称」；留空则显示「ProxyHub」。
+            别名为私有信息，绝不下发。
           </div>
         </el-form-item>
       </el-form>
@@ -320,7 +320,7 @@ onMounted(() => {
   margin-bottom: var(--ph-space-3);
 }
 /* append 槽内容器:EP 默认给 append 内 el-button 设 flex:1 + margin:0 -20px(单按钮填满),
-   多按钮会重叠;容器改为整体撑满 append(负边距抵消内边距),按钮均分宽度并填满高度 */
+   多按钮会重叠；容器改为整体撑满 append(负边距抵消内边距),按钮均分宽度并填满高度 */
 .url-actions {
   display: flex;
   align-self: stretch;

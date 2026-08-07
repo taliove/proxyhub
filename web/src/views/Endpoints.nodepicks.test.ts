@@ -169,12 +169,12 @@ const mountView = (list: Endpoint[] = [endpoint]) => {
   })
 }
 
-describe('Endpoints 精选节点(issue #80)', () => {
+describe('Endpoints 精选节点（issue #80）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('列表精选列:已配精选显示「精选 N 个节点」,未配显示「全量」', async () => {
+  it('列表精选列：已配精选显示「精选 N 个节点」，未配显示「全量」', async () => {
     const noPicks: Endpoint = { ...endpoint, id: 8, node_picks: '' }
     const wrapper = mountView([endpoint, noPicks])
     await flushPromises()
@@ -184,14 +184,14 @@ describe('Endpoints 精选节点(issue #80)', () => {
     expect(tags).toContain('全量')
   })
 
-  it('node_picks 解析失败按空集(与后端降级语义一致),显示「全量」', async () => {
+  it('node_picks 解析失败按空集（与后端降级语义一致）,显示「全量」', async () => {
     const bad: Endpoint = { ...endpoint, node_picks: 'not-json' }
     const wrapper = mountView([bad])
     await flushPromises()
     expect(wrapper.findAll('.el-tag-stub').map((t) => t.text())).toContain('全量')
   })
 
-  it('点击精选标签打开选择器并传入该端点(编辑模式)', async () => {
+  it('点击精选标签打开选择器并传入该端点（编辑模式）', async () => {
     const wrapper = mountView()
     await flushPromises()
 
@@ -203,7 +203,7 @@ describe('Endpoints 精选节点(issue #80)', () => {
     expect(stub.exists()).toBe(true)
     expect(stub.attributes('data-endpoint-id')).toBe('7')
   })
-  it('「新建订阅地址」打开创建对话框(表单与暂存精选链路归 EndpointCreateDialog)', async () => {
+  it('「新建订阅地址」打开创建对话框（表单与暂存精选链路归 EndpointCreateDialog）', async () => {
     const wrapper = mountView()
     await flushPromises()
     expect(wrapper.find('.EndpointCreateDialog-stub').exists()).toBe(false)

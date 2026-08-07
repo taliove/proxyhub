@@ -81,14 +81,14 @@ export interface Node {
   // 排障用协议参数(ticket 0016;uuid/password 属凭证,后端不透出)
   cipher?: string
   alter_id?: number
-  plugin?: string // SS 插件(simple-obfs/v2ray-plugin)
-  plugin_opts?: string // 插件参数原始串("obfs=http;obfs-host=x")
+  plugin?: string // SS 插件（simple-obfs/v2ray-plugin）
+  plugin_opts?: string // 插件参数原始串（"obfs=http;obfs-host=x"）
   grpc_service_name?: string
-  insecure?: boolean // 跳过证书校验(订阅里的 insecure=1)
+  insecure?: boolean // 跳过证书校验（订阅里的 insecure=1）
   // 可用性判定来源(与后端 subscription.AvailabilitySource* 对齐):
   // never=从未检测 / health=仅健康检查(TCP 快检)/ real=真实代理检测
   availability_source: 'never' | 'health' | 'real'
-  detection_last_check?: string // 最近一次检测时间(RFC3339;从未检测时缺省)
+  detection_last_check?: string // 最近一次检测时间（RFC3339;从未检测时缺省）
   // 最近检测失败原因(ticket 0017;与后端 detection.FailReason* 对齐):
   // 分类为有限枚举,详情为截断短文本;检测成功/从未检测时缺省
   detection_fail_reason?: 'timeout' | 'refused' | 'unreachable' | 'handshake' | 'protocol' | 'other'
@@ -96,9 +96,9 @@ export interface Node {
   unlock_results?: Record<string, UnlockResult> // 多维解锁检测结果
   bandwidth_down_mbps?: number // 最近一次带宽测试下行
   bandwidth_up_mbps?: number // 最近一次带宽测试上行
-  tags?: string[] // 自动标签(见票据 21;后端透出前缺省,按空态处理)
-  stability_score?: number // 最近体检稳定性分 0..100(见票据 54;无体检记录时缺省,按无分处理)
-  share_link?: string // 节点分享链接(机场节点从订阅解析时保留原始链接)
+  tags?: string[] // 自动标签（见票据 21;后端透出前缺省，按空态处理）
+  stability_score?: number // 最近体检稳定性分 0..100(见票据 54;无体检记录时缺省，按无分处理)
+  share_link?: string // 节点分享链接（机场节点从订阅解析时保留原始链接）
 }
 
 export interface UnlockResult {
@@ -107,8 +107,8 @@ export interface UnlockResult {
   error?: string
   down_mbps?: number
   up_mbps?: number
-  level?: string // 解锁级别:full/originals_only/blocked(仅专用解锁判定填充)
-  region?: string // 命中区域国家码(如 US/HK),空则不展示
+  level?: string // 解锁级别：full/originals_only/blocked(仅专用解锁判定填充)
+  region?: string // 命中区域国家码（如 US/HK）,空则不展示
 }
 
 // 节点分页查询响应（见 ADR 0013）
@@ -125,8 +125,8 @@ export interface NodePage {
 export interface NodeListParams {
   page?: number
   page_size?: number
-  source?: string // 机场名,子串模糊匹配
-  keyword?: string // 名称片段或地区(地区码/地区中文名)
+  source?: string // 机场名，子串模糊匹配
+  keyword?: string // 名称片段或地区（地区码/地区中文名）
 }
 
 export interface RegionOption {
@@ -258,7 +258,7 @@ export interface ExamRegionResult {
   name: string
   ttfb_ms: number
   down_mbps: number
-  up_mbps?: number // 上行速率(全区填充;上行失败时为 0 或缺失)
+  up_mbps?: number // 上行速率（全区填充；上行失败时为 0 或缺失）
   error?: string
 }
 
@@ -275,7 +275,7 @@ export interface ExamUnlockResult {
   latency: number
   error?: string
   level?: string // full | originals_only | blocked
-  region?: string // 命中区域国家码(如 US/HK)
+  region?: string // 命中区域国家码（如 US/HK）
 }
 
 // 深度体检 - 解锁段聚合结果(逐目标一条,顺序与 DefaultUnlockTargets 一致)

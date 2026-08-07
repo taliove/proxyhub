@@ -54,7 +54,7 @@
         class="diagnostic-alert"
       >
         <template #title>订阅 URL 当前不可达</template>
-        已基于池内已同步节点进行测试,评分不含拉取健康维度(权重重归一)。
+        已基于池内已同步节点进行测试，评分不含拉取健康维度（权重重归一）。
       </el-alert>
 
       <div class="phase-loading">
@@ -91,7 +91,7 @@
         <span class="muted">{{ completedTitle }}</span>
       </div>
       <AirportTestSummary v-if="completedResult" :result="completedResult" />
-      <div v-else class="muted">本次未产出维度明细,仅呈现综合得分。</div>
+      <div v-else class="muted">本次未产出维度明细，仅呈现综合得分。</div>
       <div class="drawer-hint muted">完整历史趋势与抽样节点明细见机场详情抽屉「最近测试」。</div>
     </div>
 
@@ -99,10 +99,10 @@
     <div v-else-if="phase === 'cancelled'" class="test-phase">
       <el-alert type="info" :closable="false" show-icon class="diagnostic-alert">
         <template #title>{{ cancelledTitle }}</template>
-        已写回的节点检活结果保留,未产生评分报告。
+        已写回的节点检活结果保留，未产生评分报告。
       </el-alert>
       <template v-if="diagnosticReady">
-        <h4>📊 诊断结果(取消前已产出)</h4>
+        <h4>📊 诊断结果（取消前已产出）</h4>
         <AirportTestDiagnostic :diagnostic="diagnosticResult" />
       </template>
     </div>
@@ -234,18 +234,18 @@ watch(visible, (val) => {
 const completedTitle = computed(() => {
   const mode = testFull.value ? '全量' : '抽样'
   return involvedCount.value !== null
-    ? `实测完成(${mode},共检活 ${involvedCount.value} 个节点)`
-    : `实测完成(${mode})`
+    ? `实测完成（${mode}，共检活 ${involvedCount.value} 个节点）`
+    : `实测完成（${mode}）`
 })
 
 const cancelledTitle = computed(() => {
   const mode = testFull.value ? '全量' : '抽样'
-  return `测试已取消(${mode})`
+  return `测试已取消（${mode}）`
 })
 
 const failedTitle = computed(() => {
   const mode = testFull.value ? '全量' : '抽样'
-  return `测试失败(${mode})`
+  return `测试失败（${mode}）`
 })
 
 // 显式运行入口:父级(机场管理页/详情抽屉)在用户点「测试」/「重新测试」/「测全部」时调用。

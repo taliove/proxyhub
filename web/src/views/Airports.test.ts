@@ -184,7 +184,7 @@ describe('Airports 行内操作收敛', () => {
     vi.clearAllMocks()
   })
 
-  it('行内操作列:详情/刷新 + 「测试」下拉(抽样测试/测全部两项)', async () => {
+  it('行内操作列：详情/刷新 + 「测试」下拉（抽样测试/测全部两项）', async () => {
     const wrapper = mountView()
     await flushPromises()
 
@@ -194,7 +194,7 @@ describe('Airports 行内操作收敛', () => {
     expect(buttons).toEqual(['详情', '刷新', '测试', '抽样测试', '测全部'])
   })
 
-  it('行内「测试」下拉:抽样测试以 full=false 发起,测全部以 full=true 发起', async () => {
+  it('行内「测试」下拉：抽样测试以 full=false 发起，测全部以 full=true 发起', async () => {
     const wrapper = mountView()
     await flushPromises()
 
@@ -209,7 +209,7 @@ describe('Airports 行内操作收敛', () => {
     expect(testDialogStart).toHaveBeenNthCalledWith(2, airport, true)
   })
 
-  it('禁用机场行内也可测(对齐 0037 已放开的语义)', async () => {
+  it('禁用机场行内也可测（对齐 0037 已放开的语义）', async () => {
     const disabledAirport: Airport = { ...airport, enabled: false }
     const wrapper = mountView([disabledAirport])
     await flushPromises()
@@ -236,7 +236,7 @@ describe('Airports 行内操作收敛', () => {
     expect(drawer.props('airport')).toEqual(airport)
   })
 
-  it('点最近测试分数 = 查看报告:打开抽屉,不发 POST test,不调对话框 start', async () => {
+  it('点最近测试分数 = 查看报告：打开抽屉，不发 POST test,不调对话框 start', async () => {
     const testedAirport: Airport = {
       ...airport,
       last_test_score: 88.5,
@@ -287,7 +287,7 @@ describe('Airports 行内操作收敛', () => {
     expect(vi.mocked(client.post)).not.toHaveBeenCalled()
   })
 
-  it('抽屉上抛 run-test 时经对话框 start 显式运行(抽样/全量)', async () => {
+  it('抽屉上抛 run-test 时经对话框 start 显式运行（抽样/全量）', async () => {
     const wrapper = mountView()
     await flushPromises()
 

@@ -44,7 +44,7 @@ const mockReport: ExamReport = {
 }
 
 describe('ExamShareCard', () => {
-  it('默认(showAll=false):不渲染任何 IP/服务器地址,显示打码节点名与最佳/最差,含稳定性明细', () => {
+  it('默认（showAll=false）:不渲染任何 IP/服务器地址，显示打码节点名与最佳/最差，含稳定性明细', () => {
     const wrapper = mount(ExamShareCard, {
       props: {
         report: mockReport,
@@ -143,7 +143,7 @@ describe('ExamShareCard', () => {
     expect(wrapper.find('.share-card-full').exists()).toBe(true)
   })
 
-  it('评分环使用显式背景色(不依赖 color-mix)', () => {
+  it('评分环使用显式背景色（不依赖 color-mix）', () => {
     const wrapper = mount(ExamShareCard, {
       props: {
         report: mockReport,
@@ -179,7 +179,7 @@ describe('ExamShareCard', () => {
     expect(arc.attributes('stroke-dashoffset')).toBeTruthy()
   })
 
-  it('全量版多地域表:数值单元格单行不折行(nowrap)', () => {
+  it('全量版多地域表：数值单元格单行不折行（nowrap）', () => {
     const wrapper = mount(ExamShareCard, {
       props: {
         report: mockReport,
@@ -199,7 +199,7 @@ describe('ExamShareCard', () => {
     expect(table.html()).toContain('150.0 Mbps')
   })
 
-  it('无稳定性数据时:不渲染稳定性明细区块', () => {
+  it('无稳定性数据时：不渲染稳定性明细区块', () => {
     const reportWithoutStability = { ...mockReport, stability: undefined }
     const wrapper = mount(ExamShareCard, {
       props: {

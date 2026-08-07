@@ -46,7 +46,7 @@ describe('selfIdentity', () => {
 })
 
 describe('selfNodeToRow', () => {
-  it('禁用自建节点适配为行,携带 id/enabled 且 available=false', () => {
+  it('禁用自建节点适配为行，携带 id/enabled 且 available=false', () => {
     const row = selfNodeToRow(selfNode({ id: 7, enabled: false }))
     expect(row.source).toBe(SELF_HOSTED)
     expect(row.self_node_id).toBe(7)
@@ -79,7 +79,7 @@ describe('buildUnifiedRows', () => {
     expect(rows[0].enabled).toBe(true)
   })
 
-  it('禁用自建节点(不在池中)被补进表格', () => {
+  it('禁用自建节点（不在池中）被补进表格', () => {
     const pool = [poolNode({ source: '机场A' })]
     const rows = buildUnifiedRows(pool, [selfNode({ id: 5, enabled: false })])
     expect(rows).toHaveLength(2)

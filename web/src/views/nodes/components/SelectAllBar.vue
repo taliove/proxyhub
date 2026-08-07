@@ -1,13 +1,13 @@
 <template>
   <div class="select-all-bar num">
     <template v-if="!allFiltered">
-      已选当前页 {{ pageCount }} 条,
+      已选当前页 {{ pageCount }} 条，
       <el-button link type="primary" @click="emit('enter')">
         点击选中全部 {{ total }} 条筛选结果
       </el-button>
     </template>
     <template v-else>
-      已选中全部 {{ total }} 条筛选结果,
+      已选中全部 {{ total }} 条筛选结果，
       <el-button link type="primary" @click="emit('exit')">点击取消</el-button>
     </template>
   </div>

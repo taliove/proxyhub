@@ -86,7 +86,7 @@
             </el-timeline-item>
           </el-timeline>
         </template>
-        <div v-else class="muted">暂无关联刷新记录(任务刚启动或记录已滚动清理)</div>
+        <div v-else class="muted">暂无关联刷新记录（任务刚启动或记录已滚动清理）</div>
       </template>
 
       <!-- 体检任务(exam/batch_exam):消费 GET /api/jobs/{id}/result 的报告(ticket 0023)。
@@ -96,7 +96,7 @@
         <el-divider content-position="left">体检结果</el-divider>
         <div v-if="examLoading" class="muted">加载体检报告…</div>
         <div v-else-if="examResult?.reason === 'no_report'" class="muted">
-          本次任务未产生报告(可能已被中断)
+          本次任务未产生报告（可能已被中断）
         </div>
         <div v-else-if="reportRows.length === 0" class="muted">暂无体检报告</div>
         <template v-else>

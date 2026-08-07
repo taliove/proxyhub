@@ -235,7 +235,7 @@ describe('AirportDetailDrawer', () => {
     vi.clearAllMocks()
   })
 
-  it('打开抽屉只拉取池快照与测试记录(纯读取),不触发任何测试/检活写请求', async () => {
+  it('打开抽屉只拉取池快照与测试记录（纯读取）,不触发任何测试/检活写请求', async () => {
     mountDrawer(true)
     await flushPromises()
 
@@ -255,7 +255,7 @@ describe('AirportDetailDrawer', () => {
     expect(vi.mocked(client.get)).not.toHaveBeenCalled()
   })
 
-  it('概况段展示机场信息,订阅 URL 可复制', async () => {
+  it('概况段展示机场信息，订阅 URL 可复制', async () => {
     const writeText = vi.fn(async () => {})
     Object.assign(navigator, { clipboard: { writeText } })
 
@@ -273,7 +273,7 @@ describe('AirportDetailDrawer', () => {
     expect(writeText).toHaveBeenCalledWith('https://example.com/sub/token123')
   })
 
-  it('概况段轻管理动作全部上抛(编辑/启停/删除/刷新/测试/二维码)', async () => {
+  it('概况段轻管理动作全部上抛（编辑/启停/删除/刷新/测试/二维码）', async () => {
     const wrapper = mountDrawer(true)
     await flushPromises()
 
@@ -294,7 +294,7 @@ describe('AirportDetailDrawer', () => {
     }
   })
 
-  it('池内节点明细:展示名称/地区/可用性/延迟/最近实测,行轻动作仅复制链接与体检,无屏蔽', async () => {
+  it('池内节点明细：展示名称/地区/可用性/延迟/最近实测，行轻动作仅复制链接与体检，无屏蔽', async () => {
     const wrapper = mountDrawer(true)
     await flushPromises()
 
@@ -342,7 +342,7 @@ describe('AirportDetailDrawer', () => {
     expect(wrapper.text()).toContain('该机场当前在池内无节点')
   })
 
-  it('明细分段走服务端分页:默认 page=1&page_size=10,total 渲染自接口响应', async () => {
+  it('明细分段走服务端分页：默认 page=1&page_size=10,total 渲染自接口响应', async () => {
     const wrapper = mountDrawer(true, [poolNode], 42)
     await flushPromises()
 
@@ -365,7 +365,7 @@ describe('AirportDetailDrawer', () => {
     })
   })
 
-  it('搜索输入(防抖)携带 keyword 并重置到第 1 页', async () => {
+  it('搜索输入（防抖）携带 keyword 并重置到第 1 页', async () => {
     const wrapper = mountDrawer(true, [poolNode], 42)
     await flushPromises()
 
@@ -424,7 +424,7 @@ describe('AirportDetailDrawer', () => {
     })
   })
 
-  it('搜索无结果时展示匹配空态(不白屏)', async () => {
+  it('搜索无结果时展示匹配空态（不白屏）', async () => {
     const wrapper = mountDrawer(true, [])
     await flushPromises()
 
@@ -434,7 +434,7 @@ describe('AirportDetailDrawer', () => {
     expect(wrapper.text()).toContain('未找到匹配「不存在」的节点')
   })
 
-  it('节点请求失败时降级为空态,不白屏', async () => {
+  it('节点请求失败时降级为空态，不白屏', async () => {
     vi.mocked(client.get).mockImplementation(async (url: unknown) => {
       if (url === '/nodes') throw new Error('network down')
       if (url === '/airports/7/test/runs') return [] as never
@@ -461,7 +461,7 @@ describe('AirportDetailDrawer', () => {
     expect(wrapper.text()).toContain('该机场当前在池内无节点')
   })
 
-  it('最近测试段:拉取 runs 传给报告组件;重跑意图上抛 {airport, full}', async () => {
+  it('最近测试段：拉取 runs 传给报告组件；重跑意图上抛 {airport, full}', async () => {
     const wrapper = mountDrawer(true)
     await flushPromises()
 
@@ -480,7 +480,7 @@ describe('AirportDetailDrawer', () => {
     expect(vi.mocked(client.post)).not.toHaveBeenCalled()
   })
 
-  it('reloadReport 暴露给父级:重跑完成后重新拉取测试记录', async () => {
+  it('reloadReport 暴露给父级：重跑完成后重新拉取测试记录', async () => {
     const wrapper = mountDrawer(true)
     await flushPromises()
     expect(

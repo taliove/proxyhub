@@ -41,8 +41,8 @@ const PARALLEL_CONNECTIONS = 8
 const DOWNLOAD_DURATION_MS = 10_000
 const UPLOAD_DURATION_MS = 10_000
 const LATENCY_SAMPLES = 8
-const SAMPLE_INTERVAL_MS = 300 // 聚合采样间隔(对齐后端 detection.sampleReader)
-const UPLOAD_CHUNK_SIZE = 256 * 1024 // 上行单次入队块(不可压缩随机数据)
+const SAMPLE_INTERVAL_MS = 300 // 聚合采样间隔（对齐后端 detection.sampleReader）
+const UPLOAD_CHUNK_SIZE = 256 * 1024 // 上行单次入队块（不可压缩随机数据）
 
 // measureLatency 串行打 samples 次透传小请求(经节点),量 RTT 算空闲延迟/抖动。
 async function measureLatency(
@@ -192,7 +192,7 @@ async function measureUpload(
 // 并流式转发。流量经浏览器(Network 可见大 Size),且经用户下拉选定节点。
 // 回调同现接口(onLatency/onPhase/onSample)。
 export async function runSpeedtest(
-  nodeKey: string, // 选定节点 key('' = 直连基线,后端直连 Cloudflare)
+  nodeKey: string, // 选定节点 key('' = 直连基线，后端直连 Cloudflare)
   callbacks: RunCallbacks = {},
   signal?: AbortSignal
 ): Promise<SpeedtestOutcome> {

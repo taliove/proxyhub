@@ -16,12 +16,12 @@ export function regenerateErrorMessage(err: unknown): string {
   const body = error ?? ''
   if (status === 400) {
     if (body.includes('not enrolled')) {
-      return '该账号还未绑定验证器,首批恢复码在绑定流程中发放'
+      return '该账号还未绑定验证器，首批恢复码在绑定流程中发放'
     }
     if (body.includes('required')) {
       return '请输入动态码或恢复码'
     }
-    return '确认码不正确或已过期,请用认证器上的最新动态码重试'
+    return '确认码不正确或已过期，请用认证器上的最新动态码重试'
   }
-  return '重新生成失败,请稍后重试'
+  return '重新生成失败，请稍后重试'
 }

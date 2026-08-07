@@ -54,7 +54,7 @@
           <el-input
             v-model="form.newPassword"
             type="password"
-            placeholder="至少 8 位,需同时含字母与数字"
+            placeholder="至少 8 位，需同时含字母与数字"
             size="large"
             autocomplete="new-password"
             show-password
@@ -82,7 +82,7 @@
         </el-button>
       </el-form>
 
-      <p class="change-password__footer">修改成功后将退出登录,请使用新密码重新登录</p>
+      <p class="change-password__footer">修改成功后将退出登录，请使用新密码重新登录</p>
     </div>
   </div>
 </template>
@@ -160,7 +160,7 @@ const handleSubmit = async () => {
     // 后端已销毁会话并清除 must_change_password;本地同步清位,守卫即刻放行,
     // 之后任何业务请求 401,由 axios 拦截器统一送回登录页。
     authStore.clearMustChangePassword()
-    ElMessage.success('密码已修改,请重新登录')
+    ElMessage.success('密码已修改，请重新登录')
     router.push('/')
   } catch {
     // 错误由 axios 拦截器统一提示

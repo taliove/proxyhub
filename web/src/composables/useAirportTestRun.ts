@@ -91,7 +91,7 @@ export function useAirportTestRun(onFinished: () => void) {
       // 409 = 同机场刷新在跑(跨 kind 互斥);其余错误后端为纯文本或拦截器已提示
       errorMessage.value =
         err.response?.status === 409
-          ? '同机场有刷新任务进行中,暂不能发起测试'
+          ? '同机场有刷新任务进行中，暂不能发起测试'
           : typeof err.response?.data === 'string'
             ? err.response.data
             : err.message || '请求失败'
@@ -200,7 +200,7 @@ export function useAirportTestRun(onFinished: () => void) {
         break
       case 'interrupted':
         phase.value = 'failed'
-        errorMessage.value = '任务已被中断(进程重启),未产生完整报告'
+        errorMessage.value = '任务已被中断（进程重启）,未产生完整报告'
         break
       default:
         phase.value = 'failed'

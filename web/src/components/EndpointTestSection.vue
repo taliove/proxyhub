@@ -15,8 +15,8 @@
     </div>
 
     <div v-if="!testResult" class="muted test-empty">
-      尚未测试。「拉取验证」校验订阅内容合法性并给出池快照(不发真实请求、不计拉取统计);
-      「现场实测」对下发节点抽样检活,「测全部」全量检活,结果写回节点池。
+      尚未测试。「拉取验证」校验订阅内容合法性并给出池快照（不发真实请求、不计拉取统计）;
+      「现场实测」对下发节点抽样检活，「测全部」全量检活，结果写回节点池。
     </div>
 
     <template v-else>
@@ -57,7 +57,7 @@
     <div v-if="probeRun" class="probe-block">
       <template v-if="probeRun.status === 'running'">
         <div class="probe-running muted">
-          现场实测进行中({{ probeRun.full ? '全量' : '抽样' }})…
+          现场实测进行中（{{ probeRun.full ? '全量' : '抽样' }}）…
         </div>
         <el-progress
           :percentage="probePercent"
@@ -72,9 +72,9 @@
         class="report-alert"
       >
         <template #title>
-          实测完成({{ probeRun.full ? '全量' : '抽样' }},共检活 {{ probeRun.checked }} 个节点)
+          实测完成（{{ probeRun.full ? '全量' : '抽样' }}，共检活 {{ probeRun.checked }} 个节点）
         </template>
-        可用性结果已写回节点池,池快照已刷新。
+        可用性结果已写回节点池，池快照已刷新。
       </el-alert>
       <el-alert v-else type="error" :closable="false" show-icon class="report-alert">
         <template #title>实测失败</template>
@@ -83,7 +83,7 @@
     </div>
     <el-alert v-if="probeLost" type="warning" :closable="false" show-icon class="report-alert">
       <template #title>实测进度已失效</template>
-      实测记录只保存在服务内存,服务重启或过期后丢失,请重新发起实测。
+      实测记录只保存在服务内存，服务重启或过期后丢失，请重新发起实测。
     </el-alert>
   </div>
 </template>

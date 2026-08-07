@@ -19,9 +19,9 @@
     </div>
     <div class="picks-toolbar">
       <el-button size="small" :disabled="filteredPool.length === 0" @click="addAllFiltered">
-        全选当前过滤结果({{ filteredPool.length }})
+        全选当前过滤结果（{{ filteredPool.length }}）
       </el-button>
-      <span class="cfg-hint">已选 {{ selected.length }} 个;空 = 不精选(全量)</span>
+      <span class="cfg-hint">已选 {{ selected.length }} 个；空 = 不精选（全量）</span>
     </div>
     <div v-loading="loading" class="picks-body">
       <div class="picks-col">
@@ -54,7 +54,7 @@
         />
       </div>
       <div class="picks-col">
-        <div class="picks-col-title">已选({{ selected.length }})</div>
+        <div class="picks-col-title">已选（{{ selected.length }}）</div>
         <el-table :data="selectedRows" size="small" max-height="400">
           <el-table-column label="节点" min-width="130" show-overflow-tooltip>
             <template #default="{ row }">
@@ -67,7 +67,7 @@
             </template>
           </el-table-column>
           <!-- 精选项别名(issue #85):仅本订阅下发的最终命名层;留空 = 跟随命名链 -->
-          <el-table-column label="别名(仅本订阅)" min-width="130">
+          <el-table-column label="别名（仅本订阅）" min-width="130">
             <template #default="{ row }">
               <el-input
                 :model-value="row.pick.alias ?? ''"
@@ -111,15 +111,15 @@ import {
 const props = withDefaults(
   defineProps<{
     modelValue: boolean
-    endpoint: Endpoint | null // null = 新建暂存模式(端点尚未创建,无 id 可 PUT)
+    endpoint: Endpoint | null // null = 新建暂存模式（端点尚未创建，无 id 可 PUT）
     stagedPicks?: NodePick[] // 新建暂存模式下的初始已选
   }>(),
   { stagedPicks: () => [] }
 )
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
-  (e: 'saved'): void // 编辑模式保存成功(PUT 已落库)
-  (e: 'confirm', picks: NodePick[]): void // 新建暂存模式确认(由父级随创建落库)
+  (e: 'saved'): void // 编辑模式保存成功（PUT 已落库）
+  (e: 'confirm', picks: NodePick[]): void // 新建暂存模式确认（由父级随创建落库）
 }>()
 
 // 池规模有界(本地管理面,量级为百),一次性取全量后前端过滤分页(issue #86);

@@ -36,7 +36,7 @@ export function useNodeBatchActions(
   const detectOne = (node: UnifiedNode) => detect({ type: 'selected', node_keys: [node.node_key] })
   const cancelDetection = () => cancel(reload)
   const triggerCleanupDetection = (onComplete: () => void) =>
-    trigger({ type: 'all' }, onComplete, '检测已启动,完成后自动刷新失败列表')
+    trigger({ type: 'all' }, onComplete, '检测已启动，完成后自动刷新失败列表')
 
   // 动作 2/3/4:同构批量任务,完成后刷新体检摘要(测速另需 reload 以刷带宽列)。
   const batchStability = useBatchStability(reloadExam)

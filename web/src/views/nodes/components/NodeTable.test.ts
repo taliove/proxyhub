@@ -101,8 +101,8 @@ const opsButtonTexts = (wrapper: ReturnType<typeof mountTable>, index: number) =
     .map((b) => b.text())
 }
 
-describe('NodeTable 行内屏蔽/解除屏蔽(issue #82)', () => {
-  it('未屏蔽机场节点行内显示「屏蔽」,点击 emit block 带该行', async () => {
+describe('NodeTable 行内屏蔽/解除屏蔽（issue #82）', () => {
+  it('未屏蔽机场节点行内显示「屏蔽」，点击 emit block 带该行', async () => {
     const row = node({ node_key: 'k-block' })
     const wrapper = mountTable([row])
 
@@ -120,7 +120,7 @@ describe('NodeTable 行内屏蔽/解除屏蔽(issue #82)', () => {
     expect(wrapper.emitted('unblock')).toBeUndefined()
   })
 
-  it('已屏蔽机场节点行内显示「取消屏蔽」,点击 emit unblock 带该行', async () => {
+  it('已屏蔽机场节点行内显示「取消屏蔽」，点击 emit unblock 带该行', async () => {
     const row = node({ node_key: 'k-unblock', blocked: true })
     const wrapper = mountTable([row])
 
@@ -138,7 +138,7 @@ describe('NodeTable 行内屏蔽/解除屏蔽(issue #82)', () => {
     expect(wrapper.emitted('block')).toBeUndefined()
   })
 
-  it('自建节点(屏蔽豁免)不渲染屏蔽/取消屏蔽按钮', () => {
+  it('自建节点（屏蔽豁免）不渲染屏蔽/取消屏蔽按钮', () => {
     const row = node({ node_key: 'k-self', source: SELF_HOSTED, self_node_id: 7, enabled: true })
     const wrapper = mountTable([row])
 

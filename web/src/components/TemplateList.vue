@@ -15,7 +15,7 @@
         <div class="item-meta">{{ tmpl.ref_count }} 个订阅地址使用</div>
       </div>
       <div v-if="templates.length === 0" class="list-empty">
-        模板库为空,当前使用全局默认模板。<br />点击右上角「新建模板」以生效模板为底稿创建,第一套模板自动成为默认。
+        模板库为空，当前使用全局默认模板。<br />点击右上角「新建模板」以生效模板为底稿创建，第一套模板自动成为默认。
       </div>
     </div>
   </div>

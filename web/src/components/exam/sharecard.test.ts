@@ -19,15 +19,15 @@ import {
 } from './sharecard'
 
 describe('maskNodeName', () => {
-  it('保留前两段并遮蔽尾段(三段名匹配 ticket 示例)', () => {
+  it('保留前两段并遮蔽尾段（三段名匹配 ticket 示例）', () => {
     expect(maskNodeName('233boy-grpc-1.2.3.4')).toBe(`233boy-grpc-${MASK}`)
   })
 
-  it('两段名只保留首段,遮蔽尾段(不泄露全部)', () => {
+  it('两段名只保留首段，遮蔽尾段（不泄露全部）', () => {
     expect(maskNodeName('233boy-hk')).toBe(`233boy-${MASK}`)
   })
 
-  it('多段名(>3)至多保留前两段', () => {
+  it('多段名（>3）至多保留前两段', () => {
     expect(maskNodeName('a-b-c-d')).toBe(`a-b-${MASK}`)
   })
 
@@ -36,7 +36,7 @@ describe('maskNodeName', () => {
     expect(maskNodeName('us1|premium|host')).toBe(`us1-premium-${MASK}`)
   })
 
-  it('不按点号切段:纯域名/IP 单段只露极短前缀', () => {
+  it('不按点号切段：纯域名/IP 单段只露极短前缀', () => {
     expect(maskNodeName('hk1.example.com')).toBe(`hk${MASK}`)
     expect(maskNodeName('1.2.3.4')).toBe(`1.${MASK}`)
   })
@@ -52,13 +52,13 @@ describe('maskNodeName', () => {
 })
 
 describe('displayNodeName', () => {
-  it('打码开:走 maskNodeName', () => {
+  it('打码开：走 maskNodeName', () => {
     expect(displayNodeName('233boy-grpc-host', true)).toBe(`233boy-grpc-${MASK}`)
   })
-  it('打码关:原样(去空白)', () => {
+  it('打码关：原样（去空白）', () => {
     expect(displayNodeName('  233boy-grpc-host  ', false)).toBe('233boy-grpc-host')
   })
-  it('打码关但空名:占位', () => {
+  it('打码关但空名：占位', () => {
     expect(displayNodeName('', false)).toBe(UNNAMED)
   })
 })
@@ -157,7 +157,7 @@ describe('shareBaselineUpMbps', () => {
 })
 
 describe('shareRegionExtremes', () => {
-  it('排除基准,取下行最高=最佳、最低=最差;包含 ttfb_ms', () => {
+  it('排除基准，取下行最高=最佳、最低=最差；包含 ttfb_ms', () => {
     const report = {
       region_speed: {
         regions: [
@@ -177,7 +177,7 @@ describe('shareRegionExtremes', () => {
     expect(worst?.down_mbps).toBe(40)
     expect(worst?.ttfb_ms).toBe(90)
   })
-  it('单个有效区域:最佳=最差=该区', () => {
+  it('单个有效区域：最佳=最差=该区', () => {
     const report = {
       region_speed: { regions: [{ code: 'us_west', name: '美西', ttfb_ms: 120, down_mbps: 80 }] }
     } as ExamReport
@@ -185,13 +185,13 @@ describe('shareRegionExtremes', () => {
     expect(best?.name).toBe('美西')
     expect(worst?.name).toBe('美西')
   })
-  it('无有效区域:双 null', () => {
+  it('无有效区域：双 null', () => {
     expect(shareRegionExtremes({} as ExamReport)).toEqual({ best: null, worst: null })
   })
 })
 
 describe('shareUnlockCells', () => {
-  it('固定 6 槽位归位,缺失为 unknown/未测', () => {
+  it('固定 6 槽位归位，缺失为 unknown/未测', () => {
     const report = {
       unlock: {
         results: [
@@ -211,7 +211,7 @@ describe('shareUnlockCells', () => {
 })
 
 describe('shareEgressSummary', () => {
-  it('默认不返回任何 IP/服务器地址,仅返回地区与泄露状态', () => {
+  it('默认不返回任何 IP/服务器地址，仅返回地区与泄露状态', () => {
     const report = {
       egress: {
         ipv4: {
@@ -276,7 +276,7 @@ describe('shareEgressSummary', () => {
     expect(s.ingressIp).toBeUndefined()
   })
 
-  it('showDns=true 且解析器无地区:仅显示 IP', () => {
+  it('showDns=true 且解析器无地区：仅显示 IP', () => {
     const report = {
       egress: {
         dns: { resolver_ip: '8.8.8.8', leak: false }
@@ -286,7 +286,7 @@ describe('shareEgressSummary', () => {
     expect(s.dnsResolver).toBe('8.8.8.8')
   })
 
-  it('三个开关全开:同时返回三个地址字段', () => {
+  it('三个开关全开：同时返回三个地址字段', () => {
     const report = {
       egress: {
         ipv4: { ip: '203.0.113.7', country: '美国', proxy: false, hosting: true },
@@ -304,7 +304,7 @@ describe('shareEgressSummary', () => {
     expect(s.dnsResolver).toBe('8.8.8.8 (美国)')
   })
 
-  it('DNS 泄露状态与 showDns 独立:状态始终返回,解析器详情受开关控制', () => {
+  it('DNS 泄露状态与 showDns 独立：状态始终返回，解析器详情受开关控制', () => {
     const report = {
       egress: {
         dns: { resolver_ip: '8.8.8.8', resolver_geo: '美国', leak: true }
@@ -327,14 +327,14 @@ describe('shareEgressSummary', () => {
     ).toBe('unknown')
   })
 
-  it('IPv4 探测失败 -> 地区为空,无出口 IP', () => {
+  it('IPv4 探测失败 -> 地区为空，无出口 IP', () => {
     const report = { egress: { ipv4: { proxy: false, hosting: false, error: 'x' } } } as ExamReport
     const s = shareEgressSummary(report, { showEgressIp: true })
     expect(s.ipv4Region).toBe('')
     expect(s.egressIp).toBeUndefined()
   })
 
-  it('安全:默认态摘要不含任何 IP/服务器地址', () => {
+  it('安全：默认态摘要不含任何 IP/服务器地址', () => {
     const report = {
       egress: {
         ipv4: {
@@ -357,7 +357,7 @@ describe('shareEgressSummary', () => {
     expect(serialized).not.toContain('AS64500')
   })
 
-  it('安全:各开关打开属用户明示,对应字段可序列化', () => {
+  it('安全：各开关打开属用户明示，对应字段可序列化', () => {
     const report = {
       egress: {
         ipv4: { ip: '203.0.113.7', country: '美国', proxy: false, hosting: true },
@@ -379,7 +379,7 @@ describe('shareEgressSummary', () => {
   })
 })
 
-describe('shareViewModel (统一视图模型:showAll 控制全量/摘要)', () => {
+describe('shareViewModel (统一视图模型：showAll 控制全量/摘要)', () => {
   const fullReport: ExamReport = {
     stability: {
       score: 88,
@@ -492,13 +492,13 @@ describe('shareViewModel (统一视图模型:showAll 控制全量/摘要)', () =
     expect(vm.egress.hosting).toBe(true)
   })
 
-  it('showAll=false 但稳定性段缺失:stabilityDetails 为 undefined', () => {
+  it('showAll=false 但稳定性段缺失：stabilityDetails 为 undefined', () => {
     const report = { ...fullReport, stability: undefined }
     const vm = shareViewModel(report, { showAll: false, nodeName: 'test' })
     expect(vm.stabilityDetails).toBeUndefined()
   })
 
-  it('showAll=false 但多地域段缺失:allRegions 为 undefined', () => {
+  it('showAll=false 但多地域段缺失：allRegions 为 undefined', () => {
     const report = { ...fullReport, region_speed: undefined }
     const vm = shareViewModel(report, { showAll: false, nodeName: 'test' })
     expect(vm.allRegions).toBeUndefined()

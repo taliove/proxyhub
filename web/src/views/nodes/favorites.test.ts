@@ -32,7 +32,7 @@ const node = (over: Partial<Node> = {}): Node => ({
   ...over
 })
 
-describe('predicates favorite 筛选(issue #83)', () => {
+describe('predicates favorite 筛选（issue #83）', () => {
   it('favorite=null 不筛选', () => {
     const rows = [
       node({ favorite: true }),
@@ -42,7 +42,7 @@ describe('predicates favorite 筛选(issue #83)', () => {
     expect(filterNodes(rows, { ...emptyCriteria(), favorite: null })).toHaveLength(3)
   })
 
-  it('favorite=true 只看已收藏;缺 favorite 字段的行按未收藏处理', () => {
+  it('favorite=true 只看已收藏；缺 favorite 字段的行按未收藏处理', () => {
     const rows = [
       node({ favorite: true }),
       node({ node_key: 'b:1', favorite: false }),
@@ -54,7 +54,7 @@ describe('predicates favorite 筛选(issue #83)', () => {
 })
 
 describe('applyFavoriteOverrides(乐观覆盖)', () => {
-  it('覆盖命中键的 favorite,其余行原样;不改入参', () => {
+  it('覆盖命中键的 favorite,其余行原样；不改入参', () => {
     const rows = [node({ favorite: false }), node({ node_key: 'b:1', favorite: true })]
     const out = applyFavoriteOverrides(rows, { 'example.com:443': true, 'b:1': false })
     expect(out[0].favorite).toBe(true)
@@ -68,14 +68,14 @@ describe('applyFavoriteOverrides(乐观覆盖)', () => {
   })
 })
 
-describe('quickTab 快捷 Tab(自建专区/已收藏,issue #83)', () => {
+describe('quickTab 快捷 Tab(自建专区/已收藏，issue #83)', () => {
   it('quickTabOf 按 criteria 反推当前 Tab', () => {
     expect(quickTabOf(emptyCriteria())).toBe('all')
     expect(quickTabOf({ ...emptyCriteria(), source: SELF_HOSTED })).toBe('self')
     expect(quickTabOf({ ...emptyCriteria(), favorite: true })).toBe('favorite')
   })
 
-  it('applyQuickTab 产出筛选补丁:self 直达 source=自建,favorite 直达已收藏', () => {
+  it('applyQuickTab 产出筛选补丁：self 直达 source=自建，favorite 直达已收藏', () => {
     expect(applyQuickTab('self')).toEqual({ source: SELF_HOSTED, favorite: null })
     expect(applyQuickTab('favorite')).toEqual({ source: '', favorite: true })
     expect(applyQuickTab('all')).toEqual({ source: '', favorite: null })
@@ -102,14 +102,14 @@ describe('useNodeFavorites(toggle 乐观更新 + 失败回滚)', () => {
     expect(favoriteOverrides.value['example.com:443']).toBe(false)
   })
 
-  it('API 失败回滚覆盖(全局错误 toast 由 client 拦截器负责)', async () => {
+  it('API 失败回滚覆盖（全局错误 toast 由 client 拦截器负责）', async () => {
     vi.mocked(setNodeFavorite).mockRejectedValue(new Error('boom'))
     const { favoriteOverrides, toggleFavorite } = useNodeFavorites()
     await toggleFavorite(node({ favorite: false }))
     expect(favoriteOverrides.value['example.com:443']).toBeUndefined()
   })
 
-  it('resetOverrides 清空(池重载后以服务端值为准)', async () => {
+  it('resetOverrides 清空（池重载后以服务端值为准）', async () => {
     vi.mocked(setNodeFavorite).mockResolvedValue({ success: true })
     const { favoriteOverrides, toggleFavorite, resetOverrides } = useNodeFavorites()
     await toggleFavorite(node({}))

@@ -50,7 +50,7 @@ const mountMenu = () =>
   })
 
 describe('AirportRowTestMenu', () => {
-  it('下拉含抽样测试/测全部两项,command 分别上抛 full=false/true(功能不回归,ticket 0046)', async () => {
+  it('下拉含抽样测试/测全部两项，command 分别上抛 full=false/true(功能不回归，ticket 0046)', async () => {
     const wrapper = mountMenu()
 
     const items = wrapper.findAllComponents({ name: 'ElDropdownItem' })
@@ -66,7 +66,7 @@ describe('AirportRowTestMenu', () => {
     expect(wrapper.emitted('test')).toEqual([[false], [true]])
   })
 
-  it('触发按钮为 link type=primary,与行内「详情/刷新」同形态(ticket 0046)', () => {
+  it('触发按钮为 link type=primary,与行内「详情/刷新」同形态（ticket 0046）', () => {
     const wrapper = mountMenu()
 
     const trigger = wrapper.findComponent({ name: 'ElButton' })

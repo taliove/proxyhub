@@ -27,7 +27,7 @@ export function useExamSummaries(nodes: Ref<Node[]>) {
         }
       })
     )
-    if (mine !== token) return // 已有更新的批次,丢弃过期结果
+    if (mine !== token) return // 已有更新的批次，丢弃过期结果
 
     const next: Record<string, NodeExamSummary> = {}
     for (const [key, entry] of results) {

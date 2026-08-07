@@ -126,7 +126,7 @@ describe('RecoveryCodeRegenerate', () => {
     Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => undefined) } })
   })
 
-  it('入口先弹二次确认框,不直接调接口', async () => {
+  it('入口先弹二次确认框，不直接调接口', async () => {
     const wrapper = mountBlock()
     await wrapper.find('.btn-warning').trigger('click')
     await flushPromises()
@@ -149,7 +149,7 @@ describe('RecoveryCodeRegenerate', () => {
     expect(wrapper.text()).toContain('code-10')
   })
 
-  it('未勾选"我已保存"时关闭按钮不放行,勾选后才能关', async () => {
+  it('未勾选"我已保存"时关闭按钮不放行，勾选后才能关', async () => {
     vi.mocked(api.regenerateRecoveryCodes).mockResolvedValue({ ok: true, recovery_codes: CODES })
     const wrapper = await openAndSubmit('123456')
 
@@ -184,7 +184,7 @@ describe('RecoveryCodeRegenerate', () => {
     expect(ElMessage.success).toHaveBeenCalledWith('恢复码已复制')
   })
 
-  it('确认码错误时停在确认框,不展示恢复码', async () => {
+  it('确认码错误时停在确认框，不展示恢复码', async () => {
     vi.mocked(api.regenerateRecoveryCodes).mockRejectedValue({
       response: { status: 400, data: { error: 'invalid confirmation code' } }
     })
@@ -196,7 +196,7 @@ describe('RecoveryCodeRegenerate', () => {
     expect(ElMessage.error).toHaveBeenCalledWith(expect.stringContaining('不正确或已过期'))
   })
 
-  it('空码不发请求(回车提交绕过 disabled 的兜底)', async () => {
+  it('空码不发请求（回车提交绕过 disabled 的兜底）', async () => {
     const wrapper = mountBlock()
     await wrapper.find('.btn-warning').trigger('click')
     await flushPromises()

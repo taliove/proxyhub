@@ -14,7 +14,7 @@ import {
 } from './settings-utils'
 
 describe('validateCaptchaTriggerThreshold', () => {
-  it('接受非负整数,0 表示每次登录都要求验证码', () => {
+  it('接受非负整数，0 表示每次登录都要求验证码', () => {
     expect(validateCaptchaTriggerThreshold(0)).toBeNull()
     expect(validateCaptchaTriggerThreshold(1)).toBeNull()
     expect(validateCaptchaTriggerThreshold(CAPTCHA_TRIGGER_THRESHOLD_MAX)).toBeNull()
@@ -34,7 +34,7 @@ describe('validateCaptchaTriggerThreshold', () => {
     expect(validateCaptchaTriggerThreshold(Number.NaN)).toContain('整数')
   })
 
-  it('拒绝空值(留空等于让后端静默回落默认值)', () => {
+  it('拒绝空值（留空等于让后端静默回落默认值）', () => {
     expect(validateCaptchaTriggerThreshold('')).toContain('不能为空')
     expect(validateCaptchaTriggerThreshold('   ')).toContain('不能为空')
     expect(validateCaptchaTriggerThreshold(null)).toContain('不能为空')
@@ -45,14 +45,14 @@ describe('validateCaptchaTriggerThreshold', () => {
     expect(validateCaptchaTriggerThreshold(CAPTCHA_TRIGGER_THRESHOLD_MAX + 1)).toContain('不能大于')
   })
 
-  it('默认值与后端 defaultCaptchaTriggerThreshold 对齐(1)', () => {
+  it('默认值与后端 defaultCaptchaTriggerThreshold 对齐（1）', () => {
     expect(CAPTCHA_TRIGGER_THRESHOLD_DEFAULT).toBe(1)
     expect(validateCaptchaTriggerThreshold(CAPTCHA_TRIGGER_THRESHOLD_DEFAULT)).toBeNull()
   })
 })
 
 describe('validatePullRateLimit', () => {
-  it('接受非负整数,0 表示关闭限频', () => {
+  it('接受非负整数，0 表示关闭限频', () => {
     expect(validatePullRateLimit(0)).toBeNull()
     expect(validatePullRateLimit(1)).toBeNull()
     expect(validatePullRateLimit(60)).toBeNull()
@@ -83,7 +83,7 @@ describe('validatePullRateLimit', () => {
     expect(validatePullRateLimit(PULL_RATE_LIMIT_MAX + 1)).toContain('不能大于')
   })
 
-  it('默认值与后端 defaultPullRateLimitPerHour 对齐(60)', () => {
+  it('默认值与后端 defaultPullRateLimitPerHour 对齐（60）', () => {
     expect(PULL_RATE_LIMIT_DEFAULT).toBe(60)
     expect(validatePullRateLimit(PULL_RATE_LIMIT_DEFAULT)).toBeNull()
   })
@@ -117,7 +117,7 @@ describe('validatePullBlacklistEscalation', () => {
     expect(validatePullBlacklistEscalation(undefined)).toContain('不能为空')
   })
 
-  it('默认值与后端 defaultPullBlacklistEscalationCount 对齐(10)', () => {
+  it('默认值与后端 defaultPullBlacklistEscalationCount 对齐（10）', () => {
     expect(PULL_BLACKLIST_ESCALATION_DEFAULT).toBe(10)
     expect(validatePullBlacklistEscalation(PULL_BLACKLIST_ESCALATION_DEFAULT)).toBeNull()
   })
@@ -148,7 +148,7 @@ describe('validatePullBlacklistDuration', () => {
     expect(validatePullBlacklistDuration(undefined)).toContain('不能为空')
   })
 
-  it('默认值与后端 defaultPullBlacklistDuration 对齐(24h)', () => {
+  it('默认值与后端 defaultPullBlacklistDuration 对齐（24h）', () => {
     expect(PULL_BLACKLIST_DURATION_DEFAULT).toBe('24h')
     expect(validatePullBlacklistDuration(PULL_BLACKLIST_DURATION_DEFAULT)).toBeNull()
   })

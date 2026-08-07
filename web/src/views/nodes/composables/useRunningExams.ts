@@ -23,7 +23,7 @@ export function useRunningExams(intervalMs = 10000) {
 
   const startPolling = () => {
     load() // 立即加载一次
-    timer = setInterval(load, intervalMs) // 周期轮询(默认 10s,测试可注入更短间隔)
+    timer = setInterval(load, intervalMs) // 周期轮询（默认 10s,测试可注入更短间隔）
   }
 
   const stopPolling = () => {

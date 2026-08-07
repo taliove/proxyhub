@@ -1,6 +1,6 @@
 <template>
   <el-card>
-    <div class="history-title">历史(按标注聚合)</div>
+    <div class="history-title">历史（按标注聚合）</div>
     <el-table v-loading="loading" :data="rows" size="small" @row-click="openDetail">
       <el-table-column label="标注" min-width="180">
         <template #default="{ row }">
@@ -91,7 +91,7 @@
         </template>
       </el-table-column>
       <template #empty>
-        <span class="muted">暂无实测记录,标注链路后点「开始实测」</span>
+        <span class="muted">暂无实测记录，标注链路后点「开始实测」</span>
       </template>
     </el-table>
 

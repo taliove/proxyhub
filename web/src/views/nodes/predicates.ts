@@ -7,17 +7,17 @@ import type { ScoreLevel } from '@/components/exam/stability'
 
 // NodeFilterCriteria 是筛选条件的结构化描述。null/''/空数组一律表示"该维度不筛选"。
 export interface NodeFilterCriteria {
-  source: string // '' 全部 | 'self-hosted' 仅自建 | 具体机场名(精确)
-  region: string // '' | 国家码(大小写不敏感,精确)
-  type: string // '' | 协议类型(精确)
+  source: string // '' 全部 | 'self-hosted' 仅自建 | 具体机场名（精确）
+  region: string // '' | 国家码（大小写不敏感，精确）
+  type: string // '' | 协议类型（精确）
   available: boolean | null // null 不筛选
   blocked: boolean | null
   stale: boolean | null
-  keyword: string // 名称 / 标准名 / 服务器 子串模糊(大小写不敏感)
-  tags: string[] // 标签:全含才匹配(AND,与 Go subfilter 语义对齐——订阅组合条件如 region:HK+nf-full 必须同时满足)
-  unlock: string[] // 解锁能力:每个目标都需已解锁(AND)
+  keyword: string // 名称 / 标准名 / 服务器 子串模糊（大小写不敏感）
+  tags: string[] // 标签：全含才匹配（AND,与 Go subfilter 语义对齐——订阅组合条件如 region:HK+nf-full 必须同时满足）
+  unlock: string[] // 解锁能力：每个目标都需已解锁（AND）
   stabilityBand: ScoreLevel | null // 稳定性分档 good/fair/poor
-  favorite: boolean | null // 收藏(issue #83):null 不筛选,true 只看已收藏(展示层,不影响订阅下发)
+  favorite: boolean | null // 收藏（issue #83）:null 不筛选，true 只看已收藏（展示层，不影响订阅下发）
 }
 
 // 提供筛选所需、但不在节点自身的派生数据(如体检得出的稳定性分档)。
@@ -98,7 +98,7 @@ export const matchesNode = (n: Node, c: NodeFilterCriteria, ctx: NodeFilterConte
   matchesFlag(n.available, c.available) &&
   matchesFlag(n.blocked, c.blocked) &&
   matchesFlag(n.stale, c.stale) &&
-  matchesFlag(n.favorite ?? false, c.favorite) && // 收藏(issue #83):缺省按未收藏
+  matchesFlag(n.favorite ?? false, c.favorite) && // 收藏（issue #83）:缺省按未收藏
   matchesKeyword(n, c.keyword) &&
   matchesTags(n, c.tags) &&
   matchesUnlock(n, c.unlock) &&

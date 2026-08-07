@@ -193,7 +193,7 @@ describe('Endpoints(行内极简 + 详情抽屉)', () => {
     vi.clearAllMocks()
   })
 
-  it('行内操作只留「详情」:无预览/统计/更多入口', async () => {
+  it('行内操作只留「详情」：无预览/统计/更多入口', async () => {
     const wrapper = mountView()
     await flushPromises()
 
@@ -258,7 +258,7 @@ describe('Endpoints(行内极简 + 详情抽屉)', () => {
     expect(wrapper.find('.endpoint-drawer-stub').exists()).toBe(false)
   })
 
-  it('抽屉公开名称按钮走 对话框 → PUT → 刷新 链路(照命名设置形制)', async () => {
+  it('抽屉公开名称按钮走 对话框 → PUT → 刷新 链路（照命名设置形制）', async () => {
     const wrapper = mountView()
     await flushPromises()
     await wrapper

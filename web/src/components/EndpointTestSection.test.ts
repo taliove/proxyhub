@@ -142,7 +142,7 @@ describe('EndpointTestSection', () => {
     vi.useRealTimers()
   })
 
-  it('挂载不自动测:无任何请求,展示引导空态', async () => {
+  it('挂载不自动测：无任何请求，展示引导空态', async () => {
     const wrapper = mountSection()
     await flushPromises()
 
@@ -151,7 +151,7 @@ describe('EndpointTestSection', () => {
     expect(wrapper.text()).toContain('尚未测试')
   })
 
-  it('拉取验证:显式点击发起 POST /test 并展示双格式结果与池快照', async () => {
+  it('拉取验证：显式点击发起 POST /test 并展示双格式结果与池快照', async () => {
     vi.mocked(client.post).mockResolvedValue(testResultPayload as never)
     const wrapper = mountSection()
     await flushPromises()
@@ -169,7 +169,7 @@ describe('EndpointTestSection', () => {
     expect(text).toContain('HK/US')
   })
 
-  it('现场实测:POST probe 后轮询进度,完成后刷新拉取验证与池快照', async () => {
+  it('现场实测：POST probe 后轮询进度，完成后刷新拉取验证与池快照', async () => {
     vi.useFakeTimers()
     vi.mocked(client.post).mockImplementation(async (url: unknown) => {
       const u = String(url)
@@ -189,13 +189,13 @@ describe('EndpointTestSection', () => {
     await flushPromises()
     expect(vi.mocked(client.post)).toHaveBeenCalledWith('/endpoints/7/test/probe', { full: false })
     // 进行中:展示进度 checked / sampled
-    expect(wrapper.text()).toContain('现场实测进行中(抽样)')
+    expect(wrapper.text()).toContain('现场实测进行中（抽样）')
     expect(wrapper.find('.el-progress-stub').text()).toBe('1 / 4')
 
     await vi.advanceTimersByTimeAsync(1500)
     await flushPromises()
     expect(vi.mocked(client.get)).toHaveBeenCalledWith('/endpoints/7/test/probe/run-1')
-    expect(wrapper.text()).toContain('实测完成(抽样,共检活 4 个节点)')
+    expect(wrapper.text()).toContain('实测完成（抽样，共检活 4 个节点）')
     // 完成后刷新快照(重跑拉取验证)
     expect(vi.mocked(client.post)).toHaveBeenCalledWith('/endpoints/7/test')
   })
@@ -208,7 +208,7 @@ describe('EndpointTestSection', () => {
     await clickButton(wrapper, '测全部')
     await flushPromises()
     expect(vi.mocked(client.post)).toHaveBeenCalledWith('/endpoints/7/test/probe', { full: true })
-    expect(wrapper.text()).toContain('现场实测进行中(全量)')
+    expect(wrapper.text()).toContain('现场实测进行中（全量）')
   })
 
   it('实测轮询 404(run 重启丢失/过期):停止轮询并提示重跑', async () => {

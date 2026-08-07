@@ -31,23 +31,23 @@
     <!-- 维度构成拆解:打开黑盒,直接给出各维度得分与权重 -->
     <div class="summary-subtitle">评分构成</div>
     <el-descriptions :column="1" border size="small" class="summary-block num">
-      <el-descriptions-item :label="`可用率(权重 ${weightLabel(weights.availability)})`">
+      <el-descriptions-item :label="`可用率（权重 ${weightLabel(weights.availability)}）`">
         {{ result.availability_score.toFixed(1) }} 分
       </el-descriptions-item>
-      <el-descriptions-item :label="`延迟表现(权重 ${weightLabel(weights.latency)})`">
+      <el-descriptions-item :label="`延迟表现（权重 ${weightLabel(weights.latency)}）`">
         {{ result.latency_score.toFixed(1) }} 分
       </el-descriptions-item>
       <el-descriptions-item
         :label="
           weights.fetchHealth === null
-            ? '拉取健康(N/A,权重已重归一)'
-            : `拉取健康(权重 ${weightLabel(weights.fetchHealth)})`
+            ? '拉取健康（N/A，权重已重归一）'
+            : `拉取健康（权重 ${weightLabel(weights.fetchHealth)}）`
         "
       >
         <span v-if="weights.fetchHealth === null" class="muted">N/A</span>
         <span v-else>{{ result.fetch_health_score.toFixed(1) }} 分</span>
       </el-descriptions-item>
-      <el-descriptions-item :label="`地区覆盖(权重 ${weightLabel(weights.region)})`">
+      <el-descriptions-item :label="`地区覆盖（权重 ${weightLabel(weights.region)}）`">
         {{ result.region_score.toFixed(1) }} 分
       </el-descriptions-item>
     </el-descriptions>
@@ -79,7 +79,7 @@ const regionList = computed(() => {
   margin-bottom: var(--ph-space-3);
 }
 /* el-descriptions 默认 table-layout:auto,长串(61 地区 / 串、延迟串)会把表撑出容器右溢。
-   锁定表宽 100% + fixed 布局,列宽由 label-width 与均分决定,内容再在格内换行。 */
+   锁定表宽 100% + fixed 布局，列宽由 label-width 与均分决定，内容再在格内换行。 */
 .summary-block :deep(.el-descriptions__table) {
   width: 100%;
   table-layout: fixed;

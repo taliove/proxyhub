@@ -18,12 +18,12 @@
       <el-form-item label="简称">
         <el-input
           v-model="form.abbr"
-          placeholder="留空则自动生成(如 极速机场 → JS)"
+          placeholder="留空则自动生成（如 极速机场 → JS）"
           maxlength="16"
           @input="abbrDirty = true"
         />
         <div class="form-hint">
-          用于节点名称标准化(如 🇭🇰 香港 JS-01),留空按拼音/字母首字母自动生成
+          用于节点名称标准化（如 🇭🇰 香港 JS-01）,留空按拼音/字母首字母自动生成
         </div>
       </el-form-item>
       <!-- 手动机场:用量信息手填(全部可选),创建成功后由父级打开粘贴导入对话框 -->
@@ -31,7 +31,7 @@
         <AirportUsageFields v-model="usageForm" />
         <el-form-item v-if="!airport">
           <div class="form-hint">
-            保存后将打开粘贴导入对话框,粘贴机场面板导出的订阅内容完成入池。
+            保存后将打开粘贴导入对话框，粘贴机场面板导出的订阅内容完成入池。
           </div>
         </el-form-item>
       </template>

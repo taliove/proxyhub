@@ -4,13 +4,13 @@
       type="info"
       :closable="false"
       class="settings-alert"
-      title="本机运行 TUN 代理(Clash Verge/TAG 等 fake-ip 模式)时,保证节点检测结果可信;绕过失败时检测会报错(严格模式);关闭则恢复系统网络栈。只作用于检测链路,改后立即对后续检测生效,无需重启。"
+      title="本机运行 TUN 代理（Clash Verge/TAG 等 fake-ip 模式）时，保证节点检测结果可信；绕过失败时检测会报错（严格模式）;关闭则恢复系统网络栈。只作用于检测链路，改后立即对后续检测生效，无需重启。"
     />
     <el-form-item label="启用直连出口">
       <el-switch v-model="form.direct_egress_enabled" active-value="true" inactive-value="false" />
       <span class="hint">
-        开启后,检测连接经自带 DoH 解析真实 IP 并绑定物理网卡,绕过本机 TUN 劫持;绕过失败(DoH
-        解析失败/网卡绑定失败)时检测会报错,不会悄悄退化为系统拨号。
+        开启后，检测连接经自带 DoH 解析真实 IP 并绑定物理网卡，绕过本机 TUN 劫持；绕过失败（DoH
+        解析失败/网卡绑定失败）时检测会报错，不会悄悄退化为系统拨号。
       </span>
     </el-form-item>
     <el-form-item label="DoH 端点" :error="dohUrlError">
@@ -21,16 +21,16 @@
       />
       <template #extra>
         <span class="form-extra">
-          须为 http(s) URL,host 用 IP 字面量(如 223.5.5.5 或 [2606:4700:4700::1111], 域名会被 TUN
+          须为 http(s) URL,host 用 IP 字面量（如 223.5.5.5 或 [2606:4700:4700::1111], 域名会被 TUN
           劫持);留空用默认值 https://223.5.5.5/dns-query
         </span>
       </template>
     </el-form-item>
     <el-form-item label="物理网卡名">
-      <el-input v-model="form.direct_egress_interface" placeholder="留空自动识别,如 en0 / eth0" />
+      <el-input v-model="form.direct_egress_interface" placeholder="留空自动识别，如 en0 / eth0" />
       <template #extra>
         <span class="form-extra">
-          留空=自动识别物理网卡;识别失败时检测会报错,可在此显式指定(如 en0)
+          留空=自动识别物理网卡；识别失败时检测会报错，可在此显式指定（如 en0）
         </span>
       </template>
     </el-form-item>
@@ -97,7 +97,7 @@ const save = async () => {
   }
   if (url && !isIpLiteralHost(new URL(url).hostname)) {
     dohUrlError.value =
-      'DoH 端点 host 须为 IP 字面量(如 223.5.5.5 或 [2606:4700:4700::1111]),域名会被 TUN 劫持'
+      'DoH 端点 host 须为 IP 字面量（如 223.5.5.5 或 [2606:4700:4700::1111]）,域名会被 TUN 劫持'
     return
   }
   dohUrlError.value = ''

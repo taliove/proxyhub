@@ -7,7 +7,7 @@ describe('appBase', () => {
     delete window.__PH_BASE__
   })
 
-  it('未注入时返回空串(开发/根路径部署)', () => {
+  it('未注入时返回空串（开发/根路径部署）', () => {
     expect(appBase()).toBe('')
   })
 

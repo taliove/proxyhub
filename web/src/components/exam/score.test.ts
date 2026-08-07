@@ -108,7 +108,7 @@ describe('score — 体检总分计算', () => {
   })
 
   describe('calculateEgressScore', () => {
-    it('完美出网:无泄露 + 住宅 IP + 有 IPv6 = 100 分', () => {
+    it('完美出网：无泄露 + 住宅 IP + 有 IPv6 = 100 分', () => {
       const egress = {
         ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
         ipv6: { available: true, address: '2001::1' },
@@ -144,7 +144,7 @@ describe('score — 体检总分计算', () => {
       expect(calculateEgressScore(egress as any)).toBe(90)
     })
 
-    it('叠加扣分:DNS 泄露 + 机房 + 无 IPv6 → 45 分', () => {
+    it('叠加扣分：DNS 泄露 + 机房 + 无 IPv6 → 45 分', () => {
       const egress = {
         ipv4: { ip: '1.2.3.4', hosting: true, proxy: false },
         ipv6: { available: false },
@@ -179,7 +179,7 @@ describe('score — 体检总分计算', () => {
   })
 
   describe('calculateExamScore — 加权汇总', () => {
-    it('完整四段:稳定性 40% + 速度 25% + 解锁 20% + 出网 15% = 权重和 100%', () => {
+    it('完整四段：稳定性 40% + 速度 25% + 解锁 20% + 出网 15% = 权重和 100%', () => {
       const report: ExamReport = {
         stability: { score: 85 } as any,
         region_speed: {
@@ -216,7 +216,7 @@ describe('score — 体检总分计算', () => {
       expect(result.breakdown.egress.weight).toBe(0.15)
     })
 
-    it('缺段降级:无解锁段时三项归一化(权重和仍为 100%),partial=true', () => {
+    it('缺段降级：无解锁段时三项归一化（权重和仍为 100%）,partial=true', () => {
       const report: ExamReport = {
         stability: { score: 80 } as any,
         region_speed: {
@@ -240,7 +240,7 @@ describe('score — 体检总分计算', () => {
       expect(result.breakdown.egress.weight).toBeCloseTo(0.1875, 2)
     })
 
-    it('只有稳定性段:权重归一化为 100%', () => {
+    it('只有稳定性段：权重归一化为 100%', () => {
       const report: ExamReport = {
         stability: { score: 90 } as any
       }
@@ -262,7 +262,7 @@ describe('score — 体检总分计算', () => {
     })
   })
 
-  describe('可信度标记(unreliable)', () => {
+  describe('可信度标记（unreliable）', () => {
     it('出网全失败 → unreliable=true + 总分 0', () => {
       const report: ExamReport = {
         egress: {
@@ -277,7 +277,7 @@ describe('score — 体检总分计算', () => {
       expect(result.partial).toBe(true)
     })
 
-    it('IPv6 不可达(非 error)但 IPv4/DNS 成功 → reliable', () => {
+    it('IPv6 不可达（非 error）但 IPv4/DNS 成功 → reliable', () => {
       const report: ExamReport = {
         egress: {
           ipv4: { ip: '203.0.113.7', country: 'US' },
@@ -337,8 +337,8 @@ describe('score — 体检总分计算', () => {
     })
   })
 
-  describe('渐进式评分(体检进行中)', () => {
-    it('只有稳定性段到达 → 按稳定性分算总分,标记 partial', () => {
+  describe('渐进式评分（体检进行中）', () => {
+    it('只有稳定性段到达 → 按稳定性分算总分，标记 partial', () => {
       const report: ExamReport = {
         stability: { score: 80 } as any
       }
@@ -350,7 +350,7 @@ describe('score — 体检总分计算', () => {
       expect(result.breakdown.stability.score).toBe(80)
     })
 
-    it('稳定性 + 速度到达 → 两项归一化权重,分数增长', () => {
+    it('稳定性 + 速度到达 → 两项归一化权重，分数增长', () => {
       const report: ExamReport = {
         stability: { score: 85 } as any,
         region_speed: {
@@ -366,7 +366,7 @@ describe('score — 体检总分计算', () => {
       expect(result.breakdown.speed.weight).toBeCloseTo(0.385, 2)
     })
 
-    it('稳定性 + 速度 + 解锁到达 → 三项归一化,分数继续增长', () => {
+    it('稳定性 + 速度 + 解锁到达 → 三项归一化，分数继续增长', () => {
       const report: ExamReport = {
         stability: { score: 85 } as any,
         region_speed: {
@@ -391,7 +391,7 @@ describe('score — 体检总分计算', () => {
       expect(result.unreliable).toBe(true) // 缺出网段
     })
 
-    it('四段全到达 → 完整权重,unreliable=false,partial=false', () => {
+    it('四段全到达 → 完整权重，unreliable=false,partial=false', () => {
       const report: ExamReport = {
         stability: { score: 85 } as any,
         region_speed: {
@@ -438,7 +438,7 @@ describe('score — 体检总分计算', () => {
       expect(result.partial).toBe(true)
     })
 
-    it('渐进式评分数值单调递增(段逐项到达)', () => {
+    it('渐进式评分数值单调递增（段逐项到达）', () => {
       // 第一帧:只有稳定性
       const report1: ExamReport = { stability: { score: 80 } as any }
       const score1 = calculateExamScore(report1).total
@@ -480,12 +480,12 @@ describe('score — 体检总分计算', () => {
       // 验证单调递增(或相等,因为出网可能扣分)
       expect(score2).toBeGreaterThan(score1)
       expect(score3).toBeGreaterThan(score2)
-      expect(score4).toBeGreaterThanOrEqual(score3) // 出网满分时增长,扣分时可能减少
+      expect(score4).toBeGreaterThanOrEqual(score3) // 出网满分时增长，扣分时可能减少
     })
   })
 
-  describe("渐进模式(mode='progressive'):缺段计 0,由小到大爬升", () => {
-    it('仅出网段满分 → 只贡献 15 分量级(不归一化到 100)', () => {
+  describe("渐进模式（mode='progressive'）:缺段计 0,由小到大爬升", () => {
+    it('仅出网段满分 → 只贡献 15 分量级（不归一化到 100）', () => {
       // 出网满分但缺其余三段:progressive 下只累加 100×0.15=15。
       const report: ExamReport = {
         egress: {
@@ -500,7 +500,7 @@ describe('score — 体检总分计算', () => {
       expect(result.unreliable).toBe(false)
     })
 
-    it('对比:同一份仅出网满分报告在 normalized 下爬到 100(误导),progressive 只有 15', () => {
+    it('对比：同一份仅出网满分报告在 normalized 下爬到 100(误导),progressive 只有 15', () => {
       const report: ExamReport = {
         egress: {
           ipv4: { ip: '1.2.3.4', hosting: false, proxy: false },
@@ -512,7 +512,7 @@ describe('score — 体检总分计算', () => {
       expect(calculateExamScore(report, 'progressive').total).toBeCloseTo(15, 1)
     })
 
-    it('四段全满分 → progressive 与 normalized 等价(=满分量级)', () => {
+    it('四段全满分 → progressive 与 normalized 等价（=满分量级）', () => {
       const report: ExamReport = {
         stability: { score: 100 } as any,
         region_speed: {
@@ -541,7 +541,7 @@ describe('score — 体检总分计算', () => {
       expect(prog.partial).toBe(false)
     })
 
-    it('四段全有数据(非满分)→ progressive 与 normalized 数值等价', () => {
+    it('四段全有数据（非满分）→ progressive 与 normalized 数值等价', () => {
       const report: ExamReport = {
         stability: { score: 85 } as any,
         region_speed: {
@@ -569,7 +569,7 @@ describe('score — 体检总分计算', () => {
       )
     })
 
-    it('段逐项到达 → 分数严格由小到大爬升(未到达段计 0)', () => {
+    it('段逐项到达 → 分数严格由小到大爬升（未到达段计 0）', () => {
       // 帧1:仅稳定性满分 → 40。
       const r1: ExamReport = { stability: { score: 100 } as any }
       // 帧2:+速度满分 → 40 + 25 = 65。
@@ -642,7 +642,7 @@ describe('score — 体检总分计算', () => {
       expect(failed.unreliable).toBe(true)
     })
 
-    it("默认 mode 为 'normalized'(向后兼容:显式 normalized 与省略参数一致)", () => {
+    it("默认 mode 为 'normalized'(向后兼容：显式 normalized 与省略参数一致)", () => {
       const report: ExamReport = {
         stability: { score: 80 } as any,
         region_speed: {

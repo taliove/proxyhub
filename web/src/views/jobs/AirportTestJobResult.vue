@@ -2,7 +2,7 @@
   <div>
     <div v-if="loading" class="muted">加载测试报告…</div>
     <div v-else-if="result?.reason === 'no_report'" class="muted">
-      本次任务未产生报告(可能已被中断)
+      本次任务未产生报告（可能已被中断）
     </div>
     <template v-else-if="run">
       <!-- completed:复用详情抽屉同款报告组件(只读,无重跑入口),
@@ -17,7 +17,7 @@
           class="test-alert"
         >
           <template #title>本次测试已取消</template>
-          已写回的节点检活结果保留,未产生评分报告。
+          已写回的节点检活结果保留，未产生评分报告。
         </el-alert>
         <el-alert
           v-else-if="run.status === 'failed'"
@@ -29,7 +29,7 @@
           <template #title>测试失败</template>
           {{ run.error_message || '未知错误' }}
         </el-alert>
-        <div v-else class="muted">测试进行中,报告生成后展示</div>
+        <div v-else class="muted">测试进行中，报告生成后展示</div>
         <template v-if="hasDiagnostic && run.status !== 'diagnosing'">
           <h4 class="test-diag-title">📊 诊断结果</h4>
           <AirportTestDiagnostic :diagnostic="diagnostic" />

@@ -33,7 +33,7 @@ describe('normalizeRecoveryCode', () => {
     expect(normalizeRecoveryCode('abcd-efgh-jkmn')).toBe('ABCD-EFGH-JKMN')
   })
 
-  it('丢弃字符集外的易混字形(0/O/1/I/L)与超长部分', () => {
+  it('丢弃字符集外的易混字形（0/O/1/I/L）与超长部分', () => {
     // O/I/L/0/1 都不在 recoveryCharset 里,直接丢弃
     expect(normalizeRecoveryCode('ABCD-EFGH-JKMN-OIL01')).toBe('ABCD-EFGH-JKMN')
     expect(normalizeRecoveryCode('ab')).toBe('AB')
@@ -87,8 +87,8 @@ describe('loginMFAErrorMessage', () => {
   })
 
   it('无响应视为网络异常', () => {
-    expect(loginMFAErrorMessage(new Error('boom'))).toBe('网络异常,请检查连接后重试')
-    expect(loginMFAErrorMessage(null)).toBe('网络异常,请检查连接后重试')
+    expect(loginMFAErrorMessage(new Error('boom'))).toBe('网络异常，请检查连接后重试')
+    expect(loginMFAErrorMessage(null)).toBe('网络异常，请检查连接后重试')
   })
 })
 

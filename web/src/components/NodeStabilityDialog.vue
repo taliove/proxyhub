@@ -176,7 +176,7 @@ const rerun = () => {
 const onClose = () => {
   if (running.value) {
     ElMessage({
-      message: '检查任务将在后台继续运行,可随时回来查看进度',
+      message: '检查任务将在后台继续运行，可随时回来查看进度',
       type: 'info',
       duration: 3000
     })

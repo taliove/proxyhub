@@ -161,7 +161,7 @@ describe('MFAEnroll', () => {
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
   })
 
-  it('挂载即领密钥,并把 otpauth_url 渲染成二维码', async () => {
+  it('挂载即领密钥，并把 otpauth_url 渲染成二维码', async () => {
     const wrapper = mountView()
     await flushPromises()
 
@@ -177,7 +177,7 @@ describe('MFAEnroll', () => {
     expect(wrapper.text()).toContain('ABCD EFGH IJKL MNOP')
   })
 
-  it('二维码生成失败时保留密钥文本,不炸页面', async () => {
+  it('二维码生成失败时保留密钥文本，不炸页面', async () => {
     vi.mocked(generateQRCode).mockRejectedValue(new Error('canvas unavailable'))
 
     const wrapper = mountView()
@@ -201,7 +201,7 @@ describe('MFAEnroll', () => {
     expect(codes[0].text()).toBe('code-1')
   })
 
-  it('未勾选"我已保存"时完成按钮禁用,不放行', async () => {
+  it('未勾选"我已保存"时完成按钮禁用，不放行', async () => {
     const authStore = useAuthStore()
     authStore.setAuth('alice', 'user', false, true)
 
@@ -222,7 +222,7 @@ describe('MFAEnroll', () => {
     expect(useAuthStore().mustEnrollMFA).toBe(true)
   })
 
-  it('勾选后完成:清除强制位并跳首页', async () => {
+  it('勾选后完成：清除强制位并跳首页', async () => {
     const authStore = useAuthStore()
     authStore.setAuth('alice', 'user', false, true)
     // restore 会打 /me;这里让它失败,验证放行不依赖它成功
@@ -246,7 +246,7 @@ describe('MFAEnroll', () => {
     expect(routerPush).toHaveBeenCalledWith('/')
   })
 
-  it('复制全部恢复码写入剪贴板(换行分隔)', async () => {
+  it('复制全部恢复码写入剪贴板（换行分隔）', async () => {
     const wrapper = mountView()
     await flushPromises()
     await wrapper.find('.el-input-stub').setValue('123456')
@@ -277,7 +277,7 @@ describe('MFAEnroll', () => {
     expect((wrapper.find('.el-input-stub').element as HTMLInputElement).value).toBe('')
   })
 
-  it('已绑定(409)时直接放行,不把用户锁在绑定页', async () => {
+  it('已绑定（409）时直接放行，不把用户锁在绑定页', async () => {
     const authStore = useAuthStore()
     authStore.setAuth('alice', 'user', false, true)
     vi.spyOn(authStore, 'restore').mockResolvedValue(true)

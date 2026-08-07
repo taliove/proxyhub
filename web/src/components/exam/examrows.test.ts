@@ -76,7 +76,7 @@ describe('buildRegionRows active highlight transfer', () => {
     const rows = buildRegionRows([region('jp_tokyo')], true)
     const tokyo = rows.find((r) => r.key === 'jp_tokyo')!
     expect(tokyo.status).toBe('ok')
-    expect(rows[0].status).toBe('active') // 基准尚未到达,仍为首个待处理
+    expect(rows[0].status).toBe('active') // 基准尚未到达，仍为首个待处理
     // 位置固定:东京始终在第 5 个固定槽位
     expect(rows[5].key).toBe('jp_tokyo')
   })

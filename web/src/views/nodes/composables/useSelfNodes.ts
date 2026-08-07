@@ -50,7 +50,7 @@ export function useSelfNodes() {
 
   const deleteNode = async (row: SelfNode) => {
     try {
-      await ElMessageBox.confirm('确定删除此自建节点?', '确认', { type: 'warning' })
+      await ElMessageBox.confirm('确定删除此自建节点？', '确认', { type: 'warning' })
     } catch {
       return
     }

@@ -205,7 +205,7 @@ describe('AirportTestDialog(运行模式)', () => {
     vi.useRealTimers()
   })
 
-  it('仅挂载不产生任何请求(不再 watch 打开即跑)', async () => {
+  it('仅挂载不产生任何请求（不再 watch 打开即跑）', async () => {
     mountDialog()
     await flushPromises()
 
@@ -230,7 +230,7 @@ describe('AirportTestDialog(运行模式)', () => {
 
     expect(wrapper.emitted('finished')).toBeTruthy()
     // 完成态得分头 title 带口径(ticket 0044);抽样兜底取 total_nodes=10
-    expect(wrapper.text()).toContain('实测完成(抽样,共检活 10 个节点)')
+    expect(wrapper.text()).toContain('实测完成（抽样，共检活 10 个节点）')
     expect(wrapper.text()).toContain('90.5')
     // 内嵌精简报告:事实汇总(可用节点 9/10)+ 评分构成(可用率 45 分)直接可见
     expect(wrapper.text()).toContain('9 / 10')
@@ -239,7 +239,7 @@ describe('AirportTestDialog(运行模式)', () => {
     expect(wrapper.text()).toContain('机场详情抽屉「最近测试」')
   })
 
-  it('全量运行完成:alert title 为全量口径(共检活 M 个节点)', async () => {
+  it('全量运行完成：alert title 为全量口径（共检活 M 个节点）', async () => {
     vi.mocked(client.post).mockResolvedValue(jobHandle as never)
     mockGet('done', { ...completedRun, is_full: true })
     const wrapper = mountDialog()
@@ -248,7 +248,7 @@ describe('AirportTestDialog(运行模式)', () => {
     await flushPromises()
     await advancePoll()
 
-    expect(wrapper.text()).toContain('实测完成(全量,共检活 10 个节点)')
+    expect(wrapper.text()).toContain('实测完成（全量，共检活 10 个节点）')
   })
 
   it('显式 start(测全部)以 full=true 发起', async () => {
@@ -262,7 +262,7 @@ describe('AirportTestDialog(运行模式)', () => {
     expect(vi.mocked(client.post)).toHaveBeenCalledWith('/airports/7/test', { full: true })
   })
 
-  it('抽样模式:副标题显示「抽样测试」,检活后显示「本次抽测 N 个节点」', async () => {
+  it('抽样模式：副标题显示「抽样测试」，检活后显示「本次抽测 N 个节点」', async () => {
     vi.mocked(client.post).mockResolvedValue(jobHandle as never)
     mockRunningChecking(12, 3)
     const wrapper = mountDialog()
@@ -286,7 +286,7 @@ describe('AirportTestDialog(运行模式)', () => {
     expect(wrapper.text()).toContain('3 / 12')
   })
 
-  it('全量模式:副标题显示「全量测试」,检活后显示「共 M 个节点」', async () => {
+  it('全量模式：副标题显示「全量测试」，检活后显示「共 M 个节点」', async () => {
     vi.mocked(client.post).mockResolvedValue(jobHandle as never)
     mockRunningChecking(57, 10)
     const wrapper = mountDialog()
@@ -305,7 +305,7 @@ describe('AirportTestDialog(运行模式)', () => {
   })
 
   // 常驻三步流水线:开测即三步全占位,替代单一转圈圈;检活步描述带 checked/total
-  it('运行态常驻三步流水线,检活步描述带绝对计数', async () => {
+  it('运行态常驻三步流水线，检活步描述带绝对计数', async () => {
     vi.mocked(client.post).mockResolvedValue(jobHandle as never)
     mockRunningChecking(12, 3)
     const wrapper = mountDialog()
@@ -329,7 +329,7 @@ describe('AirportTestDialog(运行模式)', () => {
 
   // 秒级完成是抽样浅测主场景:首次轮询即见 done,checkingProgress 从未赋值,
   // 涉及节点数必须从 run 维度兜底,否则「本次抽测 N 个节点」整次不显示
-  it('秒级完成(轮询直接看到 done)从 run 兜底显示涉及节点数', async () => {
+  it('秒级完成（轮询直接看到 done）从 run 兜底显示涉及节点数', async () => {
     vi.mocked(client.post).mockResolvedValue(jobHandle as never)
     mockGet('done', {
       ...completedRun,
@@ -350,7 +350,7 @@ describe('AirportTestDialog(运行模式)', () => {
     expect(wrapper.text()).toContain('抽样测试')
     expect(wrapper.text()).toContain('本次抽测 3 个节点')
     // 完成 alert title 同步用兜底计数(ticket 0044)
-    expect(wrapper.text()).toContain('实测完成(抽样,共检活 3 个节点)')
+    expect(wrapper.text()).toContain('实测完成（抽样，共检活 3 个节点）')
   })
 
   it('任务 failed 终态展示失败原因且不 emit finished', async () => {
@@ -377,7 +377,7 @@ describe('AirportTestDialog(运行模式)', () => {
   })
 
   // ticket 0044:失败/取消态 title 同带模式口径(spec「口径一致」)
-  it('failed 终态 title 带模式口径(抽样)', async () => {
+  it('failed 终态 title 带模式口径（抽样）', async () => {
     vi.mocked(client.post).mockResolvedValue(jobHandle as never)
     mockGet('failed', {
       ...completedRun,
@@ -395,10 +395,10 @@ describe('AirportTestDialog(运行模式)', () => {
     await flushPromises()
     await advancePoll()
 
-    expect(wrapper.text()).toContain('测试失败(抽样)')
+    expect(wrapper.text()).toContain('测试失败（抽样）')
   })
 
-  it('cancelled 终态 title 带模式口径(全量)', async () => {
+  it('cancelled 终态 title 带模式口径（全量）', async () => {
     vi.mocked(client.post).mockResolvedValue(jobHandle as never)
     mockGet('cancelled', {
       ...completedRun,
@@ -411,7 +411,7 @@ describe('AirportTestDialog(运行模式)', () => {
     await flushPromises()
     await advancePoll()
 
-    expect(wrapper.text()).toContain('测试已取消(全量)')
+    expect(wrapper.text()).toContain('测试已取消（全量）')
     expect(wrapper.emitted('finished')).toBeFalsy()
   })
 })

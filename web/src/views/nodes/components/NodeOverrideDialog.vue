@@ -26,7 +26,7 @@
       <el-alert
         type="info"
         :closable="false"
-        title="覆盖跨刷新保留,不被下轮机场拉取冲掉。仅可改展示名称/地区。"
+        title="覆盖跨刷新保留，不被下轮机场拉取冲掉。仅可改展示名称/地区。"
       />
     </el-form>
     <template #footer>
@@ -73,7 +73,7 @@ const save = async () => {
       display_name: displayName.value,
       region: region.value
     })
-    ElMessage.success('已保存,下次生成订阅生效')
+    ElMessage.success('已保存，下次生成订阅生效')
     visible.value = false
     emit('saved')
   } catch (e) {
@@ -86,7 +86,7 @@ const save = async () => {
 const clearOverride = async () => {
   if (!node.value) return
   try {
-    await ElMessageBox.confirm('清除覆盖后将恢复机场原始展示信息,确认?', '清除覆盖', {
+    await ElMessageBox.confirm('清除覆盖后将恢复机场原始展示信息，确认？', '清除覆盖', {
       type: 'warning'
     })
   } catch {

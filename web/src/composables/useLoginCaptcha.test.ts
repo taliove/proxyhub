@@ -15,7 +15,7 @@ const challenge = (id: string) => ({
 describe('useLoginCaptcha', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('初始休眠:不可见、不发签发请求、payload 为空', () => {
+  it('初始休眠：不可见、不发签发请求、payload 为空', () => {
     const c = useLoginCaptcha()
     expect(c.visible.value).toBe(false)
     expect(c.payload()).toEqual({})
@@ -29,7 +29,7 @@ describe('useLoginCaptcha', () => {
     expect(vi.mocked(issueCaptcha)).not.toHaveBeenCalled()
   })
 
-  it('handleFailure(true) 首次激活并签发,payload 带 id 与答案', async () => {
+  it('handleFailure(true) 首次激活并签发，payload 带 id 与答案', async () => {
     vi.mocked(issueCaptcha).mockResolvedValue(challenge('c1'))
     const c = useLoginCaptcha()
     await c.handleFailure(true)
@@ -52,7 +52,7 @@ describe('useLoginCaptcha', () => {
     expect(vi.mocked(issueCaptcha)).toHaveBeenCalledTimes(2)
   })
 
-  it('签发失败清空图片但保留可见性,payload 不带残留 id', async () => {
+  it('签发失败清空图片但保留可见性，payload 不带残留 id', async () => {
     vi.mocked(issueCaptcha)
       .mockResolvedValueOnce(challenge('c1'))
       .mockRejectedValueOnce({
@@ -66,7 +66,7 @@ describe('useLoginCaptcha', () => {
     expect(c.payload()).toEqual({})
   })
 
-  it('fetchChallenge 并发去重:进行中不重复签发', async () => {
+  it('fetchChallenge 并发去重：进行中不重复签发', async () => {
     let resolve: (v: unknown) => void = () => {}
     vi.mocked(issueCaptcha).mockImplementation(
       () => new Promise((r) => (resolve = r as (v: unknown) => void))

@@ -189,7 +189,7 @@ beforeEach(() => {
 const mountPage = () =>
   mount(SpeedtestPage, { global: { directives: { loading: {} }, stubs: globalStubs } })
 
-describe('路由注册(主导航入口)', () => {
+describe('路由注册（主导航入口）', () => {
   it('本机实测出现在导航菜单', () => {
     const sections = getMenuSections(router)
     const items = sections.flatMap((s) => s.items)
@@ -198,7 +198,7 @@ describe('路由注册(主导航入口)', () => {
 })
 
 describe('本机实测页', () => {
-  it('挂载即拉节点池与历史;?node_key= 预填标注下拉', async () => {
+  it('挂载即拉节点池与历史；?node_key= 预填标注下拉', async () => {
     routeQuery.node_key = 'hk.example.com:443'
     const wrapper = mountPage()
     await flushPromises()
@@ -210,7 +210,7 @@ describe('本机实测页', () => {
     )
   })
 
-  it('历史按节点聚合:孤儿标注显示"已失效",节点行显示与直连基线的差值', async () => {
+  it('历史按节点聚合：孤儿标注显示"已失效",节点行显示与直连基线的差值', async () => {
     const wrapper = mountPage()
     await flushPromises()
 
@@ -222,7 +222,7 @@ describe('本机实测页', () => {
     expect(text).toContain('Δ延迟')
   })
 
-  it('一键实测:完成后自动落库(带当前标注)并刷新历史', async () => {
+  it('一键实测：完成后自动落库（带当前标注）并刷新历史', async () => {
     routeQuery.node_key = 'hk.example.com:443'
     const wrapper = mountPage()
     await flushPromises()
@@ -242,7 +242,7 @@ describe('本机实测页', () => {
     expect(historyCalls.length).toBe(2)
   })
 
-  it('预填节点已不在池:提示并不选中', async () => {
+  it('预填节点已不在池：提示并不选中', async () => {
     routeQuery.node_key = 'gone.example.com:1'
     const wrapper = mountPage()
     await flushPromises()

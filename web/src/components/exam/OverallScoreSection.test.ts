@@ -5,7 +5,7 @@ import OverallScoreSection from './OverallScoreSection.vue'
 import type { ExamReport } from '@/types'
 
 describe('OverallScoreSection — 综合评分展示', () => {
-  it('进行中:只有稳定性段 → 显示 0 分(缺出网段 unreliable)', () => {
+  it('进行中：只有稳定性段 → 显示 0 分（缺出网段 unreliable）', () => {
     const report: ExamReport = {
       stability: { score: 80 } as any
     }
@@ -20,7 +20,7 @@ describe('OverallScoreSection — 综合评分展示', () => {
     expect(wrapper.find('.overall-score-unreliable').text()).toBe('不可信')
   })
 
-  it('进行中:稳定性 + 速度 → 显示 0 分(缺出网段 unreliable)', () => {
+  it('进行中：稳定性 + 速度 → 显示 0 分（缺出网段 unreliable）', () => {
     const report: ExamReport = {
       stability: { score: 85 } as any,
       region_speed: {
@@ -36,7 +36,7 @@ describe('OverallScoreSection — 综合评分展示', () => {
     expect(wrapper.find('.overall-score-unreliable').exists()).toBe(true)
   })
 
-  it('进行中:缺出网段 → unreliable 标记优先于 partial', () => {
+  it('进行中：缺出网段 → unreliable 标记优先于 partial', () => {
     const report: ExamReport = {
       stability: { score: 90 } as any,
       region_speed: {
@@ -63,7 +63,7 @@ describe('OverallScoreSection — 综合评分展示', () => {
     expect(wrapper.find('.overall-score-partial').exists()).toBe(false)
   })
 
-  it('进行中:出网全失败 → 强制显示 0 分 + 不可信标记', () => {
+  it('进行中：出网全失败 → 强制显示 0 分 + 不可信标记', () => {
     const report: ExamReport = {
       stability: { score: 90 } as any,
       region_speed: {
@@ -83,7 +83,7 @@ describe('OverallScoreSection — 综合评分展示', () => {
     expect(wrapper.find('.overall-score-unreliable').exists()).toBe(true)
   })
 
-  it('完成态:四段全到 → 显示完整分数,无 partial 标记', () => {
+  it('完成态：四段全到 → 显示完整分数，无 partial 标记', () => {
     const report: ExamReport = {
       stability: { score: 85 } as any,
       region_speed: {
@@ -118,7 +118,7 @@ describe('OverallScoreSection — 综合评分展示', () => {
     expect(wrapper.find('.overall-score-unreliable').exists()).toBe(false)
   })
 
-  it('进行中:稳定性 + 速度 + 出网(缺解锁) → 渐进分数不归一化(缺段计 0)+ 部分数据标记', () => {
+  it('进行中：稳定性 + 速度 + 出网（缺解锁） → 渐进分数不归一化（缺段计 0）+ 部分数据标记', () => {
     const report: ExamReport = {
       stability: { score: 85 } as any,
       region_speed: {
@@ -143,7 +143,7 @@ describe('OverallScoreSection — 综合评分展示', () => {
     expect(wrapper.find('.overall-score-unreliable').exists()).toBe(false)
   })
 
-  it('进行中 vs 完成态:同一份缺解锁报告,progressive 低于 normalized(由小到大爬升语义)', () => {
+  it('进行中 vs 完成态：同一份缺解锁报告，progressive 低于 normalized(由小到大爬升语义)', () => {
     const report: ExamReport = {
       stability: { score: 85 } as any,
       region_speed: {
@@ -163,7 +163,7 @@ describe('OverallScoreSection — 综合评分展示', () => {
     expect(progScore).toBeLessThan(normScore)
   })
 
-  it('历史报告卡:缺解锁段但有出网 → 显示渐进分数', () => {
+  it('历史报告卡：缺解锁段但有出网 → 显示渐进分数', () => {
     const report: ExamReport = {
       stability: { score: 75 } as any,
       region_speed: {

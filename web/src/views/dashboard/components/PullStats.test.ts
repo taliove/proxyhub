@@ -89,7 +89,7 @@ describe('PullStats', () => {
     expect(text).toContain('2')
   })
 
-  it('有趋势数据时渲染趋势图,并默认选中首个订阅地址展示 IP 明细', async () => {
+  it('有趋势数据时渲染趋势图，并默认选中首个订阅地址展示 IP 明细', async () => {
     mockGetByUrl()
     const wrapper = mountPullStats()
     await flushPromises()
@@ -116,7 +116,7 @@ describe('PullStats', () => {
     expect(wrapper.text()).toContain('请选择一个订阅地址')
   })
 
-  it('请求失败时保留空态默认值(全局拦截器已 toast)', async () => {
+  it('请求失败时保留空态默认值（全局拦截器已 toast）', async () => {
     vi.mocked(client.get).mockRejectedValue(new Error('network'))
     const wrapper = mountPullStats()
     await flushPromises()

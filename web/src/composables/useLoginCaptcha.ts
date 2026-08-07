@@ -43,8 +43,8 @@ export function useLoginCaptcha() {
       const status = (err as { response?: { status?: number } } | null)?.response?.status
       ElMessage.error(
         status === 429
-          ? '验证码获取过于频繁,请稍后点击「换一张」'
-          : '验证码加载失败,请点击「换一张」'
+          ? '验证码获取过于频繁，请稍后点击「换一张」'
+          : '验证码加载失败，请点击「换一张」'
       )
     } finally {
       refreshing.value = false

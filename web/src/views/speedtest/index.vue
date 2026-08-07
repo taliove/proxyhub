@@ -115,7 +115,7 @@ const onStart = async () => {
       jitter_ms: round2(outcome.jitterMs),
       client_info: navigator.userAgent.slice(0, CLIENT_INFO_MAX)
     })
-    ElMessage.success('实测完成,已保存到历史')
+    ElMessage.success('实测完成，已保存到历史')
   } catch {
     // 落库失败不吞测量结果:大数字已展示,历史不刷新(client.ts 拦截器已报错)
     return
@@ -132,7 +132,7 @@ const onDelete = async (id: number) => {
 onMounted(async () => {
   await Promise.all([loadAnnotation(), loadHistory()])
   if (applyQuery(route.query.node_key) === 'orphan') {
-    ElMessage.warning('该节点已不在节点池,请重新标注或按直连实测')
+    ElMessage.warning('该节点已不在节点池，请重新标注或按直连实测')
   }
 })
 </script>

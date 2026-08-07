@@ -26,18 +26,20 @@ describe('availabilitySourceText', () => {
   it('三态文案与后端枚举对齐', () => {
     expect(availabilitySourceText(node({ availability_source: 'never' }))).toBe('从未检测')
     expect(availabilitySourceText(node({ availability_source: 'health' }))).toBe(
-      '仅健康检查(TCP 快检)'
+      '仅健康检查（TCP 快检）'
     )
-    expect(availabilitySourceText(node({ availability_source: 'real' }))).toBe('真实检测(代理请求)')
+    expect(availabilitySourceText(node({ availability_source: 'real' }))).toBe(
+      '真实检测（代理请求）'
+    )
   })
 
-  it('未知值按"从未检测"兜底(与后端口径一致)', () => {
+  it('未知值按"从未检测"兜底（与后端口径一致）', () => {
     expect(availabilitySourceText(node({ availability_source: 'bogus' as never }))).toBe('从未检测')
   })
 })
 
 describe('subscriptionHint', () => {
-  it('自建节点豁免过滤,不误导为被剔除', () => {
+  it('自建节点豁免过滤，不误导为被剔除', () => {
     expect(subscriptionHint(node({ source: 'self-hosted' }))).toContain('豁免')
   })
 

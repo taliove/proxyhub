@@ -138,7 +138,7 @@ func (o *Orchestrator) persistFailedRun(ctx context.Context, run *TestRun, start
 //     B. 池无该机场节点:
 //     - URL通(diagResult.HTTPStatus 2xx):upsert 拉到的节点入池,再测试
 //     - URL不通:failed,error_message 明确("订阅URL不可达且池内无已同步节点")
-//  3. 评分:URL不通时拉取健康N/A,权重重归一(可用率5/9+延迟3/9+地区1/9)
+//  3. 评分:URL不通时拉取健康N/A，权重重归一(可用率5/9+延迟3/9+地区1/9)
 //
 // airportName 用于 poolOps.LoadPoolBySource 匹配池内节点(按 nodes.source 字段)。
 // 返回更新后的 run(含 overall_score/dimensions_json)。

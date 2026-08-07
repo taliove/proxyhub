@@ -17,7 +17,7 @@ export function useNodeBatch(reload: () => void, effectiveSelection: Ref<Node[]>
 
   const blockNode = async (row: Node) => {
     await client.post('/nodes/block', { node_key: row.node_key })
-    ElMessage.success('已屏蔽,下次生成订阅生效')
+    ElMessage.success('已屏蔽，下次生成订阅生效')
     reload()
   }
 
@@ -32,7 +32,7 @@ export function useNodeBatch(reload: () => void, effectiveSelection: Ref<Node[]>
     const res = await client.post<unknown, { count: number }>('/nodes/batch-block', {
       node_keys: keys
     })
-    ElMessage.success(`已屏蔽 ${res.count} 个节点,下次生成订阅生效`)
+    ElMessage.success(`已屏蔽 ${res.count} 个节点，下次生成订阅生效`)
     reload()
   }
 

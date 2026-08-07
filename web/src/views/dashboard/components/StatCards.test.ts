@@ -57,7 +57,7 @@ describe('StatCards', () => {
     expect(wrapper.text()).toContain('-')
   })
 
-  it('请求失败时静默降级为空态(全局拦截器已提示)', async () => {
+  it('请求失败时静默降级为空态（全局拦截器已提示）', async () => {
     vi.mocked(client.get).mockRejectedValue(new Error('network'))
     const wrapper = mountStatCards()
     await flushPromises()

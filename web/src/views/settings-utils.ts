@@ -97,7 +97,7 @@ export function validatePullBlacklistDuration(value: unknown): string | null {
   // 简化校验:必须以数字开头,以 h/m/s/ms/us/ns 结尾
   const durationPattern = /^\d+(\.\d+)?(ns|us|ms|s|m|h)$/
   if (!durationPattern.test(s)) {
-    return '黑名单时长格式错误,示例：1h、24h、168h'
+    return '黑名单时长格式错误，示例：1h、24h、168h'
   }
   return null
 }

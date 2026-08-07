@@ -200,7 +200,7 @@ describe('jobTrigger', () => {
     expect(jobTrigger({ kind: 'batch_detection' })).toBe('手动')
     expect(jobTrigger({ kind: 'exam', params: 'not-json' })).toBe('手动')
   })
-  it('retag_all 是晚间定时调度,归定时', () => {
+  it('retag_all 是晚间定时调度，归定时', () => {
     expect(jobTrigger({ kind: 'retag_all' })).toBe('定时')
   })
 })

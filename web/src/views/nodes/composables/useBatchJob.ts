@@ -8,11 +8,11 @@ import { parseCursor, isRunning } from '@/views/jobs/jobmeta'
 // 不接 SSE(详细采样在单节点弹窗,批量只需计数)。批量检查动作(深度体检 / 出网+稳定性 /
 // 快速测速)三者结构同构,共用本 composable,只在 kind/端点/文案上差异化。
 export interface BatchJobOptions {
-  kind: string // jobs 表 kind(用于轮询匹配,如 batch_exam）
+  kind: string // jobs 表 kind(用于轮询匹配，如 batch_exam）
   key: string // jobs 表 key(全局单例任务固定 key)
-  startUrl: string // 启动端点(POST /nodes/.../batch)
-  cancelUrl: string // 取消端点(POST /nodes/.../batch/cancel)
-  actionLabel: string // 动作中文名(用于启动/完成/失败提示)
+  startUrl: string // 启动端点（POST /nodes/.../batch）
+  cancelUrl: string // 取消端点（POST /nodes/.../batch/cancel）
+  actionLabel: string // 动作中文名（用于启动/完成/失败提示）
 }
 
 const POLL_INTERVAL_MS = 3000
@@ -61,7 +61,7 @@ export function useBatchJob(opts: BatchJobOptions, onDone?: () => void) {
       running.value = true
       completed.value = 0
       total.value = nodeKeys.length
-      ElMessage.info(`${opts.actionLabel}已启动(${nodeKeys.length} 个节点)`)
+      ElMessage.info(`${opts.actionLabel}已启动（${nodeKeys.length} 个节点）`)
       stopPolling()
       pollTimer = window.setInterval(poll, POLL_INTERVAL_MS)
     } catch (e) {

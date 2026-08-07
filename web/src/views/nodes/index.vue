@@ -176,7 +176,7 @@ const {
 
 const reload = async () => {
   await Promise.all([loadPool(), loadSelf()])
-  resetOverrides() // 池已以服务端值重建,丢弃收藏乐观覆盖(issue #83)
+  resetOverrides() // 池已以服务端值重建，丢弃收藏乐观覆盖（issue #83）
 }
 
 // 收藏(issue #83):行内 star 的乐观覆盖叠在统一行集上,服务端持久经 toggleFavorite。

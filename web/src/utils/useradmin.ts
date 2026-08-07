@@ -17,7 +17,7 @@ export async function copyPassword(pwd: string) {
     await navigator.clipboard.writeText(pwd)
     ElMessage.success('已复制')
   } catch {
-    ElMessage.warning('复制失败,请手动选择复制')
+    ElMessage.warning('复制失败，请手动选择复制')
   }
 }
 
@@ -28,12 +28,12 @@ export function toastCreateUserError(err: unknown, username: string) {
   const status = (err as { response?: { status?: number } })?.response?.status
   const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? ''
   if (status === 409) {
-    ElMessage.error(`用户名「${username}」已被占用,请更换`)
+    ElMessage.error(`用户名「${username}」已被占用，请更换`)
   } else if (msg.includes('reserved')) {
-    ElMessage.error(`用户名「${username}」为系统保留名(admin/root/guest 等),请更换`)
+    ElMessage.error(`用户名「${username}」为系统保留名（admin/root/guest 等）,请更换`)
   } else if (msg) {
     ElMessage.error(msg)
   } else {
-    ElMessage.error('创建失败,请稍后重试')
+    ElMessage.error('创建失败，请稍后重试')
   }
 }

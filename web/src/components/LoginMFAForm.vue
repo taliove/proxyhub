@@ -8,7 +8,7 @@
       {{
         mode === 'totp'
           ? '密码已通过。请输入认证器上的 6 位动态验证码。'
-          : '密码已通过。请输入一个未使用过的恢复码(XXXX-XXXX-XXXX)。'
+          : '密码已通过。请输入一个未使用过的恢复码（XXXX-XXXX-XXXX）。'
       }}
     </p>
 
@@ -39,7 +39,7 @@
       class="login-mfa__trust"
       @update:model-value="(v: boolean | string | number) => emit('update:trustIp', v === true)"
     >
-      信任此 IP 30 天(此后从该网络登录不再要求验证码)
+      信任此 IP 30 天（此后从该网络登录不再要求验证码）
     </el-checkbox>
 
     <el-button

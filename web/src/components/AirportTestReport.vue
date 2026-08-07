@@ -13,7 +13,7 @@
 
     <!-- 空态:从未测过 -->
     <div v-else-if="runs.length === 0" class="report-empty muted">
-      尚未测试过。点「重新测试」做分层抽样检活,或「测全部」全量检活。
+      尚未测试过。点「重新测试」做分层抽样检活，或「测全部」全量检活。
     </div>
 
     <template v-else>
@@ -25,7 +25,7 @@
         show-icon
         class="report-alert"
       >
-        <template #title>上次测试失败({{ relativeTime(latestRun.created_at) }})</template>
+        <template #title>上次测试失败（{{ relativeTime(latestRun.created_at) }}）</template>
         {{ latestRun.error_message || '未知错误' }}
       </el-alert>
 
@@ -45,7 +45,7 @@
           <span class="muted">{{ relativeTime(completedRun.created_at) }}</span>
         </div>
 
-        <!-- URL 不可达口径说明:拉取健康 N/A,权重按 5:3:1 重归一 -->
+        <!-- URL 不可达口径说明:拉取健康 N/A，权重按 5:3:1 重归一 -->
         <el-alert
           v-if="!completedResult.url_reachable"
           type="warning"
@@ -54,7 +54,7 @@
           class="report-alert"
         >
           <template #title>该次测试订阅 URL 不可达</template>
-          基于池内已同步节点评分;拉取健康维度 N/A,权重按 5:3:1 重归一到其余维度。
+          基于池内已同步节点评分；拉取健康维度 N/A，权重按 5:3:1 重归一到其余维度。
         </el-alert>
 
         <!-- 事实汇总 + 评分构成(抽出为 AirportTestSummary,与运行模式对话框完成态共用) -->
@@ -94,7 +94,7 @@
           </el-table-column>
         </el-table>
         <div v-else class="muted report-block">
-          该次测试记录较早,未保存抽样节点明细,仅显示汇总。
+          该次测试记录较早，未保存抽样节点明细，仅显示汇总。
         </div>
       </template>
 

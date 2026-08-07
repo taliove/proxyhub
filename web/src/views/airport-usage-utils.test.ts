@@ -40,7 +40,7 @@ describe('airport usage utils', () => {
     expect(usageRemainingPercent(a)).toBe(70)
   })
 
-  it('未知用量:总量为 0 返回 null(不展示)', () => {
+  it('未知用量：总量为 0 返回 null(不展示)', () => {
     expect(usageRemaining(base)).toBeNull()
     expect(usageRemainingPercent(base)).toBeNull()
     expect(isUsageLow(base)).toBe(false)
@@ -58,7 +58,7 @@ describe('airport usage utils', () => {
     expect(isUsageLow(ok)).toBe(false)
   })
 
-  it('过期:expireText/临期/已过期', () => {
+  it('过期：expireText/临期/已过期', () => {
     const exp = Math.floor(new Date('2030-06-15T00:00:00').getTime() / 1000)
     const a: Airport = { ...base, usage_expire: exp }
     expect(expireText(a)).toBe('2030-06-15')
@@ -105,13 +105,13 @@ describe('airport usage utils', () => {
     expect(payload?.web_page_url).toBe('https://example.com')
   })
 
-  it('usageFormToPayload:全空返回 null(不提供,不动既有值)', () => {
+  it('usageFormToPayload:全空返回 null(不提供，不动既有值)', () => {
     expect(
       usageFormToPayload({ remainingGb: null, totalGb: null, expireDate: '', webPageUrl: '' })
     ).toBeNull()
   })
 
-  it('usageFormToPayloadOrZero:全空发零值(编辑显式清空可达后端)', () => {
+  it('usageFormToPayloadOrZero:全空发零值（编辑显式清空可达后端）', () => {
     const payload = usageFormToPayloadOrZero({
       remainingGb: null,
       totalGb: null,

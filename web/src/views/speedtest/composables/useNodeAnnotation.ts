@@ -13,7 +13,7 @@ export interface NodeOption {
   region: string
 }
 
-export const DIRECT_OPTION: NodeOption = { value: '', label: '直连(不经节点)', region: '' }
+export const DIRECT_OPTION: NodeOption = { value: '', label: '直连（不经节点）', region: '' }
 
 // PrefillResult URL 预填结果:applied = 命中池中节点;orphan = 节点已不在池;
 // none = 无 query(默认直连)。

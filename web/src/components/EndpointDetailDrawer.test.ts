@@ -242,7 +242,7 @@ describe('EndpointDetailDrawer', () => {
     vi.clearAllMocks()
   })
 
-  it('打开抽屉只拉取下发节点清单(纯读取),不自动拉取验证、不自动实测', async () => {
+  it('打开抽屉只拉取下发节点清单（纯读取）,不自动拉取验证、不自动实测', async () => {
     mountDrawer(true)
     await flushPromises()
 
@@ -258,7 +258,7 @@ describe('EndpointDetailDrawer', () => {
     expect(vi.mocked(client.get)).not.toHaveBeenCalled()
   })
 
-  it('概况段展示端点信息,轻管理动作全部上抛(启停/命名设置/公开名称/节点范围/精选/删除/二维码)', async () => {
+  it('概况段展示端点信息，轻管理动作全部上抛（启停/命名设置/公开名称/节点范围/精选/删除/二维码）', async () => {
     const wrapper = mountDrawer(true)
     await flushPromises()
 
@@ -288,7 +288,7 @@ describe('EndpointDetailDrawer', () => {
     }
   })
 
-  it('概况段精选状态:已配精选显示「精选 N 个节点」(issue #87)', async () => {
+  it('概况段精选状态：已配精选显示「精选 N 个节点」（issue #87）', async () => {
     const picked: Endpoint = {
       ...endpoint,
       node_picks: '[{"key":"hk1.example.com:443","alias":"别名"},{"key":"us1.example.com:8443"}]'
@@ -309,7 +309,7 @@ describe('EndpointDetailDrawer', () => {
     expect(writeText).toHaveBeenCalledWith(subscriptionUrl)
   })
 
-  it('下发节点清单段:展示名称/地区/延迟/可用/来源,原文折叠,测试段与统计段接线', async () => {
+  it('下发节点清单段：展示名称/地区/延迟/可用/来源，原文折叠，测试段与统计段接线', async () => {
     const wrapper = mountDrawer(true)
     await flushPromises()
 

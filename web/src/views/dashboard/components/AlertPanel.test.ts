@@ -83,7 +83,7 @@ describe('AlertPanel', () => {
     useAuthStore().setAuth('admin', 'super_admin')
   })
 
-  it('四类异常齐备时聚合渲染,各条目点击跳转对应页面', async () => {
+  it('四类异常齐备时聚合渲染，各条目点击跳转对应页面', async () => {
     mockAll({
       '/airports': [makeAirport({ last_test_status: 'completed', last_test_score: 45.4 })],
       [JOBS_ALERT_URL]: [
@@ -140,7 +140,7 @@ describe('AlertPanel', () => {
     expect(pushMock).toHaveBeenCalledWith({ name: 'Audit' })
   })
 
-  it('jobs 过滤参数:failed/interrupted 合并为一次逗号多值请求', async () => {
+  it('jobs 过滤参数：failed/interrupted 合并为一次逗号多值请求', async () => {
     mockAll()
     mountPanel()
     await flushPromises()
@@ -159,7 +159,7 @@ describe('AlertPanel', () => {
     expect(wrapper.find('.panel-hint').exists()).toBe(false)
   })
 
-  it('低分阈值边界:60 分不算异常,低于 60 分算异常', async () => {
+  it('低分阈值边界：60 分不算异常，低于 60 分算异常', async () => {
     mockAll({
       '/airports': [
         makeAirport({ id: 1, name: '刚好60', last_test_status: 'completed', last_test_score: 60 }),
@@ -175,7 +175,7 @@ describe('AlertPanel', () => {
     expect(wrapper.text()).not.toContain('刚好60')
   })
 
-  it('从未测试的机场不算异常,单独弱提示且可点击;测试失败不算未测试', async () => {
+  it('从未测试的机场不算异常，单独弱提示且可点击；测试失败不算未测试', async () => {
     mockAll({
       '/airports': [
         makeAirport({ id: 1, name: '未测1' }),
@@ -234,7 +234,7 @@ describe('AlertPanel', () => {
     expect(wrapper.find('.panel-empty').text()).toBe('加载中...')
   })
 
-  it('单路接口失败时静默降级,其余异常照常展示', async () => {
+  it('单路接口失败时静默降级，其余异常照常展示', async () => {
     mockAll({
       '/airports': new Error('network'),
       '/audit/banned': {
@@ -255,7 +255,7 @@ describe('AlertPanel', () => {
     expect(wrapper.findAll('.alert-item')).toHaveLength(1)
   })
 
-  it('普通用户视角:不发审计两路请求(后端 403 专属),其余区块照常', async () => {
+  it('普通用户视角：不发审计两路请求（后端 403 专属）,其余区块照常', async () => {
     useAuthStore().clearAuth()
     useAuthStore().setAuth('member', 'user')
     mockAll({

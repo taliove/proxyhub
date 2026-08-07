@@ -37,7 +37,7 @@ export function updateEndpointGeoConfig(
 }
 
 export interface UpdateEndpointNodePicksRequest {
-  node_picks: NodePick[] // 精选项对象数组(issue #85);空数组 = 清空精选 = 恢复全量(后端零回归语义)
+  node_picks: NodePick[] // 精选项对象数组（issue #85）;空数组 = 清空精选 = 恢复全量（后端零回归语义）
 }
 
 // 设置订阅地址精选节点集(issue #80,后端 issue #79;对象形态 issue #85):

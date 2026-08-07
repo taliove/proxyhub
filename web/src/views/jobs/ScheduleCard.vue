@@ -8,7 +8,7 @@
     <el-form label-width="140px" class="schedule-form">
       <el-form-item label="启用定时重算">
         <el-switch v-model="form.retag_enabled" />
-        <span class="hint">开启后每天在指定时刻对全部节点重算标签(retag_all 任务)。</span>
+        <span class="hint">开启后每天在指定时刻对全部节点重算标签（retag_all 任务）。</span>
       </el-form-item>
       <el-form-item label="重算时刻">
         <el-time-picker
@@ -17,7 +17,7 @@
           :clearable="false"
           placeholder="选择时刻"
         />
-        <span class="hint">24 小时制,精确到分钟(如 03:30)。</span>
+        <span class="hint">24 小时制，精确到分钟（如 03:30）。</span>
       </el-form-item>
       <el-form-item>
         <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>

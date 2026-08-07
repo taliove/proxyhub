@@ -11,7 +11,7 @@
             <el-tag v-else type="info" size="small">自动</el-tag>
           </el-descriptions-item>
           <el-descriptions-item v-if="isManual" label="来源">
-            <el-tag type="warning" size="small">手动机场(粘贴导入)</el-tag>
+            <el-tag type="warning" size="small">手动机场（粘贴导入）</el-tag>
           </el-descriptions-item>
           <el-descriptions-item v-else label="订阅 URL">
             <span class="url-cell">
@@ -67,7 +67,7 @@
         <div class="drawer-section-title">池内节点明细</div>
         <el-input
           v-model="nodeKeyword"
-          placeholder="搜索节点名称 / 地区(码或中文名)"
+          placeholder="搜索节点名称 / 地区（码或中文名）"
           clearable
           class="pool-search"
         />
@@ -263,8 +263,8 @@ const poolEmptyText = computed(() => {
   const kw = nodeKeyword.value.trim()
   if (kw) return `未找到匹配「${kw}」的节点`
   return isManual.value
-    ? '该机场当前在池内无节点,可点上方「重新粘贴」导入。'
-    : '该机场当前在池内无节点,可点上方「刷新」拉取入池。'
+    ? '该机场当前在池内无节点，可点上方「重新粘贴」导入。'
+    : '该机场当前在池内无节点，可点上方「刷新」拉取入池。'
 })
 
 // 最近测试报告:打开抽屉时拉取一次;重跑完成后由父级调 reloadReport 刷新。

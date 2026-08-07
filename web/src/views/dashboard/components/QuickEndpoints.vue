@@ -5,9 +5,9 @@
     </template>
 
     <div v-if="loading" class="panel-empty">加载中...</div>
-    <div v-else-if="error" class="panel-empty">加载失败,请稍后再试</div>
+    <div v-else-if="error" class="panel-empty">加载失败，请稍后再试</div>
     <div v-else-if="endpoints.length === 0" class="panel-empty">
-      还没有订阅地址,<router-link class="empty-link" to="/endpoints">去创建</router-link>
+      还没有订阅地址，<router-link class="empty-link" to="/endpoints">去创建</router-link>
     </div>
 
     <ul v-else class="endpoint-list">
@@ -49,7 +49,7 @@ const copyUrl = (row: Endpoint) => {
   navigator.clipboard
     .writeText(getSubscriptionUrl(row))
     .then(() => ElMessage.success('已复制到剪贴板'))
-    .catch(() => ElMessage.error('复制失败,请检查浏览器剪贴板权限'))
+    .catch(() => ElMessage.error('复制失败，请检查浏览器剪贴板权限'))
 }
 
 const qrVisible = ref(false)

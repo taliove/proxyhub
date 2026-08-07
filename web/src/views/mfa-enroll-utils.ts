@@ -40,8 +40,8 @@ function errorBody(err: unknown): { status?: number; error?: string } {
 // the view treats it as "you are done" rather than a dead end.
 export function enrollStartErrorMessage(err: unknown): string {
   const { status } = errorBody(err)
-  if (status === 409) return '该账号已绑定过验证器,无需重复绑定'
-  return '获取绑定密钥失败,请刷新页面重试'
+  if (status === 409) return '该账号已绑定过验证器，无需重复绑定'
+  return '获取绑定密钥失败，请刷新页面重试'
 }
 
 // isAlreadyEnrolled marks the 409 "mfa already enrolled" case, which means the
@@ -55,12 +55,12 @@ export function isAlreadyEnrolled(err: unknown): boolean {
 // secret (restart stage one, usually after a server-side reset).
 export function enrollConfirmErrorMessage(err: unknown): string {
   const { status, error } = errorBody(err)
-  if (status === 409) return '该账号已绑定过验证器,无需重复绑定'
+  if (status === 409) return '该账号已绑定过验证器，无需重复绑定'
   if (status === 400) {
     if ((error ?? '').includes('no pending enrollment')) {
-      return '绑定已失效,请重新获取密钥'
+      return '绑定已失效，请重新获取密钥'
     }
-    return '验证码不正确或已过期,请用认证器上的最新 6 位码重试'
+    return '验证码不正确或已过期，请用认证器上的最新 6 位码重试'
   }
-  return '绑定失败,请稍后重试'
+  return '绑定失败，请稍后重试'
 }

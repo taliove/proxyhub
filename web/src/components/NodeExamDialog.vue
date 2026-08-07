@@ -199,7 +199,7 @@ const runExam = (force = false) => {
     { onFrame, onStatus, onTerminal }
   )
   const params = buildParams()
-  if (force) params.set('force', '1') // 重新体检:已收口的旧任务强制重开,不回放上次结果
+  if (force) params.set('force', '1') // 重新体检：已收口的旧任务强制重开，不回放上次结果
   stream.start(`${appBase()}/api/nodes/exam/stream?${params}`)
 }
 
@@ -249,7 +249,7 @@ const onClose = () => {
   // When closing during exam, show toast about background continuation
   if (running.value) {
     ElMessage({
-      message: '体检任务将在后台继续运行,可随时回来查看进度',
+      message: '体检任务将在后台继续运行，可随时回来查看进度',
       type: 'info',
       duration: 3000
     })

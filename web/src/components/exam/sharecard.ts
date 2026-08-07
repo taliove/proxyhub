@@ -142,11 +142,11 @@ export type LeakStatus = 'ok' | 'leak' | 'unknown'
 // EgressSummary 出口摘要(地区 + 可选出口 IP + 可选入口 IP + 可选 DNS 解析器)。
 // 三个 IP 字段各有独立开关,默认全隐藏(高敏信息);showXxx=true 时填充对应字段。
 export interface EgressSummary {
-  ipv4Region: string // 出口地区:国家·省·市;失败或缺失为空串
-  egressIp?: string // 出口 IPv4 地址;仅当 showEgressIp=true 时填充
+  ipv4Region: string // 出口地区：国家·省·市；失败或缺失为空串
+  egressIp?: string // 出口 IPv4 地址；仅当 showEgressIp=true 时填充
   ingressIp?: string // 入口 IP(节点 server);仅当 showIngressIp=true 时填充
-  dnsResolver?: string // DNS 解析器 IP + 地区;仅当 showDns=true 时填充
-  dnsLeak: LeakStatus // DNS 泄露状态(与 showDns 独立:状态码始终可见,解析器详情受开关控制)
+  dnsResolver?: string // DNS 解析器 IP + 地区；仅当 showDns=true 时填充
+  dnsLeak: LeakStatus // DNS 泄露状态（与 showDns 独立：状态码始终可见，解析器详情受开关控制）
   // 全量版额外字段(showAll=true 时填充)
   asn?: string // ASN 编号
   org?: string // 组织名称
@@ -233,7 +233,7 @@ export function leakLabel(status: LeakStatus): string {
 
 // ShareViewModelOptions shareViewModel 的输入选项(统一 showAll 主开关)。
 export interface ShareViewModelOptions {
-  showAll?: boolean // 主开关:false(默认)=脱敏摘要版,true=全量版
+  showAll?: boolean // 主开关：false(默认)=脱敏摘要版，true=全量版
   nodeName: string
   examTime?: string | number | Date
   ingressIp?: string
@@ -247,8 +247,8 @@ export interface ShareViewModel {
   baselineDown: number | null
   baselineUp: number | null
   regionSummary: { best: RegionExtreme | null; worst: RegionExtreme | null }
-  allRegions?: ExamRegionResult[] // 仅全量版:多地域全行(除基准外)
-  stabilityDetails?: ExamStabilityMetrics // 稳定性明细指标(摘要版+全量版均含,无敏感信息)
+  allRegions?: ExamRegionResult[] // 仅全量版：多地域全行（除基准外）
+  stabilityDetails?: ExamStabilityMetrics // 稳定性明细指标（摘要版+全量版均含，无敏感信息）
   unlockCells: UnlockCell[]
   egress: EgressSummary
 }

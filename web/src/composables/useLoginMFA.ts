@@ -85,7 +85,7 @@ export function useLoginMFA() {
       ElMessage.warning(
         mode.value === 'totp'
           ? `请输入认证器上的 ${TOTP_CODE_LENGTH} 位验证码`
-          : '请输入完整的恢复码(XXXX-XXXX-XXXX)'
+          : '请输入完整的恢复码（XXXX-XXXX-XXXX）'
       )
       return null
     }

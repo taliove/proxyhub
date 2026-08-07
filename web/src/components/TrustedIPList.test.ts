@@ -120,7 +120,7 @@ describe('TrustedIPList', () => {
     vi.clearAllMocks()
   })
 
-  it('渲染受信 IP 的地理、最后使用与到期,并标记已过期条目', async () => {
+  it('渲染受信 IP 的地理、最后使用与到期，并标记已过期条目', async () => {
     vi.mocked(api.listTrustedIPs).mockResolvedValue(
       envelope({
         trusted: [
@@ -156,7 +156,7 @@ describe('TrustedIPList', () => {
     expect(vi.mocked(api.listTrustedIPs)).toHaveBeenCalledTimes(2)
   })
 
-  it('推荐列表展示 MFA 成功次数,一键信任调用 trustIP', async () => {
+  it('推荐列表展示 MFA 成功次数，一键信任调用 trustIP', async () => {
     vi.mocked(api.listTrustedIPs).mockResolvedValue(
       envelope({
         recommendations: [
@@ -179,7 +179,7 @@ describe('TrustedIPList', () => {
     expect(vi.mocked(api.listTrustedIPs)).toHaveBeenCalledTimes(2)
   })
 
-  it('自动信任开关默认关,切换后调用 setAutoTrustIP', async () => {
+  it('自动信任开关默认关，切换后调用 setAutoTrustIP', async () => {
     vi.mocked(api.listTrustedIPs).mockResolvedValue(envelope())
     vi.mocked(api.setAutoTrustIP).mockResolvedValue({ ok: true, auto_trust_ip: true })
 
@@ -196,7 +196,7 @@ describe('TrustedIPList', () => {
     expect(wrapper.find('.el-switch-stub').attributes('data-on')).toBe('true')
   })
 
-  it('开关保存失败时回滚本地状态(不谎报已开启)', async () => {
+  it('开关保存失败时回滚本地状态（不谎报已开启）', async () => {
     vi.mocked(api.listTrustedIPs).mockResolvedValue(envelope())
     vi.mocked(api.setAutoTrustIP).mockRejectedValue(new Error('boom'))
 

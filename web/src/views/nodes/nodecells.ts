@@ -59,9 +59,9 @@ export const tagsDisplay = (n: Node): string[] => (n.tags ?? []).map(tagLabel)
 
 // 出网单元:国家码 + 泄露/代理警示。无出网信息返回 null(不占位)。
 export interface EgressCell {
-  code: string // 出口国家码(大写),未知为空
+  code: string // 出口国家码（大写）,未知为空
   warn: boolean // 是否有风险警示
-  reasons: string[] // 警示原因(代理/机房/DNS 泄露)
+  reasons: string[] // 警示原因（代理/机房/DNS 泄露）
 }
 export const examEgressCell = (report: ExamReport | undefined): EgressCell | null => {
   const ipv4 = report?.egress?.ipv4
@@ -77,9 +77,9 @@ export const examEgressCell = (report: ExamReport | undefined): EgressCell | nul
 
 // 节点行的体检派生视图:稳定性徽标 + 出网 + 体检相对时间,均由最近一次体检记录一次算出。
 export interface NodeExamSummary {
-  badge: ExamBadge | null // 稳定性分 + 色(无稳定性段为 null)
+  badge: ExamBadge | null // 稳定性分 + 色（无稳定性段为 null）
   egress: EgressCell | null // 出网国家码 + 警示
-  relative: string // 体检时间(相对)
+  relative: string // 体检时间（相对）
 }
 export const buildNodeExamSummary = (
   entry: ExamHistoryEntry | null,

@@ -18,7 +18,7 @@
           filterable
           collapse-tags
           collapse-tags-tooltip
-          placeholder="留空=不判定(所有国家可拉取)"
+          placeholder="留空=不判定（所有国家可拉取）"
         >
           <el-option
             v-for="c in COUNTRY_OPTIONS"
@@ -28,33 +28,33 @@
           />
         </el-select>
         <div class="cfg-hint">
-          选中的国家可拉取;留空则该维度不判定。建议先在「观察」档确认 GeoIP
+          选中的国家可拉取；留空则该维度不判定。建议先在「观察」档确认 GeoIP
           对自己设备判定准确再升「拦截」。
         </div>
       </el-form-item>
-      <el-form-item v-if="form.mode !== 'off'" label="省份(暂缓)">
+      <el-form-item v-if="form.mode !== 'off'" label="省份（暂缓）">
         <el-collapse class="province-collapse">
           <el-collapse-item name="province">
             <template #title>
               <span class="province-title">
                 <el-icon><WarningFilled /></el-icon>
-                省份配置(当前内嵌库无省级数据,暂不生效)
+                省份配置（当前内嵌库无省级数据，暂不生效）
               </span>
             </template>
             <el-alert type="warning" :closable="false" show-icon class="province-alert">
-              当前内嵌 GeoIP 库为 Country 级,省级数据为零。省份配置今天永不命中,拦截档下会全拒。
-              <strong>请勿在拦截档使用省份配置,否则会自锁。</strong>
+              当前内嵌 GeoIP 库为 Country 级，省级数据为零。省份配置今天永不命中，拦截档下会全拒。
+              <strong>请勿在拦截档使用省份配置，否则会自锁。</strong>
             </el-alert>
             <el-input
               v-model="form.provinces"
               type="textarea"
               :rows="2"
-              placeholder="逗号分隔省份代码或名称(如 Guangdong, Beijing)"
+              placeholder="逗号分隔省份代码或名称（如 Guangdong, Beijing）"
               class="province-input"
             />
           </el-collapse-item>
         </el-collapse>
-        <div class="cfg-hint">蜂窝网出口常落网关省;省份维度受内置库限制,当前不可用。</div>
+        <div class="cfg-hint">蜂窝网出口常落网关省；省份维度受内置库限制，当前不可用。</div>
       </el-form-item>
       <el-form-item>
         <el-button type="primary" size="small" :loading="saving" @click="handleSave">

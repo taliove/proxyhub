@@ -7,9 +7,9 @@
       </div>
     </template>
     <div v-if="loading" class="panel-empty">加载中...</div>
-    <div v-else-if="failed" class="panel-empty">加载失败,请稍后重试</div>
+    <div v-else-if="failed" class="panel-empty">加载失败，请稍后重试</div>
     <div v-else-if="items.length === 0" class="panel-empty">
-      还没有体检过的节点,
+      还没有体检过的节点，
       <router-link class="empty-link" to="/nodes">去节点页跑体检</router-link>
     </div>
     <ol v-else class="node-list">

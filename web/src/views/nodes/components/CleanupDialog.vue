@@ -4,7 +4,7 @@
       <el-button size="small" type="primary" :loading="detecting" @click="detectAllThenReload">
         一键检测全部并刷新
       </el-button>
-      <span class="muted">先跑真实检测,再筛出失败节点</span>
+      <span class="muted">先跑真实检测，再筛出失败节点</span>
     </div>
     <div v-if="failedNodes.length === 0" class="muted">
       当前没有不可用节点。可点上方「一键检测全部」后再回到此处。
@@ -18,12 +18,12 @@
       </el-alert>
       <el-form label-width="110px">
         <el-form-item label="机场节点">
-          <el-tag type="info" size="small">批量屏蔽({{ airportCount }} 个)</el-tag>
+          <el-tag type="info" size="small">批量屏蔽（{{ airportCount }} 个）</el-tag>
         </el-form-item>
         <el-form-item label="自建节点处理">
           <el-radio-group v-model="selfAction">
-            <el-radio value="disable">禁用(可恢复)</el-radio>
-            <el-radio value="delete">删除(不可恢复)</el-radio>
+            <el-radio value="disable">禁用（可恢复）</el-radio>
+            <el-radio value="delete">删除（不可恢复）</el-radio>
           </el-radio-group>
         </el-form-item>
       </el-form>
@@ -76,7 +76,7 @@ const reloadFailedNodes = async () => {
     })
     failedNodes.value = data.nodes || []
     if (data.total && data.total > 1000) {
-      ElMessage.warning(`失败节点超过 1000 个,仅加载前 1000 个`)
+      ElMessage.warning(`失败节点超过 1000 个，仅加载前 1000 个`)
     }
   } catch (e) {
     ElMessage.error(apiErrorMessage(e, '加载失败节点列表失败'))
@@ -104,7 +104,7 @@ const confirmCleanup = async () => {
   const actionLabel = selfAction.value === 'delete' ? '删除' : '禁用'
   try {
     await ElMessageBox.confirm(
-      `将屏蔽 ${airportKeys.length} 个机场节点,${actionLabel} ${selfKeys.length} 个自建节点。此操作${selfAction.value === 'delete' ? '不可恢复' : '可恢复'},确认?`,
+      `将屏蔽 ${airportKeys.length} 个机场节点，${actionLabel} ${selfKeys.length} 个自建节点。此操作${selfAction.value === 'delete' ? '不可恢复' : '可恢复'},确认？`,
       '二次确认',
       { type: 'warning', confirmButtonText: `确认${actionLabel}`, cancelButtonText: '取消' }
     )
@@ -132,7 +132,7 @@ const confirmCleanup = async () => {
       )
       processed = (r.disabled || 0) + (r.deleted || 0)
     }
-    ElMessage.success(`已屏蔽 ${blocked} 个机场节点,${actionLabel} ${processed} 个自建节点`)
+    ElMessage.success(`已屏蔽 ${blocked} 个机场节点，${actionLabel} ${processed} 个自建节点`)
     visible.value = false
     emit('done')
   } catch (e) {

@@ -133,7 +133,7 @@ const completedRun: TestRun = {
 }
 
 describe('AirportTestReport', () => {
-  it('查看报告不产生任何请求(打开不重跑)', async () => {
+  it('查看报告不产生任何请求（打开不重跑）', async () => {
     mountReport([completedRun])
     await flushPromises()
 
@@ -141,7 +141,7 @@ describe('AirportTestReport', () => {
     expect(vi.mocked(client.post)).not.toHaveBeenCalled()
   })
 
-  it('空态:从未测过时引导显式测试', async () => {
+  it('空态：从未测过时引导显式测试', async () => {
     const wrapper = mountReport([])
     await flushPromises()
 
@@ -157,7 +157,7 @@ describe('AirportTestReport', () => {
     expect(wrapper.emitted('run-test')).toEqual([[false], [true]])
   })
 
-  it('失败态:最近一次 run failed 时展示错误,不展示评分报告', async () => {
+  it('失败态：最近一次 run failed 时展示错误，不展示评分报告', async () => {
     const failedRun: TestRun = {
       id: 12,
       airport_id: 7,
@@ -175,7 +175,7 @@ describe('AirportTestReport', () => {
     expect(wrapper.text()).not.toContain('综合得分')
   })
 
-  it('completed run:事实汇总 + 维度构成拆解(标准权重 50/30/10/10)', async () => {
+  it('completed run:事实汇总 + 维度构成拆解（标准权重 50/30/10/10）', async () => {
     const wrapper = mountReport([completedRun])
     await flushPromises()
 
@@ -187,10 +187,10 @@ describe('AirportTestReport', () => {
     expect(text).toContain('3 个地区')
     expect(text).toContain('HTTP 200')
     // 维度构成拆解:得分与权重
-    expect(text).toContain('可用率(权重 50%)')
-    expect(text).toContain('延迟表现(权重 30%)')
-    expect(text).toContain('拉取健康(权重 10%)')
-    expect(text).toContain('地区覆盖(权重 10%)')
+    expect(text).toContain('可用率（权重 50%）')
+    expect(text).toContain('延迟表现（权重 30%）')
+    expect(text).toContain('拉取健康（权重 10%）')
+    expect(text).toContain('地区覆盖（权重 10%）')
     expect(text).toContain('45.0 分')
     expect(text).toContain('28.0 分')
     expect(text).toContain('7.5 分')
@@ -198,7 +198,7 @@ describe('AirportTestReport', () => {
     expect(text).toContain('抽测 2/10')
   })
 
-  it('事实汇总布局(ticket 0045):label 定宽 + 地区覆盖格 span=2', async () => {
+  it('事实汇总布局（ticket 0045）:label 定宽 + 地区覆盖格 span=2', async () => {
     const wrapper = mountReport([completedRun])
     await flushPromises()
 
@@ -215,7 +215,7 @@ describe('AirportTestReport', () => {
     expect(regionItem!.props('span')).toBe(2)
   })
 
-  it('抽样明细表定高滚动(ticket 0045):max-height=300', async () => {
+  it('抽样明细表定高滚动（ticket 0045）:max-height=300', async () => {
     const wrapper = mountReport([completedRun])
     await flushPromises()
 
@@ -243,7 +243,7 @@ describe('AirportTestReport', () => {
     expect(text).not.toContain('抽测')
   })
 
-  it('URL 不可达:拉取健康 N/A,权重按 5:3:1 重归一呈现', async () => {
+  it('URL 不可达：拉取健康 N/A，权重按 5:3:1 重归一呈现', async () => {
     const unreachableRun: TestRun = {
       ...completedRun,
       dimensions_json: JSON.stringify({
@@ -258,14 +258,14 @@ describe('AirportTestReport', () => {
 
     const text = wrapper.text()
     expect(text).toContain('订阅 URL 不可达')
-    expect(text).toContain('拉取健康(N/A,权重已重归一)')
-    expect(text).toContain('可用率(权重 55.6%)')
-    expect(text).toContain('延迟表现(权重 33.3%)')
-    expect(text).toContain('地区覆盖(权重 11.1%)')
+    expect(text).toContain('拉取健康（N/A，权重已重归一）')
+    expect(text).toContain('可用率（权重 55.6%）')
+    expect(text).toContain('延迟表现（权重 33.3%）')
+    expect(text).toContain('地区覆盖（权重 11.1%）')
     expect(text).toContain('N/A(URL 不可达)')
   })
 
-  it('抽样节点明细:逐节点展示名称/地区/可用性/延迟', async () => {
+  it('抽样节点明细：逐节点展示名称/地区/可用性/延迟', async () => {
     const wrapper = mountReport([completedRun])
     await flushPromises()
 
@@ -278,7 +278,7 @@ describe('AirportTestReport', () => {
     expect(text).toContain('120ms')
   })
 
-  it('旧 run 无抽样明细:降级为只显示汇总并说明', async () => {
+  it('旧 run 无抽样明细：降级为只显示汇总并说明', async () => {
     const oldRun: TestRun = {
       ...completedRun,
       dimensions_json: JSON.stringify({

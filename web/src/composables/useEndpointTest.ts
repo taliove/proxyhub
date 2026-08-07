@@ -35,7 +35,7 @@ export interface ProbeRun {
   full: boolean
   status: ProbeRunStatus
   total: number // 会下发节点数
-  sampled: number // 抽样后实际检活数(全量时等于 total)
+  sampled: number // 抽样后实际检活数（全量时等于 total）
   checked: number
   error?: string
 }
