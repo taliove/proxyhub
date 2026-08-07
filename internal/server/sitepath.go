@@ -8,7 +8,11 @@ import (
 
 // sitePathMiddleware 在配置了 Site Path 时强制管理面路径边界:
 //
-//   - /<site-path>/ 下的请求:剥掉前缀后下放给 mux(管理 UI / API / 订阅照常工作)
+//   - /sub 与 /sub/*:直通(不剥前缀)——订阅端点是公开拉取入口(随机 path +
+//     token,不可枚举),挂在根命名空间,订阅链接不再携带 Site Path(issue #74:
+//     链接进客户端/日志会泄露管理面路径)。IP 过滤/限流在链内侧,直通不受影响。
+//   - /<site-path>/ 下的请求:剥掉前缀后下放给 mux(管理 UI / API 照常;
+//     旧形式 /<site-path>/sub/* 由此保持双挂兼容,历史链接不失效)
 //   - /、缺前缀、前缀之外的请求:一律返回普通 404(不暴露服务存在)
 //
 // 未配置 Site Path(开发/CI)时完全透传,行为与现状一致。
@@ -27,6 +31,12 @@ func (s *Server) sitePathMiddleware(next http.Handler) http.Handler {
 		}
 
 		p := r.URL.Path
+		// 订阅端点根命名空间直通(sub 在保留字清单内,与 Site Path 无冲突)
+		if p == "/sub" || strings.HasPrefix(p, "/sub/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		prefix := "/" + sitePath
 		var stripped string
 		switch {

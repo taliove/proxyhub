@@ -183,7 +183,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Endpoint } from '@/types'
 import client from '@/api/client'
 import { updateEndpointPublicName } from '@/api/endpoints'
-import { appBase } from '@/utils/base'
 import PageHeader from '@/components/PageHeader.vue'
 import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
 import EndpointDetailDrawer from '@/components/EndpointDetailDrawer.vue'
@@ -217,8 +216,9 @@ const loadEndpoints = async () => {
   }
 }
 
+// 订阅地址挂根命名空间 /sub(issue #74):不含 Site Path,链接进客户端/日志不泄露管理面路径。
 const getSubscriptionUrl = (row: Endpoint) => {
-  return `${window.location.origin}${appBase()}/sub/${row.path}?token=${row.token}`
+  return `${window.location.origin}/sub/${row.path}?token=${row.token}`
 }
 
 const copyUrl = (row: Endpoint) => {
