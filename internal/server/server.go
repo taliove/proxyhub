@@ -2051,20 +2051,21 @@ func (s *Server) filteredNodesWithPicks(nodes []*subscription.Node, userID int64
 	// 端点级精选候选集替换(spec #70):过滤链最前,空精选短路(零回归)。
 	nodes = filterByNodePicks(nodes, picks)
 
-	// 过滤链三键按属主读取(租户级设置,回退全局默认);读取失败降级跳过对应过滤。
+	// 过滤链三键按属主读取(租户级设置,回退全局默认);设置未初始化(ErrNotFound)
+	// 按声明默认值(空=不过滤)静默通过——仅真正的 DB 错误才告警(同 #51 降级语义)。
 	if wl, err := s.st.GetSettingForUser(userID, "region_whitelist"); err == nil {
 		nodes = s.filterByRegionWhitelist(nodes, wl)
-	} else {
+	} else if !errors.Is(err, store.ErrNotFound) {
 		s.logger.Warn("get region whitelist failed, skipping region filter", "error", err)
 	}
 	if kw, err := s.st.GetSettingForUser(userID, "filter_whitelist"); err == nil {
 		nodes = filter.FilterByWhitelist(nodes, filter.SplitKeywords(kw))
-	} else {
+	} else if !errors.Is(err, store.ErrNotFound) {
 		s.logger.Warn("get filter whitelist failed, skipping keyword whitelist", "error", err)
 	}
 	if kw, err := s.st.GetSettingForUser(userID, "filter_keywords"); err == nil {
 		nodes = filter.FilterByKeywords(nodes, filter.SplitKeywords(kw))
-	} else {
+	} else if !errors.Is(err, store.ErrNotFound) {
 		s.logger.Warn("get filter keywords failed, skipping keyword blacklist", "error", err)
 	}
 
