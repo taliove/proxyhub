@@ -610,6 +610,9 @@ func (a *Aggregator) executeForUser(ctx context.Context, rl *runLog, progress fu
 
 	// 应用覆盖层（机场节点的 display_name/region 编辑）
 	a.applyOverrides(owner, mergedPool)
+	// 刷新完成后自动重算名称(issue #51):按属主生效设置,开启时重算 DisplayName。
+	// 覆盖层之后调用,保证手动编辑的 display_name 不被本次刷新抹掉。
+	mergedPool = a.standardizePoolNames(owner, mergedPool)
 	// 属主回填:本轮节点全部归属刷新 owner 分片(Invariant B)
 	for _, n := range mergedPool {
 		if n.UserID == 0 {

@@ -19,6 +19,7 @@ func stdNodes() []*subscription.Node {
 }
 
 // 开启标准化后,/api/nodes 的 display_name 应为标准格式;关闭时为空。
+// issue #51:设置不存在时按默认值 false 求值,不再整条降级打 WARN。
 func TestListNodes_Standardization(t *testing.T) {
 	srv, st := newTestServer(t, stdNodes())
 	h := srv.Handler()
@@ -33,11 +34,11 @@ func TestListNodes_Standardization(t *testing.T) {
 		t.Fatalf("set abbr: %v", err)
 	}
 
-	// 默认关闭:display_name 应为空
+	// 设置不存在(新实例):按声明默认 false,display_name 为空(不标准化)
 	nodes := listNodes(t, h, cookie)
 	for _, n := range nodes {
 		if n.DisplayName != "" {
-			t.Errorf("standardization off, but display_name=%q", n.DisplayName)
+			t.Errorf("standardization 未设置(默认关), but display_name=%q", n.DisplayName)
 		}
 	}
 

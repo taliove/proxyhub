@@ -2051,18 +2051,25 @@ func (s *Server) filteredNodes(nodes []*subscription.Node, userID int64) []*subs
 //
 // 以属主生效设置为基准（standardize_names / name_template,租户级回退全局默认），
 // 再按订阅地址覆盖:ep.NameMode "on"/"off" 强制开关,ep.NameTemplate 非空则替换模板。
-// ep 为 nil 时只取属主设置（用于无端点上下文的管理列表）。读设置失败时降级为不标准化。
+// ep 为 nil 时只取属主设置（用于无端点上下文的管理列表）。
+// 设置键不存在时按声明默认值(standardize_names 默认 false);只有真正的 DB 错误才告警。
 // userID 为属主(多租户):0 = 全局视角(只读全局默认)。
 func (s *Server) resolveNameConfig(userID int64, ep *store.Endpoint) (standardize bool, template string) {
 	template = subscription.DefaultNameTemplate
 	val, err := s.st.GetSettingForUser(userID, "standardize_names")
 	if err != nil {
-		s.logger.Warn("get settings failed, skipping name standardization", "error", err)
-		return false, template
+		if !errors.Is(err, store.ErrNotFound) {
+			s.logger.Warn("get standardize_names setting failed", "error", err)
+		}
+		// ErrNotFound = 设置未初始化,按声明默认值 false(与前端 UI 默认一致,issue #51)
+		standardize = false
+	} else {
+		standardize = val == "true"
 	}
-	standardize = val == "true"
 	if t, err := s.st.GetSettingForUser(userID, "name_template"); err == nil && t != "" {
 		template = t
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.logger.Warn("get name_template setting failed", "error", err)
 	}
 
 	if ep != nil {
