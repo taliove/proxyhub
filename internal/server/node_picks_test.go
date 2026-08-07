@@ -326,3 +326,59 @@ func TestNodePicks_InvalidStoredJSONDegrades(t *testing.T) {
 		t.Errorf("endpointNodePicks(valid) = %v, want [a.example.com:8388]", picks)
 	}
 }
+
+// TestNodePicks_ListAvailabilityMatchesDelivery 端点列表可用数与实发同口径
+// (check 评审 MEDIUM):精选在下发路径先于 filt.Apply(每地区限量)收窄;
+// 列表若在共享 base(已过限量)上事后叠加精选,被限量截流的精选节点会漏计——
+// 列表显示 0 可用而订阅实际在发。本测试把限量压到 1,精选"被截流"的节点,
+// 列表 Total 必须 = 实发节点数。
+func TestNodePicks_ListAvailabilityMatchesDelivery(t *testing.T) {
+	pool := []*subscription.Node{
+		{Name: "香港1", Type: "ss", Server: "hk1.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Available: true, Region: "HK", Source: "机场甲"},
+		{Name: "香港2", Type: "ss", Server: "hk2.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Available: true, Region: "HK", Source: "机场甲"},
+		{Name: "香港3", Type: "ss", Server: "hk3.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Available: true, Region: "HK", Source: "机场甲"},
+	}
+	srv, st := newTestServer(t, pool)
+	// 每地区限量压到 1:共享 base 只留一个香港节点,其余被截流
+	srv.cfg.Filter.NodesPerRegion = 1
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+
+	ep, _ := st.CreateEndpointForUser(1, "picked")
+	// 精选被截流的节点(香港3 不在共享 base 里)
+	setNodePicks(t, srv, ep.ID, "hk3.example.com:8388")
+
+	// 实发:/sub 含香港3
+	out := fetchSub(t, h, ep)
+	if !strings.Contains(out, "香港3") {
+		t.Fatalf("picked sub missing 香港3\nbody: %s", out)
+	}
+
+	// 列表可用数:Total 必须 = 1(与实发一致),而不是 0(共享 base 事后叠加)
+	req := httptest.NewRequest("GET", "/api/endpoints", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status = %d", w.Code)
+	}
+	var items []struct {
+		ID           int64 `json:"id"`
+		Availability struct {
+			Available int `json:"available"`
+			Total     int `json:"total"`
+		} `json:"availability"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&items); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1", len(items))
+	}
+	if items[0].Availability.Total != 1 {
+		t.Errorf("availability.total = %d, want 1(与实发同口径)", items[0].Availability.Total)
+	}
+	if items[0].Availability.Available != 1 {
+		t.Errorf("availability.available = %d, want 1", items[0].Availability.Available)
+	}
+}

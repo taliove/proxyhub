@@ -1438,14 +1438,21 @@ func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	// 可用性汇总加性附加(ADR 0028 决策 2):池在内存,全局过滤链只跑一遍,
-	// 各端点仅精选/条件维度不同,逐个叠加计算(精选在 availabilityFor 内按端点叠加)。
-	base := s.filteredNodes(s.nodes.NodesForUser(effUID), effUID)
+	// 可用性汇总加性附加(ADR 0028 决策 2):池在内存,无精选端点复用全局过滤链
+	// 只跑一遍的 base;配了精选的端点必须按下发路径(filteredNodesWithPicks,
+	// 精选先于 filt.Apply)单独重算——共享 base 已过 filt.Apply(去重/每地区限量),
+	// 事后叠加精选会把被截流的精选节点漏计,列表口径与实发分裂(check 评审)。
+	pool := s.nodes.NodesForUser(effUID)
+	base := s.filteredNodes(pool, effUID)
 	items := make([]endpointListItem, 0, len(eps))
 	for _, ep := range eps {
+		scoped := base
+		if picks := s.endpointNodePicks(ep); len(picks) > 0 {
+			scoped = s.filteredNodesWithPicks(pool, effUID, picks)
+		}
 		items = append(items, endpointListItem{
 			Endpoint:     ep,
-			Availability: s.availabilityFor(base, ep),
+			Availability: s.availabilityFor(scoped, ep),
 		})
 	}
 	writeJSON(w, items)

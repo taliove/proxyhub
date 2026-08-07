@@ -260,10 +260,10 @@ type endpointListItem struct {
 }
 
 // availabilityFor 计算单个端点会下发集合的可用 x/y。
-// base 为全局过滤链产物(调用方批量复用);各端点先按精选(spec #70)收窄,
-// 再套用条件,与会下发集合同口径;名称标准化不影响计数,跳过。
-func (s *Server) availabilityFor(base []*subscription.Node, ep *store.Endpoint) endpointAvailability {
-	nodes := filterByNodePicks(base, s.endpointNodePicks(ep))
+// nodes 必须是与下发同口径的已收窄集合(调用方负责:无精选传全局过滤链 base,
+// 有精选传 filteredNodesWithPicks 的产物,精选先于 filt.Apply 收窄);
+// 此处只再套用端点条件;名称标准化不影响计数,跳过。
+func (s *Server) availabilityFor(nodes []*subscription.Node, ep *store.Endpoint) endpointAvailability {
 	nodes = s.applyConditions(nodes, ep)
 	result := endpointAvailability{Total: len(nodes)}
 	for _, n := range nodes {
