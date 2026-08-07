@@ -1,11 +1,19 @@
 <template>
   <div>
     <PageHeader>
-      <el-button type="primary" @click="dialogVisible = true">新建订阅地址</el-button>
+      <el-button type="primary" @click="createVisible = true">新建订阅地址</el-button>
     </PageHeader>
 
     <el-card>
-      <el-table v-loading="loading" :data="endpoints" row-key="id">
+      <!-- 精选状态筛选(issue #87):全部 / 全量 / 已精选,前端过滤不改接口 -->
+      <div class="list-toolbar">
+        <el-radio-group v-model="picksFilter" size="small">
+          <el-radio-button label="all">全部</el-radio-button>
+          <el-radio-button label="full">全量</el-radio-button>
+          <el-radio-button label="picked">已精选</el-radio-button>
+        </el-radio-group>
+      </div>
+      <el-table v-loading="loading" :data="filteredEndpoints" row-key="id">
         <el-table-column prop="alias" label="别名" />
         <el-table-column label="公开名称" width="130">
           <template #default="{ row }">
@@ -70,43 +78,8 @@
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" title="新建订阅地址" width="500px">
-      <el-form :model="form" label-width="90px">
-        <el-form-item label="别名">
-          <el-input v-model="form.alias" placeholder="例如：老爸的手机" />
-        </el-form-item>
-        <el-form-item label="配置模板">
-          <el-select
-            v-model="form.template_name"
-            placeholder="跟随默认模板"
-            clearable
-            class="full-width"
-          >
-            <el-option
-              v-for="tpl in templates"
-              :key="tpl.name"
-              :label="tpl.name"
-              :value="tpl.name"
-            />
-          </el-select>
-          <div class="cfg-hint">留空则使用用户默认模板(用户级模板库四级回退链)</div>
-        </el-form-item>
-        <el-form-item label="公开名称">
-          <el-input v-model="form.public_name" placeholder="例如：家里宽带" maxlength="50" />
-          <div class="cfg-hint">
-            随订阅下发,客户端配置列表显示「ProxyHub · 公开名称」;留空则显示「ProxyHub」。
-            别名为私有信息,绝不下发。
-          </div>
-        </el-form-item>
-        <el-form-item label="精选节点">
-          <el-button size="small" @click="openNodePicks(null)">{{ stagedLabel }}</el-button>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="createEndpoint">创建</el-button>
-      </template>
-    </el-dialog>
+    <!-- 新建订阅地址:独立组件,持有表单与新建暂存精选链路(issue #80) -->
+    <EndpointCreateDialog v-model="createVisible" @created="loadEndpoints" />
 
     <el-dialog v-model="nameConfigVisible" title="节点命名设置" width="560px">
       <el-form label-width="110px">
@@ -161,13 +134,12 @@
       @saved="loadEndpoints"
     />
 
-    <!-- 精选节点选择器(issue #80):picksEndpoint=null 为新建暂存模式(confirm 上抛) -->
+    <!-- 精选节点选择器(issue #80):编辑模式(已有端点)直接 PUT 落库;
+         新建暂存链路在 EndpointCreateDialog 内 -->
     <EndpointNodePicksDialog
       v-model="picksVisible"
       :endpoint="picksEndpoint"
-      :staged-picks="stagedPicks"
       @saved="loadEndpoints"
-      @confirm="onPicksConfirm"
     />
 
     <!-- 详情抽屉(四段式:概况/下发节点清单/订阅测试/拉取统计);
@@ -180,6 +152,7 @@
       @name-config="openNameConfig"
       @public-name="openPublicName"
       @conditions="openConditions"
+      @picks="openNodePicks"
       @delete="deleteEndpoint"
       @qrcode="showSubscriptionQR"
       @template-changed="loadEndpoints"
@@ -200,23 +173,28 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Endpoint } from '@/types'
 import client from '@/api/client'
-import { updateEndpointPublicName, updateEndpointNodePicks } from '@/api/endpoints'
+import { updateEndpointPublicName } from '@/api/endpoints'
 import PageHeader from '@/components/PageHeader.vue'
 import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
+import EndpointCreateDialog from '@/components/EndpointCreateDialog.vue'
 import EndpointNodePicksDialog from '@/components/EndpointNodePicksDialog.vue'
 import EndpointNodePicksTag from '@/components/EndpointNodePicksTag.vue'
 import EndpointDetailDrawer from '@/components/EndpointDetailDrawer.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { hasConditions } from '@/utils/conditions'
 import { nameModeLabel, nameModeTag } from '@/utils/namemode'
-import type { NodePick } from '@/components/endpoint-nodepicks-utils'
-import { useTemplateList } from '@/composables/useTemplateList'
+import {
+  filterEndpointsByPicks,
+  type PicksStatusFilter
+} from '@/components/endpoint-nodepicks-utils'
 
 const endpoints = ref<Endpoint[]>([])
 const loading = ref(false)
-const dialogVisible = ref(false)
-const form = ref({ alias: '', template_name: '', public_name: '' })
-const { templates, loadTemplates } = useTemplateList()
+const createVisible = ref(false)
+
+// 精选状态筛选(issue #87):默认全部;计数口径与精选列标签一致(同一纯函数)
+const picksFilter = ref<PicksStatusFilter>('all')
+const filteredEndpoints = computed(() => filterEndpointsByPicks(endpoints.value, picksFilter.value))
 
 // 详情抽屉状态:行内「详情」打开;抽屉内动作复用本页既有处理函数(事件上抛)。
 const detailVisible = ref(false)
@@ -245,28 +223,6 @@ const getSubscriptionUrl = (row: Endpoint) => {
 const copyUrl = (row: Endpoint) => {
   navigator.clipboard.writeText(getSubscriptionUrl(row))
   ElMessage.success('已复制到剪贴板')
-}
-
-const createEndpoint = async () => {
-  const payload: { alias: string; template_name?: string; public_name?: string } = {
-    alias: form.value.alias
-  }
-  if (form.value.template_name) {
-    payload.template_name = form.value.template_name
-  }
-  if (form.value.public_name.trim()) {
-    payload.public_name = form.value.public_name.trim()
-  }
-  const created = await client.post<unknown, Endpoint>('/endpoints', payload)
-  // 新建暂存的精选随创建补 PUT(创建接口不收精选字段,issue #80)
-  if (stagedPicks.value.length && created?.id) {
-    await updateEndpointNodePicks(created.id, stagedPicks.value)
-  }
-  ElMessage.success('创建成功')
-  dialogVisible.value = false
-  form.value = { alias: '', template_name: '', public_name: '' }
-  stagedPicks.value = []
-  loadEndpoints()
 }
 
 const toggleEndpoint = async (row: Endpoint) => {
@@ -336,18 +292,13 @@ const openConditions = (row: Endpoint) => {
   conditionsVisible.value = true
 }
 
-// 精选节点(issue #80):picksEndpoint=null 为新建暂存模式,confirm 暂存后创建成功补 PUT
+// 精选节点(issue #80):列表精选标签与详情抽屉入口(issue #87)共用,编辑模式直接 PUT
 const picksVisible = ref(false)
 const picksEndpoint = ref<Endpoint | null>(null)
-const stagedPicks = ref<NodePick[]>([])
-const stagedLabel = computed(() =>
-  stagedPicks.value.length ? `精选 ${stagedPicks.value.length} 个节点` : '全量(不精选)'
-)
 const openNodePicks = (row: Endpoint | null) => {
   picksEndpoint.value = row
   picksVisible.value = true
 }
-const onPicksConfirm = (picks: NodePick[]) => (stagedPicks.value = picks)
 
 const qrVisible = ref(false)
 const qrDialog = ref<InstanceType<typeof QRCodeDialog>>()
@@ -359,11 +310,15 @@ const showSubscriptionQR = async (row: Endpoint) => {
 
 onMounted(() => {
   loadEndpoints()
-  loadTemplates()
 })
 </script>
 
 <style scoped>
+.list-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--ph-space-3);
+}
 /* append 槽内容器:EP 默认给 append 内 el-button 设 flex:1 + margin:0 -20px(单按钮填满),
    多按钮会重叠;容器改为整体撑满 append(负边距抵消内边距),按钮均分宽度并填满高度 */
 .url-actions {
@@ -391,8 +346,5 @@ onMounted(() => {
 }
 .muted {
   color: var(--ph-text-secondary);
-}
-.full-width {
-  width: 100%;
 }
 </style>

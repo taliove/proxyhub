@@ -180,6 +180,7 @@ const mountView = (list: Endpoint[] = [endpoint]) => {
         'el-radio-group': SimpleSlotStub('ElRadioGroup'),
         'el-radio-button': SimpleSlotStub('ElRadioButton'),
         EndpointConditionsDialog: ClosedDialogStub('EndpointConditionsDialog'),
+        EndpointCreateDialog: ClosedDialogStub('EndpointCreateDialog'),
         EndpointDetailDrawer: DrawerStub,
         QRCodeDialog: ClosedDialogStub('QRCodeDialog')
       }
@@ -255,56 +256,6 @@ describe('Endpoints(行内极简 + 详情抽屉)', () => {
     expect(vi.mocked(client.delete)).toHaveBeenCalledWith('/endpoints/7')
     // 抽屉内删除后抽屉关闭
     expect(wrapper.find('.endpoint-drawer-stub').exists()).toBe(false)
-  })
-
-  it('新建表单携带可选公开名称(issue #38)', async () => {
-    const wrapper = mountView()
-    await flushPromises()
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === '新建订阅地址')!
-      .trigger('click')
-    await flushPromises()
-
-    // 新建对话框内输入框顺序:别名、公开名称(配置模板是 select)
-    const dialog = wrapper.find('.ElDialog-stub')
-    const inputs = dialog.findAll('input.el-input-inner')
-    expect(inputs.length).toBe(2)
-    await inputs[0].setValue('老爸的手机')
-    await inputs[1].setValue('家里宽带')
-
-    await dialog
-      .findAll('button')
-      .find((b) => b.text() === '创建')!
-      .trigger('click')
-    await flushPromises()
-
-    expect(vi.mocked(client.post)).toHaveBeenCalledWith('/endpoints', {
-      alias: '老爸的手机',
-      public_name: '家里宽带'
-    })
-  })
-
-  it('新建表单公开名称留空则不下发该字段', async () => {
-    const wrapper = mountView()
-    await flushPromises()
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === '新建订阅地址')!
-      .trigger('click')
-    await flushPromises()
-
-    const dialog = wrapper.find('.ElDialog-stub')
-    await dialog.findAll('input.el-input-inner')[0].setValue('老爸的手机')
-    await dialog
-      .findAll('button')
-      .find((b) => b.text() === '创建')!
-      .trigger('click')
-    await flushPromises()
-
-    expect(vi.mocked(client.post)).toHaveBeenCalledWith('/endpoints', { alias: '老爸的手机' })
   })
 
   it('抽屉公开名称按钮走 对话框 → PUT → 刷新 链路(照命名设置形制)', async () => {

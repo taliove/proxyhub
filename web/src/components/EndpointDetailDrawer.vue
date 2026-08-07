@@ -26,6 +26,12 @@
               {{ hasConditions(endpoint.conditions) ? '自定义' : '全量' }}
             </el-tag>
           </el-descriptions-item>
+          <!-- 精选(issue #87):概况段直接可见当前精选状态,编辑入口复用订阅管理页选择器 -->
+          <el-descriptions-item label="精选节点">
+            <el-tag :type="nodePicksCount(endpoint) ? 'warning' : 'info'" size="small">
+              {{ nodePicksLabel(endpoint) }}
+            </el-tag>
+          </el-descriptions-item>
           <el-descriptions-item label="配置模板">
             <span>{{ templateDisplay }}</span>
           </el-descriptions-item>
@@ -45,6 +51,7 @@
           <el-button size="small" @click="emit('name-config', endpoint)">命名设置</el-button>
           <el-button size="small" @click="emit('public-name', endpoint)">公开名称</el-button>
           <el-button size="small" @click="emit('conditions', endpoint)">节点范围</el-button>
+          <el-button size="small" @click="emit('picks', endpoint)">精选节点</el-button>
           <el-button size="small" @click="openTemplateConfig">配置模板</el-button>
           <el-button size="small" type="danger" @click="emit('delete', endpoint)">删除</el-button>
         </div>
@@ -165,6 +172,7 @@ import IPStatsTable from '@/components/IPStatsTable.vue'
 import EndpointTestSection from '@/components/EndpointTestSection.vue'
 import EndpointGeoConfigSection from '@/components/EndpointGeoConfigSection.vue'
 import { hasConditions } from '@/utils/conditions'
+import { nodePicksCount, nodePicksLabel } from '@/components/endpoint-nodepicks-utils'
 import { nameModeLabel, nameModeTag } from '@/utils/namemode'
 import { useTemplateList } from '@/composables/useTemplateList'
 import { regionDisplay } from '@/views/nodes/nodecells'
@@ -192,6 +200,7 @@ const emit = defineEmits<{
   (e: 'name-config', endpoint: Endpoint): void
   (e: 'public-name', endpoint: Endpoint): void
   (e: 'conditions', endpoint: Endpoint): void
+  (e: 'picks', endpoint: Endpoint): void
   (e: 'delete', endpoint: Endpoint): void
   (e: 'qrcode', endpoint: Endpoint): void
   (e: 'template-changed'): void

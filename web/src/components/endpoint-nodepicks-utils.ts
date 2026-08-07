@@ -45,6 +45,21 @@ export function nodePicksLabel(ep: { node_picks?: string }): string {
   return n > 0 ? `精选 ${n} 个节点` : '全量'
 }
 
+// ===== 订阅列表精选状态筛选(issue #87)=====
+
+// PicksStatusFilter 精选状态:all 全部 | full 仅全量(未配精选) | picked 仅已精选。
+export type PicksStatusFilter = 'all' | 'full' | 'picked'
+
+// filterEndpointsByPicks 按精选状态过滤订阅地址列表(前端过滤,不改接口)。
+// 非法/损坏的 node_picks 按空集(=全量)归类,与解析降级语义一致。
+export function filterEndpointsByPicks<T extends { node_picks?: string }>(
+  endpoints: T[],
+  filter: PicksStatusFilter
+): T[] {
+  if (filter === 'all') return endpoints
+  return endpoints.filter((ep) => nodePicksCount(ep) > 0 === (filter === 'picked'))
+}
+
 // ===== 选择器池过滤与分页(issue #86)=====
 
 // PicksPoolTab 池快捷页签:all 全部 | self 仅自建节点 | fav 仅已收藏。

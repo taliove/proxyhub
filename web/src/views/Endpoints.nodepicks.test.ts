@@ -160,6 +160,7 @@ const mountView = (list: Endpoint[] = [endpoint]) => {
         'el-radio-group': SimpleSlotStub('ElRadioGroup'),
         'el-radio-button': SimpleSlotStub('ElRadioButton'),
         EndpointConditionsDialog: ClosedDialogStub('EndpointConditionsDialog'),
+        EndpointCreateDialog: ClosedDialogStub('EndpointCreateDialog'),
         EndpointNodePicksDialog: NodePicksDialogStub,
         EndpointDetailDrawer: ClosedDialogStub('EndpointDetailDrawer'),
         QRCodeDialog: ClosedDialogStub('QRCodeDialog')
@@ -202,67 +203,16 @@ describe('Endpoints 精选节点(issue #80)', () => {
     expect(stub.exists()).toBe(true)
     expect(stub.attributes('data-endpoint-id')).toBe('7')
   })
-
-  it('新建表单:选择节点暂存后,创建成功补 PUT node-picks', async () => {
-    vi.mocked(client.post).mockResolvedValue({ id: 9 } as never)
-    const noPicks: Endpoint = { ...endpoint, node_picks: '' }
-    const wrapper = mountView([noPicks])
-    await flushPromises()
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === '新建订阅地址')!
-      .trigger('click')
-    await flushPromises()
-
-    // 新建对话框内精选入口初始为「全量(不精选)」
-    const dialog = wrapper.find('.ElDialog-stub')
-    const picksEntry = dialog.findAll('button').find((b) => b.text() === '全量(不精选)')!
-    await picksEntry.trigger('click')
-    await flushPromises()
-
-    // 暂存模式:endpoint=null
-    expect(wrapper.find('.picks-dialog-stub').attributes('data-endpoint-id')).toBe('staged')
-    await wrapper.find('.picks-confirm-btn').trigger('click')
-    await flushPromises()
-
-    // 暂存回显在入口按钮上
-    expect(dialog.findAll('button').map((b) => b.text())).toContain('精选 1 个节点')
-
-    await dialog.find('input.el-input-inner').setValue('新端点')
-    await dialog
-      .findAll('button')
-      .find((b) => b.text() === '创建')!
-      .trigger('click')
-    await flushPromises()
-
-    expect(vi.mocked(client.post)).toHaveBeenCalledWith('/endpoints', { alias: '新端点' })
-    expect(vi.mocked(client.put)).toHaveBeenCalledWith('/endpoints/9/node-picks', {
-      node_picks: [{ key: 'hk1.example.com:443' }]
-    })
-  })
-
-  it('新建未触碰精选:创建后不发 node-picks PUT(零回归)', async () => {
-    vi.mocked(client.post).mockResolvedValue({ id: 9 } as never)
+  it('「新建订阅地址」打开创建对话框(表单与暂存精选链路归 EndpointCreateDialog)', async () => {
     const wrapper = mountView()
     await flushPromises()
+    expect(wrapper.find('.EndpointCreateDialog-stub').exists()).toBe(false)
 
     await wrapper
       .findAll('button')
       .find((b) => b.text() === '新建订阅地址')!
       .trigger('click')
     await flushPromises()
-    const dialog = wrapper.find('.ElDialog-stub')
-    await dialog.find('input.el-input-inner').setValue('新端点')
-    await dialog
-      .findAll('button')
-      .find((b) => b.text() === '创建')!
-      .trigger('click')
-    await flushPromises()
-
-    expect(vi.mocked(client.put)).not.toHaveBeenCalledWith(
-      '/endpoints/9/node-picks',
-      expect.anything()
-    )
+    expect(wrapper.find('.EndpointCreateDialog-stub').exists()).toBe(true)
   })
 })

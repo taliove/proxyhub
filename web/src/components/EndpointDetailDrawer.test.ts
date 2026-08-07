@@ -202,14 +202,14 @@ const previewPayload = {
   ]
 }
 
-const mountDrawer = (modelValue: boolean) => {
+const mountDrawer = (modelValue: boolean, ep: Endpoint = endpoint) => {
   vi.mocked(client.get).mockImplementation(async (url: unknown) => {
     const u = String(url)
-    if (u.startsWith('/endpoints/7/preview')) return previewPayload as never
+    if (u.startsWith(`/endpoints/${ep.id}/preview`)) return previewPayload as never
     return {} as never
   })
   return mount(EndpointDetailDrawer, {
-    props: { modelValue, endpoint, subscriptionUrl },
+    props: { modelValue, endpoint: ep, subscriptionUrl },
     global: {
       directives: { loading: {} },
       stubs: {
@@ -258,7 +258,7 @@ describe('EndpointDetailDrawer', () => {
     expect(vi.mocked(client.get)).not.toHaveBeenCalled()
   })
 
-  it('概况段展示端点信息,轻管理动作全部上抛(启停/命名设置/公开名称/节点范围/删除/二维码)', async () => {
+  it('概况段展示端点信息,轻管理动作全部上抛(启停/命名设置/公开名称/节点范围/精选/删除/二维码)', async () => {
     const wrapper = mountDrawer(true)
     await flushPromises()
 
@@ -269,12 +269,15 @@ describe('EndpointDetailDrawer', () => {
     expect(text).toContain('全量')
     // 公开名称(issue #38):概况段展示当前值
     expect(text).toContain('家里宽带')
+    // 精选(issue #87):概况段展示当前精选状态(未配 = 全量)
+    expect(text).toContain('精选节点')
 
     const cases: Array<[string, string]> = [
       ['禁用', 'toggle'],
       ['命名设置', 'name-config'],
       ['公开名称', 'public-name'],
       ['节点范围', 'conditions'],
+      ['精选节点', 'picks'],
       ['删除', 'delete'],
       ['二维码', 'qrcode']
     ]
@@ -283,6 +286,16 @@ describe('EndpointDetailDrawer', () => {
       expect(wrapper.emitted(event)).toBeTruthy()
       expect(wrapper.emitted(event)![0]).toEqual([endpoint])
     }
+  })
+
+  it('概况段精选状态:已配精选显示「精选 N 个节点」(issue #87)', async () => {
+    const picked: Endpoint = {
+      ...endpoint,
+      node_picks: '[{"key":"hk1.example.com:443","alias":"别名"},{"key":"us1.example.com:8443"}]'
+    }
+    const wrapper = mountDrawer(true, picked)
+    await flushPromises()
+    expect(wrapper.text()).toContain('精选 2 个节点')
   })
 
   it('概况段订阅 URL 可复制', async () => {

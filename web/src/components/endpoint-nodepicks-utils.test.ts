@@ -7,6 +7,7 @@ import {
   filterPicksPool,
   paginateSlice,
   mergePicks,
+  filterEndpointsByPicks,
   type NodePick
 } from './endpoint-nodepicks-utils'
 
@@ -121,6 +122,24 @@ describe('paginateSlice 前端分页(issue #86)', () => {
 
   it('空列表恒返回空切片', () => {
     expect(paginateSlice([], 1, 50)).toEqual([])
+  })
+})
+
+describe('filterEndpointsByPicks 订阅列表精选筛选(issue #87)', () => {
+  const eps = [
+    { id: 1, node_picks: '[{"key":"a.example.com:8388"}]' },
+    { id: 2, node_picks: '' },
+    { id: 3, node_picks: 'bad-json' }, // 损坏按空集(=全量)归类,与降级语义一致
+    { id: 4, node_picks: '["b.example.com:443"]' } // 旧格式同样算已精选
+  ]
+
+  it('all 原样返回(不改入参数组引用)', () => {
+    expect(filterEndpointsByPicks(eps, 'all')).toBe(eps)
+  })
+
+  it('picked 只留已精选(新旧格式都算);full 只留全量(含损坏降级)', () => {
+    expect(filterEndpointsByPicks(eps, 'picked').map((e) => e.id)).toEqual([1, 4])
+    expect(filterEndpointsByPicks(eps, 'full').map((e) => e.id)).toEqual([2, 3])
   })
 })
 
