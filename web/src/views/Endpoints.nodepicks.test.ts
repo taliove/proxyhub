@@ -42,7 +42,7 @@ const NodePicksDialogStub = defineComponent({
                 'button',
                 {
                   class: 'picks-confirm-btn',
-                  onClick: () => emit('confirm', ['hk1.example.com:443'])
+                  onClick: () => emit('confirm', [{ key: 'hk1.example.com:443' }])
                 },
                 '确认精选'
               )
@@ -238,7 +238,7 @@ describe('Endpoints 精选节点(issue #80)', () => {
 
     expect(vi.mocked(client.post)).toHaveBeenCalledWith('/endpoints', { alias: '新端点' })
     expect(vi.mocked(client.put)).toHaveBeenCalledWith('/endpoints/9/node-picks', {
-      node_picks: ['hk1.example.com:443']
+      node_picks: [{ key: 'hk1.example.com:443' }]
     })
   })
 

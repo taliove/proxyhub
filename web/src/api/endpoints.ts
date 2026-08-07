@@ -1,5 +1,6 @@
 // Endpoint (subscription address) API client
 import client from './client'
+import type { NodePick } from '@/components/endpoint-nodepicks-utils'
 
 export interface UpdateEndpointTemplateRequest {
   template_name: string // Empty string to unbind (follow default)
@@ -36,12 +37,13 @@ export function updateEndpointGeoConfig(
 }
 
 export interface UpdateEndpointNodePicksRequest {
-  node_picks: string[] // NodeKey 数组;空数组 = 清空精选 = 恢复全量(后端零回归语义)
+  node_picks: NodePick[] // 精选项对象数组(issue #85);空数组 = 清空精选 = 恢复全量(后端零回归语义)
 }
 
-// 设置订阅地址精选节点集(issue #80,后端 issue #79):
-// NodeKey = server:port(节点 SNI 非空时 server:port:sni);空数组落库为空串 = 未配置。
-export function updateEndpointNodePicks(id: number, picks: string[]): Promise<{ ok: boolean }> {
+// 设置订阅地址精选节点集(issue #80,后端 issue #79;对象形态 issue #85):
+// key = NodeKey(server:port,节点 SNI 非空时 server:port:sni),alias 可选
+// (该订阅下发命名链最终层,留空 = 跟随命名链);空数组落库为空串 = 未配置。
+export function updateEndpointNodePicks(id: number, picks: NodePick[]): Promise<{ ok: boolean }> {
   return client.put<unknown, { ok: boolean }>(`/endpoints/${id}/node-picks`, {
     node_picks: picks
   })

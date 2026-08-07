@@ -209,6 +209,7 @@ import EndpointDetailDrawer from '@/components/EndpointDetailDrawer.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { hasConditions } from '@/utils/conditions'
 import { nameModeLabel, nameModeTag } from '@/utils/namemode'
+import type { NodePick } from '@/components/endpoint-nodepicks-utils'
 import { useTemplateList } from '@/composables/useTemplateList'
 
 const endpoints = ref<Endpoint[]>([])
@@ -338,7 +339,7 @@ const openConditions = (row: Endpoint) => {
 // 精选节点(issue #80):picksEndpoint=null 为新建暂存模式,confirm 暂存后创建成功补 PUT
 const picksVisible = ref(false)
 const picksEndpoint = ref<Endpoint | null>(null)
-const stagedPicks = ref<string[]>([])
+const stagedPicks = ref<NodePick[]>([])
 const stagedLabel = computed(() =>
   stagedPicks.value.length ? `精选 ${stagedPicks.value.length} 个节点` : '全量(不精选)'
 )
@@ -346,7 +347,7 @@ const openNodePicks = (row: Endpoint | null) => {
   picksEndpoint.value = row
   picksVisible.value = true
 }
-const onPicksConfirm = (picks: string[]) => (stagedPicks.value = picks)
+const onPicksConfirm = (picks: NodePick[]) => (stagedPicks.value = picks)
 
 const qrVisible = ref(false)
 const qrDialog = ref<InstanceType<typeof QRCodeDialog>>()

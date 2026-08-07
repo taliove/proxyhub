@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, inject, provide, toRef, watch, type Ref } from 'vue'
 import type { Endpoint, Node } from '@/types'
 import EndpointNodePicksDialog from './EndpointNodePicksDialog.vue'
-import { parseNodePicks, nodePicksCount, nodePicksLabel } from './endpoint-nodepicks-utils'
+import type { NodePick } from './endpoint-nodepicks-utils'
 import client from '@/api/client'
 
 vi.mock('@/api/client', () => ({
@@ -83,6 +83,14 @@ const ElTagStub = defineComponent({
     return () => h('span', { class: 'el-tag-stub' }, slots.default?.())
   }
 })
+// 页签/分页桩(issue #86):不渲染交互,页签过滤与分页切片的语义由纯函数缝覆盖
+const SimpleContainerStub = (name: string) =>
+  defineComponent({
+    name,
+    setup(_, { slots }) {
+      return () => h('div', { class: `${name}-stub` }, slots.default?.())
+    }
+  })
 
 // fixture 全合成:example.com + 全零 UUID 风格(issue #80)
 const poolNodes: Node[] = [
@@ -138,7 +146,7 @@ const endpoint: Endpoint = {
 
 const mountDialog = (props: {
   endpoint: Endpoint | null
-  stagedPicks?: string[]
+  stagedPicks?: NodePick[]
   modelValue?: boolean
 }) => {
   vi.mocked(client.get).mockResolvedValue({ nodes: poolNodes, total: 2 } as never)
@@ -152,37 +160,16 @@ const mountDialog = (props: {
         'el-table-column': ElTableColumnStub,
         'el-input': ElInputStub,
         'el-button': ElButtonStub,
-        'el-tag': ElTagStub
+        'el-tag': ElTagStub,
+        'el-radio-group': SimpleContainerStub('ElRadioGroup'),
+        'el-radio-button': SimpleContainerStub('ElRadioButton'),
+        'el-pagination': SimpleContainerStub('ElPagination')
       }
     }
   })
 }
 
-describe('parseNodePicks/nodePicksLabel 纯函数(issue #80)', () => {
-  it('空串/缺省/非法 JSON 均按空集(与后端降级语义一致)', () => {
-    expect(parseNodePicks('')).toEqual([])
-    expect(parseNodePicks(undefined)).toEqual([])
-    expect(parseNodePicks('not-json')).toEqual([])
-    expect(parseNodePicks('{"x":1}')).toEqual([])
-  })
-
-  it('合法 JSON 数组原样返回;非字符串元素被过滤', () => {
-    expect(parseNodePicks('["a.example.com:443","b.example.com:8443:sni"]')).toEqual([
-      'a.example.com:443',
-      'b.example.com:8443:sni'
-    ])
-    expect(parseNodePicks('["a.example.com:443",1]')).toEqual(['a.example.com:443'])
-  })
-
-  it('数量与文案:0=全量,非零=精选 N 个节点', () => {
-    expect(nodePicksCount({})).toBe(0)
-    expect(nodePicksLabel({})).toBe('全量')
-    expect(nodePicksLabel({ node_picks: '["a:1","b:2","c:3"]' })).toBe('精选 3 个节点')
-    expect(nodePicksLabel({ node_picks: 'bad' })).toBe('全量')
-  })
-})
-
-describe('EndpointNodePicksDialog(issue #80)', () => {
+describe('EndpointNodePicksDialog(issue #80;对象形态 #85;翻页/页签/全选/别名 #86)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -195,7 +182,7 @@ describe('EndpointNodePicksDialog(issue #80)', () => {
     })
   })
 
-  it('编辑模式回显已选;已消失的 key 标「已失效」且保存时保留', async () => {
+  it('编辑模式回显已选(旧格式兼容);已消失的 key 标「已失效」且保存时保留', async () => {
     const ep: Endpoint = {
       ...endpoint,
       node_picks: '["hk1.example.com:443","gone.example.com:443"]'
@@ -215,14 +202,14 @@ describe('EndpointNodePicksDialog(issue #80)', () => {
       .trigger('click')
     await flushPromises()
 
-    // 失效 key 保留在配置里(复活自动恢复,后端语义)
+    // 失效 key 保留在配置里(复活自动恢复,后端语义);写入归一为新格式对象数组
     expect(vi.mocked(client.put)).toHaveBeenCalledWith('/endpoints/7/node-picks', {
-      node_picks: ['hk1.example.com:443', 'gone.example.com:443']
+      node_picks: [{ key: 'hk1.example.com:443' }, { key: 'gone.example.com:443' }]
     })
     expect(wrapper.emitted('saved')).toBeTruthy()
   })
 
-  it('从池中添加节点后保存,NodeKey 入精选数组', async () => {
+  it('从池中添加节点后保存,NodeKey 入精选数组(新格式)', async () => {
     const wrapper = mountDialog({ endpoint })
     await flushPromises()
 
@@ -236,7 +223,37 @@ describe('EndpointNodePicksDialog(issue #80)', () => {
     await flushPromises()
 
     expect(vi.mocked(client.put)).toHaveBeenCalledWith('/endpoints/7/node-picks', {
-      node_picks: ['us1.example.com:8443:cdn.example.com']
+      node_picks: [{ key: 'us1.example.com:8443:cdn.example.com' }]
+    })
+  })
+
+  it('别名回显与编辑(issue #85):新格式回显别名,改别名后随精选落库;trim 空串不落字段', async () => {
+    const ep: Endpoint = {
+      ...endpoint,
+      node_picks:
+        '[{"key":"hk1.example.com:443","alias":"老爸的香港"},{"key":"us1.example.com:8443:cdn.example.com"}]'
+    }
+    const wrapper = mountDialog({ endpoint: ep })
+    await flushPromises()
+
+    // 别名输入框回显(第一个是关键字搜索框,其余为各已选行别名)
+    const aliasInputs = wrapper.findAll('input.el-input-inner')
+    expect((aliasInputs[1].element as HTMLInputElement).value).toBe('老爸的香港')
+
+    // 改第二行别名;清空第一行别名(trim 后为空 = 无别名,不落字段)
+    await aliasInputs[1].setValue('   ')
+    await aliasInputs[2].setValue('专用美国')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '确定')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(client.put)).toHaveBeenCalledWith('/endpoints/7/node-picks', {
+      node_picks: [
+        { key: 'hk1.example.com:443' },
+        { key: 'us1.example.com:8443:cdn.example.com', alias: '专用美国' }
+      ]
     })
   })
 
@@ -273,8 +290,36 @@ describe('EndpointNodePicksDialog(issue #80)', () => {
     expect(wrapper.text()).not.toContain('HK-01')
   })
 
+  it('全选当前过滤结果:过滤后一键并入已选并按 key 去重(issue #86)', async () => {
+    const wrapper = mountDialog({ endpoint })
+    await flushPromises()
+
+    // 先单个添加 HK-01,再全选过滤结果:HK-01 不重复
+    await wrapper
+      .findAll('button')
+      .filter((b) => b.text() === '添加')[0]
+      .trigger('click')
+    await wrapper.find('input.el-input-inner').setValue('机场b')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().startsWith('全选当前过滤结果'))!
+      .trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '确定')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(client.put)).toHaveBeenCalledWith('/endpoints/7/node-picks', {
+      node_picks: [{ key: 'hk1.example.com:443' }, { key: 'us1.example.com:8443:cdn.example.com' }]
+    })
+  })
+
   it('新建暂存模式(endpoint=null):确定上抛 confirm,不发 PUT', async () => {
-    const wrapper = mountDialog({ endpoint: null, stagedPicks: ['hk1.example.com:443'] })
+    const wrapper = mountDialog({
+      endpoint: null,
+      stagedPicks: [{ key: 'hk1.example.com:443' }]
+    })
     await flushPromises()
 
     expect(wrapper.text()).toContain('已选 1 个') // 暂存回显
@@ -295,7 +340,7 @@ describe('EndpointNodePicksDialog(issue #80)', () => {
 
     expect(vi.mocked(client.put)).not.toHaveBeenCalled()
     expect(wrapper.emitted('confirm')).toEqual([
-      [['hk1.example.com:443', 'us1.example.com:8443:cdn.example.com']]
+      [[{ key: 'hk1.example.com:443' }, { key: 'us1.example.com:8443:cdn.example.com' }]]
     ])
   })
 })
