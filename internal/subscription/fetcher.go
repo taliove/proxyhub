@@ -257,7 +257,7 @@ func (f *Fetcher) parseVMessNode(line, source string) (*Node, error) {
 	port := f.parsePort(vmess.Port)
 	alterID := f.parseInt(vmess.Aid)
 
-	return &Node{
+	node := &Node{
 		Name:      vmess.PS,
 		Type:      "vmess",
 		Server:    vmess.Add,
@@ -268,7 +268,15 @@ func (f *Fetcher) parseVMessNode(line, source string) (*Node, error) {
 		TLS:       vmess.TLS == "tls",
 		Source:    source,
 		Available: false,
-	}, nil
+	}
+
+	// gRPC 传输参数(spec #72):net=grpc 时按 v2rayN 约定 path→serviceName、
+	// host→authority;ws 的 path/host 是已知缺口(出界,另开 spec),不入模型。
+	if vmess.Net == "grpc" {
+		node.GrpcServiceName = vmess.Path
+		node.GrpcAuthority = vmess.Host
+	}
+	return node, nil
 }
 
 // parseVLessNode 解析 VLess 节点
@@ -330,6 +338,8 @@ func (f *Fetcher) parseVLessNode(line, source string) (*Node, error) {
 	// Reality 参数(spec #58):flow/pbk/sid/fp 全链路保真;reality 判定
 	// 交给下游(RealityPublicKey 非空),解析层只负责不丢参数。
 	// security=reality 语义上仍走 TLS 握手,TLS 记 true。
+	// gRPC 参数(spec #72):serviceName/authority 同样不丢;非 grpc 链接
+	// 不带这两个参数,字段自然为空(零回归)。
 	return &Node{
 		Name:              name,
 		Type:              "vless",
@@ -339,6 +349,8 @@ func (f *Fetcher) parseVLessNode(line, source string) (*Node, error) {
 		Network:           network,
 		TLS:               security == "tls" || security == "reality",
 		SNI:               sni,
+		GrpcServiceName:   query.Get("serviceName"),
+		GrpcAuthority:     query.Get("authority"),
 		Flow:              query.Get("flow"),
 		RealityPublicKey:  query.Get("pbk"),
 		RealityShortID:    query.Get("sid"),

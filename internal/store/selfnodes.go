@@ -8,11 +8,11 @@ func (s *Store) UpdateSelfHostedNode(node *SelfHostedNode) error {
 	res, err := s.db.Exec(
 		`UPDATE self_hosted_nodes SET
 		 name = ?, protocol = ?, server = ?, port = ?, uuid = ?, password = ?,
-		 cipher = ?, alter_id = ?, network = ?, tls = ?, region_code = ?, grpc_service_name = ?
+		 cipher = ?, alter_id = ?, network = ?, tls = ?, region_code = ?, grpc_service_name = ?, grpc_authority = ?
 		 WHERE id = ?`,
 		node.Name, node.Protocol, node.Server, node.Port, node.UUID, node.Password,
 		node.Cipher, node.AlterID, node.Network, boolToInt(node.TLS), node.RegionCode,
-		node.GrpcServiceName, node.ID)
+		node.GrpcServiceName, node.GrpcAuthority, node.ID)
 	if err != nil {
 		return fmt.Errorf("update self hosted node: %w", mapIdentityViolation(err))
 	}
@@ -29,11 +29,11 @@ func (s *Store) UpdateSelfHostedNodeForUser(userID int64, node *SelfHostedNode) 
 	res, err := s.db.Exec(
 		`UPDATE self_hosted_nodes SET
 		 name = ?, protocol = ?, server = ?, port = ?, uuid = ?, password = ?,
-		 cipher = ?, alter_id = ?, network = ?, tls = ?, region_code = ?, grpc_service_name = ?
+		 cipher = ?, alter_id = ?, network = ?, tls = ?, region_code = ?, grpc_service_name = ?, grpc_authority = ?
 		 WHERE id = ? AND user_id = ?`,
 		node.Name, node.Protocol, node.Server, node.Port, node.UUID, node.Password,
 		node.Cipher, node.AlterID, node.Network, boolToInt(node.TLS), node.RegionCode,
-		node.GrpcServiceName, node.ID, userID)
+		node.GrpcServiceName, node.GrpcAuthority, node.ID, userID)
 	if err != nil {
 		return fmt.Errorf("update self hosted node: %w", mapIdentityViolation(err))
 	}

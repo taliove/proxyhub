@@ -49,6 +49,9 @@ type Node struct {
 	SNI             string `json:"sni,omitempty"`               // TLS SNI / servername（anytls 等依赖）
 	Insecure        bool   `json:"insecure,omitempty"`          // 跳过证书校验（对应订阅里的 insecure=1）
 	GrpcServiceName string `json:"grpc_service_name,omitempty"` // gRPC service name (vless/vmess over grpc)
+	// gRPC authority(spec #72):vless 链接 authority= 参数 / vmess JSON net=grpc
+	// 时的 host(v2rayN 约定);丢失会让小火箭等客户端连不上 grpc 节点。
+	GrpcAuthority string `json:"grpc_authority,omitempty"`
 
 	// VLESS Reality 参数(见 spec #58):分享链接里的 flow/pbk/sid/fp 必须全链路
 	// 保真,丢失会让节点被当成普通明文 VLESS、与真实服务器握手必然失败。

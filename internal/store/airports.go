@@ -54,6 +54,9 @@ type SelfHostedNode struct {
 	TLS             bool   `json:"tls"`
 	RegionCode      string `json:"region_code"`
 	GrpcServiceName string `json:"grpc_service_name"`
+	// GrpcAuthority gRPC authority(spec #72):vless/vmess over grpc 自建节点可填;
+	// 空 = 无 authority(多数部署不需要)。
+	GrpcAuthority string `json:"grpc_authority"`
 	Enabled         bool   `json:"enabled"`
 	// UserID 属主(ticket 06/07);0 = 未归属(历史数据桶,迁移后由超管认领)。
 	UserID int64 `json:"user_id,omitempty"`
@@ -82,6 +85,7 @@ func (n *SelfHostedNode) ToNode() *subscription.Node {
 		Network:         n.Network,
 		TLS:             n.TLS,
 		GrpcServiceName: n.GrpcServiceName,
+		GrpcAuthority:   n.GrpcAuthority,
 		Region:          region,
 		Source:          subscription.SourceSelfHosted,
 		Available:       true,
@@ -396,17 +400,18 @@ func (s *Store) CreateSelfHostedNode(node *SelfHostedNode) error {
 func (s *Store) CreateSelfHostedNodeForUser(userID int64, node *SelfHostedNode) error {
 	_, err := s.db.Exec(
 		`INSERT INTO self_hosted_nodes
-		(name, protocol, server, port, uuid, password, cipher, alter_id, network, tls, region_code, grpc_service_name, enabled, user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(name, protocol, server, port, uuid, password, cipher, alter_id, network, tls, region_code, grpc_service_name, grpc_authority, enabled, user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		node.Name, node.Protocol, node.Server, node.Port,
 		node.UUID, node.Password, node.Cipher, node.AlterID,
-		node.Network, boolToInt(node.TLS), node.RegionCode, node.GrpcServiceName, boolToInt(node.Enabled), userID)
+		node.Network, boolToInt(node.TLS), node.RegionCode, node.GrpcServiceName, node.GrpcAuthority, boolToInt(node.Enabled), userID)
 	return mapIdentityViolation(err)
 }
 
-// selfHostedColumns 自建节点查询共用列清单(ticket 07 起带 user_id)。
+// selfHostedColumns 自建节点查询共用列清单(ticket 07 起带 user_id;
+// spec #72 起带 grpc_authority)。
 const selfHostedColumns = `id, name, protocol, server, port, uuid, password, cipher,
-		alter_id, network, tls, region_code, grpc_service_name, enabled, user_id`
+		alter_id, network, tls, region_code, grpc_service_name, grpc_authority, enabled, user_id`
 
 // ListSelfHostedNodes 列出所有自建节点(跨用户,全量视角;
 // 按用户过滤走 ListSelfHostedNodesByUser)。
@@ -446,7 +451,7 @@ func scanSelfHostedNodes(rows *sql.Rows) ([]*SelfHostedNode, error) {
 		var tls, enabled int
 		if err := rows.Scan(&n.ID, &n.Name, &n.Protocol, &n.Server, &n.Port,
 			&n.UUID, &n.Password, &n.Cipher, &n.AlterID, &n.Network, &tls, &n.RegionCode,
-			&n.GrpcServiceName, &enabled, &n.UserID); err != nil {
+			&n.GrpcServiceName, &n.GrpcAuthority, &enabled, &n.UserID); err != nil {
 			return nil, fmt.Errorf("scan node: %w", err)
 		}
 		n.TLS = tls == 1

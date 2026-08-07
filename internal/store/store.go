@@ -316,6 +316,15 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		}
 	}
 
+	// gRPC authority 列(024_grpc_authority.sql, spec #72):与 022 同构。
+	// 既有行默认 ''(非 grpc 或无 authority),下一轮刷新按新解析重新填充,无需 backfill。
+	if err := s.addColumnIfMissing("nodes", "grpc_authority", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("self_hosted_nodes", "grpc_authority", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+
 	// node_health 带宽列
 	if err := s.addColumnIfMissing("node_health", "down_mbps", "REAL NOT NULL DEFAULT 0"); err != nil {
 		return err
