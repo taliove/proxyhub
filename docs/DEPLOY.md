@@ -47,6 +47,20 @@ apt install caddy
 systemctl status caddy
 ```
 
+**订阅端点根命名空间（2026-08 起，issue #74）**：安装器生成的站点块除代理 `/<SitePath>` 前缀外，还会放行根 `/sub/*`（订阅链接不再携带 Site Path）。**存量部署升级后**需同步 Caddy 配置：重跑安装器（幂等，会重新生成站点块），或在站点块内手工补一段：
+
+```caddy
+@sub path /sub /sub/*
+handle @sub {
+	reverse_proxy 127.0.0.1:8080 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+	}
+}
+```
+
+未同步前旧链接（`/<SitePath>/sub/...` 形式）照常可用，仅新形式的根 `/sub/` 链接 404。
+
 ### Docker 容器中的 Caddy(--caddy-docker)
 
 适用场景：目标机的 Caddy v2 已经跑在 Docker 容器里（`docker run` 或 compose 部署），宿主机上没有原生 caddy 二进制。安装器识别并集成这个容器：写配置片段、容器内校验与重载、失败自动回滚，ProxyHub 本体仍是 systemd 裸机安装——本模式不是全容器化编排。
