@@ -7,9 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
-	"unicode"
 )
 
 // ErrNotFound 记录不存在
@@ -289,20 +287,20 @@ func (s *Store) UpdateEndpointConditionsForUser(userID, id int64, conditions str
 }
 
 // validNodePicksJSON 校验精选原始 JSON(spec #70):空串合法(=清空);
-// 非空必须是 NodeKey 字符串数组(比 conditions 的裸 json.Valid 多一层形状校验,
+// 非空必须是精选数组——旧格式 NodeKey 字符串或新格式 {key, alias} 对象
+// (双格式兼容,issue #85;比 conditions 的裸 json.Valid 多一层形状校验,
 // 因为过滤链按数组解释,形状错了语义就错了)。
 func validNodePicksJSON(picks string) bool {
-	if picks == "" {
-		return true
-	}
-	var keys []string
-	return json.Unmarshal([]byte(picks), &keys) == nil
+	_, err := ParseNodePicks(picks)
+	return err == nil
 }
 
 // UpdateEndpointNodePicks 设置订阅地址的精选节点集(spec #70 / issue #79)。
-// picks 为 NodeKey 数组的原始 JSON;空串表示清空(回到全量,零回归)。
-// 非空时校验为字符串数组,在边界处 fail fast,不让脏数据落库
+// picks 为精选数组的原始 JSON(双格式兼容,issue #85);空串表示清空(回到全量,零回归)。
+// 非空时校验数组形状(字符串或 {key, alias} 对象元素),在边界处 fail fast,不让脏数据落库
 // (与 UpdateEndpointConditions 的 json.Valid 同哲学)。
+// 注意:本函数只验形状,不做别名归一(trim/去控制字符/截断)——归一是调用方责任
+// (当前唯一写方 handleUpdateEndpointNodePicks 经 SanitizeNodePickAlias 归一后落库)。
 func (s *Store) UpdateEndpointNodePicks(id int64, picks string) error {
 	if !validNodePicksJSON(picks) {
 		return fmt.Errorf("invalid node_picks json")
@@ -346,20 +344,7 @@ const maxPublicNameRunes = 50
 // sanitizePublicName 公开名称的边界归一:trim 首尾空白、剔除控制字符、
 // 截断到 maxPublicNameRunes。空串合法(=清除公开名)。
 func sanitizePublicName(name string) string {
-	name = strings.TrimSpace(name)
-	var b strings.Builder
-	b.Grow(len(name))
-	for _, r := range name {
-		if unicode.IsControl(r) {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	runes := []rune(b.String())
-	if len(runes) > maxPublicNameRunes {
-		runes = runes[:maxPublicNameRunes]
-	}
-	return string(runes)
+	return sanitizeDisplayText(name, maxPublicNameRunes)
 }
 
 // UpdateEndpointPublicName 设置订阅地址的公开名称(issue #38)。空串=清除。

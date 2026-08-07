@@ -221,8 +221,9 @@ func TestUpdateEndpointNodePicksAPI(t *testing.T) {
 		t.Errorf("list node_picks = %+v, want stored picks echoed", items)
 	}
 
-	// 非法请求体 -> 400(坏 JSON / 非数组)。
-	for _, bad := range []string{"{bad", `{"node_picks":"not-an-array"}`} {
+	// 非法请求体 -> 400(坏 JSON / 非数组 / 非法元素形状)。
+	for _, bad := range []string{"{bad", `{"node_picks":"not-an-array"}`,
+		`{"node_picks":[1]}`, `{"node_picks":[{}]}`, `{"node_picks":[{"key":123}]}`} {
 		if w := putNodePicks(t, h, cookie, ep.ID, bad); w.Code != http.StatusBadRequest {
 			t.Errorf("invalid body %q status = %d, want 400", bad, w.Code)
 		}
@@ -322,7 +323,7 @@ func TestNodePicks_InvalidStoredJSONDegrades(t *testing.T) {
 	}
 	ok := &store.Endpoint{ID: 1, NodePicks: `["a.example.com:8388"]`}
 	picks := srv.endpointNodePicks(ok)
-	if len(picks) != 1 || picks[0] != "a.example.com:8388" {
+	if len(picks) != 1 || picks[0].Key != "a.example.com:8388" {
 		t.Errorf("endpointNodePicks(valid) = %v, want [a.example.com:8388]", picks)
 	}
 }
@@ -380,5 +381,152 @@ func TestNodePicks_ListAvailabilityMatchesDelivery(t *testing.T) {
 	}
 	if items[0].Availability.Available != 1 {
 		t.Errorf("availability.available = %d, want 1", items[0].Availability.Available)
+	}
+}
+
+// ===== 精选项别名(命名链最终层,spec #84 / issue #85)=====
+
+// TestNodePicks_AliasOverridesDeliveredName 配了别名的精选节点,/sub 下发名 = 别名;
+// 原名不再出现;同一节点在另一条未配精选的订阅里名不变(别名仅本订阅生效)。
+func TestNodePicks_AliasOverridesDeliveredName(t *testing.T) {
+	srv, st := newTestServer(t, picksPool())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	ep, _ := st.CreateEndpointForUser(1, "aliased")
+	other, _ := st.CreateEndpointForUser(1, "plain")
+
+	w := putNodePicks(t, h, cookie, ep.ID,
+		`{"node_picks":[{"key":"a.example.com:8388","alias":"老爸的香港"},"b.example.com:8388"]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update picks status = %d (body %s)", w.Code, w.Body.String())
+	}
+
+	out := fetchSub(t, h, ep)
+	if !strings.Contains(out, "老爸的香港") {
+		t.Errorf("aliased sub missing alias name\nbody: %s", out)
+	}
+	if strings.Contains(out, "香港A") {
+		t.Errorf("original name must be overridden by alias\nbody: %s", out)
+	}
+	if !strings.Contains(out, "日本B") {
+		t.Errorf("no-alias pick must follow naming chain (original name)\nbody: %s", out)
+	}
+
+	// 另一条订阅:同节点名不受别名影响。
+	out = fetchSub(t, h, other)
+	if !strings.Contains(out, "香港A") || strings.Contains(out, "老爸的香港") {
+		t.Errorf("alias leaked into another endpoint's sub\nbody: %s", out)
+	}
+}
+
+// TestNodePicks_AliasEmptyFallsBack 别名留空/缺省 = 跟随命名链,原名下发(零回归)。
+func TestNodePicks_AliasEmptyFallsBack(t *testing.T) {
+	srv, st := newTestServer(t, picksPool())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	ep, _ := st.CreateEndpointForUser(1, "aliased")
+
+	w := putNodePicks(t, h, cookie, ep.ID,
+		`{"node_picks":[{"key":"a.example.com:8388","alias":""},{"key":"b.example.com:8388"}]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update picks status = %d (body %s)", w.Code, w.Body.String())
+	}
+	out := fetchSub(t, h, ep)
+	if !strings.Contains(out, "香港A") || !strings.Contains(out, "日本B") {
+		t.Errorf("empty alias must fall back to naming chain\nbody: %s", out)
+	}
+}
+
+// TestNodePicks_AliasPreviewMatchesSub 后台预览(订阅测试同源的会下发集合)
+// 看到的节点名 = /sub 实发名(含别名),所见即所得(ADR 0028 同口径)。
+func TestNodePicks_AliasPreviewMatchesSub(t *testing.T) {
+	srv, st := newTestServer(t, picksPool())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	ep, _ := st.CreateEndpointForUser(1, "aliased")
+	setNodePicks(t, srv, ep.ID, "a.example.com:8388")
+	// 走 API 覆写为带别名的新格式(覆盖两条写入路径)。
+	w := putNodePicks(t, h, cookie, ep.ID,
+		`{"node_picks":[{"key":"a.example.com:8388","alias":"预览一致性"}]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update picks status = %d (body %s)", w.Code, w.Body.String())
+	}
+
+	req := httptest.NewRequest("GET", "/api/endpoints/"+strconv.FormatInt(ep.ID, 10)+"/preview?format=clash", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview status = %d (body %s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "预览一致性") {
+		t.Errorf("preview must show alias name\nbody: %s", w.Body.String())
+	}
+
+	out := fetchSub(t, h, ep)
+	if !strings.Contains(out, "预览一致性") {
+		t.Errorf("/sub must deliver alias name, same as preview\nbody: %s", out)
+	}
+}
+
+// TestNodePicks_LegacyWriteNormalizedToNewForm 旧格式(字符串数组)经 API 写入后
+// 落库一律归一为新格式对象数组(写入单格式,读取才做双格式兼容)。
+func TestNodePicks_LegacyWriteNormalizedToNewForm(t *testing.T) {
+	srv, st := newTestServer(t, picksPool())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	ep, _ := st.CreateEndpointForUser(1, "cfg")
+
+	w := putNodePicks(t, h, cookie, ep.ID, `{"node_picks":["a.example.com:8388"]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update picks status = %d (body %s)", w.Code, w.Body.String())
+	}
+	got, _ := st.GetEndpointByID(ep.ID)
+	want := `[{"key":"a.example.com:8388"}]`
+	if got.NodePicks != want {
+		t.Errorf("stored node_picks = %q, want normalized %q", got.NodePicks, want)
+	}
+}
+
+// TestNodePicks_AliasSanitizedOnWrite 别名在写边界归一:trim、去控制字符
+// (脏数据不落库,与公开名称同哲学);归一后下发名为干净串。
+func TestNodePicks_AliasSanitizedOnWrite(t *testing.T) {
+	srv, st := newTestServer(t, picksPool())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	ep, _ := st.CreateEndpointForUser(1, "cfg")
+
+	w := putNodePicks(t, h, cookie, ep.ID,
+		`{"node_picks":[{"key":"a.example.com:8388","alias":"  脏\n别名\r  "}]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update picks status = %d (body %s)", w.Code, w.Body.String())
+	}
+	got, _ := st.GetEndpointByID(ep.ID)
+	if strings.Contains(got.NodePicks, "\n") || strings.Contains(got.NodePicks, "\r") {
+		t.Errorf("stored alias not sanitized: %q", got.NodePicks)
+	}
+	picks, err := store.ParseNodePicks(got.NodePicks)
+	if err != nil || len(picks) != 1 || picks[0].Alias != "脏别名" {
+		t.Errorf("stored picks = %+v (err %v), want sanitized alias 脏别名", picks, err)
+	}
+}
+
+// TestNodePicks_AliasDoesNotMutatePool 别名应用对命中节点浅拷贝,池共享指针
+// 的 DisplayName 原值不变(标准化关闭时下发链直接持有池指针,改动会污染全局)。
+func TestNodePicks_AliasDoesNotMutatePool(t *testing.T) {
+	pool := picksPool()
+	picks := []store.NodePick{{Key: "a.example.com:8388", Alias: "别名"}}
+	out := applyNodePickAliases(pool, picks)
+	if pool[0].DisplayName != "" {
+		t.Errorf("pool node DisplayName mutated: %q, want untouched", pool[0].DisplayName)
+	}
+	if out[0].DisplayName != "别名" {
+		t.Errorf("delivered node DisplayName = %q, want 别名", out[0].DisplayName)
+	}
+	if out[0] == pool[0] {
+		t.Error("aliased node must be a copy, not the pool pointer")
+	}
+	if out[1] != pool[1] {
+		t.Error("unaliased node must pass through without copy")
 	}
 }

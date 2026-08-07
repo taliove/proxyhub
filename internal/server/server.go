@@ -998,7 +998,8 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	// 全新装机仅配置自建节点时也必须能拉到订阅(与订阅测试口径一致,见 ADR 0028 决策 1)。
 	// 订阅端点:按端点属主选择节点池与自建节点(ticket 07;属主 0 = 全局池);
 	// 端点精选(spec #70)在过滤链最前做候选集替换,空精选零回归。
-	nodes := s.filteredNodesWithPicks(s.nodes.NodesForUser(ep.UserID), ep.UserID, s.endpointNodePicks(ep))
+	picks := s.endpointNodePicks(ep)
+	nodes := s.filteredNodesWithPicks(s.nodes.NodesForUser(ep.UserID), ep.UserID, picks)
 	// 该订阅地址的节点范围条件(动态查询,见 internal/subfilter);空条件=全量(零回归)
 	nodes = s.applyConditions(nodes, ep)
 	if len(nodes) == 0 {
@@ -1010,6 +1011,8 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 
 	// 节点名称标准化（见 ADR 0012）：按该订阅地址的生效配置（端点覆盖 → 全局回退）统一名称。
 	nodes = s.standardizeNodesForEndpoint(nodes, ep, ep.UserID)
+	// 精选项别名(issue #85):命名链最终层,仅本订阅下发生效。
+	nodes = applyNodePickAliases(nodes, picks)
 
 	// 格式：显式参数优先，否则按 User-Agent 猜测，默认 Clash
 	format := r.URL.Query().Get("format")
@@ -2044,7 +2047,7 @@ func (s *Server) filteredNodes(nodes []*subscription.Node, userID int64) []*subs
 // picks 为该订阅地址的精选 NodeKey 集,nil/空 = 未配置(与 filteredNodes 完全一致);
 // 非空时插在过滤链最前(合并自建节点之后、各设置过滤之前)做候选集替换,
 // 屏蔽/stale 等既有过滤在其后天然仍剔除精选集中的禁用/下架节点。
-func (s *Server) filteredNodesWithPicks(nodes []*subscription.Node, userID int64, picks []string) []*subscription.Node {
+func (s *Server) filteredNodesWithPicks(nodes []*subscription.Node, userID int64, picks []store.NodePick) []*subscription.Node {
 	// serve-time 合并自建节点:填补「新增后到下轮刷新前」的空档,并保证机场全挂时自建节点仍在。
 	nodes = s.mergeSelfHosted(nodes, userID)
 
