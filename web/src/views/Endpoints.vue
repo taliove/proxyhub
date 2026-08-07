@@ -7,6 +7,12 @@
     <el-card>
       <el-table v-loading="loading" :data="endpoints" row-key="id">
         <el-table-column prop="alias" label="别名" />
+        <el-table-column label="公开名称" width="130">
+          <template #default="{ row }">
+            <span v-if="row.public_name">{{ row.public_name }}</span>
+            <span v-else class="muted">未设置</span>
+          </template>
+        </el-table-column>
         <el-table-column label="订阅 URL">
           <template #default="{ row }">
             <el-input :value="getSubscriptionUrl(row)" readonly>
