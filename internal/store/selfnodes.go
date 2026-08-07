@@ -3,6 +3,7 @@ package store
 import "fmt"
 
 // UpdateSelfHostedNode 更新自建节点的全部可编辑字段（不含 enabled，启停走 SetSelfHostedNodeEnabled）。
+// 撞身份唯一约束(023)返回 ErrDuplicateIdentity。
 func (s *Store) UpdateSelfHostedNode(node *SelfHostedNode) error {
 	res, err := s.db.Exec(
 		`UPDATE self_hosted_nodes SET
@@ -13,13 +14,14 @@ func (s *Store) UpdateSelfHostedNode(node *SelfHostedNode) error {
 		node.Cipher, node.AlterID, node.Network, boolToInt(node.TLS), node.RegionCode,
 		node.GrpcServiceName, node.ID)
 	if err != nil {
-		return fmt.Errorf("update self hosted node: %w", err)
+		return fmt.Errorf("update self hosted node: %w", mapIdentityViolation(err))
 	}
 	return checkAffected(res)
 }
 
 // UpdateSelfHostedNodeForUser 按属主更新自建节点(ticket 07);行属他人时 ErrNotFound。
 // userID=0 = 全局视角(测试逃生舱/超管未切换时使用),属主校验跳过。
+// 撞身份唯一约束(023)返回 ErrDuplicateIdentity。
 func (s *Store) UpdateSelfHostedNodeForUser(userID int64, node *SelfHostedNode) error {
 	if userID == 0 {
 		return s.UpdateSelfHostedNode(node)
@@ -33,7 +35,7 @@ func (s *Store) UpdateSelfHostedNodeForUser(userID int64, node *SelfHostedNode) 
 		node.Cipher, node.AlterID, node.Network, boolToInt(node.TLS), node.RegionCode,
 		node.GrpcServiceName, node.ID, userID)
 	if err != nil {
-		return fmt.Errorf("update self hosted node: %w", err)
+		return fmt.Errorf("update self hosted node: %w", mapIdentityViolation(err))
 	}
 	return checkAffected(res)
 }

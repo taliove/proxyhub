@@ -392,7 +392,7 @@ func (s *Store) CreateSelfHostedNode(node *SelfHostedNode) error {
 }
 
 // CreateSelfHostedNodeForUser 创建归属指定用户的自建节点(ticket 07)。
-// userID=0 保留旧行为(未归属)。
+// userID=0 保留旧行为(未归属)。撞身份唯一约束(023)返回 ErrDuplicateIdentity。
 func (s *Store) CreateSelfHostedNodeForUser(userID int64, node *SelfHostedNode) error {
 	_, err := s.db.Exec(
 		`INSERT INTO self_hosted_nodes
@@ -401,7 +401,7 @@ func (s *Store) CreateSelfHostedNodeForUser(userID int64, node *SelfHostedNode) 
 		node.Name, node.Protocol, node.Server, node.Port,
 		node.UUID, node.Password, node.Cipher, node.AlterID,
 		node.Network, boolToInt(node.TLS), node.RegionCode, node.GrpcServiceName, boolToInt(node.Enabled), userID)
-	return err
+	return mapIdentityViolation(err)
 }
 
 // selfHostedColumns 自建节点查询共用列清单(ticket 07 起带 user_id)。

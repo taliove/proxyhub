@@ -80,6 +80,11 @@ func (s *Server) handleCreateSelfNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.st.CreateSelfHostedNodeForUser(EffectiveUserID(scope), n); err != nil {
+		// check-then-insert 竞态的 DB 兜底(023 唯一约束):与前置查重同款 409
+		if errors.Is(err, store.ErrDuplicateIdentity) {
+			http.Error(w, "该节点已存在(相同服务器/端口/协议)", http.StatusConflict)
+			return
+		}
 		s.logger.Error("create self node failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -123,6 +128,11 @@ func (s *Server) handleUpdateSelfNode(w http.ResponseWriter, r *http.Request) {
 	if err := s.st.UpdateSelfHostedNodeForUser(EffectiveUserID(scope), n); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
+			return
+		}
+		// check-then-update 竞态的 DB 兜底(023 唯一约束):与前置查重同款 409
+		if errors.Is(err, store.ErrDuplicateIdentity) {
+			http.Error(w, "该节点已存在(相同服务器/端口/协议)", http.StatusConflict)
 			return
 		}
 		s.logger.Error("update self node failed", "error", err)

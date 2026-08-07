@@ -413,6 +413,12 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 自建节点身份唯一约束(023, issue #67):先清存量重复再建索引;
+	// 依赖 user_id 列(019)与归属回填,放在二者之后。
+	if err := s.migrateSelfHostedIdentityUnique(); err != nil {
+		return err
+	}
+
 	// 刷新任务化:refresh_runs 关联 jobs 任务 id(ticket 03,刷新迁入 jobs 运行时)
 	if err := s.addColumnIfMissing("refresh_runs", "job_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err

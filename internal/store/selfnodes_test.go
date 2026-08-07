@@ -84,6 +84,7 @@ func TestSelfHostedNode_ListAllIncludesDisabled(t *testing.T) {
 	a.Name = "启用的"
 	b := sampleSelfNode()
 	b.Name = "禁用的"
+	b.Port = a.Port + 1 // 身份唯一约束(023):夹具须用不同身份,不能靠重复行凑数
 	b.Enabled = false
 	st.CreateSelfHostedNode(a)
 	st.CreateSelfHostedNode(b)
