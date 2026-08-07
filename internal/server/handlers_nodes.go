@@ -22,9 +22,12 @@ func (s *Server) handleNodeShareURI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find node in the caller's own pool shard
+	// Find node in the caller's own pool shard.
+	// serve-time 合并自建节点(同 handleListNodes):自建节点只在合并后出现,
+	// 查原始池会让自建节点二维码/分享 404(用户报告)。
+	effUID := EffectiveUserID(scope)
 	var targetNode *subscription.Node
-	for _, n := range s.nodes.NodesForUser(EffectiveUserID(scope)) {
+	for _, n := range s.mergeSelfHosted(s.nodes.NodesForUser(effUID), effUID) {
 		if n.NodeKey() == nodeKey {
 			targetNode = n
 			break

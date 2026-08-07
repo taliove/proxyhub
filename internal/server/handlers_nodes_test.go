@@ -261,3 +261,45 @@ func TestHandleListNodes_OmitsRawLinkCredentials(t *testing.T) {
 	}
 }
 
+
+// TestHandleNodeShareURI_SelfHosted 验证自建节点(不在原始池,serve-time 合并才出现)
+// 也能拿到分享 URI(issue:自建节点二维码 404)。修前 handler 只查原始池,自建节点 404。
+func TestHandleNodeShareURI_SelfHosted(t *testing.T) {
+	s, st := newTestServer(t, nil)
+
+	// 库里加自建节点(启用),但原始池里没有它(不复现 serve-time 合并)
+	selfNode := &store.SelfHostedNode{
+		Name:     "我的VPS",
+		Protocol: "vless",
+		Server:   "vps-bb22e394.example.com",
+		Port:     443,
+		UUID:     "00000000-0000-0000-0000-000000000000",
+		Enabled:  true,
+		UserID:   0,
+	}
+	if err := st.CreateSelfHostedNode(selfNode); err != nil {
+		t.Fatalf("create self node: %v", err)
+	}
+
+	nodeKey := selfNode.ToNode().NodeKey()
+	req := httptest.NewRequest("GET", "/api/nodes/"+nodeKey+"/share-uri", nil)
+	req.SetPathValue("nodeKey", nodeKey)
+	rec := httptest.NewRecorder()
+	s.handleNodeShareURI(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200(自建节点应可分享), body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		URI string `json:"uri"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.HasPrefix(resp.URI, "vless://") {
+		t.Errorf("uri = %q, want vless:// 开头", resp.URI)
+	}
+	if !strings.Contains(resp.URI, "vps-bb22e394.example.com") {
+		t.Errorf("uri = %q, want 含服务器地址", resp.URI)
+	}
+}
