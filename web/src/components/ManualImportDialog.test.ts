@@ -238,10 +238,14 @@ describe('ManualImportDialog 文件导入', () => {
       new File(['ss://x@node1.example.com:8388#HK 01'], 'sub.txt', { type: 'text/plain' })
     )
 
-    expect(wrapper.findComponent(ElInputStub).props('modelValue')).toBe(
-      'ss://x@node1.example.com:8388#HK 01'
-    )
-    expect(wrapper.text()).toContain('sub.txt')
+    // FileReader 回调与 setTimeout(0) 存在任务排序竞态(issue #68 flaky):
+    // 用条件等待替代固定时长的侥幸心理
+    await vi.waitFor(() => {
+      expect(wrapper.findComponent(ElInputStub).props('modelValue')).toBe(
+        'ss://x@node1.example.com:8388#HK 01'
+      )
+      expect(wrapper.text()).toContain('sub.txt')
+    })
   })
 
   it('超限文件(>1MiB):警告拦截,不读入、不发请求', async () => {
