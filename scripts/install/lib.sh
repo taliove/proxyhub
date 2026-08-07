@@ -1229,6 +1229,17 @@ ${1} {
 	# bundle (~3MB) and large JSON list responses compress to roughly a third.
 	encode zstd gzip
 
+	# Subscription endpoints live at the root namespace /sub (issue #74):
+	# subscription links must not carry the Site Path, or every shared link
+	# leaks the hidden admin path. Token-gated, publicly reachable by design.
+	@sub path /sub /sub/*
+	handle @sub {
+		reverse_proxy ${3} {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
 	@proxyhub path /${2} /${2}/*
 	handle @proxyhub {
 		# Hashed Vite assets are immutable across releases: cache a year.

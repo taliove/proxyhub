@@ -252,6 +252,8 @@ _assert_file_contains "$CADDY" "respond 404"
 _assert_file_contains "$CADDY" "encode zstd gzip"
 _assert_file_contains "$CADDY" "@assets path /$SITE/assets/*"
 _assert_file_contains "$CADDY" 'Cache-Control "public, max-age=31536000, immutable"'
+# 订阅端点根命名空间放行(issue #74):订阅链接不含 Site Path,转发头同样替换
+_assert_file_contains "$CADDY" "@sub path /sub /sub/*"
 
 # Rejects invalid inputs and does not write.
 rm -f "$CADDY"

@@ -91,7 +91,32 @@ func TestSitePath_ConfiguredPrefixAllows(t *testing.T) {
 }
 
 // TestSitePath_RootAndPrefixlessReturn404 配置 Site Path 后,根路径与无前缀请求一律普通 404。
+// 例外:根 /sub 订阅端点直通(issue #74),见 SubRootNamespacePassThrough。
 func TestSitePath_RootAndPrefixlessReturn404(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	if err := st.SetSitePath(testSitePath); err != nil {
+		t.Fatalf("SetSitePath: %v", err)
+	}
+	h := srv.Handler()
+
+	for _, path := range []string{
+		"/",
+		"/login",
+		"/api/status",
+		"/healthz",
+		"/api/endpoints",
+	} {
+		if w := get(t, h, path); w.Code != http.StatusNotFound {
+			t.Errorf("GET %s: status = %d, want 404", path, w.Code)
+		}
+	}
+}
+
+// TestSitePath_SubRootNamespacePassThrough 订阅端点根命名空间直通(issue #74):
+// 订阅链接不再携带 Site Path(泄露管理面入口);根 /sub/{path} 直达,
+// 旧形式 /<site-path>/sub/{path} 双挂兼容(历史已发链接不失效)。
+// 管理面边界不扩:根 /api/* 等照旧 404(见 RootAndPrefixlessReturn404)。
+func TestSitePath_SubRootNamespacePassThrough(t *testing.T) {
 	nodes := []*subscription.Node{
 		{Name: "香港-01", Type: "ss", Server: "1.2.3.4", Port: 8388,
 			Cipher: "aes-256-gcm", Password: "p", Available: true},
@@ -107,17 +132,28 @@ func TestSitePath_RootAndPrefixlessReturn404(t *testing.T) {
 		t.Fatalf("CreateEndpoint: %v", err)
 	}
 
-	for _, path := range []string{
-		"/",
-		"/login",
-		"/api/status",
-		"/healthz",
-		"/api/endpoints",
-		"/sub/" + ep.Path + "?token=" + ep.Token, // 订阅无前缀同样不可达
-	} {
-		if w := get(t, h, path); w.Code != http.StatusNotFound {
-			t.Errorf("GET %s: status = %d, want 404", path, w.Code)
-		}
+	// 根命名空间直通:合法 token 200 且含节点内容
+	w := get(t, h, "/sub/"+ep.Path+"?token="+ep.Token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /sub/...: status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "proxies") {
+		t.Errorf("root /sub missing 'proxies': %s", w.Body.String())
+	}
+
+	// 非法 token:与既有一致的拒绝(不 200 即可,具体码由 sub 鉴权决定)
+	if w := get(t, h, "/sub/"+ep.Path+"?token=wrong-token"); w.Code == http.StatusOK {
+		t.Errorf("GET /sub/... wrong token: status = 200, want 拒绝")
+	}
+
+	// 旧形式双挂兼容:Site Path 前缀下的订阅照常 200
+	if w := get(t, h, "/"+testSitePath+"/sub/"+ep.Path+"?token="+ep.Token); w.Code != http.StatusOK {
+		t.Errorf("GET /<site-path>/sub/...: status = %d, want 200 (双挂兼容)", w.Code)
+	}
+
+	// 边界不扩:根 /api 仍 404
+	if w := get(t, h, "/api/status"); w.Code != http.StatusNotFound {
+		t.Errorf("GET /api/status: status = %d, want 404 (管理面边界不扩)", w.Code)
 	}
 }
 
