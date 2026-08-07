@@ -38,6 +38,14 @@ export interface SubscriptionConditions {
   keyword: string
 }
 
+// NodePick 订阅地址精选项(issue #85 对象形态,与 Go 侧 store.NodePick 对齐):
+// key = NodeKey;alias 可选,非空时是该订阅下发命名链的最终层(仅本订阅生效),
+// 留空 = 跟随命名链(标准化/改名覆盖 → 订阅级模板)。
+export interface NodePick {
+  key: string
+  alias?: string
+}
+
 export interface Airport {
   id: number
   name: string

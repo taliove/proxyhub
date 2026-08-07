@@ -1,14 +1,9 @@
 // 订阅地址精选节点(issue #80/#85/#86)的纯函数,供选择器对话框与列表标签复用。
 // 全部无副作用、不改入参,语义与后端 internal/store/node_picks.go 对齐。
 
-import type { Node } from '@/types'
+import type { Node, NodePick } from '@/types'
 
-// NodePick 精选项(issue #85 对象形态):key = NodeKey;alias 可选,
-// 非空时是该订阅下发命名链的最终层(仅本订阅生效);留空 = 跟随命名链。
-export interface NodePick {
-  key: string
-  alias?: string
-}
+export type { NodePick }
 
 // parseNodePicks 把 endpoint.node_picks 原始 JSON 串解析为精选项列表。
 // 双格式兼容(issue #85):旧格式字符串元素视为 {key, 无别名};

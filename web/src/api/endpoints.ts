@@ -1,6 +1,6 @@
 // Endpoint (subscription address) API client
 import client from './client'
-import type { NodePick } from '@/components/endpoint-nodepicks-utils'
+import type { NodePick } from '@/types'
 
 export interface UpdateEndpointTemplateRequest {
   template_name: string // Empty string to unbind (follow default)
