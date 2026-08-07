@@ -993,26 +993,18 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 订阅时过滤链：白名单 → 黑名单 → 机场屏蔽，自建节点全程豁免（见 ADR 0005/0009）。
-	// 注意：不在此处对空池提前 503——filteredNodes 内含 serve-time 合并自建节点,
-	// 全新装机仅配置自建节点时也必须能拉到订阅(与订阅测试口径一致,见 ADR 0028 决策 1)。
-	// 订阅端点:按端点属主选择节点池与自建节点(ticket 07;属主 0 = 全局池);
-	// 端点精选(spec #70)在过滤链最前做候选集替换,空精选零回归。
-	picks := s.endpointNodePicks(ep)
-	nodes := s.filteredNodesWithPicks(s.nodes.NodesForUser(ep.UserID), ep.UserID, picks)
-	// 该订阅地址的节点范围条件(动态查询,见 internal/subfilter);空条件=全量(零回归)
-	nodes = s.applyConditions(nodes, ep)
+	// 订阅时过滤链:白名单 → 黑名单 → 机场屏蔽,自建节点全程豁免(见 ADR 0005/0009)。
+	// 与订阅测试/预览/实测共用同一条会下发集合管道(endpointDeliverableNodes,
+	// ADR 0028 决策 1):池 → 精选候选集替换 → 全局过滤链 → 端点条件 → 标准化 → 别名。
+	// 注意:不在此处对空池提前 503——管道内含 serve-time 合并自建节点,
+	// 全新装机仅配置自建节点时也必须能拉到订阅。
+	nodes := s.endpointDeliverableNodes(ep)
 	if len(nodes) == 0 {
 		// 过滤链过窄把节点池清空：与池未就绪同样返回 503，避免生成空订阅落到 500，
 		// 也与后台预览（返回空清单）保持一致
 		http.Error(w, "no available nodes yet, try again later", http.StatusServiceUnavailable)
 		return
 	}
-
-	// 节点名称标准化（见 ADR 0012）：按该订阅地址的生效配置（端点覆盖 → 全局回退）统一名称。
-	nodes = s.standardizeNodesForEndpoint(nodes, ep, ep.UserID)
-	// 精选项别名(issue #85):命名链最终层,仅本订阅下发生效。
-	nodes = applyNodePickAliases(nodes, picks)
 
 	// 格式：显式参数优先，否则按 User-Agent 猜测，默认 Clash
 	format := r.URL.Query().Get("format")
