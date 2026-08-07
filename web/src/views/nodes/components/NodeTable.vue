@@ -11,6 +11,21 @@
     >
       <el-table-column type="selection" width="48" :selectable="isSelectable" />
 
+      <!-- 收藏(issue #83):行内 star,机场/自建节点均可;展示层标记,不参与订阅下发 -->
+      <el-table-column label="收藏" width="64">
+        <template #default="{ row }">
+          <el-button
+            link
+            class="fav-btn"
+            :title="row.favorite ? '取消收藏' : '收藏'"
+            @click.stop="emit('toggle-favorite', row)"
+          >
+            <el-icon v-if="row.favorite" :size="16" class="fav-on"><StarFilled /></el-icon>
+            <el-icon v-else :size="16" class="fav-off"><Star /></el-icon>
+          </el-button>
+        </template>
+      </el-table-column>
+
       <!-- 名称:标准名优先,原始名副标题;状态(屏蔽/下架/禁用/不可用)降为名称旁小标签 -->
       <el-table-column prop="name" label="名称" min-width="180" sortable="custom">
         <template #default="{ row }">
@@ -206,7 +221,7 @@
 </template>
 
 <script setup lang="ts">
-import { WarningFilled } from '@element-plus/icons-vue'
+import { Star, StarFilled, WarningFilled } from '@element-plus/icons-vue'
 import StatusDot from '@/components/StatusDot.vue'
 import NodeTestCell from './NodeTestCell.vue'
 import { isSelfHosted } from '../utils'
@@ -255,6 +270,7 @@ const emit = defineEmits<{
   (e: 'page-change', page: number): void
   (e: 'size-change', size: number): void
   (e: 'view', row: UnifiedNode): void
+  (e: 'toggle-favorite', row: UnifiedNode): void
   (e: 'edit-override', row: UnifiedNode): void
   (e: 'edit-self', row: UnifiedNode): void
   (e: 'toggle-self', row: UnifiedNode): void
@@ -363,6 +379,15 @@ const onRowClick = (row: UnifiedNode, column: { type?: string } | null) => {
 }
 .unlock-info {
   font-size: var(--ph-text-xs);
+}
+.fav-on {
+  color: var(--ph-warning);
+}
+.fav-off {
+  color: var(--ph-text-secondary);
+}
+.fav-btn:hover .fav-off {
+  color: var(--ph-warning);
 }
 :deep(.stale-row) {
   opacity: 0.55;

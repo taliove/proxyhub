@@ -628,6 +628,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/nodes", guard(s.handleListNodes))
 	// 节点分享 URI 生成（用于生成二维码）
 	mux.HandleFunc("GET /api/nodes/{nodeKey}/share-uri", guard(s.handleNodeShareURI))
+	// 节点收藏(issue #83):展示层星标,服务端持久(node_overrides.favorite)
+	mux.HandleFunc("POST /api/nodes/{nodeKey}/favorite", guard(s.handleSetNodeFavorite))
 
 	// 机场节点屏蔽（按 NodeKey 精确拉黑，跨刷新持久）
 	mux.HandleFunc("POST /api/nodes/block", guard(s.handleBlockNode))
@@ -1296,7 +1298,7 @@ func (s *Server) verifyCredentials(username, password string) (*store.User, erro
 //   - 新会话(ticket 02 风格,带 UserID/Role)直接取用;
 //   - 旧会话(settings-KV 时代)回退为首个 super_admin(单管理员部署等价语义);
 //   - 超管视角切换走 POST /api/admin/switch-user(ticket 09),持久化到会话
-//         acting_user_id,之后请求免传。
+//     acting_user_id,之后请求免传。
 //
 // 在线再校验(go-reviewer H1/H2):非旧会话每请求重读 users 表——用户被删 401、
 // 被禁用 401、角色以库为准刷新进 scope(降级即刻生效)。读库失败(非 NotFound)
@@ -1782,7 +1784,8 @@ type nodeView struct {
 	Available       bool   `json:"available"`
 	NodeKey         string `json:"node_key"`
 	Blocked         bool   `json:"blocked"`
-	Stale           bool   `json:"stale"` // 机场订阅中消失的节点
+	Favorite        bool   `json:"favorite"` // 节点收藏(issue #83):展示层星标,请求者维度
+	Stale           bool   `json:"stale"`    // 机场订阅中消失的节点
 	// AvailabilitySource 可用性判定来源:never(从未检测)/health(仅健康检查,TCP 快检)/real(真实检测)。
 	// 口径由 subscription.Node.AvailabilitySource 统一定义,全池一致(ticket 0016)。
 	AvailabilitySource string `json:"availability_source"`
@@ -1922,9 +1925,21 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		stabilityScores = nil
 	}
 
+	views := toNodeViews(res.Nodes, blocked, unlockResults, nodeTags, stabilityScores)
+
+	// 加性附加收藏标记(issue #83):读请求者收藏集,读失败降级为空集(节点仍展示,都标未收藏)。
+	favorites, err := s.st.ListFavoriteNodeKeysForUser(effUID)
+	if err != nil {
+		s.logger.Warn("list node favorites failed", "error", err)
+		favorites = map[string]bool{}
+	}
+	for i := range views {
+		views[i].Favorite = favorites[views[i].NodeKey]
+	}
+
 	writeJSON(w, map[string]any{
 		"last_update": s.nodes.LastUpdateForUser(effUID),
-		"nodes":       toNodeViews(res.Nodes, blocked, unlockResults, nodeTags, stabilityScores),
+		"nodes":       views,
 		"total":       res.Total,
 		"page":        res.Page,
 		"page_size":   res.PageSize,

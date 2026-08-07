@@ -18,11 +18,14 @@
         v-model:tags="criteria.tags"
         v-model:unlock="criteria.unlock"
         v-model:stability-band="criteria.stabilityBand"
+        v-model:favorite="criteria.favorite"
         :regions="regions"
         :sources="airportSources"
         :tag-options="tagOptions"
         :unlock-targets="unlockTargets"
         :detecting="detecting"
+        :self-count="selfCount"
+        :favorite-count="favoriteCount"
         @cancel-detect="cancelDetection"
       />
 
@@ -63,6 +66,7 @@
         @page-change="setPage"
         @size-change="setPageSize"
         @view="openDetail"
+        @toggle-favorite="toggleFavorite"
         @edit-override="openOverride"
         @edit-self="openEditSelf"
         @toggle-self="onToggleSelf"
@@ -143,8 +147,9 @@ import { useSelfNodes } from './composables/useSelfNodes'
 import { useExamSummaries } from './composables/useExamSummaries'
 import { useRunningExams } from './composables/useRunningExams'
 import { buildUnifiedRows, selfNodeIndex, type UnifiedNode } from './selfmerge'
+import { applyFavoriteOverrides, useNodeFavorites } from './composables/useNodeFavorites'
 import { tagsOf, unlockTargetsOf } from './nodecells'
-import { formatTime, SELF_HOSTED } from './utils'
+import { formatTime, isSelfHosted, SELF_HOSTED } from './utils'
 import { copyNodeLink, getNodeShareLink } from '@/composables/useNodeShare'
 
 const router = useRouter()
@@ -171,13 +176,24 @@ const {
 
 const reload = async () => {
   await Promise.all([loadPool(), loadSelf()])
+  resetOverrides() // 池已以服务端值重建,丢弃收藏乐观覆盖(issue #83)
 }
+
+// 收藏(issue #83):行内 star 的乐观覆盖叠在统一行集上,服务端持久经 toggleFavorite。
+const { favoriteOverrides, toggleFavorite, resetOverrides } = useNodeFavorites()
 
 // 合成统一行:池自建行补 id/enabled;禁用自建(不在池中)补进表格(否则无法再管理)。
 const unifiedRows = computed<UnifiedNode[]>(() =>
-  buildUnifiedRows(poolNodes.value, selfNodes.value)
+  applyFavoriteOverrides(
+    buildUnifiedRows(poolNodes.value, selfNodes.value),
+    favoriteOverrides.value
+  )
 )
 const selfIndex = computed(() => selfNodeIndex(selfNodes.value))
+
+// 快捷 Tab 计数(issue #83):未筛选口径,从全量统一行集派生。
+const selfCount = computed(() => unifiedRows.value.filter(isSelfHosted).length)
+const favoriteCount = computed(() => unifiedRows.value.filter((n) => n.favorite).length)
 
 // 筛选下拉的可选项来自当前行集(自动发现标签/解锁目标)。
 const tagOptions = computed(() => tagsOf(unifiedRows.value))

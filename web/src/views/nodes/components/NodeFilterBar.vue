@@ -9,6 +9,16 @@
       </template>
     </el-alert>
 
+    <div class="quick-tabs">
+      <!-- 快捷 Tab(issue #83):自建专区一键可达(复用 source=自建 筛选与 SELF_HOSTED 常量,
+           与 ?tab=self 深链同语义)+ 已收藏快捷项;计数来自当前行集(未筛选口径) -->
+      <el-radio-group :model-value="quickTab" @change="onQuickTab">
+        <el-radio-button value="all">全部</el-radio-button>
+        <el-radio-button value="self">自建节点 ({{ selfCount }})</el-radio-button>
+        <el-radio-button value="favorite">已收藏 ({{ favoriteCount }})</el-radio-button>
+      </el-radio-group>
+    </div>
+
     <div class="filter-bar">
       <el-select v-model="source" placeholder="来源" clearable filterable class="ctl-md">
         <el-option label="自建节点" :value="SELF_HOSTED" />
@@ -81,6 +91,7 @@ import { computed, ref } from 'vue'
 import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import { NODE_TYPES, SELF_HOSTED } from '../utils'
 import type { RegionItem } from '../composables/useNodePool'
+import { applyQuickTab, quickTabOf, type NodeQuickTab } from '../composables/useNodeFavorites'
 import type { ScoreLevel } from '@/components/exam/stability'
 import { tagLabel } from '@/utils/taglabels'
 
@@ -96,6 +107,8 @@ const stale = defineModel<boolean | null>('stale', { required: true })
 const tags = defineModel<string[]>('tags', { required: true })
 const unlock = defineModel<string[]>('unlock', { required: true })
 const stabilityBand = defineModel<ScoreLevel | null>('stabilityBand', { required: true })
+// 收藏筛选(issue #83):快捷 Tab 的"已收藏"落在这里
+const favorite = defineModel<boolean | null>('favorite', { required: true })
 
 defineProps<{
   regions: RegionItem[]
@@ -103,11 +116,25 @@ defineProps<{
   tagOptions: string[]
   unlockTargets: string[]
   detecting: boolean
+  // 快捷 Tab 计数(未筛选口径,由父层从全量行集派生)
+  selfCount: number
+  favoriteCount: number
 }>()
 
 const emit = defineEmits<{
   (e: 'cancel-detect'): void
 }>()
+
+// 快捷 Tab 与结构化条件的桥接:Tab 是 source/favorite 两维的常用组合快捷方式,
+// 正/反推纯函数见 composables/useNodeFavorites(quickTabOf / applyQuickTab)。
+const quickTab = computed<NodeQuickTab>(() =>
+  quickTabOf({ source: source.value, favorite: favorite.value })
+)
+const onQuickTab = (tab: string | number | boolean | undefined) => {
+  const patch = applyQuickTab(tab as NodeQuickTab)
+  source.value = patch.source
+  favorite.value = patch.favorite
+}
 
 // 三态布尔 <-> el-select 字符串:清空 -> null(不筛选)。
 const triProxy = (model: { value: boolean | null }) =>
@@ -136,6 +163,9 @@ const more = ref(false)
 <style scoped>
 .filter-zone {
   margin-bottom: var(--ph-space-3);
+}
+.quick-tabs {
+  margin-bottom: var(--ph-space-2);
 }
 .detect-alert {
   margin-bottom: var(--ph-space-3);

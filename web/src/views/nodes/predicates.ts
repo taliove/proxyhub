@@ -17,6 +17,7 @@ export interface NodeFilterCriteria {
   tags: string[] // 标签:全含才匹配(AND,与 Go subfilter 语义对齐——订阅组合条件如 region:HK+nf-full 必须同时满足)
   unlock: string[] // 解锁能力:每个目标都需已解锁(AND)
   stabilityBand: ScoreLevel | null // 稳定性分档 good/fair/poor
+  favorite: boolean | null // 收藏(issue #83):null 不筛选,true 只看已收藏(展示层,不影响订阅下发)
 }
 
 // 提供筛选所需、但不在节点自身的派生数据(如体检得出的稳定性分档)。
@@ -36,7 +37,8 @@ export const emptyCriteria = (): NodeFilterCriteria => ({
   keyword: '',
   tags: [],
   unlock: [],
-  stabilityBand: null
+  stabilityBand: null,
+  favorite: null
 })
 
 export const matchesSource = (n: Node, source: string): boolean => {
@@ -96,6 +98,7 @@ export const matchesNode = (n: Node, c: NodeFilterCriteria, ctx: NodeFilterConte
   matchesFlag(n.available, c.available) &&
   matchesFlag(n.blocked, c.blocked) &&
   matchesFlag(n.stale, c.stale) &&
+  matchesFlag(n.favorite ?? false, c.favorite) && // 收藏(issue #83):缺省按未收藏
   matchesKeyword(n, c.keyword) &&
   matchesTags(n, c.tags) &&
   matchesUnlock(n, c.unlock) &&
@@ -120,7 +123,8 @@ export const isActiveCriteria = (c: NodeFilterCriteria): boolean =>
   c.keyword.trim() !== '' ||
   c.tags.length > 0 ||
   c.unlock.length > 0 ||
-  c.stabilityBand !== null
+  c.stabilityBand !== null ||
+  c.favorite !== null
 
 export type SortOrder = 'asc' | 'desc'
 

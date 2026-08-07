@@ -27,6 +27,9 @@ export function useNodeUrlState(
     else if (q.blocked === 'false') criteria.blocked = false
     if (q.stale === 'true') criteria.stale = true
     else if (q.stale === 'false') criteria.stale = false
+    // 收藏筛选(issue #83):?favorite=true 直达"已收藏"视图
+    if (q.favorite === 'true') criteria.favorite = true
+    else if (q.favorite === 'false') criteria.favorite = false
     if (typeof q.tags === 'string' && q.tags) criteria.tags = q.tags.split(',')
     if (typeof q.unlock === 'string' && q.unlock) criteria.unlock = q.unlock.split(',')
     if (typeof q.stabilityBand === 'string' && isScoreLevel(q.stabilityBand)) {
@@ -51,6 +54,7 @@ export function useNodeUrlState(
       if (criteria.available !== null) query.available = String(criteria.available)
       if (criteria.blocked !== null) query.blocked = String(criteria.blocked)
       if (criteria.stale !== null) query.stale = String(criteria.stale)
+      if (criteria.favorite !== null) query.favorite = String(criteria.favorite)
       if (criteria.tags.length > 0) query.tags = criteria.tags.join(',')
       if (criteria.unlock.length > 0) query.unlock = criteria.unlock.join(',')
       if (criteria.stabilityBand) query.stabilityBand = criteria.stabilityBand

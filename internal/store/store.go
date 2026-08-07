@@ -440,6 +440,13 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 节点收藏(027_node_favorites.sql, issue #83):(user_id, node_key) 维度的展示层
+	// 星标,复用 node_overrides 覆盖层存储;与名称/地区覆盖同表异列,读写互不触碰。
+	// 既有行默认 0(未收藏),无需 backfill。
+	if err := s.addColumnIfMissing("node_overrides", "favorite", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
 	// 自建节点身份唯一约束(023, issue #67):先清存量重复再建索引;
 	// 依赖 user_id 列(019)与归属回填,放在二者之后。
 	if err := s.migrateSelfHostedIdentityUnique(); err != nil {
