@@ -1,8 +1,10 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -528,5 +530,72 @@ func TestNodePicks_AliasDoesNotMutatePool(t *testing.T) {
 	}
 	if out[1] != pool[1] {
 		t.Error("unaliased node must pass through without copy")
+	}
+}
+
+// TestNodePicks_AliasInV2RayOutput 别名在 v2ray 格式输出中同样生效
+// (ticket #85 双格式 AC:fragment 备注 = escapeFragment(别名),QueryEscape 且空格 %20)。
+func TestNodePicks_AliasInV2RayOutput(t *testing.T) {
+	srv, st := newTestServer(t, picksPool())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	ep, _ := st.CreateEndpointForUser(1, "aliased")
+	w := putNodePicks(t, h, cookie, ep.ID,
+		`{"node_picks":[{"key":"a.example.com:8388","alias":"老爸的香港"},"b.example.com:8388"]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update picks status = %d (body %s)", w.Code, w.Body.String())
+	}
+
+	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token+"&format=v2ray", nil)
+	req.RemoteAddr = "1.2.3.4:5678"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("v2ray sub status = %d (body %s)", rec.Code, rec.Body.String())
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(rec.Body.String()))
+	if err != nil {
+		t.Fatalf("v2ray output not base64: %v", err)
+	}
+	body := string(raw)
+	escape := func(s string) string { return strings.ReplaceAll(url.QueryEscape(s), "+", "%20") }
+	if !strings.Contains(body, escape("老爸的香港")) {
+		t.Errorf("v2ray output missing escaped alias\nbody: %s", body)
+	}
+	if strings.Contains(body, escape("香港A")) {
+		t.Errorf("original name must be overridden in v2ray output\nbody: %s", body)
+	}
+	if !strings.Contains(body, escape("日本B")) {
+		t.Errorf("no-alias pick must follow naming chain in v2ray output\nbody: %s", body)
+	}
+}
+
+// TestNodePicks_AliasLayeringOverTemplate 命名层序(spec #84 测试决策):
+// 标准化开 + 订阅级模板 + 精选项别名三者叠加时下发名 = 别名(最终层);
+// 别名留空的精选节点回退到模板/标准化结果。
+func TestNodePicks_AliasLayeringOverTemplate(t *testing.T) {
+	srv, st := newTestServer(t, picksPool())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	ep, _ := st.CreateEndpointForUser(1, "layered")
+	// 端点强制标准化开 + 自定义模板(第二层);与全局设置无关。
+	if err := st.UpdateEndpointNameConfig(ep.ID, "on", "定制-{original_name}"); err != nil {
+		t.Fatalf("UpdateEndpointNameConfig: %v", err)
+	}
+	w := putNodePicks(t, h, cookie, ep.ID,
+		`{"node_picks":[{"key":"a.example.com:8388","alias":"老爸专线"},{"key":"b.example.com:8388"}]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update picks status = %d (body %s)", w.Code, w.Body.String())
+	}
+
+	out := fetchSub(t, h, ep)
+	if !strings.Contains(out, "老爸专线") {
+		t.Errorf("alias must win over template\nbody: %s", out)
+	}
+	if strings.Contains(out, "定制-香港A") {
+		t.Errorf("templated name must be overridden by alias\nbody: %s", out)
+	}
+	if !strings.Contains(out, "定制-日本B") {
+		t.Errorf("empty alias must fall back to endpoint template result\nbody: %s", out)
 	}
 }
