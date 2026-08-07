@@ -57,7 +57,14 @@ type SelfHostedNode struct {
 	// GrpcAuthority gRPC authority(spec #72):vless/vmess over grpc 自建节点可填;
 	// 空 = 无 authority(多数部署不需要)。
 	GrpcAuthority string `json:"grpc_authority"`
-	Enabled         bool   `json:"enabled"`
+	// VLESS Reality / TLS 参数(spec #70 一键转自建):机场 reality 节点转自建时
+	// 全量带过来,丢失会让节点退化成明文 VLESS、与真实服务器握手必然失败。
+	SNI               string `json:"sni"`
+	Flow              string `json:"flow"`               // xtls-rprx-vision
+	RealityPublicKey  string `json:"reality_public_key"` // 分享链接 pbk
+	RealityShortID    string `json:"reality_short_id"`   // 分享链接 sid
+	ClientFingerprint string `json:"client_fingerprint"` // 分享链接 fp,如 chrome
+	Enabled           bool   `json:"enabled"`
 	// UserID 属主(ticket 06/07);0 = 未归属(历史数据桶,迁移后由超管认领)。
 	UserID int64 `json:"user_id,omitempty"`
 }
@@ -74,21 +81,26 @@ func (n *SelfHostedNode) ToNode() *subscription.Node {
 		region = "SELF" // 历史行未解析时的兼容兜底
 	}
 	return &subscription.Node{
-		Name:            n.Name,
-		Type:            n.Protocol,
-		Server:          n.Server,
-		Port:            n.Port,
-		UUID:            n.UUID,
-		Password:        n.Password,
-		AlterID:         n.AlterID,
-		Cipher:          n.Cipher,
-		Network:         n.Network,
-		TLS:             n.TLS,
-		GrpcServiceName: n.GrpcServiceName,
-		GrpcAuthority:   n.GrpcAuthority,
-		Region:          region,
-		Source:          subscription.SourceSelfHosted,
-		Available:       true,
+		Name:              n.Name,
+		Type:              n.Protocol,
+		Server:            n.Server,
+		Port:              n.Port,
+		UUID:              n.UUID,
+		Password:          n.Password,
+		AlterID:           n.AlterID,
+		Cipher:            n.Cipher,
+		Network:           n.Network,
+		TLS:               n.TLS,
+		SNI:               n.SNI,
+		Flow:              n.Flow,
+		RealityPublicKey:  n.RealityPublicKey,
+		RealityShortID:    n.RealityShortID,
+		ClientFingerprint: n.ClientFingerprint,
+		GrpcServiceName:   n.GrpcServiceName,
+		GrpcAuthority:     n.GrpcAuthority,
+		Region:            region,
+		Source:            subscription.SourceSelfHosted,
+		Available:         true,
 	}
 }
 
@@ -390,7 +402,7 @@ func (s *Store) UpdateAirportForUser(userID, id int64, name, url, abbr string) e
 // CreateSelfHostedNode 添加自建节点
 // CreateSelfHostedNode 添加自建节点。
 // 未指定属主(旧调用/直接库调用)时归一到首个 super_admin(ticket 07 Invariant B):
-	// 没有超管(初始化前)才落未归属桶 0,避免后台属主校验把孤儿行过滤掉。
+// 没有超管(初始化前)才落未归属桶 0,避免后台属主校验把孤儿行过滤掉。
 func (s *Store) CreateSelfHostedNode(node *SelfHostedNode) error {
 	return s.CreateSelfHostedNodeForUser(s.defaultOwnerUserID(node.UserID), node)
 }
@@ -400,18 +412,21 @@ func (s *Store) CreateSelfHostedNode(node *SelfHostedNode) error {
 func (s *Store) CreateSelfHostedNodeForUser(userID int64, node *SelfHostedNode) error {
 	_, err := s.db.Exec(
 		`INSERT INTO self_hosted_nodes
-		(name, protocol, server, port, uuid, password, cipher, alter_id, network, tls, region_code, grpc_service_name, grpc_authority, enabled, user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(name, protocol, server, port, uuid, password, cipher, alter_id, network, tls, region_code, grpc_service_name, grpc_authority, sni, flow, reality_public_key, reality_short_id, client_fingerprint, enabled, user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		node.Name, node.Protocol, node.Server, node.Port,
 		node.UUID, node.Password, node.Cipher, node.AlterID,
-		node.Network, boolToInt(node.TLS), node.RegionCode, node.GrpcServiceName, node.GrpcAuthority, boolToInt(node.Enabled), userID)
+		node.Network, boolToInt(node.TLS), node.RegionCode, node.GrpcServiceName, node.GrpcAuthority,
+		node.SNI, node.Flow, node.RealityPublicKey, node.RealityShortID, node.ClientFingerprint,
+		boolToInt(node.Enabled), userID)
 	return mapIdentityViolation(err)
 }
 
 // selfHostedColumns 自建节点查询共用列清单(ticket 07 起带 user_id;
-// spec #72 起带 grpc_authority)。
+// spec #72 起带 grpc_authority;spec #70 起带 sni/reality 五列)。
 const selfHostedColumns = `id, name, protocol, server, port, uuid, password, cipher,
-		alter_id, network, tls, region_code, grpc_service_name, grpc_authority, enabled, user_id`
+		alter_id, network, tls, region_code, grpc_service_name, grpc_authority,
+		sni, flow, reality_public_key, reality_short_id, client_fingerprint, enabled, user_id`
 
 // ListSelfHostedNodes 列出所有自建节点(跨用户,全量视角;
 // 按用户过滤走 ListSelfHostedNodesByUser)。
@@ -451,7 +466,9 @@ func scanSelfHostedNodes(rows *sql.Rows) ([]*SelfHostedNode, error) {
 		var tls, enabled int
 		if err := rows.Scan(&n.ID, &n.Name, &n.Protocol, &n.Server, &n.Port,
 			&n.UUID, &n.Password, &n.Cipher, &n.AlterID, &n.Network, &tls, &n.RegionCode,
-			&n.GrpcServiceName, &n.GrpcAuthority, &enabled, &n.UserID); err != nil {
+			&n.GrpcServiceName, &n.GrpcAuthority,
+			&n.SNI, &n.Flow, &n.RealityPublicKey, &n.RealityShortID, &n.ClientFingerprint,
+			&enabled, &n.UserID); err != nil {
 			return nil, fmt.Errorf("scan node: %w", err)
 		}
 		n.TLS = tls == 1
@@ -551,7 +568,6 @@ func (s *Store) GetUsedAbbrs(excludeID int64) (map[string]bool, error) {
 	}
 	return used, rows.Err()
 }
-
 
 // AirportAbbreviations 返回 机场名 → 简称 的映射,供节点名称标准化使用(见 ADR 0012)。
 //

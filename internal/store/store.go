@@ -328,6 +328,21 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 自建节点 SNI + VLESS Reality 参数列(026_self_hosted_reality_params.sql, spec #70):
+	// 机场节点一键转自建的字段底座,与 nodes 快照表 022 同构。
+	// 既有行默认 ''(非 reality),由用户后续编辑或转换重新填充,无需 backfill。
+	for _, col := range [][2]string{
+		{"sni", "TEXT NOT NULL DEFAULT ''"},
+		{"flow", "TEXT NOT NULL DEFAULT ''"},
+		{"reality_public_key", "TEXT NOT NULL DEFAULT ''"},
+		{"reality_short_id", "TEXT NOT NULL DEFAULT ''"},
+		{"client_fingerprint", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.addColumnIfMissing("self_hosted_nodes", col[0], col[1]); err != nil {
+			return err
+		}
+	}
+
 	// node_health 带宽列
 	if err := s.addColumnIfMissing("node_health", "down_mbps", "REAL NOT NULL DEFAULT 0"); err != nil {
 		return err
