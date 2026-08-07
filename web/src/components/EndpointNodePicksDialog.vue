@@ -94,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Endpoint, Node, NodePage } from '@/types'
 import client from '@/api/client'
@@ -146,6 +146,14 @@ const selectedRows = computed(() =>
 // 页签 + 关键字过滤(跨全量池),再分页切片;过滤条件变化时收敛页码(越界页由 paginateSlice 兜底)
 const filteredPool = computed(() => filterPicksPool(pool.value, tab.value, keyword.value))
 const pagedPool = computed(() => paginateSlice(filteredPool.value, page.value, POOL_PAGE_SIZE))
+
+// 页签/关键字变化回到第一页;过滤缩集导致页码越界时收敛到最后一页——
+// paginateSlice 只对显示兜底,不修正 page,分页器会高亮不存在的页码(code-review 边界瑕疵)
+watch([tab, keyword], () => (page.value = 1))
+watch(filteredPool, (list) => {
+  const pageCount = Math.max(1, Math.ceil(list.length / POOL_PAGE_SIZE))
+  if (page.value > pageCount) page.value = pageCount
+})
 
 // 打开时初始化:编辑模式回显端点已配精选(双格式兼容),新建模式取暂存;池节点仅首次拉取
 const onOpen = async () => {
