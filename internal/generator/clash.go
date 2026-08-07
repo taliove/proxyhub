@@ -45,6 +45,12 @@ func ClashProxy(node *subscription.Node, name string) (map[string]any, error) {
 		if node.TLS {
 			base["tls"] = true
 		}
+		// gRPC 传输选项(spec #72):与 vless 分支同约定,仅 grpc-service-name
+		if node.Network == "grpc" && node.GrpcServiceName != "" {
+			base["grpc-opts"] = map[string]any{
+				"grpc-service-name": node.GrpcServiceName,
+			}
+		}
 	case "vless":
 		base["type"] = "vless"
 		base["uuid"] = node.UUID

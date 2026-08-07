@@ -295,7 +295,7 @@ func loadAirportRecords(db *sql.DB, key []byte) ([]RecordFingerprint, error) {
 // uuid 与 password 是代理凭证(机密),不读取、不进入摘要。
 func loadSelfHostedNodeRecords(db *sql.DB, key []byte) ([]RecordFingerprint, error) {
 	rows, err := db.Query(`SELECT id, name, protocol, server, port, cipher, alter_id,
-		network, tls, region_code, grpc_service_name, enabled FROM self_hosted_nodes`)
+		network, tls, region_code, grpc_service_name, grpc_authority, enabled FROM self_hosted_nodes`)
 	if err != nil {
 		return nil, fmt.Errorf("查询 self_hosted_nodes: %w", err)
 	}
@@ -304,10 +304,10 @@ func loadSelfHostedNodeRecords(db *sql.DB, key []byte) ([]RecordFingerprint, err
 	var records []RecordFingerprint
 	for rows.Next() {
 		var id int64
-		var name, protocol, server, cipher, network, regionCode, grpcServiceName string
+		var name, protocol, server, cipher, network, regionCode, grpcServiceName, grpcAuthority string
 		var port, alterID, tls, enabled int
 		if err := rows.Scan(&id, &name, &protocol, &server, &port, &cipher, &alterID,
-			&network, &tls, &regionCode, &grpcServiceName, &enabled); err != nil {
+			&network, &tls, &regionCode, &grpcServiceName, &grpcAuthority, &enabled); err != nil {
 			return nil, fmt.Errorf("扫描 self_hosted_nodes: %w", err)
 		}
 		identity := strconv.FormatInt(id, 10)
@@ -324,6 +324,7 @@ func loadSelfHostedNodeRecords(db *sql.DB, key []byte) ([]RecordFingerprint, err
 				"tls="+strconv.Itoa(tls),
 				"region_code="+regionCode,
 				"grpc_service_name="+grpcServiceName,
+				"grpc_authority="+grpcAuthority,
 				"enabled="+strconv.Itoa(enabled)),
 		})
 	}

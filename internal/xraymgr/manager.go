@@ -578,9 +578,10 @@ func nodeToOutbound(n *subscription.Node, idx int) map[string]any {
 			},
 		}
 		applyVlessReality(n, user, ob)
+		applyGrpcStream(n, ob)
 		return ob
 	case "vmess":
-		return map[string]any{
+		ob := map[string]any{
 			"tag":      tag,
 			"protocol": "vmess",
 			"settings": map[string]any{
@@ -599,6 +600,8 @@ func nodeToOutbound(n *subscription.Node, idx int) map[string]any {
 				},
 			},
 		}
+		applyGrpcStream(n, ob)
+		return ob
 	case "trojan":
 		return map[string]any{
 			"tag":      tag,
@@ -637,8 +640,8 @@ func nodeToOutbound(n *subscription.Node, idx int) map[string]any {
 // 见 spec #58)补 streamSettings{security: reality, realitySettings{...}} 与
 // user 级 flow;非 reality 不动。fp 缺省 chrome,network 缺省 tcp;
 // flow/sid/serverName 空则不输出(与 clash/v2ray 两处空值约定对齐)。
-// 注:reality 输出仅对 tcp 完整保证;reality+grpc 等组合的 grpcSettings
-// 缺口属 spec #58 Out of Scope(其余 transport 的 xray 数据面补全)。
+// 注:reality+grpc 组合的 grpcSettings 由 applyGrpcStream(spec #72)在本函数
+// 之后合并进同一 streamSettings,两 settings 并存。
 func applyVlessReality(n *subscription.Node, user, ob map[string]any) {
 	if n.RealityPublicKey == "" {
 		return
@@ -669,4 +672,30 @@ func applyVlessReality(n *subscription.Node, user, ob map[string]any) {
 		"security":        "reality",
 		"realitySettings": realitySettings,
 	}
+}
+
+// applyGrpcStream 为 grpc 传输节点(network=grpc,spec #72)补
+// streamSettings{network: grpc, grpcSettings{serviceName, authority(有则带)}};
+// 非 grpc 不动(零回归)。与 reality 组合时 reality 分支(applyVlessReality)
+// 已建 streamSettings,此处合并 network/grpcSettings 而非覆盖,
+// security=reality 与 realitySettings 保留,两 settings 并存。
+// serviceName/authority 空则省略对应键(与 v2ray/clash 两处空值约定对齐)。
+func applyGrpcStream(n *subscription.Node, ob map[string]any) {
+	if n.Network != "grpc" {
+		return
+	}
+	grpcSettings := map[string]any{}
+	if n.GrpcServiceName != "" {
+		grpcSettings["serviceName"] = n.GrpcServiceName
+	}
+	if n.GrpcAuthority != "" {
+		grpcSettings["authority"] = n.GrpcAuthority
+	}
+	ss, ok := ob["streamSettings"].(map[string]any)
+	if !ok {
+		ss = map[string]any{}
+		ob["streamSettings"] = ss
+	}
+	ss["network"] = "grpc"
+	ss["grpcSettings"] = grpcSettings
 }

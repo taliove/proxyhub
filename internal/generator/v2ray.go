@@ -82,6 +82,14 @@ func vmessLink(node *subscription.Node) (string, error) {
 		"tls":  tls,
 	}
 
+	// gRPC 传输参数(spec #72):net=grpc 时按 v2rayN 约定反向映射
+	// path=GrpcServiceName、host=GrpcAuthority(与解析层 fetcher.go 镜像);
+	// 非 grpc 时 host/path 维持空串(ws 的 path/host 是已知缺口,出界)。
+	if network == "grpc" {
+		cfg["path"] = node.GrpcServiceName
+		cfg["host"] = node.GrpcAuthority
+	}
+
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return "", fmt.Errorf("marshal vmess: %w", err)
@@ -117,6 +125,16 @@ func vlessLink(node *subscription.Node) string {
 		network = "tcp"
 	}
 	params.Set("type", network)
+	// gRPC 传输参数(spec #72):network=grpc 时带 serviceName/authority,
+	// 空则省略;非 grpc 链接不带这两个参数(零回归)。
+	if network == "grpc" {
+		if node.GrpcServiceName != "" {
+			params.Set("serviceName", node.GrpcServiceName)
+		}
+		if node.GrpcAuthority != "" {
+			params.Set("authority", node.GrpcAuthority)
+		}
+	}
 	// reality 节点(判定与解析层一致:RealityPublicKey 非空,见 spec #58)按结构化
 	// 字段重造完整链接,v2rayN 等客户端导入即可连;缺 fp 兜底 chrome。
 	if node.RealityPublicKey != "" {

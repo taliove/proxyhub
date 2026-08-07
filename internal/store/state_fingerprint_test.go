@@ -381,6 +381,7 @@ func TestRetainedStateFingerprint_SecretsNotInDigest(t *testing.T) {
 		{"endpoints", `UPDATE endpoints SET alias = 'stable-changed'`},
 		{"airports", `UPDATE airports SET name = '机场A-新'`},
 		{"self_hosted_nodes", `UPDATE self_hosted_nodes SET server = '9.9.9.9'`},
+		{"self_hosted_nodes", `UPDATE self_hosted_nodes SET grpc_authority = 'changed.example.com'`},
 		{"distribution_paths", `UPDATE distribution_paths SET lb_strategy = 'hash'`},
 		{"distribution_nodes", `UPDATE distribution_nodes SET region = 'JP'`},
 	}
