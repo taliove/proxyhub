@@ -21,6 +21,10 @@ export interface Endpoint {
   // 订阅 profile 公开名称(issue #38):非空时客户端显示「ProxyHub · <公开名>」,
   // 空串=未设=裸品牌名;与私有 alias(绝不下发)相对。
   public_name: string
+  // 精选节点集(issue #80,后端 issue #79):NodeKey 数组的 JSON 字符串;
+  // ''=未配置=全量,解析失败按空(与后端 endpointNodePicks 降级语义一致)。
+  // NodeKey = server:port(节点 SNI 非空时 server:port:sni),改名仍命中、下架自然失效。
+  node_picks?: string
   // 会下发集合的可用性汇总(列表接口加性附加,池状态实时算,见 ADR 0028 决策 2)
   availability?: { available: number; total: number }
 }
@@ -70,6 +74,9 @@ export interface Node {
   available: boolean
   node_key: string
   blocked: boolean
+  // 节点收藏(issue #83):展示层星标,服务端持久(node_overrides.favorite),
+  // 不参与订阅过滤链;老后端/未透出时缺省,按未收藏处理
+  favorite?: boolean
   stale: boolean // 机场订阅中已消失的节点
   // 排障用协议参数(ticket 0016;uuid/password 属凭证,后端不透出)
   cipher?: string

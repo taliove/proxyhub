@@ -35,6 +35,18 @@ export function updateEndpointGeoConfig(
   })
 }
 
+export interface UpdateEndpointNodePicksRequest {
+  node_picks: string[] // NodeKey 数组;空数组 = 清空精选 = 恢复全量(后端零回归语义)
+}
+
+// 设置订阅地址精选节点集(issue #80,后端 issue #79):
+// NodeKey = server:port(节点 SNI 非空时 server:port:sni);空数组落库为空串 = 未配置。
+export function updateEndpointNodePicks(id: number, picks: string[]): Promise<{ ok: boolean }> {
+  return client.put<unknown, { ok: boolean }>(`/endpoints/${id}/node-picks`, {
+    node_picks: picks
+  })
+}
+
 export interface UpdateEndpointPublicNameRequest {
   public_name: string // Empty string clears the name (bare brand title)
 }

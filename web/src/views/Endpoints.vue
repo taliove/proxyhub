@@ -46,6 +46,12 @@
             </el-tag>
           </template>
         </el-table-column>
+        <!-- 精选(issue #80):点击标签打开节点选择器;空精选 = 全量 -->
+        <el-table-column label="精选" width="110">
+          <template #default="{ row }">
+            <EndpointNodePicksTag :endpoint="row" @open="openNodePicks(row)" />
+          </template>
+        </el-table-column>
         <!-- 可用 x/y:池状态实时算(ADR 0028 决策 2),不依赖测试记录 -->
         <el-table-column label="可用" width="80">
           <template #default="{ row }">
@@ -91,6 +97,9 @@
             随订阅下发,客户端配置列表显示「ProxyHub · 公开名称」;留空则显示「ProxyHub」。
             别名为私有信息,绝不下发。
           </div>
+        </el-form-item>
+        <el-form-item label="精选节点">
+          <el-button size="small" @click="openNodePicks(null)">{{ stagedLabel }}</el-button>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -152,6 +161,15 @@
       @saved="loadEndpoints"
     />
 
+    <!-- 精选节点选择器(issue #80):picksEndpoint=null 为新建暂存模式(confirm 上抛) -->
+    <EndpointNodePicksDialog
+      v-model="picksVisible"
+      :endpoint="picksEndpoint"
+      :staged-picks="stagedPicks"
+      @saved="loadEndpoints"
+      @confirm="onPicksConfirm"
+    />
+
     <!-- 详情抽屉(四段式:概况/下发节点清单/订阅测试/拉取统计);
          概况段变更动作全部复用本页既有处理函数(事件上抛) -->
     <EndpointDetailDrawer
@@ -178,14 +196,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Endpoint } from '@/types'
 import client from '@/api/client'
-import { updateEndpointPublicName } from '@/api/endpoints'
+import { updateEndpointPublicName, updateEndpointNodePicks } from '@/api/endpoints'
 import { appBase } from '@/utils/base'
 import PageHeader from '@/components/PageHeader.vue'
 import EndpointConditionsDialog from '@/components/EndpointConditionsDialog.vue'
+import EndpointNodePicksDialog from '@/components/EndpointNodePicksDialog.vue'
+import EndpointNodePicksTag from '@/components/EndpointNodePicksTag.vue'
 import EndpointDetailDrawer from '@/components/EndpointDetailDrawer.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { hasConditions } from '@/utils/conditions'
@@ -236,10 +256,15 @@ const createEndpoint = async () => {
   if (form.value.public_name.trim()) {
     payload.public_name = form.value.public_name.trim()
   }
-  await client.post('/endpoints', payload)
+  const created = await client.post<unknown, Endpoint>('/endpoints', payload)
+  // 新建暂存的精选随创建补 PUT(创建接口不收精选字段,issue #80)
+  if (stagedPicks.value.length && created?.id) {
+    await updateEndpointNodePicks(created.id, stagedPicks.value)
+  }
   ElMessage.success('创建成功')
   dialogVisible.value = false
   form.value = { alias: '', template_name: '', public_name: '' }
+  stagedPicks.value = []
   loadEndpoints()
 }
 
@@ -309,6 +334,19 @@ const openConditions = (row: Endpoint) => {
   conditionsEndpoint.value = row
   conditionsVisible.value = true
 }
+
+// 精选节点(issue #80):picksEndpoint=null 为新建暂存模式,confirm 暂存后创建成功补 PUT
+const picksVisible = ref(false)
+const picksEndpoint = ref<Endpoint | null>(null)
+const stagedPicks = ref<string[]>([])
+const stagedLabel = computed(() =>
+  stagedPicks.value.length ? `精选 ${stagedPicks.value.length} 个节点` : '全量(不精选)'
+)
+const openNodePicks = (row: Endpoint | null) => {
+  picksEndpoint.value = row
+  picksVisible.value = true
+}
+const onPicksConfirm = (picks: string[]) => (stagedPicks.value = picks)
 
 const qrVisible = ref(false)
 const qrDialog = ref<InstanceType<typeof QRCodeDialog>>()
