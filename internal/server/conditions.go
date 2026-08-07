@@ -130,6 +130,7 @@ func (s *Server) handlePreviewConditions(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	// 条件预览无端点上下文,精选维度不参与(spec #70:精选是按已保存端点的候选集替换)。
 	filtered := s.filteredNodes(s.nodes.NodesForUser(effUID), effUID)
 	matched := s.applyConditionsResolved(filtered, cond)
 

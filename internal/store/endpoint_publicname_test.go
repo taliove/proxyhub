@@ -49,6 +49,12 @@ INSERT INTO endpoints (alias, path, token) VALUES ('example.com', 'legacypath000
 	if err := s.migrateEndpointPublicName(); err != nil {
 		t.Fatalf("migrateEndpointPublicName: %v", err)
 	}
+	// A real upgrade runs the whole migrate chain; the read path now also
+	// selects node_picks (issue #79), so the staged legacy table must gain it
+	// the same way production would (same pattern as the geo legacy test).
+	if err := s.migrateEndpointNodePicks(); err != nil {
+		t.Fatalf("migrateEndpointNodePicks: %v", err)
+	}
 
 	ep, err := s.GetEndpointByPath("legacypath000000")
 	if err != nil {

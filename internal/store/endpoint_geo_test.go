@@ -48,10 +48,13 @@ INSERT INTO endpoints (alias, path, token) VALUES ('存量设备', 'legacypath00
 		t.Fatalf("migrateEndpointGeo: %v", err)
 	}
 	// A real upgrade runs the whole migrate chain; the read path now also
-	// selects public_name (issue #38), so the staged legacy table must gain it
-	// the same way production would.
+	// selects public_name (issue #38) and node_picks (issue #79), so the staged
+	// legacy table must gain them the same way production would.
 	if err := s.migrateEndpointPublicName(); err != nil {
 		t.Fatalf("migrateEndpointPublicName: %v", err)
+	}
+	if err := s.migrateEndpointNodePicks(); err != nil {
+		t.Fatalf("migrateEndpointNodePicks: %v", err)
 	}
 
 	ep, err := s.GetEndpointByPath("legacypath000000")

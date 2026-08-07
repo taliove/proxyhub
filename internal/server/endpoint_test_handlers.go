@@ -23,7 +23,7 @@ import (
 // 拉取验证、池快照、现场实测、后台预览四处共用这一个选择逻辑(ADR 0028 决策 1)。
 // 池与自建节点按端点属主分片(ticket 07;UserID 0 = 全局池)。
 func (s *Server) endpointDeliverableNodes(ep *store.Endpoint) []*subscription.Node {
-	nodes := s.filteredNodes(s.nodes.NodesForUser(ep.UserID), ep.UserID)
+	nodes := s.filteredNodesWithPicks(s.nodes.NodesForUser(ep.UserID), ep.UserID, s.endpointNodePicks(ep))
 	nodes = s.applyConditions(nodes, ep)
 	return s.standardizeNodesForEndpoint(nodes, ep, ep.UserID)
 }
@@ -260,9 +260,11 @@ type endpointListItem struct {
 }
 
 // availabilityFor 计算单个端点会下发集合的可用 x/y。
-// base 为全局过滤链产物(调用方批量复用);名称标准化不影响计数,跳过。
+// base 为全局过滤链产物(调用方批量复用);各端点先按精选(spec #70)收窄,
+// 再套用条件,与会下发集合同口径;名称标准化不影响计数,跳过。
 func (s *Server) availabilityFor(base []*subscription.Node, ep *store.Endpoint) endpointAvailability {
-	nodes := s.applyConditions(base, ep)
+	nodes := filterByNodePicks(base, s.endpointNodePicks(ep))
+	nodes = s.applyConditions(nodes, ep)
 	result := endpointAvailability{Total: len(nodes)}
 	for _, n := range nodes {
 		if n.Available {

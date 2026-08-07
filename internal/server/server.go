@@ -598,6 +598,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/endpoints/{id}/name-config", guard(s.handleUpdateEndpointNameConfig))
 	mux.HandleFunc("PUT /api/endpoints/{id}/template", guard(s.handleUpdateEndpointTemplate))
 	mux.HandleFunc("PUT /api/endpoints/{id}/conditions", guard(s.handleUpdateEndpointConditions))
+	mux.HandleFunc("PUT /api/endpoints/{id}/node-picks", guard(s.handleUpdateEndpointNodePicks))
 	mux.HandleFunc("PUT /api/endpoints/{id}/geo-config", guard(s.handleUpdateEndpointGeoConfig))
 	mux.HandleFunc("PUT /api/endpoints/{id}/public-name", guard(s.handleUpdateEndpointPublicName))
 	mux.HandleFunc("POST /api/endpoints/preview-conditions", guard(s.handlePreviewConditions))
@@ -992,8 +993,9 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	// 订阅时过滤链：白名单 → 黑名单 → 机场屏蔽，自建节点全程豁免（见 ADR 0005/0009）。
 	// 注意：不在此处对空池提前 503——filteredNodes 内含 serve-time 合并自建节点,
 	// 全新装机仅配置自建节点时也必须能拉到订阅(与订阅测试口径一致,见 ADR 0028 决策 1)。
-	// 订阅端点:按端点属主选择节点池与自建节点(ticket 07;属主 0 = 全局池)。
-	nodes := s.filteredNodes(s.nodes.NodesForUser(ep.UserID), ep.UserID)
+	// 订阅端点:按端点属主选择节点池与自建节点(ticket 07;属主 0 = 全局池);
+	// 端点精选(spec #70)在过滤链最前做候选集替换,空精选零回归。
+	nodes := s.filteredNodesWithPicks(s.nodes.NodesForUser(ep.UserID), ep.UserID, s.endpointNodePicks(ep))
 	// 该订阅地址的节点范围条件(动态查询,见 internal/subfilter);空条件=全量(零回归)
 	nodes = s.applyConditions(nodes, ep)
 	if len(nodes) == 0 {
@@ -1436,7 +1438,7 @@ func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 可用性汇总加性附加(ADR 0028 决策 2):池在内存,全局过滤链只跑一遍,
-	// 各端点仅条件维度不同,逐个叠加计算。
+	// 各端点仅精选/条件维度不同,逐个叠加计算(精选在 availabilityFor 内按端点叠加)。
 	base := s.filteredNodes(s.nodes.NodesForUser(effUID), effUID)
 	items := make([]endpointListItem, 0, len(eps))
 	for _, ep := range eps {
@@ -1998,17 +2000,33 @@ func (s *Server) mergeSelfHosted(nodes []*subscription.Node, userID int64) []*su
 
 // filteredNodes 对节点池应用订阅生成时过滤链（承接 ADR 0005/0009 + 2026-07-15 改动）：
 //
-//	白名单(非空则只留命中) → 黑名单(剔除命中) → 机场屏蔽(剔除 NodeKey 命中)
+//	精选候选集替换(非空 picks 则池∩精选,spec #70) → 白名单(非空则只留命中)
+//	→ 黑名单(剔除命中) → 机场屏蔽(剔除 NodeKey 命中)
 //	→ 可用性过滤 → 延迟阈值 → 去重/精选(NodesPerRegion)
 //
-// 自建节点在每道过滤内部均豁免（FailBack 安全网）。任一数据源读取失败时降级跳过
+// 自建节点在每道过滤内部均豁免（FailBack 安全网;端点级精选/条件是用户的显式
+// 取范围意图,不在豁免之列——与 conditions 同哲学)。任一数据源读取失败时降级跳过
 // 对应过滤——宁可多给节点，也不因设置/名单读不出而让订阅失效。
 //
 // 注意:节点池现在保留全量数据(含不可用/慢/重复),所有过滤在这里执行,刷新时不再砍节点。
 // userID 为属主(ticket 07):0 = 全局池,非 0 时自建节点合并只读该用户的。
+//
+// 本签名不带精选维度 = 未配置精选(零回归),等价于 filteredNodesWithPicks(..., nil);
+// 无端点上下文的调用方(列表汇总/条件预览)与既有测试走这里。
 func (s *Server) filteredNodes(nodes []*subscription.Node, userID int64) []*subscription.Node {
+	return s.filteredNodesWithPicks(nodes, userID, nil)
+}
+
+// filteredNodesWithPicks 是 filteredNodes 的带精选形态(spec #70 / issue #79):
+// picks 为该订阅地址的精选 NodeKey 集,nil/空 = 未配置(与 filteredNodes 完全一致);
+// 非空时插在过滤链最前(合并自建节点之后、各设置过滤之前)做候选集替换,
+// 屏蔽/stale 等既有过滤在其后天然仍剔除精选集中的禁用/下架节点。
+func (s *Server) filteredNodesWithPicks(nodes []*subscription.Node, userID int64, picks []string) []*subscription.Node {
 	// serve-time 合并自建节点:填补「新增后到下轮刷新前」的空档,并保证机场全挂时自建节点仍在。
 	nodes = s.mergeSelfHosted(nodes, userID)
+
+	// 端点级精选候选集替换(spec #70):过滤链最前,空精选短路(零回归)。
+	nodes = filterByNodePicks(nodes, picks)
 
 	// 过滤链三键按属主读取(租户级设置,回退全局默认);读取失败降级跳过对应过滤。
 	if wl, err := s.st.GetSettingForUser(userID, "region_whitelist"); err == nil {

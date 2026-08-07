@@ -42,6 +42,11 @@ type Endpoint struct {
 	// 空串=不筛选=全量(现状行为)。store 只存原始串,谓词语义由 subfilter 解释。
 	Conditions string `json:"conditions"`
 
+	// NodePicks 订阅地址精选节点集的原始 JSON(spec #70 / issue #79):
+	// NodeKey 字符串数组,空串=未配置=全量(零回归)。store 只存原始串,
+	// 候选集替换语义由 server 过滤链(filteredNodes)解释,与 conditions 同构。
+	NodePicks string `json:"node_picks"`
+
 	// TemplateName 指定订阅地址使用的模板名称(ticket endpoint-template-02)。
 	// 空串=跟随用户默认模板,按四级回退链解析。软引用:名称不存在时回退,不报错。
 	TemplateName string `json:"template_name"`
@@ -75,7 +80,7 @@ func randomHex(bytes int) (string, error) {
 
 // endpointColumns 查询列表共用的列清单(ticket 07 起带 user_id,读取侧三处保持一致)。
 // 与 scanEndpointFrom 的 Scan 目标顺序一一对应,加列必须双处同步。
-const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name, geo_mode, geo_countries, geo_provinces, public_name`
+const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name, geo_mode, geo_countries, geo_provinces, public_name, node_picks`
 
 // CreateEndpoint 创建订阅地址（随机 Path + Token）。
 // 未指定属主(旧调用/直接库调用)时归一到首个 super_admin(ticket 07 Invariant B);
@@ -283,6 +288,56 @@ func (s *Store) UpdateEndpointConditionsForUser(userID, id int64, conditions str
 	return checkAffected(res)
 }
 
+// validNodePicksJSON 校验精选原始 JSON(spec #70):空串合法(=清空);
+// 非空必须是 NodeKey 字符串数组(比 conditions 的裸 json.Valid 多一层形状校验,
+// 因为过滤链按数组解释,形状错了语义就错了)。
+func validNodePicksJSON(picks string) bool {
+	if picks == "" {
+		return true
+	}
+	var keys []string
+	return json.Unmarshal([]byte(picks), &keys) == nil
+}
+
+// UpdateEndpointNodePicks 设置订阅地址的精选节点集(spec #70 / issue #79)。
+// picks 为 NodeKey 数组的原始 JSON;空串表示清空(回到全量,零回归)。
+// 非空时校验为字符串数组,在边界处 fail fast,不让脏数据落库
+// (与 UpdateEndpointConditions 的 json.Valid 同哲学)。
+func (s *Store) UpdateEndpointNodePicks(id int64, picks string) error {
+	if !validNodePicksJSON(picks) {
+		return fmt.Errorf("invalid node_picks json")
+	}
+	res, err := s.db.Exec(`UPDATE endpoints SET node_picks = ? WHERE id = ?`, picks, id)
+	if err != nil {
+		return fmt.Errorf("update endpoint node picks: %w", err)
+	}
+	return checkAffected(res)
+}
+
+// UpdateEndpointNodePicksForUser 按属主更新精选(issue #79 多租户);行属他人时 ErrNotFound。
+// userID=0 = 全局视角(测试逃生舱/超管未切换时使用),属主校验跳过。
+func (s *Store) UpdateEndpointNodePicksForUser(userID, id int64, picks string) error {
+	if userID == 0 {
+		return s.UpdateEndpointNodePicks(id, picks)
+	}
+	if !validNodePicksJSON(picks) {
+		return fmt.Errorf("invalid node_picks json")
+	}
+	res, err := s.db.Exec(`UPDATE endpoints SET node_picks = ? WHERE id = ? AND user_id = ?`, picks, id, userID)
+	if err != nil {
+		return fmt.Errorf("update endpoint node picks: %w", err)
+	}
+	return checkAffected(res)
+}
+
+// migrateEndpointNodePicks 为 endpoints 表补 node_picks 列(spec #70 / issue #79)。
+// 幂等:每次启动安全执行;列默认空串,所有读取侧把空串解释为"未配置精选"
+// (存量端点零回归)。新库由 store.go 的 CREATE TABLE 直接建出,本函数升级既有库
+// (双路径,同 migrateEndpointPublicName 先例)。
+func (s *Store) migrateEndpointNodePicks() error {
+	return s.addColumnIfMissing("endpoints", "node_picks", "TEXT NOT NULL DEFAULT ''")
+}
+
 // maxPublicNameRunes 公开名称的 rune 上限(issue #38):展示卫生,防超长串
 // 撑爆客户端配置列表;不是安全闸门(/sub 头值整体 base64/percent-encode,
 // CRLF 结构性进不去)。
@@ -398,7 +453,7 @@ func scanEndpointFrom(r rowScanner) (*Endpoint, error) {
 	var enabled int
 	if err := r.Scan(&ep.ID, &ep.Alias, &ep.Path, &ep.Token, &enabled, &ep.CreatedAt,
 		&ep.NameMode, &ep.NameTemplate, &ep.Conditions, &ep.UserID, &ep.TemplateName,
-		&ep.GeoMode, &ep.GeoCountries, &ep.GeoProvinces, &ep.PublicName); err != nil {
+		&ep.GeoMode, &ep.GeoCountries, &ep.GeoProvinces, &ep.PublicName, &ep.NodePicks); err != nil {
 		return nil, err
 	}
 	ep.Enabled = enabled != 0
