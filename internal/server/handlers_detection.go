@@ -186,6 +186,9 @@ func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
 
 // resolveTestNode 节点解析公共逻辑:自建查库 ToNode,机场查内存池(返回 nil 表示未找到或参数错误)。
 // 按属主限定用户空间(多租户):自建查本人表,机场查本人池分片;命中他人资源一律 nil(404)。
+// nodeKey 分支查 serve-time 合并后的池(mergeSelfHosted):自建节点不入原始池,
+// 只经合并出现——测速页等只按 node_key 寻址的调用方(不带 self_node_id)对自建
+// 节点会 404(生产实测:proxy-latency 对自建节点 404)。
 func (s *Server) resolveTestNode(userID, selfNodeID int64, nodeKey string) *subscription.Node {
 	switch {
 	case selfNodeID > 0:
@@ -199,7 +202,7 @@ func (s *Server) resolveTestNode(userID, selfNodeID int64, nodeKey string) *subs
 			}
 		}
 	case nodeKey != "":
-		for _, n := range s.nodes.NodesForUser(userID) {
+		for _, n := range s.mergeSelfHosted(s.nodes.NodesForUser(userID), userID) {
 			if n.NodeKey() == nodeKey {
 				return n
 			}

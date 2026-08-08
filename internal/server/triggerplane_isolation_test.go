@@ -92,3 +92,33 @@ func TestTriggerPlane_SingleExamCrossUser404(t *testing.T) {
 		})
 	}
 }
+
+// TestTriggerPlane_SelfNodeByNodeKey 自建节点按 node_key 可解析(生产实测 bug:
+// 测速页只带 node_key,而自建节点不入原始池、只经 serve-time 合并出现,
+// 导致 proxy-latency 等对自建节点一律 404)。属主隔离不松:他人自建仍查不到。
+func TestTriggerPlane_SelfNodeByNodeKey(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	if err := st.CreateSelfHostedNodeForUser(1, &store.SelfHostedNode{
+		Name: "自建", Protocol: "ss", Server: "self.example.com", Port: 8388,
+		Cipher: "aes-256-gcm", Password: "p", Enabled: true,
+	}); err != nil {
+		t.Fatalf("CreateSelfHostedNodeForUser: %v", err)
+	}
+
+	n := srv.resolveTestNode(1, 0, "self.example.com:8388")
+	if n == nil {
+		t.Fatal("self-hosted node must resolve by node_key (merged pool)")
+	}
+	if n.Source != subscription.SourceSelfHosted {
+		t.Errorf("Source = %q, want self-hosted", n.Source)
+	}
+
+	// 他人视角:查不到(404 语义,不暴露存在性)
+	if n := srv.resolveTestNode(2, 0, "self.example.com:8388"); n != nil {
+		t.Errorf("user 2 resolved user 1's self node: %+v", n)
+	}
+	// 不存在的 key:仍查不到
+	if n := srv.resolveTestNode(1, 0, "gone.example.com:8388"); n != nil {
+		t.Errorf("unknown key resolved: %+v", n)
+	}
+}
