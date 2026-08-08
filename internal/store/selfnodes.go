@@ -2,19 +2,20 @@ package store
 
 import "fmt"
 
-// UpdateSelfHostedNode 更新自建节点的全部可编辑字段（不含 enabled，启停走 SetSelfHostedNodeEnabled）。
+// UpdateSelfHostedNode 更新自建节点编辑面持有的字段(不含 enabled,启停走 SetSelfHostedNodeEnabled)。
+// 编辑面(UI 表单/请求体)不持有的列不在 UPDATE 集合内、保持原值:
+// sni/flow/reality_public_key/reality_short_id/client_fingerprint/grpc_authority——
+// 否则一次普通编辑(如改名)会把 API 创建的 reality/grpc 参数静默清零(pre-push 评审 H1)。
 // 撞身份唯一约束(023)返回 ErrDuplicateIdentity。
 func (s *Store) UpdateSelfHostedNode(node *SelfHostedNode) error {
 	res, err := s.db.Exec(
 		`UPDATE self_hosted_nodes SET
 		 name = ?, protocol = ?, server = ?, port = ?, uuid = ?, password = ?,
-		 cipher = ?, alter_id = ?, network = ?, tls = ?, region_code = ?, grpc_service_name = ?, grpc_authority = ?,
-		 sni = ?, flow = ?, reality_public_key = ?, reality_short_id = ?, client_fingerprint = ?
+		 cipher = ?, alter_id = ?, network = ?, tls = ?, region_code = ?, grpc_service_name = ?
 		 WHERE id = ?`,
 		node.Name, node.Protocol, node.Server, node.Port, node.UUID, node.Password,
 		node.Cipher, node.AlterID, node.Network, boolToInt(node.TLS), node.RegionCode,
-		node.GrpcServiceName, node.GrpcAuthority,
-		node.SNI, node.Flow, node.RealityPublicKey, node.RealityShortID, node.ClientFingerprint,
+		node.GrpcServiceName,
 		node.ID)
 	if err != nil {
 		return fmt.Errorf("update self hosted node: %w", mapIdentityViolation(err))
@@ -32,13 +33,11 @@ func (s *Store) UpdateSelfHostedNodeForUser(userID int64, node *SelfHostedNode) 
 	res, err := s.db.Exec(
 		`UPDATE self_hosted_nodes SET
 		 name = ?, protocol = ?, server = ?, port = ?, uuid = ?, password = ?,
-		 cipher = ?, alter_id = ?, network = ?, tls = ?, region_code = ?, grpc_service_name = ?, grpc_authority = ?,
-		 sni = ?, flow = ?, reality_public_key = ?, reality_short_id = ?, client_fingerprint = ?
+		 cipher = ?, alter_id = ?, network = ?, tls = ?, region_code = ?, grpc_service_name = ?
 		 WHERE id = ? AND user_id = ?`,
 		node.Name, node.Protocol, node.Server, node.Port, node.UUID, node.Password,
 		node.Cipher, node.AlterID, node.Network, boolToInt(node.TLS), node.RegionCode,
-		node.GrpcServiceName, node.GrpcAuthority,
-		node.SNI, node.Flow, node.RealityPublicKey, node.RealityShortID, node.ClientFingerprint,
+		node.GrpcServiceName,
 		node.ID, userID)
 	if err != nil {
 		return fmt.Errorf("update self hosted node: %w", mapIdentityViolation(err))

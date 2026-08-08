@@ -2,15 +2,16 @@ package store
 
 import "testing"
 
-// spec #70 一键转自建的 store 级字段底座:SelfHostedNode 的
-// SNI/Flow/RealityPublicKey/RealityShortID/ClientFingerprint 全量字段必须
-// 完整落库并读回(create/update roundtrip),ToNode 不丢连接参数。
+// 自建节点 reality/grpc 字段的 store 缝:SelfHostedNode 的
+// SNI/Flow/RealityPublicKey/RealityShortID/ClientFingerprint/GrpcAuthority 必须
+// 完整落库并读回(create roundtrip),ToNode 不丢连接参数;
+// UPDATE 只写编辑面持有的列,不持有的列保持原值(pre-push 评审 H1)。
 // fixture 全合成:example.com + 全零 UUID + 合成 pbk。
 
 // syntheticRealitySelfNode 合成一个带完整 reality/grpc 参数的自建节点。
 func syntheticRealitySelfNode() *SelfHostedNode {
 	return &SelfHostedNode{
-		Name:              "转自建",
+		Name:              "合成Reality",
 		Protocol:          "vless",
 		Server:            "pool.example.com",
 		Port:              443,
@@ -78,8 +79,9 @@ func TestSelfHostedNode_RealityGrpcCreateRoundtrip(t *testing.T) {
 	}
 }
 
-// 更新 → 读回:编辑路径同样不丢 reality/grpc 字段。
-func TestSelfHostedNode_RealityGrpcUpdateRoundtrip(t *testing.T) {
+// 更新 → 读回:编辑面不持有的列(sni/flow/reality_*/grpc_authority)保持原值——
+// UI 表单不含这些字段,请求体解码零值不得静默擦除既有 reality/grpc 参数(H1 回归)。
+func TestSelfHostedNode_RealityGrpcPreservedOnUpdate(t *testing.T) {
 	s := newTestStore(t)
 
 	if err := s.CreateSelfHostedNodeForUser(1, syntheticRealitySelfNode()); err != nil {
@@ -89,9 +91,15 @@ func TestSelfHostedNode_RealityGrpcUpdateRoundtrip(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("list: n=%d err=%v", len(rows), err)
 	}
-	node := rows[0]
-	node.Name = "转自建-改名"
-	if err := s.UpdateSelfHostedNodeForUser(1, node); err != nil {
+	// 模拟 UI 编辑请求的形状:只有表单字段,其余零值(改名 + 改 service_name)。
+	ui := &SelfHostedNode{
+		ID: rows[0].ID, Name: "改名后", Protocol: "vless",
+		Server: "pool.example.com", Port: 443,
+		UUID: "00000000-0000-0000-0000-000000000000",
+		Network: "grpc", TLS: true, GrpcServiceName: "renamed-svc",
+		Enabled: true,
+	}
+	if err := s.UpdateSelfHostedNodeForUser(1, ui); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 
@@ -99,10 +107,24 @@ func TestSelfHostedNode_RealityGrpcUpdateRoundtrip(t *testing.T) {
 	if err != nil || len(after) != 1 {
 		t.Fatalf("list after update: n=%d err=%v", len(after), err)
 	}
-	if after[0].Name != "转自建-改名" {
-		t.Errorf("name = %q, want 转自建-改名", after[0].Name)
+	if after[0].Name != "改名后" || after[0].GrpcServiceName != "renamed-svc" {
+		t.Errorf("编辑面字段未生效: name=%q svc=%q", after[0].Name, after[0].GrpcServiceName)
 	}
-	assertRealityFields(t, after[0])
+	// 非编辑面字段全部保留原值(service_name 归编辑面,上方已断言改写生效)
+	got := after[0]
+	preserved := map[string][2]string{
+		"SNI":               {got.SNI, "sni.example.com"},
+		"Flow":              {got.Flow, "xtls-rprx-vision"},
+		"RealityPublicKey":  {got.RealityPublicKey, "synthetic-public-key"},
+		"RealityShortID":    {got.RealityShortID, "01ab"},
+		"ClientFingerprint": {got.ClientFingerprint, "chrome"},
+		"GrpcAuthority":     {got.GrpcAuthority, "authority.example.com"},
+	}
+	for field, pair := range preserved {
+		if pair[0] != pair[1] {
+			t.Errorf("%s = %q, want preserved %q", field, pair[0], pair[1])
+		}
+	}
 }
 
 // 历史行兼容:未填 reality 字段的旧节点(零值)roundtrip 后仍为零值,
