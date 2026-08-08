@@ -302,3 +302,22 @@ func TestSitePath_SaveSettingsDoesNotOverride(t *testing.T) {
 		t.Errorf("site path changed to %q via /api/settings, want unchanged %q", p, testSitePath)
 	}
 }
+
+// TestSPA_IndexNoCacheHeader index.html(入口与前端路由回退)必须带
+// Cache-Control: no-cache——入口无缓存头时浏览器启发式缓存会把旧版 SPA 钉住,
+// 升级后用户看到旧界面(0.9.0 生产实证)。assets 的 immutable 缓存在 Caddy 层
+// (文件名带构建戳),不在此断言范围。
+func TestSPA_IndexNoCacheHeader(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+	h := srv.Handler()
+
+	for _, path := range []string{"/", "/endpoints"} {
+		w := get(t, h, path)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, want 200 (SPA)", path, w.Code)
+		}
+		if cc := w.Header().Get("Cache-Control"); cc != "no-cache" {
+			t.Errorf("GET %s: Cache-Control = %q, want no-cache", path, cc)
+		}
+	}
+}

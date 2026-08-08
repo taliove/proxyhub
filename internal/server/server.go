@@ -876,6 +876,10 @@ func (s *Server) serveIndex(w http.ResponseWriter, webRoot fs.FS) {
 	}
 	data = rewriteIndexForSitePath(data, sp)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// index.html 必须每次回源校验:assets 是构建戳哈希文件名(immutable 缓存一年),
+	// 入口 HTML 无任何缓存头时浏览器启发式缓存会把旧版 SPA 钉住——升级后用户
+	// 看到的还是旧界面(0.9.0 生产实证:精选功能"没有"实为旧入口缓存)。
+	w.Header().Set("Cache-Control", "no-cache")
 	w.Write(data)
 }
 
