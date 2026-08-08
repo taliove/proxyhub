@@ -791,6 +791,12 @@ func (s *Server) Handler() http.Handler {
 
 	// 订阅拉取端点（随机 Path + Token，公开访问）
 	mux.HandleFunc("GET /sub/{path}", s.handleSubscription)
+	// /sub 命名空间边界(pre-push 评审 C1):除合法单段 /sub/{path} 外一律 404。
+	// 缺了这两条,GET /sub、/sub/、/sub/a/b 会落到 SPA 兜底——配置 Site Path 时
+	// SPA 的 index.html 内嵌管理面前缀(rewriteIndexForSitePath),等于把隐藏入口
+	// 交给任何探测公开 /sub 命名空间的未认证请求。
+	mux.HandleFunc("GET /sub", http.NotFound)
+	mux.HandleFunc("GET /sub/", http.NotFound)
 
 	// 健康检查端点（供反向代理探活）
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

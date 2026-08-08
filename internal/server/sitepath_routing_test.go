@@ -157,6 +157,30 @@ func TestSitePath_SubRootNamespacePassThrough(t *testing.T) {
 	}
 }
 
+// TestSitePath_SubNamespaceNoSPA almost-valid /sub 形状不得落到 SPA(pre-push 评审 C1):
+// 空路径/尾斜杠/多段路径若落到 SPA 兜底,配置 Site Path 时响应体(index.html)
+// 内嵌管理面前缀——探测公开 /sub 命名空间即泄露隐藏入口。一律纯 404。
+func TestSitePath_SubNamespaceNoSPA(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	if err := st.SetSitePath(testSitePath); err != nil {
+		t.Fatalf("SetSitePath: %v", err)
+	}
+	h := srv.Handler()
+
+	for _, path := range []string{"/sub", "/sub/", "/sub/a/b", "/sub/a/b/c"} {
+		w := get(t, h, path)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("GET %s: status = %d, want 404", path, w.Code)
+		}
+		if strings.Contains(w.Body.String(), testSitePath) {
+			t.Errorf("GET %s: response leaks site path", path)
+		}
+		if strings.Contains(w.Body.String(), "<html") {
+			t.Errorf("GET %s: served SPA, want plain 404", path)
+		}
+	}
+}
+
 // TestSitePath_WrongPrefixReturns404 错误前缀(含大小写变体、非段边界前缀)一律 404。
 func TestSitePath_WrongPrefixReturns404(t *testing.T) {
 	srv, st := newTestServer(t, nil)
