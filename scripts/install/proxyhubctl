@@ -174,7 +174,7 @@ cmd_backup() {
         service_start
         return 1
     }
-    trap 'rm -rf "$staging_dir"; service_start' EXIT
+    trap "rm -rf $(printf '%q' "$staging_dir"); service_start" EXIT
 
     # Write fingerprint metadata.
     local meta_file="${staging_dir}/fingerprint.meta"
@@ -299,7 +299,7 @@ cmd_restore() {
         _ph_err "failed to create staging directory"
         return 1
     }
-    trap 'rm -rf "$staging_dir"' EXIT
+    trap "rm -rf $(printf '%q' "$staging_dir")" EXIT
 
     if ! tar -xzf "$archive_path" -C "$staging_dir"; then
         _ph_err "failed to extract archive"
@@ -314,7 +314,7 @@ cmd_restore() {
 
     _ph_log "stopping service for restore"
     service_stop || return 1
-    trap 'service_start; rm -rf "$staging_dir"' EXIT
+    trap "service_start; rm -rf $(printf '%q' "$staging_dir")" EXIT
 
     # Create rollback snapshot.
     local rollback_dir
@@ -529,7 +529,7 @@ cmd_rotate_path() {
             return 1
         }
     fi
-    trap 'rm -f "$rollback_frag"' EXIT
+    trap "rm -f $(printf '%q' "$rollback_frag")" EXIT
 
     # Write new Caddy fragment.
     if ! write_caddy_fragment "$domain" "$new_path"; then
@@ -743,7 +743,7 @@ cmd_update() {
         _ph_err "failed to create update workspace"
         return 1
     }
-    trap 'rm -rf "$workdir"' EXIT
+    trap "rm -rf $(printf '%q' "$workdir")" EXIT
 
     _ph_log "downloading ${base}/${asset}"
     if ! curl -fsSL --max-time 60 -o "${workdir}/SHA256SUMS" "${base}/SHA256SUMS"; then
@@ -791,8 +791,11 @@ cmd_update() {
     fi
     chmod +x "${workdir}/extract/proxyhub"
 
-    # Pre-swap fingerprint: prove the new binary reads the SAME retained state
-    # before it replaces the old one.
+    # Pre-swap fingerprint(issue #92):新旧二进制各自对当前 DB 取指纹。
+    # 跨版本全等只作建议性报告,不作硬门——摘要输入随版本合法演进(如 0.9.0
+    # 把 grpc_authority 纳入自建节点摘要),迁移也可能合法改写记录(如 023 去重
+    # 删行);把可预期差异误判为"数据丢失"会锁死升级。真正的硬门是下方
+    # 同二进制 pre/post-swap 比对;差异由升级前备份兜底。
     local binary_path auth_key old_fp new_fp
     binary_path=$(root_path "$PROXYHUB_BINARY")
     if [[ ! -x "$binary_path" ]]; then
@@ -808,11 +811,18 @@ cmd_update() {
         _ph_err "state fingerprint capture failed on new binary"
         return 1
     }
-    if [[ "$old_fp" != "$new_fp" ]]; then
-        _ph_err "state fingerprint mismatch with new binary; refusing to update (current installation untouched)"
-        return 1
+    if [[ "$old_fp" == "$new_fp" ]]; then
+        _ph_log "state fingerprint identical across versions"
+    else
+        _ph_warn "state fingerprint differs across versions (digest inputs or migration transforms changed between ${current_version} and ${target})"
+        # 计数级差异可见性:行数变化是迁移改写的最直观信号,贴出来供人工核对
+        local counts_diff
+        counts_diff=$(diff <(grep '^[a-z_]*_count' <<<"$old_fp") <(grep '^[a-z_]*_count' <<<"$new_fp") || true)
+        if [[ -n "$counts_diff" ]]; then
+            _ph_warn "row-count changes (pre-update backup covers this):"
+            printf '%s\n' "$counts_diff" >&2
+        fi
     fi
-    _ph_log "state fingerprint verified against new binary"
 
     # Swap the binary, keeping the old one for rollback.
     cp -a "$binary_path" "${workdir}/proxyhub.old" || {
@@ -821,7 +831,7 @@ cmd_update() {
     }
     _ph_log "stopping service for binary swap"
     service_stop || return 1
-    trap 'service_start; rm -rf "$workdir"' EXIT
+    trap "service_start; rm -rf $(printf '%q' "$workdir")" EXIT
 
     if ! install -m 0755 "${workdir}/extract/proxyhub" "$binary_path"; then
         _ph_err "failed to install new binary; restoring previous binary"
@@ -830,11 +840,13 @@ cmd_update() {
         return 1
     fi
 
-    # Post-swap fingerprint: the installed binary must still see the same state.
+    # Post-swap fingerprint(硬门,issue #92):同一个新二进制在原地迁移后(pre-swap
+    # 捕获)与安装落位后必须看到完全相同的状态——证明 swap 零损坏。比对基准是
+    # new_fp(新二进制自己),不是 old_fp(跨版本摘要可能合法不同)。
     local installed_fp
     installed_fp=$(_capture_state_fingerprint "$binary_path" "$auth_key") || true
-    if [[ "$installed_fp" != "$old_fp" ]]; then
-        _ph_err "post-update state fingerprint mismatch; rolling back to ${current_version}"
+    if [[ "$installed_fp" != "$new_fp" ]]; then
+        _ph_err "post-update state fingerprint mismatch (same binary pre/post swap); rolling back to ${current_version}"
         cp -a "${workdir}/proxyhub.old" "$binary_path" || true
         service_start
         return 1

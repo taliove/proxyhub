@@ -131,7 +131,18 @@ if [[ "$1" == "state-fingerprint" ]]; then
     read -r key
     echo "fingerprint_version: 1"
     echo "algorithm: HMAC-SHA256"
-    echo "state_hash: abc123"
+    # issue #92 测试标记:fp-drift-new = 跨版本摘要漂移;fp-drift-post =
+    # 同二进制 pre/post-swap 不一致(按调用计数漂移)
+    if [[ -f "${PROXYHUB_ROOT}/fp-drift-new" ]]; then
+        echo "state_hash: def456"
+    elif [[ -f "${PROXYHUB_ROOT}/fp-drift-post" ]]; then
+        n=$(cat "${PROXYHUB_ROOT}/fp-counter" 2>/dev/null || echo 0)
+        n=$((n + 1))
+        printf '%s' "$n" > "${PROXYHUB_ROOT}/fp-counter"
+        echo "state_hash: drift$n"
+    else
+        echo "state_hash: abc123"
+    fi
     echo "timestamp: 2024-01-01T00:00:00Z"
     exit 0
 fi
@@ -300,6 +311,19 @@ EOFSHA
         TESTS_FAILED=$((TESTS_FAILED + 1))
         printf '[FAIL] checksum failure should trigger proper rollback\n' >&2
         echo "Output was: $output" >&2
+    fi
+
+    # trap 作用域回归(issue #92):失败路径退出时不得出现 workdir/staging_dir
+    # unbound(trap 在脚本退出时触发,函数局部变量已出作用域)
+    if echo "$output" | grep -q "unbound variable"; then
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '[FAIL] failure path emitted unbound variable (trap scope bug)\n' >&2
+        echo "Output was: $output" >&2
+    else
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '[PASS] failure path free of unbound variable noise\n'
     fi
 
     # Verify version unchanged.
@@ -601,6 +625,67 @@ MOCK
 # Main
 # --------------------------------------------------------------------------
 
+test_update_cross_version_fingerprint_drift_warns_but_updates() {
+    echo "==> test_update_cross_version_fingerprint_drift_warns_but_updates"
+    setup_test
+
+    # 新二进制摘要漂移(摘要输入随版本演进,issue #92):跨版本不再全等,
+    # 应 WARN 降级而升级照常(硬门只剩同二进制 pre/post-swap)
+    touch "${PROXYHUB_ROOT}/fp-drift-new"
+
+    local output
+    output=$("$PROXYHUBCTL" update v1.1.0 2>&1) || true
+
+    if echo "$output" | grep -q "WARN: state fingerprint differs across versions"; then
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '[PASS] cross-version fingerprint drift warns\n'
+    else
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '[FAIL] expected cross-version drift warning\n' >&2
+        echo "Output was: $output" >&2
+    fi
+
+    local version
+    version=$(grep '^VERSION=' "$(root_path /root/.proxyhub-install-info)" | cut -d= -f2)
+    assert_true "[[ '$version' == 'v1.1.0' ]]" "update proceeds despite cross-version drift"
+
+    teardown_test
+}
+
+test_update_post_swap_fingerprint_mismatch_rolls_back() {
+    echo "==> test_update_post_swap_fingerprint_mismatch_rolls_back"
+    setup_test
+    mark_live_binary
+
+    # 同二进制 pre/post-swap 指纹不一致(交换过程损坏):硬门,必须回滚
+    touch "${PROXYHUB_ROOT}/fp-drift-post"
+
+    local output
+    output=$("$PROXYHUBCTL" update v1.1.0 2>&1) && {
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '[FAIL] post-swap mismatch must fail the update\n' >&2
+        teardown_test
+        return
+    }
+
+    if echo "$output" | grep -q "same binary pre/post swap"; then
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        printf '[PASS] post-swap mismatch rolls back\n'
+    else
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        printf '[FAIL] expected post-swap mismatch rollback message\n' >&2
+        echo "Output was: $output" >&2
+    fi
+    assert_install_untouched "post-swap mismatch"
+
+    teardown_test
+}
+
 main() {
     echo "Running proxyhubctl update tests..."
     echo
@@ -617,6 +702,9 @@ main() {
     test_update_latest_both_channels_down
     test_update_missing_minisig_fails_closed
     test_update_bad_signature_fails_closed
+
+    test_update_cross_version_fingerprint_drift_warns_but_updates
+    test_update_post_swap_fingerprint_mismatch_rolls_back
     test_update_docker_happy
     test_update_docker_lost_container
 

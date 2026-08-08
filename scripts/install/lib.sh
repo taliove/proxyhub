@@ -96,6 +96,12 @@ _ph_log() {
     printf '[proxyhub] %s\n' "$*" >&2
 }
 
+# _ph_warn MSG... - print a warning line to stderr(non-fatal,与 _ph_err 区分:
+# 升级门禁的降级提示走这里,不制造"已失败"的误读)。
+_ph_warn() {
+    printf '[proxyhub] WARN: %s\n' "$*" >&2
+}
+
 # _die MSG... - print an error and exit 1. The only function allowed to exit.
 _die() {
     _ph_err "$@"
