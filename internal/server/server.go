@@ -646,7 +646,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/self-nodes", guard(s.handleListSelfNodes))
 	mux.HandleFunc("GET /api/self-nodes/suggest", guard(s.handleSuggestSelfNode))
 	mux.HandleFunc("POST /api/self-nodes", guard(s.handleCreateSelfNode))
-	mux.HandleFunc("POST /api/self-nodes/from-pool", guard(s.handleCreateSelfNodeFromPool))
 	mux.HandleFunc("PUT /api/self-nodes/{id}", guard(s.handleUpdateSelfNode))
 	mux.HandleFunc("DELETE /api/self-nodes/{id}", guard(s.handleDeleteSelfNode))
 	mux.HandleFunc("POST /api/self-nodes/{id}/toggle", guard(s.handleToggleSelfNode))
