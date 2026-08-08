@@ -167,7 +167,13 @@ func TestSitePath_SubNamespaceNoSPA(t *testing.T) {
 	}
 	h := srv.Handler()
 
-	for _, path := range []string{"/sub", "/sub/", "/sub/a/b", "/sub/a/b/c"} {
+	// 含编码变体:/sub%2Ffoo 解码后形似订阅路径,escaped 段却骗过 mux 字面量
+	// 匹配落 SPA(C1 的 %2F 绕过);/%73ub/foo 同理。middleware 按 EscapedPath
+	// 严格单段形状放行,其余 /sub 前缀一律就地 404。
+	for _, path := range []string{
+		"/sub", "/sub/", "/sub/a/b", "/sub/a/b/c",
+		"/sub%2F", "/sub%2Ffoo", "/sub%2ffoo", "/sub/foo%2Fbar", "/%73ub/foo",
+	} {
 		w := get(t, h, path)
 		if w.Code != http.StatusNotFound {
 			t.Errorf("GET %s: status = %d, want 404", path, w.Code)

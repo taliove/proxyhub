@@ -31,9 +31,22 @@ func (s *Server) sitePathMiddleware(next http.Handler) http.Handler {
 		}
 
 		p := r.URL.Path
-		// 订阅端点根命名空间直通(sub 在保留字清单内,与 Site Path 无冲突)
-		if p == "/sub" || strings.HasPrefix(p, "/sub/") {
+		// 订阅端点根命名空间直通(sub 在保留字清单内,与 Site Path 无冲突)。
+		// 形状校验走 EscapedPath(未解码)严格单段:decoded-path 前缀判断会被
+		// 编码斜杠绕过——/sub%2Ffoo 解码后是 /sub/foo(命中前缀直通),但 mux 按
+		// escaped 段匹配(sub%2Ffoo ≠ 字面量 sub)落到 SPA 兜底,Site Path 随之
+		// 泄露(pre-push 评审 C1 变体)。合法订阅 path 是随机 hex,永不带百分号
+		// 编码,收紧无兼容代价。
+		ep := r.URL.EscapedPath()
+		if seg, ok := strings.CutPrefix(ep, "/sub/"); ok && seg != "" && !strings.ContainsAny(seg, "/%") {
 			next.ServeHTTP(w, r)
+			return
+		}
+		// /sub 前缀的其余形状(空路径/尾斜杠/多段/编码变体)就地 404,不下放 mux
+		// (mux 的 SPA 兜底在配置 Site Path 时会泄露管理面;旧形式双挂兼容
+		// /<site-path>/sub/* 由下方前缀剥离照常,不受影响)。
+		if p == "/sub" || strings.HasPrefix(p, "/sub/") {
+			http.NotFound(w, r)
 			return
 		}
 
