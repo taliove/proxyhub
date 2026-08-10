@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -156,6 +157,29 @@ func TestSlotsAPI_CreateListDelete(t *testing.T) {
 	srv.handleDeleteSlot(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("delete missing status = %d, want 404", w.Code)
+	}
+}
+
+// TestSlotsAPI_SelfHostedNodeAssignable 自建节点可指派(回归:poolNodeIndex
+// 未做 serve-time 自建合并时,自建节点键被误判 unknown node_key)
+func TestSlotsAPI_SelfHostedNodeAssignable(t *testing.T) {
+	selfNode := &subscription.Node{
+		Name: "自建HK", Type: "trojan", Server: "self.example.com", Port: 443,
+		Source: subscription.SourceSelfHosted,
+	}
+	srv, st := newTestServer(t, []*subscription.Node{selfNode})
+	// 自建节点落库(serve-time 合并读的是 self_hosted_nodes 表,不是内存池)
+	if err := st.CreateSelfHostedNode(&store.SelfHostedNode{
+		Name: "自建HK", Protocol: "trojan", Server: "self.example.com", Port: 443, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	w, req := slotReq(t, http.MethodPost, "/api/slots",
+		map[string]any{"name": "自建主力", "node_key": selfNode.NodeKey()})
+	srv.handleCreateSlot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("assign self-hosted node status = %d, body = %s", w.Code, w.Body.String())
 	}
 }
 

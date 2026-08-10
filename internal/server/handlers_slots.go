@@ -36,10 +36,12 @@ type slotView struct {
 	Node      *slotNodeView `json:"node,omitempty"`
 }
 
-// poolNodeIndex 建 node_key → 池节点索引(含 stale,供槽位摘要判 missing/stale)
+// poolNodeIndex 建 node_key → 池节点索引(含 stale,供槽位摘要判 missing/stale)。
+// 与 handleListNodes 同口径做 serve-time 自建节点合并——自建节点在聚合注入前
+// (新建后/聚合失败时)不在 NodesForUser 里,不合并会把自建节点误判为幽灵键。
 func (s *Server) poolNodeIndex(userID int64) map[string]*subscription.Node {
 	idx := make(map[string]*subscription.Node)
-	for _, n := range s.nodes.NodesForUser(userID) {
+	for _, n := range s.mergeSelfHosted(s.nodes.NodesForUser(userID), userID) {
 		// 同 key 多节点(跨机场共存)取首个,摘要场景足够
 		if _, ok := idx[n.NodeKey()]; !ok {
 			idx[n.NodeKey()] = n
