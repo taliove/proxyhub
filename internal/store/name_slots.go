@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -58,6 +59,16 @@ var ErrSlotNotFound = errors.New("name slot not found")
 
 // ErrSlotNameEmpty 名字为空
 var ErrSlotNameEmpty = errors.New("slot name required")
+
+// maxSlotNameRunes 槽位名 rune 上限:展示卫生,与精选项别名同规格(50)。
+const maxSlotNameRunes = 50
+
+// SanitizeSlotName 槽位名边界归一(trim/去控制字符/rune 截断,剔除 '/')。
+// 与精选项别名/公开名称同一 sanitizer,不让脏数据落库;'/' 会破坏
+// /api/slots/{name} 单段路由寻址,必须剔除。空串由调用方判 400。
+func SanitizeSlotName(name string) string {
+	return strings.ReplaceAll(sanitizeDisplayText(name, maxSlotNameRunes), "/", "")
+}
 
 // parseSlotTime 解析时间列。与 overrides.go 同坑:历史写入格式不止一种
 // (time.Time 直写 / RFC3339),两种都认,解析失败留零值。

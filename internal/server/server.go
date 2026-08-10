@@ -694,6 +694,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/nodes/cleanup", guard(s.handleCleanupNodes))
 	mux.HandleFunc("POST /api/nodes/purge-airport", guard(s.handlePurgeAirportNodes))
 
+	// 名称槽位(ADR 0047 / issue #97):用户级统一命名层
+	mux.HandleFunc("GET /api/slots", guard(s.handleListSlots))
+	mux.HandleFunc("POST /api/slots", guard(s.handleCreateSlot))
+	mux.HandleFunc("PUT /api/slots/{name}", guard(s.handleUpdateSlot))
+	mux.HandleFunc("DELETE /api/slots/{name}", guard(s.handleDeleteSlot))
+
 	// 系统设置
 	mux.HandleFunc("GET /api/settings", guard(s.handleGetSettings))
 	mux.HandleFunc("POST /api/settings", guard(s.handleSaveSettings))
