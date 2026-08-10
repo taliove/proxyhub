@@ -54,7 +54,7 @@ func buildStatusNode(nodes []*subscription.Node) *subscription.Node {
 
 	var name string
 	if len(downNames) == 0 {
-		name = fmt.Sprintf("📡 节点状态: %d/%d 在线 · 更新于 %s", total, total, stamp)
+		name = fmt.Sprintf("📡 节点状态:%d/%d 在线 · 更新于 %s", total, total, stamp)
 	} else {
 		shown := downNames
 		suffix := ""
@@ -62,7 +62,7 @@ func buildStatusNode(nodes []*subscription.Node) *subscription.Node {
 			shown = downNames[:maxStatusDownNames]
 			suffix = fmt.Sprintf(" 等 %d 个", len(downNames))
 		}
-		name = fmt.Sprintf("⚠️ 节点状态: 故障 %d/%d(%s%s)· 更新于 %s",
+		name = fmt.Sprintf("⚠️ 节点状态:故障 %d/%d（%s%s）· 更新于 %s",
 			len(downNames), total, strings.Join(shown, "、"), suffix, stamp)
 	}
 

@@ -33,7 +33,7 @@
             <span class="name-primary">{{ nameCell(row).primary }}</span>
             <el-tooltip
               v-if="slotKeys.has(row.node_key)"
-              content="名称槽位接管:该名称可在名称槽位区转移给其他节点"
+              content="名称槽位接管：该名称可在名称槽位区转移给其他节点"
               placement="top"
             >
               <el-tag size="small" type="success" effect="plain" class="slot-tag">槽位</el-tag>

@@ -123,7 +123,7 @@ func (sm *StateMachine) onDown(t Target, s Sample) {
 		}
 	}
 	sm.alert("订阅节点宕机",
-		fmt.Sprintf("节点「%s」连续 %d 次 TCP 探测失败,已判定宕机。\n节点仍在订阅中下发(免疫),请观察或把名称转移给其他节点。\nnode_key: %s",
+		fmt.Sprintf("节点「%s」连续 %d 次 TCP 探测失败，已判定宕机。\n节点仍在订阅中下发（免疫），请观察或把名称转移给其他节点。\nnode_key: %s",
 			name, downAfterFails, t.NodeKey))
 	sm.logger.Warn("monitor node down", "user", t.UserID, "key", t.NodeKey, "name", name)
 }
@@ -136,7 +136,7 @@ func (sm *StateMachine) onUp(t Target, s Sample) {
 		}
 	}
 	sm.alert("订阅节点恢复",
-		fmt.Sprintf("节点「%s」连续 %d 次探测成功,已恢复。当前延迟 %dms。\nnode_key: %s",
+		fmt.Sprintf("节点「%s」连续 %d 次探测成功，已恢复。当前延迟 %dms。\nnode_key: %s",
 			name, upAfterOK, s.LatencyMs, t.NodeKey))
 	sm.logger.Info("monitor node recovered", "user", t.UserID, "key", t.NodeKey, "name", name)
 }

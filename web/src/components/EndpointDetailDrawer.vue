@@ -244,7 +244,7 @@ const onStatusNodeChange = async (val: string | number | boolean) => {
   statusNodeSaving.value = true
   try {
     await setEndpointStatusNode(props.endpoint.id, Boolean(val))
-    ElMessage.success(val ? '已开启:订阅第一位将展示节点状态' : '已关闭')
+    ElMessage.success(val ? '已开启：订阅第一位将展示节点状态' : '已关闭')
     emit('status-node-changed')
   } catch (e) {
     ElMessage.error(extractErrorDetail(e) || '保存失败')

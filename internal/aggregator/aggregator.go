@@ -990,7 +990,7 @@ func (a *Aggregator) alertEmptySlots(userID int64, pool []*subscription.Node) {
 			if !a.alerted[key] {
 				if a.alerter != nil {
 					if err := a.alerter.Alert("名称槽位待指派",
-						fmt.Sprintf("名称「%s」挂载的节点已从机场消失或下架,订阅已停发该名称。\n请把名称指派给新节点(节点管理 → 名称槽位)。\nnode_key: %s",
+						fmt.Sprintf("名称「%s」挂载的节点已从机场消失或下架，订阅已停发该名称。\n请把名称指派给新节点（节点管理 → 名称槽位）。\nnode_key: %s",
 							sl.Name, sl.NodeKey)); err != nil {
 						a.logger.Warn("send empty-slot alert failed", "error", err)
 					} else {
@@ -1001,7 +1001,7 @@ func (a *Aggregator) alertEmptySlots(userID int64, pool []*subscription.Node) {
 		} else {
 			if a.alerted[key] && a.alerter != nil {
 				if err := a.alerter.Alert("名称槽位已恢复",
-					fmt.Sprintf("名称「%s」挂载的节点已回归,订阅自动恢复下发。", sl.Name)); err != nil {
+					fmt.Sprintf("名称「%s」挂载的节点已回归，订阅自动恢复下发。", sl.Name)); err != nil {
 					a.logger.Warn("send slot recovery alert failed", "error", err)
 				}
 			}

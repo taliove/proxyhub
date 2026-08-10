@@ -4,7 +4,7 @@
       <span class="slot-title">
         名称槽位
         <el-tooltip
-          content="名称是你的资产:一次起名,所有订阅地址统一生效;节点不可用时把名称转移给别的节点。"
+          content="名称是你的资产：一次起名，所有订阅地址统一生效；节点不可用时把名称转移给别的节点。"
           placement="top"
         >
           <el-icon class="muted"><QuestionFilled /></el-icon>
@@ -160,7 +160,7 @@ const createNew = async () => {
   }
   try {
     await createSlot(name)
-    ElMessage.success('已创建空槽,可指派节点')
+    ElMessage.success('已创建空槽，可指派节点')
     emit('changed')
   } catch (e) {
     if (readSlotConflict(e)?.kind === 'name_taken') {
@@ -186,7 +186,7 @@ const doAssign = async (force: boolean) => {
   const slotName = assignSlot.value.name
   try {
     await updateSlot(slotName, { nodeKey: assignNodeKey.value, force })
-    ElMessage.success('已生效,所有订阅立即使用新名称')
+    ElMessage.success('已生效，所有订阅立即使用新名称')
     assignVisible.value = false
     emit('changed')
   } catch (e) {
@@ -194,9 +194,9 @@ const doAssign = async (force: boolean) => {
     if (conflict && !force) {
       let text = ''
       if (conflict.kind === 'node_occupied') {
-        text = `该节点当前挂在名称「${conflict.holder_name}」上。改挂到「${slotName}」后,「${conflict.holder_name}」将变空槽。确认?`
+        text = `该节点当前挂在名称「${conflict.holder_name}」上。改挂到「${slotName}」后，「${conflict.holder_name}」将变空槽。确认？`
       } else if (conflict.kind === 'reassign') {
-        text = `名称「${slotName}」当前挂在节点 ${conflict.holder_node_key} 上,确认换人?`
+        text = `名称「${slotName}」当前挂在节点 ${conflict.holder_node_key} 上，确认换人？`
       }
       if (text) {
         try {
@@ -227,7 +227,7 @@ const rename = async (row: NameSlot) => {
   if (newName === row.name) return
   try {
     await updateSlot(row.name, { newName })
-    ElMessage.success('已改名,立即生效')
+    ElMessage.success('已改名，立即生效')
     emit('changed')
   } catch (e) {
     if (readSlotConflict(e)?.kind === 'name_taken') {
@@ -240,7 +240,7 @@ const rename = async (row: NameSlot) => {
 
 const remove = async (row: NameSlot) => {
   try {
-    await ElMessageBox.confirm(`删除名称「${row.name}」?挂载节点回退模板/原始名称。`, '删除名称', {
+    await ElMessageBox.confirm(`删除名称「${row.name}」？挂载节点回退模板/原始名称。`, '删除名称', {
       type: 'warning'
     })
   } catch {
@@ -260,7 +260,7 @@ const claim = async (c: SlotConflictRow) => {
   let name: string
   try {
     const { value } = await ElMessageBox.prompt(
-      `为节点 ${c.node_key} 起一个新名称(旧名「${c.display_name}」已被占)`,
+      `为节点 ${c.node_key} 起一个新名称（旧名「${c.display_name}」已被占）`,
       '认领为槽位',
       { inputValue: c.display_name, inputPattern: /\S/, inputErrorMessage: '名称不能为空' }
     )
@@ -275,7 +275,7 @@ const claim = async (c: SlotConflictRow) => {
     if (conflict?.kind === 'node_occupied') {
       try {
         await ElMessageBox.confirm(
-          `该节点当前挂在名称「${conflict.holder_name}」上,改挂后旧名称变空槽。确认?`,
+          `该节点当前挂在名称「${conflict.holder_name}」上，改挂后旧名称变空槽。确认？`,
           '转移确认',
           { type: 'warning' }
         )
@@ -300,7 +300,7 @@ const claim = async (c: SlotConflictRow) => {
 const drop = async (c: SlotConflictRow) => {
   try {
     await ElMessageBox.confirm(
-      `放弃节点 ${c.node_key} 的旧名称「${c.display_name}」?该名称仍被别的节点占用。`,
+      `放弃节点 ${c.node_key} 的旧名称「${c.display_name}」？该名称仍被别的节点占用。`,
       '放弃覆盖',
       { type: 'warning' }
     )

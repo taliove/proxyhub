@@ -7,7 +7,7 @@
     type="warning"
     :closable="false"
     class="slot-banner"
-    :title="`有 ${attentionSlots.length} 个名称槽位待处理(空槽或挂载节点已消失),请在下方名称槽位区指派节点`"
+    :title="`有 ${attentionSlots.length} 个名称槽位待处理（空槽或挂载节点已消失），请在下方名称槽位区指派节点`"
   />
   <SlotManager
     :slots="slots"

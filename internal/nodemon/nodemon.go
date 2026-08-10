@@ -159,7 +159,7 @@ func (m *Monitor) runRound(ctx context.Context) {
 	if len(targets) > fuseThreshold && !m.fuseNotified {
 		m.fuseNotified = true
 		m.alert("订阅节点监控集合过大",
-			fmt.Sprintf("当前监控节点 %d 个,超过阈值 %d。请检查订阅地址的筛选配置(未精选的地址会把整个池纳入监控)。", len(targets), fuseThreshold))
+			fmt.Sprintf("当前监控节点 %d 个，超过阈值 %d。请检查订阅地址的筛选配置（未精选的地址会把整个池纳入监控）。", len(targets), fuseThreshold))
 	} else if len(targets) <= fuseThreshold {
 		m.fuseNotified = false
 	}

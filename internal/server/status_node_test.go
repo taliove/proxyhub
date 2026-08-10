@@ -17,7 +17,7 @@ func TestBuildStatusNode(t *testing.T) {
 
 	// 全在线(未检测按在线计)
 	n := buildStatusNode([]*subscription.Node{up, unchecked})
-	if !strings.HasPrefix(n.Name, "📡 节点状态: 2/2 在线") {
+	if !strings.HasPrefix(n.Name, "📡 节点状态:2/2 在线") {
 		t.Errorf("all-up name = %q", n.Name)
 	}
 	if n.Type != "ss" || n.Server != "127.0.0.1" {
@@ -80,7 +80,7 @@ func TestSubscription_StatusNodeEndToEnd(t *testing.T) {
 	}
 	out = fetchSub(t, h, ep)
 	// 注:emoji 在 YAML 输出中被转义(\U0001F4E1),断言匹配未转义的中文段
-	if !strings.Contains(out, "节点状态: 1/1 在线") {
+	if !strings.Contains(out, "节点状态:1/1 在线") {
 		t.Errorf("enabled: output should contain status node, got:\n%s", out)
 	}
 

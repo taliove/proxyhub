@@ -6,12 +6,12 @@
       </el-form-item>
       <el-form-item v-if="currentSlot" label="当前名称">
         <el-tag size="small" type="success" effect="plain">{{ currentSlot }}</el-tag>
-        <span class="muted hint-inline">保存新名称后,旧名称变空槽</span>
+        <span class="muted hint-inline">保存新名称后，旧名称变空槽</span>
       </el-form-item>
       <el-form-item label="名称">
         <el-select
           v-model="name"
-          placeholder="选择空槽名称,或输入新名称"
+          placeholder="选择空槽名称，或输入新名称"
           filterable
           allow-create
           default-first-option
@@ -26,7 +26,7 @@
       <el-alert
         type="info"
         :closable="false"
-        title="名称立即生效,所有订阅地址统一使用;节点不可用时可把名称转移给别的节点。"
+        title="名称立即生效，所有订阅地址统一使用；节点不可用时可把名称转移给别的节点。"
       />
     </el-form>
     <template #footer>
@@ -68,10 +68,10 @@ const open = (row: UnifiedNode, occupyingSlot = '') => {
 // 冲突确认文案(409 载荷驱动):节点已占别的槽位 / 名字挂在别的节点上
 const confirmText = (c: SlotConflict, target: string): string => {
   if (c.kind === 'node_occupied') {
-    return `该节点当前挂在名称「${c.holder_name}」上。改挂到「${target}」后,「${c.holder_name}」将变空槽。确认?`
+    return `该节点当前挂在名称「${c.holder_name}」上。改挂到「${target}」后，「${c.holder_name}」将变空槽。确认？`
   }
   if (c.kind === 'reassign') {
-    return `名称「${target}」当前挂在节点 ${c.holder_node_key} 上,确认转移到本节点?`
+    return `名称「${target}」当前挂在节点 ${c.holder_node_key} 上，确认转移到本节点？`
   }
   return ''
 }
@@ -87,7 +87,7 @@ const save = async (force: boolean) => {
     } else {
       await createSlot(target, node.value.node_key, force)
     }
-    ElMessage.success('已生效,所有订阅立即使用新名称')
+    ElMessage.success('已生效，所有订阅立即使用新名称')
     visible.value = false
     emit('saved')
   } catch (e) {
@@ -95,7 +95,7 @@ const save = async (force: boolean) => {
     if (conflict && !force) {
       const text = confirmText(conflict, name.value)
       if (conflict.kind === 'name_taken') {
-        ElMessage.error(`名称「${name.value}」已存在,请换一个名字`)
+        ElMessage.error(`名称「${name.value}」已存在，请换一个名字`)
       } else if (text) {
         try {
           await ElMessageBox.confirm(text, '转移确认', { type: 'warning' })
@@ -104,7 +104,7 @@ const save = async (force: boolean) => {
           /* 用户取消 */
         }
       } else {
-        ElMessage.error('操作冲突,请刷新后重试')
+        ElMessage.error('操作冲突，请刷新后重试')
       }
     } else {
       ElMessage.error(apiErrorMessage(e, '保存失败'))
@@ -118,7 +118,7 @@ const unassign = async () => {
   if (!currentSlot.value) return
   try {
     await ElMessageBox.confirm(
-      `摘下后「${currentSlot.value}」变空槽,该节点回退模板/原始名称。确认?`,
+      `摘下后「${currentSlot.value}」变空槽，该节点回退模板/原始名称。确认？`,
       '摘下名称',
       { type: 'warning' }
     )
@@ -127,7 +127,7 @@ const unassign = async () => {
   }
   try {
     await updateSlot(currentSlot.value, { nodeKey: '' })
-    ElMessage.success('已摘下,名称保留为空槽')
+    ElMessage.success('已摘下，名称保留为空槽')
     visible.value = false
     emit('saved')
   } catch (e) {
