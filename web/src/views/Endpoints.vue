@@ -188,6 +188,7 @@ import {
   filterEndpointsByPicks,
   type PicksStatusFilter
 } from '@/components/endpoint-nodepicks-utils'
+import { copyText } from '@/utils/clipboard'
 
 const endpoints = ref<Endpoint[]>([])
 const loading = ref(false)
@@ -221,8 +222,9 @@ const getSubscriptionUrl = (row: Endpoint) => {
   return `${window.location.origin}/sub/${row.path}?token=${row.token}`
 }
 
-const copyUrl = (row: Endpoint) => {
-  navigator.clipboard.writeText(getSubscriptionUrl(row))
+const copyUrl = async (row: Endpoint) => {
+  // 降级剪贴板(局域网 http 非安全上下文无 clipboard API,见 utils/clipboard)
+  await copyText(getSubscriptionUrl(row))
   ElMessage.success('已复制到剪贴板')
 }
 

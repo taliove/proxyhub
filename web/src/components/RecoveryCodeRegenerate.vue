@@ -81,6 +81,7 @@ import { ElMessage } from 'element-plus'
 import { DocumentCopy } from '@element-plus/icons-vue'
 import { regenerateRecoveryCodes } from '@/api/mfa'
 import { regenerateErrorMessage } from './recovery-regen-utils'
+import { copyText } from '@/utils/clipboard'
 
 const confirmVisible = ref(false)
 const codesVisible = ref(false)
@@ -120,7 +121,7 @@ const submitRegenerate = async () => {
 
 const copyRecoveryCodes = async () => {
   try {
-    await navigator.clipboard.writeText(recoveryCodes.value.join('\n'))
+    await copyText(recoveryCodes.value.join('\n'))
     ElMessage.success('恢复码已复制')
   } catch {
     ElMessage.warning('复制失败，请手动选择复制')

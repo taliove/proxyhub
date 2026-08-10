@@ -1,6 +1,7 @@
 import { ElMessage } from 'element-plus'
 import type { Node } from '@/types'
 import client from '@/api/client'
+import { copyText } from '@/utils/clipboard'
 
 const SUPPORTED_PROTOCOLS = ['vmess', 'vless', 'trojan', 'ss', 'anytls'] as const
 
@@ -38,7 +39,7 @@ export async function getNodeShareLink(node: Node): Promise<string> {
 export async function copyNodeLink(node: Node): Promise<void> {
   try {
     const uri = await getNodeShareLink(node)
-    await navigator.clipboard.writeText(uri)
+    await copyText(uri)
     ElMessage.success('节点链接已复制到剪贴板')
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

@@ -1,6 +1,7 @@
 // Admin user-management view helpers (Users.vue): credential generation,
 // clipboard copy, and localized create-error toasts.
 import { ElMessage } from 'element-plus'
+import { copyText } from './clipboard'
 
 // generatePassword returns a 16-char alphanumeric random password using
 // crypto.getRandomValues (CSPRNG; never Math.random for credentials).
@@ -14,7 +15,7 @@ export function generatePassword(): string {
 // copyPassword writes the credential to the clipboard, with a fallback hint.
 export async function copyPassword(pwd: string) {
   try {
-    await navigator.clipboard.writeText(pwd)
+    await copyText(pwd)
     ElMessage.success('已复制')
   } catch {
     ElMessage.warning('复制失败，请手动选择复制')

@@ -126,6 +126,7 @@ import {
   isCompleteTOTPCode,
   normalizeTOTPCode
 } from './mfa-enroll-utils'
+import { copyText } from '@/utils/clipboard'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -216,7 +217,7 @@ const handleConfirm = async () => {
 
 const copySecret = async () => {
   try {
-    await navigator.clipboard.writeText(secret.value)
+    await copyText(secret.value)
     ElMessage.success('密钥已复制')
   } catch {
     ElMessage.warning('复制失败，请手动选择复制')
@@ -225,7 +226,7 @@ const copySecret = async () => {
 
 const copyRecoveryCodes = async () => {
   try {
-    await navigator.clipboard.writeText(recoveryCodes.value.join('\n'))
+    await copyText(recoveryCodes.value.join('\n'))
     ElMessage.success('恢复码已复制')
   } catch {
     ElMessage.warning('复制失败，请手动选择复制')

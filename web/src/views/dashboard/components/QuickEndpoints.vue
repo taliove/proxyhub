@@ -41,13 +41,13 @@ import { ElMessage } from 'element-plus'
 import type { Endpoint } from '@/types'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { useQuickEndpoints } from '../composables/useQuickEndpoints'
+import { copyText } from '@/utils/clipboard'
 
 const { endpoints, loading, error, getSubscriptionUrl } = useQuickEndpoints()
 
 // 复制与成功反馈照搬 Endpoints.vue 现成模式;剪贴板被拒绝时显式报错,不假报成功
 const copyUrl = (row: Endpoint) => {
-  navigator.clipboard
-    .writeText(getSubscriptionUrl(row))
+  copyText(getSubscriptionUrl(row))
     .then(() => ElMessage.success('已复制到剪贴板'))
     .catch(() => ElMessage.error('复制失败，请检查浏览器剪贴板权限'))
 }

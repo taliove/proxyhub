@@ -185,6 +185,7 @@ import { nodePicksCount, nodePicksLabel } from '@/components/endpoint-nodepicks-
 import { nameModeLabel, nameModeTag } from '@/utils/namemode'
 import { useTemplateList } from '@/composables/useTemplateList'
 import { regionDisplay } from '@/views/nodes/nodecells'
+import { copyText } from '@/utils/clipboard'
 
 // 预览节点(与后端 toNodeViews 输出对齐,只取本段所需字段)
 interface PreviewNode {
@@ -308,7 +309,7 @@ watch(
 
 const copyUrl = async () => {
   try {
-    await navigator.clipboard.writeText(props.subscriptionUrl)
+    await copyText(props.subscriptionUrl)
     ElMessage.success('订阅 URL 已复制到剪贴板')
   } catch (err) {
     ElMessage.error(`复制失败：${err instanceof Error ? err.message : String(err)}`)
