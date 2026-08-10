@@ -68,6 +68,40 @@ func TestApplyStandardization_SkipsSlotNodes(t *testing.T) {
 	}
 }
 
+// TestApplyNameSlots_TemplateVars 槽位名模板变量:含 "{" 的名字按当前挂载节点
+// 渲染,转移节点后名字跟随新节点地区("主节点-{region}"场景)
+func TestApplyNameSlots_TemplateVars(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	hk := &subscription.Node{Name: "原名", Server: "hk.example.com", Port: 443, Source: "机场A", Region: "HK"}
+	us := &subscription.Node{Name: "US原", Server: "us.example.com", Port: 443, Source: "机场A", Region: "US"}
+	if err := st.CreateNameSlotForUser(0, "主节点-{emoji}{region}", hk.NodeKey(), false); err != nil {
+		t.Fatal(err)
+	}
+
+	out := srv.applyNameSlots([]*subscription.Node{hk}, 0)
+	if out[0].DisplayName != "主节点-🇭🇰香港" {
+		t.Fatalf("rendered = %q, want 主节点-🇭🇰香港", out[0].DisplayName)
+	}
+
+	// 转移到美国节点:同一槽位名渲染出美国(槽位不变,文案跟随节点)
+	if err := st.UpdateNameSlotForUser(0, "主节点-{emoji}{region}", "", us.NodeKey(), true); err != nil {
+		t.Fatal(err)
+	}
+	out = srv.applyNameSlots([]*subscription.Node{us}, 0)
+	if out[0].DisplayName != "主节点-🇺🇸美国" {
+		t.Fatalf("after transfer rendered = %q, want 主节点-🇺🇸美国", out[0].DisplayName)
+	}
+
+	// 无变量的名字原样(不回读渲染依赖)
+	if err := st.CreateNameSlotForUser(0, "固定名", hk.NodeKey(), true); err != nil {
+		t.Fatal(err)
+	}
+	out = srv.applyNameSlots([]*subscription.Node{hk}, 0)
+	if out[0].DisplayName != "固定名" {
+		t.Errorf("literal slot name = %q, want 固定名", out[0].DisplayName)
+	}
+}
+
 // TestNamingChainOrder 命名链优先级:精选 alias > 槽位名 > 模板标准化 > 原名
 func TestNamingChainOrder(t *testing.T) {
 	srv, st := newTestServer(t, nil)

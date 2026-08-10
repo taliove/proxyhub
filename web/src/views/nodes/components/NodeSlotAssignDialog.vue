@@ -18,7 +18,7 @@
           clearable
           class="ctl-full"
         >
-          <el-option-group v-if="emptySlotNames.length" label="空槽(待指派)">
+          <el-option-group v-if="emptySlotNames.length" label="空槽（待指派）">
             <el-option v-for="n in emptySlotNames" :key="n" :label="n" :value="n" />
           </el-option-group>
         </el-select>
@@ -27,6 +27,7 @@
         type="info"
         :closable="false"
         title="名称立即生效，所有订阅地址统一使用；节点不可用时可把名称转移给别的节点。"
+        description="支持变量 {emoji} {region} {region_code} {source_abbr} {original_name}，随挂载节点自动渲染——例如「主节点-{region}」转移后自动跟随新节点地区。"
       />
     </el-form>
     <template #footer>
