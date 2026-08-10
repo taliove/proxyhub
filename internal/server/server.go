@@ -599,6 +599,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/endpoints/{id}/template", guard(s.handleUpdateEndpointTemplate))
 	mux.HandleFunc("PUT /api/endpoints/{id}/conditions", guard(s.handleUpdateEndpointConditions))
 	mux.HandleFunc("PUT /api/endpoints/{id}/node-picks", guard(s.handleUpdateEndpointNodePicks))
+	mux.HandleFunc("PUT /api/endpoints/{id}/status-node", guard(s.handleUpdateEndpointStatusNode))
 	mux.HandleFunc("PUT /api/endpoints/{id}/geo-config", guard(s.handleUpdateEndpointGeoConfig))
 	mux.HandleFunc("PUT /api/endpoints/{id}/public-name", guard(s.handleUpdateEndpointPublicName))
 	mux.HandleFunc("POST /api/endpoints/preview-conditions", guard(s.handlePreviewConditions))
@@ -1020,6 +1021,10 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no available nodes yet, try again later", http.StatusServiceUnavailable)
 		return
 	}
+
+	// 虚拟状态节点(issue #102):开关开启时输出第一位注入监控摘要哑节点。
+	// 在空池 503 判定之后:状态节点不应把空订阅伪装成非空。
+	nodes = s.prependStatusNode(nodes, ep)
 
 	// 格式：显式参数优先，否则按 User-Agent 猜测，默认 Clash
 	format := r.URL.Query().Get("format")
@@ -1451,16 +1456,19 @@ func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 可用性汇总加性附加(ADR 0028 决策 2):池在内存,无精选端点复用全局过滤链
-	// 只跑一遍的 base;配了精选的端点必须按下发路径(filteredNodesWithPicks,
+	// 只跑一遍的 base;配了精选的端点必须按下发路径(filteredNodesForDelivery,
 	// 精选先于 filt.Apply)单独重算——共享 base 已过 filt.Apply(去重/每地区限量),
 	// 事后叠加精选会把被截流的精选节点漏计,列表口径与实发分裂(check 评审)。
+	// 宕机免疫(issue #101)同宗:base/scoped 都必须带 immuneKeys,否则监控开启后
+	// 列表可用性口径与实发再次分裂(补审 MEDIUM)。
 	pool := s.nodes.NodesForUser(effUID)
-	base := s.filteredNodes(pool, effUID)
+	immuneKeys := s.monitorImmuneKeys(effUID)
+	base := s.filteredNodesForDelivery(pool, effUID, nil, immuneKeys)
 	items := make([]endpointListItem, 0, len(eps))
 	for _, ep := range eps {
 		scoped := base
 		if picks := s.endpointNodePicks(ep); len(picks) > 0 {
-			scoped = s.filteredNodesWithPicks(pool, effUID, picks)
+			scoped = s.filteredNodesForDelivery(pool, effUID, picks, immuneKeys)
 		}
 		items = append(items, endpointListItem{
 			Endpoint:     ep,
@@ -1578,6 +1586,37 @@ func (s *Server) handleUpdateEndpointNameConfig(w http.ResponseWriter, r *http.R
 		}
 		// 非法 name_mode 等参数错误回 400,其余 500
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleUpdateEndpointStatusNode 设置虚拟状态节点开关(issue #102)。
+// PUT /api/endpoints/{id}/status-node,请求体 {"enabled": true}。
+func (s *Server) handleUpdateEndpointStatusNode(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if err := s.st.SetEndpointStatusNodeForUser(EffectiveUserID(scope), id, req.Enabled); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		s.logger.Error("update endpoint status node failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
@@ -2045,8 +2084,9 @@ func (s *Server) mergeSelfHosted(nodes []*subscription.Node, userID int64) []*su
 // 注意:节点池现在保留全量数据(含不可用/慢/重复),所有过滤在这里执行,刷新时不再砍节点。
 // userID 为属主(ticket 07):0 = 全局池,非 0 时自建节点合并只读该用户的。
 //
-// 本签名不带精选维度 = 未配置精选(零回归),等价于 filteredNodesWithPicks(..., nil);
-// 无端点上下文的调用方(列表汇总/条件预览)与既有测试走这里。
+// 本签名不带精选维度 = 未配置精选(零回归),等价于 filteredNodesWithPicks(..., nil)。
+// 生产调用方已迁往 filteredNodesForDelivery(宕机免疫口径,issue #101);
+// 本函数仅剩既有测试在用——新代码请勿再调,需要裸链时显式传 nil immuneKeys。
 func (s *Server) filteredNodes(nodes []*subscription.Node, userID int64) []*subscription.Node {
 	return s.filteredNodesWithPicks(nodes, userID, nil)
 }

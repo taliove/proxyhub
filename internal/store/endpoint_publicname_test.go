@@ -55,6 +55,10 @@ INSERT INTO endpoints (alias, path, token) VALUES ('example.com', 'legacypath000
 	if err := s.migrateEndpointNodePicks(); err != nil {
 		t.Fatalf("migrateEndpointNodePicks: %v", err)
 	}
+	// status_node_enabled(issue #102)同理:读路径已选该列,legacy 表须同步补
+	if err := s.migrateEndpointStatusNode(); err != nil {
+		t.Fatalf("migrateEndpointStatusNode: %v", err)
+	}
 
 	ep, err := s.GetEndpointByPath("legacypath000000")
 	if err != nil {

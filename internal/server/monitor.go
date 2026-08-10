@@ -1,7 +1,10 @@
 package server
 
 import (
+	"errors"
+
 	"github.com/taliove/proxyhub/internal/nodemon"
+	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -67,7 +70,14 @@ func toMonitorTargets(userID int64, nodes []*subscription.Node) []nodemon.Target
 // 返回 nil——过滤链走原始可用性过滤(零回归)。
 func (s *Server) monitorImmuneKeys(userID int64) map[string]bool {
 	v, err := s.st.GetSetting("subscription_monitor_enabled")
-	if err != nil || v != "true" {
+	if err != nil {
+		// ErrNotFound = 未配置(功能默认关),是常态不告警;只记录真实 DB 故障
+		if !errors.Is(err, store.ErrNotFound) {
+			s.logger.Warn("read subscription_monitor_enabled failed, immunity off", "error", err)
+		}
+		return nil
+	}
+	if v != "true" {
 		return nil
 	}
 	eps, err := s.st.ListEndpointsByUser(userID)

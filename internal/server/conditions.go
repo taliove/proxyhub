@@ -131,7 +131,8 @@ func (s *Server) handlePreviewConditions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// 条件预览无端点上下文,精选维度不参与(spec #70:精选是按已保存端点的候选集替换)。
-	filtered := s.filteredNodes(s.nodes.NodesForUser(effUID), effUID)
+	// 宕机免疫(issue #101)与实发同口径:免疫死节点在预览中也可见/可命中。
+	filtered := s.filteredNodesForDelivery(s.nodes.NodesForUser(effUID), effUID, nil, s.monitorImmuneKeys(effUID))
 	matched := s.applyConditionsResolved(filtered, cond)
 
 	// 取前 20 个命中节点的明细(多于 20 时截断,避免返回体过大;count 保留真实命中数)

@@ -75,7 +75,10 @@ CREATE TABLE IF NOT EXISTS endpoints (
 	public_name   TEXT NOT NULL DEFAULT '',
 	-- 订阅地址精选节点集(spec #70 / issue #79):NodeKey JSON 数组,空串=未配置=全量。
 	-- 新库由本 schema 建出;既有库靠 migrateEndpointNodePicks 幂等补列。
-	node_picks    TEXT NOT NULL DEFAULT ''
+	node_picks    TEXT NOT NULL DEFAULT '',
+	-- 虚拟状态节点开关(issue #102):1 = 该地址输出第一位注入监控摘要哑节点。
+	-- 新库由本 schema 建出;既有库靠 migrateEndpointStatusNode 幂等补列。
+	status_node_enabled INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS pull_logs (
@@ -308,6 +311,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 	if err := s.addColumnIfMissing("endpoints", "name_template", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// 虚拟状态节点开关(030_endpoint_status_node.sql / issue #102):默认关,零回归。
+	if err := s.migrateEndpointStatusNode(); err != nil {
 		return err
 	}
 	// 订阅地址的节点范围筛选条件(013_endpoint_conditions.sql)。

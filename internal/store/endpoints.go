@@ -60,6 +60,11 @@ type Endpoint struct {
 	// "ProxyHub · <public_name>";空串=未设,下发裸品牌名。与私有 alias 相对,
 	// 是可下发到订阅客户端的人类可读名。
 	PublicName string `json:"public_name"`
+
+	// StatusNodeEnabled 虚拟状态节点开关(ADR 0047 / issue #102):开启时该地址
+	// 输出第一位注入合成哑节点,名称动态展示监控摘要(在线数/故障名单)。
+	// 默认关(零回归)。
+	StatusNodeEnabled bool `json:"status_node_enabled"`
 }
 
 // URL 返回订阅地址的相对路径
@@ -78,7 +83,7 @@ func randomHex(bytes int) (string, error) {
 
 // endpointColumns 查询列表共用的列清单(ticket 07 起带 user_id,读取侧三处保持一致)。
 // 与 scanEndpointFrom 的 Scan 目标顺序一一对应,加列必须双处同步。
-const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name, geo_mode, geo_countries, geo_provinces, public_name, node_picks`
+const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name, geo_mode, geo_countries, geo_provinces, public_name, node_picks, status_node_enabled`
 
 // CreateEndpoint 创建订阅地址（随机 Path + Token）。
 // 未指定属主(旧调用/直接库调用)时归一到首个 super_admin(ticket 07 Invariant B);
@@ -336,6 +341,12 @@ func (s *Store) migrateEndpointNodePicks() error {
 	return s.addColumnIfMissing("endpoints", "node_picks", "TEXT NOT NULL DEFAULT ''")
 }
 
+// migrateEndpointStatusNode 虚拟状态节点开关列(issue #102)。
+// 新库由 migrate() 内联 schema 建出;既有库经此幂等补列(双路径同 019/025 先例)。
+func (s *Store) migrateEndpointStatusNode() error {
+	return s.addColumnIfMissing("endpoints", "status_node_enabled", "INTEGER NOT NULL DEFAULT 0")
+}
+
 // maxPublicNameRunes 公开名称的 rune 上限(issue #38):展示卫生,防超长串
 // 撑爆客户端配置列表;不是安全闸门(/sub 头值整体 base64/percent-encode,
 // CRLF 结构性进不去)。
@@ -436,13 +447,27 @@ func (s *Store) scanEndpointRow(rows *sql.Rows) (*Endpoint, error) {
 func scanEndpointFrom(r rowScanner) (*Endpoint, error) {
 	var ep Endpoint
 	var enabled int
+	var statusNode int
 	if err := r.Scan(&ep.ID, &ep.Alias, &ep.Path, &ep.Token, &enabled, &ep.CreatedAt,
 		&ep.NameMode, &ep.NameTemplate, &ep.Conditions, &ep.UserID, &ep.TemplateName,
-		&ep.GeoMode, &ep.GeoCountries, &ep.GeoProvinces, &ep.PublicName, &ep.NodePicks); err != nil {
+		&ep.GeoMode, &ep.GeoCountries, &ep.GeoProvinces, &ep.PublicName, &ep.NodePicks,
+		&statusNode); err != nil {
 		return nil, err
 	}
 	ep.Enabled = enabled != 0
+	ep.StatusNodeEnabled = statusNode != 0
 	return &ep, nil
+}
+
+// SetEndpointStatusNodeForUser 设置虚拟状态节点开关(issue #102,按属主校验)。
+func (s *Store) SetEndpointStatusNodeForUser(userID, id int64, enabled bool) error {
+	res, err := s.db.Exec(
+		`UPDATE endpoints SET status_node_enabled = ? WHERE id = ? AND user_id = ?`,
+		boolToInt(enabled), id, userID)
+	if err != nil {
+		return err
+	}
+	return checkAffected(res)
 }
 
 func boolToInt(b bool) int {
