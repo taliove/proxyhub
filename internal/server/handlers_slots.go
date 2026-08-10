@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
@@ -14,13 +15,13 @@ import (
 
 // slotNodeView 槽位挂载节点的摘要(在线状态供管理界面亮灯)
 type slotNodeView struct {
-	Name      string `json:"name"`       // 机场原名
-	Source    string `json:"source"`     // 来源机场
-	Region    string `json:"region"`     // 地区码
-	Available bool   `json:"available"`  // 最近检测可用性
-	Latency   int    `json:"latency"`    // 延迟(ms)
-	Stale     bool   `json:"stale"`      // 已从机场订阅消失
-	Missing   bool   `json:"missing"`    // 池里找不到(键已孤儿化)
+	Name      string `json:"name"`      // 机场原名
+	Source    string `json:"source"`    // 来源机场
+	Region    string `json:"region"`    // 地区码
+	Available bool   `json:"available"` // 最近检测可用性
+	Latency   int    `json:"latency"`   // 延迟(ms)
+	Stale     bool   `json:"stale"`     // 已从机场订阅消失
+	Missing   bool   `json:"missing"`   // 池里找不到(键已孤儿化)
 	// 最近一次监控探测(issue #103):无监控数据时为空
 	LastProbeAt string `json:"last_probe_at,omitempty"`
 	LastProbeOK bool   `json:"last_probe_ok"`
@@ -34,6 +35,62 @@ type slotView struct {
 	CreatedAt string        `json:"created_at"`
 	UpdatedAt string        `json:"updated_at"`
 	Node      *slotNodeView `json:"node,omitempty"`
+	// ProbeGrid 24 小时探测网格(issue #103):24 格,旧→新;
+	// 0=无数据 1=全通 2=部分通 3=全断。未指派/监控未开时不输出。
+	ProbeGrid []int `json:"probe_grid,omitempty"`
+}
+
+// 探测网格状态值(与前端 ProbeGrid 组件对齐)
+const (
+	probeNone  = 0
+	probeOK    = 1
+	probeMixed = 2
+	probeDown  = 3
+)
+
+// buildProbeGrid 把 24 小时内的打点聚成 24 个按小时的格子(旧→新,本地时区)。
+func (s *Server) buildProbeGrid(nodeKey string) []int {
+	samples, err := s.st.ListMonitorSamplesSince(nodeKey, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		s.logger.Warn("list monitor samples for grid failed", "key", nodeKey, "error", err)
+		return nil
+	}
+	if len(samples) == 0 {
+		return nil
+	}
+	type bucket struct{ total, ok int }
+	buckets := make([]bucket, 24)
+	now := time.Now()
+	hasData := false
+	for _, smp := range samples {
+		hoursAgo := int(now.Sub(smp.CheckedAt.Local()).Hours())
+		if hoursAgo < 0 || hoursAgo > 23 {
+			continue
+		}
+		idx := 23 - hoursAgo
+		buckets[idx].total++
+		if smp.OK {
+			buckets[idx].ok++
+		}
+		hasData = true
+	}
+	if !hasData {
+		return nil
+	}
+	grid := make([]int, 24)
+	for i, b := range buckets {
+		switch {
+		case b.total == 0:
+			grid[i] = probeNone
+		case b.ok == b.total:
+			grid[i] = probeOK
+		case b.ok == 0:
+			grid[i] = probeDown
+		default:
+			grid[i] = probeMixed
+		}
+	}
+	return grid
 }
 
 // poolNodeIndex 建 node_key → 池节点索引(含 stale,供槽位摘要判 missing/stale)。
@@ -99,13 +156,21 @@ func (s *Server) handleListSlots(w http.ResponseWriter, r *http.Request) {
 			} else if serr != nil {
 				s.logger.Warn("list monitor samples failed", "key", sl.NodeKey, "error", serr)
 			}
+			v.ProbeGrid = s.buildProbeGrid(sl.NodeKey)
 		}
 		views = append(views, v)
 	}
 
+	// 监控总开关一并下发:前端据此把"无探测数据"提示为"监控未开启"(issue #103)
+	monitorEnabled := false
+	if v, err := s.st.GetSetting("subscription_monitor_enabled"); err == nil && v == "true" {
+		monitorEnabled = true
+	}
+
 	writeJSON(w, map[string]any{
-		"slots":     views,
-		"conflicts": conflicts,
+		"slots":           views,
+		"conflicts":       conflicts,
+		"monitor_enabled": monitorEnabled,
 	})
 }
 

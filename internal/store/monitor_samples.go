@@ -30,6 +30,34 @@ func (s *Store) PruneMonitorSamples(before time.Time) error {
 	return err
 }
 
+// ListMonitorSamplesSince 读节点 since 之后的打点(新到旧),供 24 小时
+// 探测网格聚合(issue #103)。时间窗比较与写入同用 RFC3339,避免裸 SQL
+// datetime() 解析歧义(见 store 时间格式教训)。
+func (s *Store) ListMonitorSamplesSince(nodeKey string, since time.Time) ([]MonitorSample, error) {
+	rows, err := s.db.Query(
+		`SELECT node_key, ok, latency_ms, checked_at FROM node_monitor_samples
+		 WHERE node_key = ? AND checked_at >= ? ORDER BY checked_at DESC, id DESC`,
+		nodeKey, since.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []MonitorSample{}
+	for rows.Next() {
+		var smp MonitorSample
+		var ok int
+		var checkedStr string
+		if err := rows.Scan(&smp.NodeKey, &ok, &smp.LatencyMs, &checkedStr); err != nil {
+			return nil, err
+		}
+		smp.OK = ok != 0
+		smp.CheckedAt = parseSlotTime(checkedStr)
+		result = append(result, smp)
+	}
+	return result, rows.Err()
+}
+
 // ListMonitorSamples 读节点最近打点(新到旧,limit 截断),供节点详情/趋势
 // (issue #103)与测试断言。
 func (s *Store) ListMonitorSamples(nodeKey string, limit int) ([]MonitorSample, error) {

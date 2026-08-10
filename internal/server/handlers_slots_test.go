@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
@@ -180,6 +181,60 @@ func TestSlotsAPI_SelfHostedNodeAssignable(t *testing.T) {
 	srv.handleCreateSlot(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("assign self-hosted node status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
+// TestSlotsAPI_ProbeGrid 24 小时探测网格:按小时聚合,旧→新 24 格,
+// 全通/全断/部分通/无数据四态;响应带 monitor_enabled 开关回显(issue #103)
+func TestSlotsAPI_ProbeGrid(t *testing.T) {
+	node := &subscription.Node{Name: "A", Server: "a.example.com", Port: 443, Source: "机场A"}
+	srv, st := newTestServer(t, []*subscription.Node{node})
+	now := time.Now()
+
+	// 当前小时:2 通 1 断(部分通);1 小时前:全断;3 小时前:全通
+	put := func(hoursAgo int, ok bool) {
+		if err := st.SaveMonitorSample(node.NodeKey(), ok, 50, now.Add(-time.Duration(hoursAgo)*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(0, true)
+	put(0, true)
+	put(0, false)
+	put(1, false)
+	put(3, true)
+
+	if err := st.CreateNameSlotForUser(0, "格", node.NodeKey(), false); err != nil {
+		t.Fatal(err)
+	}
+
+	w, req := slotReq(t, http.MethodGet, "/api/slots", nil)
+	srv.handleListSlots(w, req)
+	var resp struct {
+		MonitorEnabled bool `json:"monitor_enabled"`
+		Slots          []struct {
+			Name      string `json:"name"`
+			ProbeGrid []int  `json:"probe_grid"`
+		} `json:"slots"`
+	}
+	decodeSlotResp(t, w, &resp)
+	if resp.MonitorEnabled {
+		t.Error("monitor_enabled should be false by default")
+	}
+	if len(resp.Slots) != 1 || len(resp.Slots[0].ProbeGrid) != 24 {
+		t.Fatalf("probe_grid = %+v, want 24 cells", resp.Slots)
+	}
+	grid := resp.Slots[0].ProbeGrid
+	if grid[23] != 2 {
+		t.Errorf("current hour = %d, want 2 (mixed)", grid[23])
+	}
+	if grid[22] != 3 {
+		t.Errorf("1h ago = %d, want 3 (down)", grid[22])
+	}
+	if grid[21] != 0 {
+		t.Errorf("2h ago = %d, want 0 (no data)", grid[21])
+	}
+	if grid[20] != 1 {
+		t.Errorf("3h ago = %d, want 1 (ok)", grid[20])
 	}
 }
 

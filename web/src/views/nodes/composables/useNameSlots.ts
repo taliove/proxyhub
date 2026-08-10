@@ -7,6 +7,8 @@ export const useNameSlots = () => {
   const slots = ref<NameSlot[]>([])
   const conflicts = ref<SlotConflictRow[]>([])
   const loading = ref(false)
+  // 监控总开关(issue #103):关时探测列显示"监控未开启"指引而非横杠
+  const monitorEnabled = ref(false)
 
   const load = async () => {
     loading.value = true
@@ -14,6 +16,7 @@ export const useNameSlots = () => {
       const resp = await listSlots()
       slots.value = resp.slots || []
       conflicts.value = resp.conflicts || []
+      monitorEnabled.value = resp.monitor_enabled === true
     } finally {
       loading.value = false
     }
@@ -36,5 +39,14 @@ export const useNameSlots = () => {
     slots.value.filter((s) => s.empty || s.node?.stale || s.node?.missing)
   )
 
-  return { slots, conflicts, loading, load, slotNameByNodeKey, emptySlots, attentionSlots }
+  return {
+    slots,
+    conflicts,
+    loading,
+    monitorEnabled,
+    load,
+    slotNameByNodeKey,
+    emptySlots,
+    attentionSlots
+  }
 }

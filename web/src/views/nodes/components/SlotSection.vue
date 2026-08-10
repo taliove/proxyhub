@@ -13,6 +13,7 @@
     :slots="slots"
     :conflicts="conflicts"
     :loading="loading"
+    :monitor-enabled="monitorEnabled"
     :nodes="nodes"
     @changed="onChanged"
   />
@@ -32,8 +33,16 @@ const emit = defineEmits<{
   (e: 'changed'): void
 }>()
 
-const { slots, conflicts, loading, load, slotNameByNodeKey, emptySlots, attentionSlots } =
-  useNameSlots()
+const {
+  slots,
+  conflicts,
+  loading,
+  monitorEnabled,
+  load,
+  slotNameByNodeKey,
+  emptySlots,
+  attentionSlots
+} = useNameSlots()
 
 const emptySlotNames = computed(() => emptySlots.value.map((s) => s.name))
 // 名称列"槽位"标记用的占用集合(供父页传 NodeTable)

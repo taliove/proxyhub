@@ -23,6 +23,8 @@ export interface NameSlot {
   created_at: string
   updated_at: string
   node?: SlotNodeSummary
+  // 24 小时探测网格(issue #103):24 格,旧→新;0=无数据 1=全通 2=部分通 3=全断
+  probe_grid?: number[]
 }
 
 // 迁移落选冲突行(display_name 残留待人工处理)
@@ -37,6 +39,8 @@ export interface SlotConflictRow {
 export interface SlotListResponse {
   slots: NameSlot[]
   conflicts: SlotConflictRow[]
+  // 监控总开关(订阅节点监控):关时前端提示"监控未开启"而非空数据
+  monitor_enabled?: boolean
 }
 
 // 409 冲突载荷(与后端 writeSlotError 对齐)

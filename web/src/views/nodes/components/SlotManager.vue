@@ -23,7 +23,7 @@
         <template #default="{ row }">
           <el-tag v-if="row.empty" type="danger" size="small">空槽 · 待指派</el-tag>
           <template v-else-if="row.node">
-            <span v-if="row.node.missing" class="muted">节点已消失({{ row.node_key }})</span>
+            <span v-if="row.node.missing" class="muted">节点已消失（{{ row.node_key }}）</span>
             <span v-else>{{ row.node.name }}</span>
           </template>
         </template>
@@ -46,7 +46,6 @@
           <el-tag v-else type="success" size="small" effect="plain">在线</el-tag>
         </template>
       </el-table-column>
-      <!-- 最近监控探测(issue #103):无监控数据走占位 -->
       <el-table-column label="最近探测" width="150">
         <template #default="{ row }">
           <span v-if="row.node?.last_probe_at" class="probe-cell">
@@ -55,6 +54,14 @@
             </span>
             <span class="muted num">{{ row.node.last_probe_at }}</span>
           </span>
+          <span v-else-if="!monitorEnabled" class="muted">监控未开启</span>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="24 小时" width="230">
+        <template #default="{ row }">
+          <ProbeGrid v-if="row.probe_grid" :grid="row.probe_grid" />
+          <span v-else-if="!monitorEnabled" class="muted">设置 → 告警设置里开启</span>
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
@@ -71,7 +78,7 @@
 
     <!-- 迁移待处理冲突:同名竞争落选行,认领(改成槽位)或放弃(清除覆盖) -->
     <div v-if="conflicts.length" class="conflict-zone">
-      <div class="conflict-title">待处理冲突(旧名称覆盖同名竞争落选)</div>
+      <div class="conflict-title">待处理冲突（旧名称覆盖同名竞争落选）</div>
       <div v-for="c in conflicts" :key="c.node_key" class="conflict-row">
         <span class="conflict-name">{{ c.display_name }}</span>
         <span class="muted">{{ c.node_key }}</span>
@@ -90,7 +97,7 @@
     >
       <el-select
         v-model="assignNodeKey"
-        placeholder="搜索节点(名称/地区)"
+        placeholder="搜索节点（名称/地区）"
         filterable
         class="ctl-full"
       >
@@ -119,6 +126,7 @@ import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import client from '@/api/client'
+import ProbeGrid from './ProbeGrid.vue'
 import {
   createSlot,
   deleteSlot,
@@ -134,6 +142,8 @@ const props = defineProps<{
   slots: NameSlot[]
   conflicts: SlotConflictRow[]
   loading: boolean
+  // 监控总开关(订阅节点监控):关时探测列显示指引而非横杠
+  monitorEnabled: boolean
   // 指派候选:统一行集(机场+自建)
   nodes: UnifiedNode[]
 }>()
@@ -150,7 +160,7 @@ const assignCandidates = computed(() =>
 const createNew = async () => {
   let name: string
   try {
-    const { value } = await ElMessageBox.prompt('输入新名称(可先起名后挑节点)', '新建名称', {
+    const { value } = await ElMessageBox.prompt('输入新名称（可先起名后挑节点）', '新建名称', {
       inputPattern: /\S/,
       inputErrorMessage: '名称不能为空'
     })
