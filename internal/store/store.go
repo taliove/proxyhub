@@ -249,6 +249,18 @@ CREATE TABLE IF NOT EXISTS name_slots (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_name_slots_node
 	ON name_slots(user_id, node_key) WHERE node_key != '';
 
+-- 订阅节点监控探测打点(ADR 0047 / issue #99):每次 TCP 探测一行,按 node_key
+-- 物理维度(跨用户去重),保留 7 天由 nodemon prune。参考:migrations/029_node_monitor_samples.sql。
+CREATE TABLE IF NOT EXISTS node_monitor_samples (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	node_key   TEXT NOT NULL,
+	ok         INTEGER NOT NULL,
+	latency_ms INTEGER NOT NULL DEFAULT 0,
+	checked_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_node_monitor_samples_key_time
+	ON node_monitor_samples(node_key, checked_at);
+
 -- 安全审计事件流水：登录成功/失败/蜜罐命中/达阈值封禁。保留 90 天。
 CREATE TABLE IF NOT EXISTS audit_logs (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,

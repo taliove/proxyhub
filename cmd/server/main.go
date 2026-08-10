@@ -19,6 +19,7 @@ import (
 	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/geoip"
 	"github.com/taliove/proxyhub/internal/jobs"
+	"github.com/taliove/proxyhub/internal/nodemon"
 	"github.com/taliove/proxyhub/internal/server"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
@@ -135,6 +136,12 @@ func run(configPath string) error {
 
 	srv.RecoverJobs()            // 重启恢复:遗留 running 体检任务标记 interrupted
 	go srv.StartExamSweeper(ctx) // 后台清扫过期(超过 TTL)的体检任务
+
+	// 订阅节点监控(ADR 0047 / issue #99):5 分钟 TCP 探活 + 打点落库。
+	// 总开关 subscription_monitor_enabled 默认关,开了才开始探测。
+	monitor := nodemon.New(st, st, alerter, logger)
+	monitor.SetProvider(srv)
+	go monitor.Run(ctx)
 
 	// 启动调度器(晚间标签重算)
 	go scheduler.Run(ctx)
