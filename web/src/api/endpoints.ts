@@ -6,6 +6,11 @@ export interface UpdateEndpointTemplateRequest {
   template_name: string // Empty string to unbind (follow default)
 }
 
+// 虚拟状态节点开关(issue #102):开启后该地址输出第一位注入监控摘要哑节点
+export function setEndpointStatusNode(id: number, enabled: boolean): Promise<{ ok: boolean }> {
+  return client.put<unknown, { ok: boolean }>(`/endpoints/${id}/status-node`, { enabled })
+}
+
 // Update endpoint template binding
 export function updateEndpointTemplate(
   id: number,

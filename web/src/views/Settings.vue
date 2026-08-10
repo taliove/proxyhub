@@ -72,6 +72,7 @@
               <el-button type="primary" @click="saveSettings">保存</el-button>
             </el-form-item>
           </el-form>
+          <MonitorSettings />
         </el-tab-pane>
         <el-tab-pane label="订阅设置">
           <el-form :model="settings" label-width="180px" class="settings-form">
@@ -97,9 +98,7 @@
                 全量刷新时同时拉取的机场数（1-10，默认 4）。只作用于拉取阶段。
               </span>
             </el-form-item>
-            <el-form-item label="地区白名单">
-              <RegionWhitelist />
-            </el-form-item>
+            <el-form-item label="地区白名单"><RegionWhitelist /></el-form-item>
             <el-form-item label="节点名称标准化">
               <template #label>
                 节点名称标准化
@@ -239,6 +238,7 @@ import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/PageHeader.vue'
 import RegionWhitelist from '@/components/RegionWhitelist.vue'
 import DirectEgressSettings from '@/components/DirectEgressSettings.vue'
+import MonitorSettings from '@/components/MonitorSettings.vue'
 import DetectionTargets from '@/components/DetectionTargets.vue'
 import TrustedIPList from '@/components/TrustedIPList.vue'
 import RecoveryCodeRegenerate from '@/components/RecoveryCodeRegenerate.vue'

@@ -11,6 +11,9 @@ export interface SlotNodeSummary {
   latency: number
   stale: boolean
   missing: boolean
+  // 最近一次监控探测(issue #103);无监控数据时缺省
+  last_probe_at?: string
+  last_probe_ok?: boolean
 }
 
 export interface NameSlot {

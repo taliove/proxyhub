@@ -12,6 +12,8 @@ export interface Endpoint {
   conditions: string
   // 配置模板名称(软引用);''=跟随默认模板(见模板库四级回退链)
   template_name: string
+  // 虚拟状态节点开关(issue #102):true = 订阅第一位注入节点状态摘要哑节点
+  status_node_enabled?: boolean
   // 地域白名单(pull-guard ticket 07):'off'=不判(默认), 'observe'=只留痕仍下发,
   // 'enforce'=不匹配则 403。两个列表逗号分隔,空=该维度不判(所以 enforce + 双空仍全放行)。
   // 省份维度受内置库限制:当前内置库只有国家级数据,省份列表非空即恒不匹配。

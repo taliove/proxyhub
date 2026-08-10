@@ -43,6 +43,14 @@
             />
             <span>{{ endpoint.enabled ? '启用' : '禁用' }}</span>
           </el-descriptions-item>
+          <el-descriptions-item label="虚拟状态节点">
+            <el-switch
+              :model-value="endpoint.status_node_enabled"
+              :loading="statusNodeSaving"
+              @change="onStatusNodeChange"
+            />
+            <span class="status-node-hint">在订阅第一位注入节点状态摘要</span>
+          </el-descriptions-item>
         </el-descriptions>
         <div class="drawer-actions">
           <el-button size="small" @click="emit('toggle', endpoint)">
@@ -166,12 +174,13 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Endpoint } from '@/types'
 import client from '@/api/client'
-import { updateEndpointTemplate } from '@/api/endpoints'
+import { updateEndpointTemplate, setEndpointStatusNode } from '@/api/endpoints'
 import StatusDot from '@/components/StatusDot.vue'
 import IPStatsTable from '@/components/IPStatsTable.vue'
 import EndpointTestSection from '@/components/EndpointTestSection.vue'
 import EndpointGeoConfigSection from '@/components/EndpointGeoConfigSection.vue'
 import { hasConditions } from '@/utils/conditions'
+import { extractErrorDetail } from '@/utils/errors'
 import { nodePicksCount, nodePicksLabel } from '@/components/endpoint-nodepicks-utils'
 import { nameModeLabel, nameModeTag } from '@/utils/namemode'
 import { useTemplateList } from '@/composables/useTemplateList'
@@ -204,6 +213,7 @@ const emit = defineEmits<{
   (e: 'delete', endpoint: Endpoint): void
   (e: 'qrcode', endpoint: Endpoint): void
   (e: 'template-changed'): void
+  (e: 'status-node-changed'): void
 }>()
 
 const drawerTitle = computed(() =>
@@ -225,6 +235,22 @@ const openTemplateConfig = async () => {
   await loadTemplates()
   templateConfigForm.value.template_name = props.endpoint.template_name || ''
   templateConfigVisible.value = true
+}
+
+// ---- 虚拟状态节点开关(issue #102/103):直改直存,与模板配置同哲学 ----
+const statusNodeSaving = ref(false)
+const onStatusNodeChange = async (val: string | number | boolean) => {
+  if (!props.endpoint) return
+  statusNodeSaving.value = true
+  try {
+    await setEndpointStatusNode(props.endpoint.id, Boolean(val))
+    ElMessage.success(val ? '已开启:订阅第一位将展示节点状态' : '已关闭')
+    emit('status-node-changed')
+  } catch (e) {
+    ElMessage.error(extractErrorDetail(e) || '保存失败')
+  } finally {
+    statusNodeSaving.value = false
+  }
 }
 
 const saveTemplateConfig = async () => {
@@ -308,6 +334,11 @@ const copyUrl = async () => {
 }
 .url-text {
   word-break: break-all;
+}
+.status-node-hint {
+  margin-left: var(--ph-space-2);
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
 }
 .state-dot {
   margin-right: var(--ph-space-1);

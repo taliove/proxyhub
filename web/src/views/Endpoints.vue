@@ -156,6 +156,7 @@
       @delete="deleteEndpoint"
       @qrcode="showSubscriptionQR"
       @template-changed="loadEndpoints"
+      @status-node-changed="loadEndpoints"
     />
 
     <!-- 订阅地址二维码:扫码导入客户端 -->

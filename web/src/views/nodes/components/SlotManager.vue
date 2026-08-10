@@ -46,6 +46,18 @@
           <el-tag v-else type="success" size="small" effect="plain">在线</el-tag>
         </template>
       </el-table-column>
+      <!-- 最近监控探测(issue #103):无监控数据走占位 -->
+      <el-table-column label="最近探测" width="150">
+        <template #default="{ row }">
+          <span v-if="row.node?.last_probe_at" class="probe-cell">
+            <span :class="row.node.last_probe_ok ? 'probe-ok' : 'probe-fail'">
+              {{ row.node.last_probe_ok ? '✓' : '✗' }}
+            </span>
+            <span class="muted num">{{ row.node.last_probe_at }}</span>
+          </span>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="200">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openAssign(row)">
@@ -360,5 +372,19 @@ const clearOverrideRow = async (nodeKey: string) => {
 }
 .conflict-ops {
   margin-left: auto;
+}
+.probe-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ph-space-1);
+}
+.probe-ok {
+  color: var(--ph-success);
+}
+.probe-fail {
+  color: var(--ph-danger);
+}
+.num {
+  font-variant-numeric: tabular-nums;
 }
 </style>

@@ -21,6 +21,9 @@ type slotNodeView struct {
 	Latency   int    `json:"latency"`    // 延迟(ms)
 	Stale     bool   `json:"stale"`      // 已从机场订阅消失
 	Missing   bool   `json:"missing"`    // 池里找不到(键已孤儿化)
+	// 最近一次监控探测(issue #103):无监控数据时为空
+	LastProbeAt string `json:"last_probe_at,omitempty"`
+	LastProbeOK bool   `json:"last_probe_ok"`
 }
 
 // slotView 槽位对外视图
@@ -83,6 +86,16 @@ func (s *Server) handleListSlots(w http.ResponseWriter, r *http.Request) {
 				}
 			} else {
 				v.Node = &slotNodeView{Missing: true}
+			}
+			// 最近一次监控探测打点(节点可能已消失,探测数据仍可展示)
+			if samples, serr := s.st.ListMonitorSamples(sl.NodeKey, 1); serr == nil && len(samples) > 0 {
+				if v.Node == nil {
+					v.Node = &slotNodeView{Missing: true}
+				}
+				v.Node.LastProbeAt = samples[0].CheckedAt.Local().Format("2006-01-02 15:04:05")
+				v.Node.LastProbeOK = samples[0].OK
+			} else if serr != nil {
+				s.logger.Warn("list monitor samples failed", "key", sl.NodeKey, "error", serr)
 			}
 		}
 		views = append(views, v)
