@@ -2056,19 +2056,26 @@ func (s *Server) filteredNodes(nodes []*subscription.Node, userID int64) []*subs
 // 非空时插在过滤链最前(合并自建节点之后、各设置过滤之前)做候选集替换,
 // 屏蔽/stale 等既有过滤在其后天然仍剔除精选集中的禁用/下架节点。
 func (s *Server) filteredNodesWithPicks(nodes []*subscription.Node, userID int64, picks []store.NodePick) []*subscription.Node {
-	return s.filteredNodesChain(nodes, userID, picks, false)
+	return s.filteredNodesChain(nodes, userID, picks, false, nil)
 }
 
 // filteredNodesForMonitor 监控集合口径(ADR 0047 / issue #99):与下发链同源,
 // 但跳过可用性/延迟过滤——否则节点一判宕就掉出监控集合,永远等不到恢复探测。
 // stale/屏蔽/白黑名单等卫生过滤保留(已消失/已拉黑的节点没有探测意义)。
 func (s *Server) filteredNodesForMonitor(nodes []*subscription.Node, userID int64, picks []store.NodePick) []*subscription.Node {
-	return s.filteredNodesChain(nodes, userID, picks, true)
+	return s.filteredNodesChain(nodes, userID, picks, true, nil)
+}
+
+// filteredNodesForDelivery 下发口径(含宕机免疫,issue #101):immuneKeys 非空时
+// 免疫节点跳过可用性/延迟过滤(宕机仍下发,用户可见"它还在,只是不可用")。
+func (s *Server) filteredNodesForDelivery(nodes []*subscription.Node, userID int64, picks []store.NodePick, immuneKeys map[string]bool) []*subscription.Node {
+	return s.filteredNodesChain(nodes, userID, picks, false, immuneKeys)
 }
 
 // filteredNodesChain 下发过滤链共享实现。skipAvailability=true 时跳过
-// FilterAvailable/延迟阈值(监控集合专用,见 filteredNodesForMonitor)。
-func (s *Server) filteredNodesChain(nodes []*subscription.Node, userID int64, picks []store.NodePick, skipAvailability bool) []*subscription.Node {
+// FilterAvailable/延迟阈值(监控集合专用,见 filteredNodesForMonitor);
+// 否则 immuneKeys 命中的节点豁免这两道过滤(宕机免疫,issue #101)。
+func (s *Server) filteredNodesChain(nodes []*subscription.Node, userID int64, picks []store.NodePick, skipAvailability bool, immuneKeys map[string]bool) []*subscription.Node {
 	// serve-time 合并自建节点:填补「新增后到下轮刷新前」的空档,并保证机场全挂时自建节点仍在。
 	nodes = s.mergeSelfHosted(nodes, userID)
 
@@ -2104,16 +2111,44 @@ func (s *Server) filteredNodesChain(nodes []*subscription.Node, userID int64, pi
 	nodes = filterStaleNodes(nodes)
 
 	// 可用性、延迟阈值、去重/精选(刷新时不再过滤,挪到这里执行);
-	// 监控集合口径跳过可用性/延迟,但保留去重/限量(与实发一致)。
+	// 监控集合口径(skipAvailability)跳过可用性/延迟,但保留去重/限量(与实发一致);
+	// 宕机免疫(issue #101):immuneKeys 命中的节点豁免可用性/延迟,宕机仍下发。
 	if !skipAvailability {
-		nodes = filter.FilterAvailable(nodes)
-		latencyThreshold := s.cfg.HealthCheck.LatencyThreshold
-		nodes = filter.FilterByLatencyThreshold(nodes, latencyThreshold)
+		if len(immuneKeys) > 0 {
+			nodes = filterAvailableImmune(nodes, immuneKeys)
+			nodes = filterLatencyImmune(nodes, s.cfg.HealthCheck.LatencyThreshold, immuneKeys)
+		} else {
+			nodes = filter.FilterAvailable(nodes)
+			nodes = filter.FilterByLatencyThreshold(nodes, s.cfg.HealthCheck.LatencyThreshold)
+		}
 	}
 	filt := filter.NewFilter(s.cfg.Filter.NodesPerRegion, s.cfg.Filter.Deduplicate)
 	nodes = filt.Apply(nodes)
 
 	return nodes
+}
+
+// filterAvailableImmune 与 filter.FilterAvailable 同语义,但免疫节点豁免
+// (宕机仍下发,issue #101)。三态/自建豁免口径与原版逐条对齐。
+func filterAvailableImmune(nodes []*subscription.Node, immune map[string]bool) []*subscription.Node {
+	var result []*subscription.Node
+	for _, node := range nodes {
+		if immune[node.NodeKey()] || node.Source == subscription.SourceSelfHosted || node.Available || node.Unchecked() {
+			result = append(result, node)
+		}
+	}
+	return result
+}
+
+// filterLatencyImmune 与 filter.FilterByLatencyThreshold 同语义,免疫节点豁免。
+func filterLatencyImmune(nodes []*subscription.Node, maxLatency int, immune map[string]bool) []*subscription.Node {
+	var result []*subscription.Node
+	for _, node := range nodes {
+		if immune[node.NodeKey()] || node.Source == subscription.SourceSelfHosted || node.Latency <= maxLatency {
+			result = append(result, node)
+		}
+	}
+	return result
 }
 
 // resolveNameConfig 计算节点名称标准化的生效配置（见 ADR 0012）。

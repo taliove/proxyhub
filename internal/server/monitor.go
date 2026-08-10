@@ -61,3 +61,34 @@ func toMonitorTargets(userID int64, nodes []*subscription.Node) []nodemon.Target
 	}
 	return out
 }
+
+// monitorImmuneKeys 宕机免疫集合(ADR 0047 / issue #101):监控开启时返回该用户
+// 全部启用地址的监控集合并集(与 MonitorTargets 同口径);监控关闭或读失败
+// 返回 nil——过滤链走原始可用性过滤(零回归)。
+func (s *Server) monitorImmuneKeys(userID int64) map[string]bool {
+	v, err := s.st.GetSetting("subscription_monitor_enabled")
+	if err != nil || v != "true" {
+		return nil
+	}
+	eps, err := s.st.ListEndpointsByUser(userID)
+	if err != nil {
+		s.logger.Warn("list endpoints for immune keys failed", "user_id", userID, "error", err)
+		return nil
+	}
+	pool := s.nodes.NodesForUser(userID)
+	keys := make(map[string]bool)
+	for _, ep := range eps {
+		if !ep.Enabled {
+			continue
+		}
+		nodes := s.filteredNodesForMonitor(pool, userID, s.endpointNodePicks(ep))
+		nodes = s.applyConditions(nodes, ep)
+		for _, n := range nodes {
+			keys[n.NodeKey()] = true
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys
+}

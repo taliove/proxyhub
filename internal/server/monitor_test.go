@@ -59,6 +59,56 @@ func TestMonitorTargets(t *testing.T) {
 	}
 }
 
+// TestMonitorImmuneDelivery 宕机免疫(issue #101):监控开启时,监控集合内
+// 确认死亡的节点仍下发;集合外(关键词黑名单)的死节点照旧过滤;监控关闭零回归
+func TestMonitorImmuneDelivery(t *testing.T) {
+	dead := &subscription.Node{
+		Name: "好名但宕了", Server: "dead.example.com", Port: 443, Source: "机场A",
+		Available: false, DetectionKind: subscription.DetectionKindHealth, Latency: 500,
+	}
+	excluded := &subscription.Node{
+		Name: "垃圾节点", Server: "junk.example.com", Port: 443, Source: "机场A",
+		Available: false, DetectionKind: subscription.DetectionKindHealth,
+	}
+	srv, st := newTestServer(t, []*subscription.Node{dead, excluded})
+	ep, err := st.CreateEndpointForUser(0, "主订阅")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 关键词黑名单把 excluded 挤出下发/监控集合
+	if err := st.SaveSystemSettings(map[string]string{"filter_keywords": "垃圾"}); err != nil {
+		t.Fatal(err)
+	}
+
+	contains := func(nodes []*subscription.Node, key string) bool {
+		for _, n := range nodes {
+			if n.NodeKey() == key {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 监控关闭(默认):死节点不下发(零回归)
+	if got := srv.endpointDeliverableNodes(ep); contains(got, dead.NodeKey()) {
+		t.Error("monitor off: dead node should be filtered (zero regression)")
+	}
+
+	// 监控开启:集合内死节点仍下发;集合外死节点仍过滤
+	if err := st.SaveSystemSettings(map[string]string{
+		"filter_keywords": "垃圾", "subscription_monitor_enabled": "true",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := srv.endpointDeliverableNodes(ep)
+	if !contains(got, dead.NodeKey()) {
+		t.Error("monitor on: immune dead node should still be delivered")
+	}
+	if contains(got, excluded.NodeKey()) {
+		t.Error("monitor on: non-immune dead node should stay filtered")
+	}
+}
+
 // TestMonitorTargetsRespectPicks 精选地址只监控精选节点
 func TestMonitorTargetsRespectPicks(t *testing.T) {
 	a := &subscription.Node{Name: "A", Server: "a.example.com", Port: 443, Source: "机场A", Available: true}

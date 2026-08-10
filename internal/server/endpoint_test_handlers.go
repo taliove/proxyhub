@@ -19,14 +19,15 @@ import (
 )
 
 // endpointDeliverableNodes 计算该订阅地址"此刻会下发的节点集合":
-// 池 → 精选候选集替换 → 全局过滤链 → 端点条件 → 名称标准化(跳过槽位节点)
+// 池 → 精选候选集替换 → 全局过滤链(宕机免疫:监控集合节点跳过可用性/延迟,
+// issue #101)→ 端点条件 → 名称标准化(跳过槽位节点)
 // → 名称槽位(ADR 0047 / issue #96)→ 精选项别名(命名链最终层,issue #85),
 // 与 /sub 生成链同源(所见即所得)。
 // 拉取验证、池快照、现场实测、后台预览四处共用这一个选择逻辑(ADR 0028 决策 1)。
 // 池与自建节点按端点属主分片(ticket 07;UserID 0 = 全局池)。
 func (s *Server) endpointDeliverableNodes(ep *store.Endpoint) []*subscription.Node {
 	picks := s.endpointNodePicks(ep)
-	nodes := s.filteredNodesWithPicks(s.nodes.NodesForUser(ep.UserID), ep.UserID, picks)
+	nodes := s.filteredNodesForDelivery(s.nodes.NodesForUser(ep.UserID), ep.UserID, picks, s.monitorImmuneKeys(ep.UserID))
 	nodes = s.applyConditions(nodes, ep)
 	nodes = s.standardizeNodesForEndpoint(nodes, ep, ep.UserID)
 	nodes = s.applyNameSlots(nodes, ep.UserID)
