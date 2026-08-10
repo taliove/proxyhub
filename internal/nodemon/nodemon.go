@@ -3,12 +3,12 @@
 // (issue #103)消费。
 //
 // 设计要点:
-// - 纯 TCP 连接探测(无 ICMP,免 CAP_NET_RAW 部署变更),与现有健康检查同源;
-// - 监控集合由 TargetProvider(server)现算:各订阅地址实际下发节点的并集,
-//   排除可用性过滤(否则节点一宕就掉出集合,永远等不到恢复探测);
-// - 跨用户按 node_key 物理去重,同一节点只探一次;
-// - 总开关 subscription_monitor_enabled 默认关(零回归),间隔
-//   monitor_interval_sec 默认 300s,均每轮重读,免重启生效。
+//   - 纯 TCP 连接探测(无 ICMP,免 CAP_NET_RAW 部署变更),与现有健康检查同源;
+//   - 监控集合由 TargetProvider(server)现算:各订阅地址实际下发节点的并集,
+//     排除可用性过滤(否则节点一宕就掉出集合,永远等不到恢复探测);
+//   - 跨用户按 node_key 物理去重,同一节点只探一次;
+//   - 总开关 subscription_monitor_enabled 默认关(零回归),间隔
+//     monitor_interval_sec 默认 300s,均每轮重读,免重启生效。
 package nodemon
 
 import (
@@ -143,12 +143,14 @@ func (m *Monitor) Run(ctx context.Context) {
 	}
 }
 
-// runRound 单轮:取集合 → 去重 → 保险丝 → 并发探测 → 打点 +  listener 分发。
+// runRound 单轮:取集合 → 物理去重探测 → 打点(物理维度一次)→ 按 (用户,节点)
+// 扇出分发 listener(同一节点多用户各自走状态机/告警,issue #100)。
 func (m *Monitor) runRound(ctx context.Context) {
 	if m.provider == nil || m.sink == nil {
 		return
 	}
-	targets := dedupeTargets(m.provider.MonitorTargets())
+	all := m.provider.MonitorTargets()
+	targets := dedupeTargets(all)
 	if len(targets) == 0 {
 		return
 	}
@@ -163,20 +165,15 @@ func (m *Monitor) runRound(ctx context.Context) {
 	}
 
 	results := probeAll(ctx, targets, probeTimeoutSec*time.Second)
+	sampleByKey := make(map[string]Sample, len(results))
 
 	// 打点落库失败聚合成一条日志(持久 DB 故障时避免每轮 200+ 条 Warn 刷屏)
 	saveFailures := 0
-	var lis Listener
-	if v := m.listener.Load(); v != nil {
-		lis = *v.(*Listener)
-	}
 	for _, r := range results {
+		sampleByKey[r.target.NodeKey] = r.sample
 		// 用探测时刻(而非轮次开始时刻)落库,与 listener 收到的时钟一致
 		if err := m.sink.SaveMonitorSample(r.target.NodeKey, r.sample.OK, r.sample.LatencyMs, r.sample.CheckedAt); err != nil {
 			saveFailures++
-		}
-		if lis != nil {
-			lis.OnProbeResult(r.target, r.sample)
 		}
 	}
 	if saveFailures > 0 {
@@ -184,6 +181,20 @@ func (m *Monitor) runRound(ctx context.Context) {
 	}
 	if err := m.sink.PruneMonitorSamples(time.Now().Add(-sampleRetention)); err != nil {
 		m.logger.Warn("prune monitor samples failed", "error", err)
+	}
+
+	var lis Listener
+	if v := m.listener.Load(); v != nil {
+		lis = *v.(*Listener)
+	}
+	if lis != nil {
+		// 按 (用户,节点) 去重再分发:同用户多个地址命中同一节点时一轮只计
+		// 一次探测结果——否则一轮失败即计入 N 次,状态机"连续 3 败"形同虚设
+		for _, t := range dedupeByUserKey(all) {
+			if smp, ok := sampleByKey[t.NodeKey]; ok {
+				lis.OnProbeResult(t, smp)
+			}
+		}
 	}
 	m.logger.Info("monitor round finished", "targets", len(targets),
 		"up", countOK(results), "down", len(results)-countOK(results))
@@ -208,6 +219,26 @@ func dedupeTargets(targets []Target) []Target {
 			continue
 		}
 		seen[t.NodeKey] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// dedupeByUserKey 按 (用户,节点) 去重(listener 扇出用):物理探测按 node_key
+// 去重(dedupeTargets),告警分发按归属展开,但同用户同节点只算一份。
+func dedupeByUserKey(targets []Target) []Target {
+	type uk struct {
+		u int64
+		k string
+	}
+	seen := make(map[uk]bool, len(targets))
+	out := make([]Target, 0, len(targets))
+	for _, t := range targets {
+		key := uk{t.UserID, t.NodeKey}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		out = append(out, t)
 	}
 	return out

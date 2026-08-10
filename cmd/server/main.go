@@ -139,8 +139,10 @@ func run(configPath string) error {
 
 	// 订阅节点监控(ADR 0047 / issue #99):5 分钟 TCP 探活 + 打点落库。
 	// 总开关 subscription_monitor_enabled 默认关,开了才开始探测。
+	// 告警状态机(issue #100):连续 3 败判宕告警 / 2 胜恢复,跳变写回池。
 	monitor := nodemon.New(st, st, alerter, logger)
 	monitor.SetProvider(srv)
+	monitor.SetListener(nodemon.NewStateMachine(st, agg, alerter, logger))
 	go monitor.Run(ctx)
 
 	// 启动调度器(晚间标签重算)

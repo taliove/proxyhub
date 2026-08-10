@@ -3,6 +3,7 @@ package nodemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
@@ -38,6 +39,20 @@ func (f *fakeSink) PruneMonitorSamples(before time.Time) error { return nil }
 type fakeProvider struct{ targets []Target }
 
 func (f fakeProvider) MonitorTargets() []Target { return f.targets }
+
+type fakeListener struct {
+	mu    sync.Mutex
+	count map[string]int // "userID|nodeKey" -> 次数
+}
+
+func (f *fakeListener) OnProbeResult(t Target, s Sample) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.count == nil {
+		f.count = make(map[string]int)
+	}
+	f.count[fmt.Sprintf("%d|%s", t.UserID, t.NodeKey)]++
+}
 
 type fakeAlerter struct {
 	mu     sync.Mutex
@@ -102,7 +117,7 @@ func TestMonitorRound(t *testing.T) {
 	m := New(fakeSettings{m: map[string]string{"subscription_monitor_enabled": "true"}}, sink, al, testLogger())
 	m.SetProvider(fakeProvider{targets: []Target{
 		{UserID: 1, NodeKey: "up:1", Server: "127.0.0.1", Port: upPort},
-		{UserID: 1, NodeKey: "down:1", Server: "127.0.0.1", Port: 1}, // 端口 1 不可连
+		{UserID: 1, NodeKey: "down:1", Server: "127.0.0.1", Port: 1},    // 端口 1 不可连
 		{UserID: 2, NodeKey: "up:1", Server: "127.0.0.1", Port: upPort}, // 跨用户重复:去重
 	}})
 
@@ -173,5 +188,38 @@ func TestDedupeTargets(t *testing.T) {
 	out := dedupeTargets(in)
 	if len(out) != 2 || out[0].NodeKey != "a:1" || out[1].NodeKey != "b:1" {
 		t.Errorf("dedupe = %v", out)
+	}
+}
+
+// TestRunRoundFanout 扇出分发(issue #100 评审):物理探测按 node_key 一次、
+// 打点一次;listener 按 (用户,节点) 各收一次——同用户多地址命中同节点不重复计
+func TestRunRoundFanout(t *testing.T) {
+	port := listenTCP(t)
+	sink := &fakeSink{}
+	lis := &fakeListener{}
+	m := New(fakeSettings{m: map[string]string{"subscription_monitor_enabled": "true"}}, sink, &fakeAlerter{}, testLogger())
+	m.SetProvider(fakeProvider{targets: []Target{
+		// 用户 1 的两个地址都含同一节点(全部 + 精选典型配置)
+		{UserID: 1, NodeKey: "k:1", Server: "127.0.0.1", Port: port},
+		{UserID: 1, NodeKey: "k:1", Server: "127.0.0.1", Port: port},
+		// 用户 2 也含该节点
+		{UserID: 2, NodeKey: "k:1", Server: "127.0.0.1", Port: port},
+	}})
+	m.SetListener(lis)
+
+	m.runRound(context.Background())
+
+	if len(sink.samples) != 1 {
+		t.Errorf("samples = %d, want 1 (physical dedupe)", len(sink.samples))
+	}
+	lis.mu.Lock()
+	defer lis.mu.Unlock()
+	if len(lis.count) != 2 {
+		t.Fatalf("listener dispatch = %v, want 2 (user,node) pairs", lis.count)
+	}
+	for k, c := range lis.count {
+		if c != 1 {
+			t.Errorf("%s dispatched %d times, want exactly 1 per round", k, c)
+		}
 	}
 }

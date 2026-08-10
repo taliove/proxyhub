@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +42,8 @@ const (
 type Notifier interface {
 	AlertAirportDown(airportName string, totalNodes int) error
 	AlertLowAvailability(available, threshold int) error
+	// Alert 通用告警(名称槽位空槽/恢复等,issue #100)
+	Alert(title, content string) error
 }
 
 // Aggregator 订阅聚合调度器：拉取 → 检查 → 过滤 → 更新节点池 → 告警
@@ -631,6 +634,9 @@ func (a *Aggregator) executeForUser(ctx context.Context, rl *runLog, progress fu
 		a.logger.Warn("persist node pool failed", "error", err)
 	}
 
+	// 空槽告警(issue #100):槽位节点消失/stale → 告警一次;回归自动恢复
+	a.alertEmptySlots(owner, mergedPool)
+
 	a.logger.Info("aggregation finished",
 		"total", len(fetched.allNodes), "available", len(available), "final", len(mergedPool))
 
@@ -956,6 +962,60 @@ func (a *Aggregator) checkAlerts(airportNodes map[string][]*subscription.Node, a
 	}
 }
 
+// alertEmptySlots 空槽告警(ADR 0047 / issue #100):刷新后槽位指向的节点
+// 从池中消失或被标 stale → 飞书告警一次(冷却:同槽位恢复前不重复);
+// 节点以同 node_key 回归 → 自动恢复通知。预建空槽(node_key 空)不告警——
+// 那是用户故意的"先起名后挑节点"。绝不自动改绑,补位是用户的显式动作。
+func (a *Aggregator) alertEmptySlots(userID int64, pool []*subscription.Node) {
+	slots, err := a.st.ListNameSlotsForUser(userID)
+	if err != nil {
+		a.logger.Warn("list name slots for empty-slot alert failed", "error", err)
+		return
+	}
+	staleByKey := make(map[string]bool, len(pool))
+	for _, n := range pool {
+		staleByKey[n.NodeKey()] = n.Stale
+	}
+	prefix := fmt.Sprintf("slot_empty:%d:", userID)
+	seen := make(map[string]bool, len(slots))
+	for _, sl := range slots {
+		if sl.NodeKey == "" {
+			continue
+		}
+		stale, exists := staleByKey[sl.NodeKey]
+		gone := !exists || stale
+		key := prefix + sl.Name
+		seen[key] = true
+		if gone {
+			if !a.alerted[key] {
+				if a.alerter != nil {
+					if err := a.alerter.Alert("名称槽位待指派",
+						fmt.Sprintf("名称「%s」挂载的节点已从机场消失或下架,订阅已停发该名称。\n请把名称指派给新节点(节点管理 → 名称槽位)。\nnode_key: %s",
+							sl.Name, sl.NodeKey)); err != nil {
+						a.logger.Warn("send empty-slot alert failed", "error", err)
+					} else {
+						a.alerted[key] = true
+					}
+				}
+			}
+		} else {
+			if a.alerted[key] && a.alerter != nil {
+				if err := a.alerter.Alert("名称槽位已恢复",
+					fmt.Sprintf("名称「%s」挂载的节点已回归,订阅自动恢复下发。", sl.Name)); err != nil {
+					a.logger.Warn("send slot recovery alert failed", "error", err)
+				}
+			}
+			delete(a.alerted, key)
+		}
+	}
+	// 清理已删除槽位的冷却残留(alerted 只增不减会泄漏;改名等同删旧建新)
+	for k := range a.alerted {
+		if strings.HasPrefix(k, prefix) && !seen[k] {
+			delete(a.alerted, k)
+		}
+	}
+}
+
 // recognizeRegions 识别全部节点的地区代码，填充 Region 字段。
 // 统一三层识别(issue #37):名称规则 -> 国旗 emoji 反解 -> GeoIP 兜底,
 // 与 poolops 单机场 upsert 同一识别器同一口径;ctx 从刷新任务透传,
@@ -1094,6 +1154,7 @@ func (a *Aggregator) mergePartialOnCancel(ctx context.Context, rl *runLog, fetch
 	if err := a.st.SaveNodePoolForUser(owner, newPool); err != nil {
 		a.logger.Warn("persist node pool failed", "error", err)
 	}
+	a.alertEmptySlots(owner, newPool)
 
 	rl.event(levelWarn, stageDone,
 		fmt.Sprintf("刷新已取消：%d 个机场已拉取部分照常入池，未拉取机场保持原状", len(fetchedSources(fetched))),
