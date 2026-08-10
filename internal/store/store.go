@@ -464,7 +464,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	// 名称槽位存量回填(028_name_slots.sql / issue #95):node_overrides 的
 	// display_name 升级为槽位。幂等;同名冲突新占旧让,落选行保留走人工待处理。
 	// 必须在 migrateNodeOwnershipScope((user_id, node_key) 主键)之后。
-	// 注意:此处只建槽位,不清 display_name——旧命名路径在 issue #96 切换前仍在读。
+	// issue #96 起命名链切到槽位层,回填同时清掉已迁移赢家的 display_name 残留。
 	if err := s.migrateOverridesToNameSlots(); err != nil {
 		return err
 	}

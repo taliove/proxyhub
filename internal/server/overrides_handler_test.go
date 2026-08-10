@@ -11,15 +11,27 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
-// TestNodeOverride_SetAndClear 验证覆盖层设置与清除
+// TestNodeOverride_SetAndClear 验证覆盖层设置与清除(ADR 0047:仅 region;
+// display_name 已移交名称槽位,拒收)
 func TestNodeOverride_SetAndClear(t *testing.T) {
 	srv, st := newTestServer(t, nil)
 
-	// 设置覆盖
-	body, _ := json.Marshal(map[string]any{
+	// display_name 非空 → 400(命名走 /api/slots)
+	badBody, _ := json.Marshal(map[string]any{
 		"node_key":     "1.1.1.1:8388",
 		"display_name": "自定义名",
-		"region":       "HK",
+	})
+	badReq := httptest.NewRequest(http.MethodPut, "/api/nodes/override", bytes.NewReader(badBody))
+	badW := httptest.NewRecorder()
+	srv.handleSetNodeOverride(badW, badReq)
+	if badW.Code != http.StatusBadRequest {
+		t.Fatalf("display_name should be rejected, status = %d", badW.Code)
+	}
+
+	// 设置覆盖(仅 region)
+	body, _ := json.Marshal(map[string]any{
+		"node_key": "1.1.1.1:8388",
+		"region":   "HK",
 	})
 	req := httptest.NewRequest(http.MethodPut, "/api/nodes/override", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -37,8 +49,8 @@ func TestNodeOverride_SetAndClear(t *testing.T) {
 	if !ok {
 		t.Fatal("override not found after set")
 	}
-	if o.DisplayName != "自定义名" || o.Region != "HK" {
-		t.Errorf("override = %+v, want 自定义名/HK", o)
+	if o.Region != "HK" {
+		t.Errorf("override = %+v, want region HK", o)
 	}
 
 	// 清除覆盖
@@ -54,6 +66,29 @@ func TestNodeOverride_SetAndClear(t *testing.T) {
 	overrides, _ = st.ListNodeOverrides()
 	if _, ok := overrides["1.1.1.1:8388"]; ok {
 		t.Error("override should be removed after clear")
+	}
+}
+
+// TestNodeOverride_RegionSetPreservesDisplayName region 覆盖不得清掉
+// display_name 残留(迁移落选冲突行靠它露出,ADR 0047)
+func TestNodeOverride_RegionSetPreservesDisplayName(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+
+	// 构造一行带 display_name 残留的覆盖(模拟迁移落选冲突行)
+	if err := st.SetNodeOverrideForUser(0, "2.2.2.2:443", "遗留名", ""); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"node_key": "2.2.2.2:443", "region": "JP"})
+	req := httptest.NewRequest(http.MethodPut, "/api/nodes/override", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handleSetNodeOverride(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	overrides, _ := st.ListNodeOverrides()
+	o := overrides["2.2.2.2:443"]
+	if o.DisplayName != "遗留名" || o.Region != "JP" {
+		t.Errorf("override = %+v, want display_name preserved + region JP", o)
 	}
 }
 

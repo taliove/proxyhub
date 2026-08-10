@@ -23,8 +23,11 @@ func decodeNodeKeyRequest(r *http.Request) (string, error) {
 	return req.NodeKey, nil
 }
 
-// handleSetNodeOverride 设置机场节点覆盖层（display_name/region）。
+// handleSetNodeOverride 设置机场节点覆盖层(region)。
 // 按请求者属主写(多租户):同一节点可被不同用户独立覆盖,互不串扰。
+// display_name 自 ADR 0047(issue #96)起拒收:命名统一走名称槽位(/api/slots),
+// 避免"两套命名来源"并存。注意:旧客户端发空串是静默 no-op(不再清空任何值);
+// 迁移落选行的 display_name 残留只能经槽位认领或 DELETE 整行清理。
 func (s *Server) handleSetNodeOverride(w http.ResponseWriter, r *http.Request) {
 	scope, ok := s.mustUserScope(w, r)
 	if !ok {
@@ -43,8 +46,12 @@ func (s *Server) handleSetNodeOverride(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "node_key required", http.StatusBadRequest)
 		return
 	}
+	if req.DisplayName != "" {
+		http.Error(w, "display_name moved to name slots, use /api/slots", http.StatusBadRequest)
+		return
+	}
 
-	if err := s.st.SetNodeOverrideForUser(EffectiveUserID(scope), req.NodeKey, req.DisplayName, req.Region); err != nil {
+	if err := s.st.SetNodeRegionOverrideForUser(EffectiveUserID(scope), req.NodeKey, req.Region); err != nil {
 		s.logger.Error("set node override failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

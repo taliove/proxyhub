@@ -77,7 +77,8 @@ func (s *Server) refreshAirportNodeNames(userID int64, targetKeys map[string]boo
 	}
 
 	// Re-apply standardization using the same logic as subscription generation
-	standardized := s.applyStandardization(toRefresh, true, subscription.DefaultNameTemplate)
+	// (槽位节点在 applyStandardization 内部跳过,ADR 0047)
+	standardized := s.applyStandardization(toRefresh, true, subscription.DefaultNameTemplate, userID)
 
 	// Update DisplayName in the node pool (mutation is safe here as we own the pool)
 	for i, original := range toRefresh {

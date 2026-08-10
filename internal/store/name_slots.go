@@ -288,11 +288,12 @@ func (s *Store) SlotNameByNodeKeyForUser(userID int64) (map[string]string, error
 // display_name != '' 的行升级为槽位。幂等,随 migrate() 每次启动执行。
 //
 // 同名冲突(同一用户给多个节点起过同名):updated_at 最新者占住槽位,其余行
-// 保留 display_name 不动,由 ListSlotMigrationConflicts 露出走人工处理——
+// 保留 display_name 不动,由 ListSlotMigrationConflictsForUser 露出走人工处理——
 // 不替用户猜哪个是对的。
 //
-// 注意:本函数【不清】已迁移行的 display_name——旧命名路径(applyOverrides)
-// 在 issue #96 切换命名链前仍在读它,提前清空会造成回归。#96 切换时负责清理。
+// 清理(issue #96):命名链已切换为槽位层实时叠加,旧 applyOverrides 不再消费
+// display_name——已迁移赢家(存在同名同节点槽位)的 display_name 在此清空,
+// 避免残留旧值造成"两套命名来源"的误读;落选冲突行没有对应槽位,不受影响。
 func (s *Store) migrateOverridesToNameSlots() error {
 	rows, err := s.db.Query(
 		`SELECT user_id, node_key, display_name, updated_at FROM node_overrides WHERE display_name != ''`)
@@ -343,13 +344,23 @@ func (s *Store) migrateOverridesToNameSlots() error {
 			return err
 		}
 	}
-	return nil
+
+	// 清理已迁移赢家的 display_name(issue #96):命名链已切到槽位层,旧值不再被消费。
+	// 只清"存在同名同节点槽位"的行;落选冲突行无对应槽位,保留待人工处理。
+	_, err = s.db.Exec(`
+		UPDATE node_overrides SET display_name = ''
+		WHERE display_name != '' AND EXISTS (
+			SELECT 1 FROM name_slots sl
+			WHERE sl.user_id = node_overrides.user_id
+			  AND sl.name = node_overrides.display_name
+			  AND sl.node_key = node_overrides.node_key
+		)`)
+	return err
 }
 
 // ListSlotMigrationConflictsForUser 列出迁移待处理冲突:display_name 残留
 // (回填没能迁走的行——同名竞争落选或名字/节点已被占)。userID<=0 返回全量。
-// 注意:issue #96 切换命名链前,已迁移赢家的 display_name 也仍在(见
-// migrateOverridesToNameSlots 注释),故判定标准是"该行没有对应槽位"。
+// 已迁移赢家的 display_name 已被回填清理(issue #96),残留即冲突。
 func (s *Store) ListSlotMigrationConflictsForUser(userID int64) ([]NodeOverride, error) {
 	query := `
 		SELECT o.node_key, o.display_name, o.region, o.favorite, o.updated_at

@@ -44,5 +44,48 @@ func (a *Aggregator) standardizePoolNames(userID int64, nodes []*subscription.No
 		return nodes
 	}
 
-	return subscription.NewStandardizer(template, abbrs, regions).StandardizeNodes(nodes)
+	// 槽位节点跳过标准化(ADR 0047 / issue #96):名字已被用户接管,刷新重算不得
+	// 触碰(修复"standardize_names 开启时刷新冲掉手动名"的缺陷——旧实现无此跳过,
+	// StandardizeNodes 无条件覆盖 DisplayName)。读失败降级为不跳过。
+	var slotKeys map[string]bool
+	if slots, serr := a.st.SlotNameByNodeKeyForUser(userID); serr != nil {
+		a.logger.Warn("list name slots failed, standardizing all", "error", serr)
+	} else if len(slots) > 0 {
+		slotKeys = make(map[string]bool, len(slots))
+		for k := range slots {
+			slotKeys[k] = true
+		}
+	}
+	free := nodes
+	if len(slotKeys) > 0 {
+		free = make([]*subscription.Node, 0, len(nodes))
+		for _, n := range nodes {
+			if slotKeys[n.NodeKey()] {
+				continue
+			}
+			free = append(free, n)
+		}
+	}
+	standardized := subscription.NewStandardizer(template, abbrs, regions).StandardizeNodes(free)
+	if len(slotKeys) == 0 {
+		return standardized
+	}
+	// 按 NodeKey 映射回原序列,槽位节点保持原样(其下发名由生成链槽位层覆盖)。
+	// 同 NodeKey 多节点(转售/合租机场同 server:port 共存)用队列按序弹出,
+	// 各拿各的标准化副本,不共享指针。
+	byKey := make(map[string][]*subscription.Node, len(standardized))
+	for _, n := range standardized {
+		k := n.NodeKey()
+		byKey[k] = append(byKey[k], n)
+	}
+	result := make([]*subscription.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if q := byKey[n.NodeKey()]; len(q) > 0 {
+			result = append(result, q[0])
+			byKey[n.NodeKey()] = q[1:]
+		} else {
+			result = append(result, n)
+		}
+	}
+	return result
 }

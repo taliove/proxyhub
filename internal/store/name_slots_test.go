@@ -180,13 +180,26 @@ func TestMigrateOverridesToNameSlots(t *testing.T) {
 		t.Errorf("conflict winner = %+v, %v; want new.example.com:2", sl, err)
 	}
 
-	// 落选行成为待处理冲突;赢家行不算冲突(display_name 未清,#96 才清)
+	// 落选行成为待处理冲突;赢家行 display_name 已清,不会误入冲突区
 	conflicts, err := s.ListSlotMigrationConflictsForUser(1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(conflicts) != 1 || conflicts[0].NodeKey != "old.example.com:1" {
 		t.Errorf("conflicts = %+v, want only old.example.com:1", conflicts)
+	}
+
+	// 赢家行的 display_name 已被回填清理(issue #96:命名链切槽位层后旧值不再消费);
+	// 落选冲突行保留 display_name 供人工待处理露出
+	overrides, err := s.ListNodeOverridesForUser(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := overrides["hk1.example.com:443"].DisplayName; got != "" {
+		t.Errorf("winner display_name = %q, want cleared", got)
+	}
+	if got := overrides["old.example.com:1"].DisplayName; got != "重名" {
+		t.Errorf("loser display_name = %q, want preserved for manual resolution", got)
 	}
 
 	// 幂等:再跑一次,槽位数不变,无报错

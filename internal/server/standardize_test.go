@@ -171,7 +171,7 @@ func TestApplyStandardization_SelfHostedGetsSelfAbbr(t *testing.T) {
 		{Name: "我的东京机", Region: "JP", Source: subscription.SourceSelfHosted, Server: "1.2.3.4", Port: 443},
 	}
 	std, tmpl := srv.resolveNameConfig(0, nil)
-	out := srv.applyStandardization(nodes, std, tmpl)
+	out := srv.applyStandardization(nodes, std, tmpl, 0)
 	if out[0].DisplayName == "" || !strings.Contains(out[0].DisplayName, "SELF") {
 		t.Fatalf("self-hosted DisplayName = %q, want to contain SELF", out[0].DisplayName)
 	}

@@ -1896,10 +1896,11 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 管理页展示全量池（含不可用/被屏蔽）并附标准化名，便于原名↔标准名对比（见 ADR 0012/0013）。
-	// 管理列表无端点上下文,用全局配置。
+	// 管理列表无端点上下文,用全局配置;名称槽位层与下发链同源叠加(WYSIWYG,ADR 0047)。
 	// serve-time 合并自建节点(同订阅下发路径):新建/编辑/禁用/删除即时可见,
 	// 不依赖下一轮聚合注入——聚合失败(如机场全挂)时自建节点照样出现在列表。
 	nodes := s.standardizeNodesForEndpoint(s.mergeSelfHosted(s.nodes.NodesForUser(effUID), effUID), nil, effUID)
+	nodes = s.applyNameSlots(nodes, effUID)
 	q := parseNodeQuery(r)
 	res := QueryNodes(nodes, blocked, q)
 
@@ -2137,7 +2138,10 @@ func (s *Server) resolveNameConfig(userID int64, ep *store.Endpoint) (standardiz
 // standardize=false 时原样返回（各节点 DisplayName 为空，生成器回退用机场原名）。
 // 启用时按 (机场,地区) 分组、组内按 NodeKey 排序编号，依 template 生成统一名称。
 // 建映射失败时降级为不标准化——宁可用原名，也不让订阅生成失败。
-func (s *Server) applyStandardization(nodes []*subscription.Node, standardize bool, template string) []*subscription.Node {
+// 槽位节点(ADR 0047 / issue #96)跳过标准化:名字已被用户接管,不参与模板重算
+// (修复 standardize_names 开启时刷新冲掉手动名的缺陷);跳过不改变其余节点的
+// 相对顺序(按 NodeKey 映射回原序列)。
+func (s *Server) applyStandardization(nodes []*subscription.Node, standardize bool, template string, userID int64) []*subscription.Node {
 	if !standardize {
 		return nodes
 	}
@@ -2153,14 +2157,48 @@ func (s *Server) applyStandardization(nodes []*subscription.Node, standardize bo
 		s.logger.Warn("build region info failed, skipping standardization", "error", err)
 		return nodes
 	}
-	return subscription.NewStandardizer(template, abbrs, regions).StandardizeNodes(nodes)
+
+	// 槽位节点摘出,不参与标准化
+	slotKeys := s.slotKeySetForUser(userID)
+	free := nodes
+	if len(slotKeys) > 0 {
+		free = make([]*subscription.Node, 0, len(nodes))
+		for _, n := range nodes {
+			if slotKeys[n.NodeKey()] {
+				continue
+			}
+			free = append(free, n)
+		}
+	}
+	standardized := subscription.NewStandardizer(template, abbrs, regions).StandardizeNodes(free)
+	if len(slotKeys) == 0 {
+		return standardized
+	}
+	// 按 NodeKey 映射回原序列,槽位节点保持原样(DisplayName 由槽位层覆盖)。
+	// 同 NodeKey 多节点(转售/合租机场同 server:port 共存,拉取链不跨机场去重)
+	// 用队列按序弹出,保证各拿各的标准化副本,不共享指针。
+	byKey := make(map[string][]*subscription.Node, len(standardized))
+	for _, n := range standardized {
+		k := n.NodeKey()
+		byKey[k] = append(byKey[k], n)
+	}
+	result := make([]*subscription.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if q := byKey[n.NodeKey()]; len(q) > 0 {
+			result = append(result, q[0])
+			byKey[n.NodeKey()] = q[1:]
+		} else {
+			result = append(result, n)
+		}
+	}
+	return result
 }
 
 // standardizeNodesForEndpoint 用订阅地址的生效配置标准化节点池（订阅/预览路径）。
 // userID 为属主(多租户):管理列表(ep=nil)传调用方 effUID;订阅路径传端点属主。
 func (s *Server) standardizeNodesForEndpoint(nodes []*subscription.Node, ep *store.Endpoint, userID int64) []*subscription.Node {
 	std, tmpl := s.resolveNameConfig(userID, ep)
-	return s.applyStandardization(nodes, std, tmpl)
+	return s.applyStandardization(nodes, std, tmpl, userID)
 }
 
 // filterByRegionWhitelist 按地区白名单过滤节点。空白名单=全部通过;非空时只保留白名单地区节点。

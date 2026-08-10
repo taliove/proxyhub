@@ -608,10 +608,10 @@ func (a *Aggregator) executeForUser(ctx context.Context, rl *runLog, progress fu
 	a.mu.RUnlock()
 	mergedPool := mergePerSource(oldPool, allNodes, fetched, true)
 
-	// 应用覆盖层（机场节点的 display_name/region 编辑）
+	// 应用覆盖层（机场节点的 region 编辑;display_name 自 ADR 0047 起走名称槽位,不在此）
 	a.applyOverrides(owner, mergedPool)
 	// 刷新完成后自动重算名称(issue #51):按属主生效设置,开启时重算 DisplayName。
-	// 覆盖层之后调用,保证手动编辑的 display_name 不被本次刷新抹掉。
+	// 槽位节点在 standardizePoolNames 内部跳过(ADR 0047),用户接管的名字不被抹掉。
 	mergedPool = a.standardizePoolNames(owner, mergedPool)
 	// 属主回填:本轮节点全部归属刷新 owner 分片(Invariant B)
 	for _, n := range mergedPool {
@@ -983,8 +983,10 @@ func (a *Aggregator) recognizeRegions(ctx context.Context, rl *runLog, nodes []*
 	a.logger.Info("region recognition completed", "nodes", len(nodes), "regions", len(regionStats), "stats", regionStats)
 }
 
-// applyOverrides 应用机场节点覆盖层(display_name/region 编辑);自建节点豁免。
+// applyOverrides 应用机场节点覆盖层(region 编辑);自建节点豁免。
 // 按池属主读覆盖层(多租户):同一节点可被不同用户独立覆盖。
+// display_name 自 ADR 0047(issue #96)起不再由此应用:命名统一走名称槽位
+// (订阅生成时实时叠加,立即生效),覆盖层只保留 region 维度。
 func (a *Aggregator) applyOverrides(userID int64, pool []*subscription.Node) {
 	overrides, err := a.st.ListNodeOverridesForUser(userID)
 	if err != nil {
@@ -996,9 +998,6 @@ func (a *Aggregator) applyOverrides(userID int64, pool []*subscription.Node) {
 			continue // 自建节点不走覆盖层
 		}
 		if override, exists := overrides[n.NodeKey()]; exists {
-			if override.DisplayName != "" {
-				n.DisplayName = override.DisplayName
-			}
 			if override.Region != "" {
 				n.Region = override.Region
 			}

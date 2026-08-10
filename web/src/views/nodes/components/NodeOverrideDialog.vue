@@ -1,11 +1,8 @@
 <template>
   <el-dialog v-model="visible" title="编辑节点覆盖" width="420px">
     <el-form label-width="90px">
-      <el-form-item label="原始名称">
-        <span class="muted">{{ node?.name || '—' }}</span>
-      </el-form-item>
-      <el-form-item label="展示名称">
-        <el-input v-model="displayName" placeholder="留空则用原始名称" clearable />
+      <el-form-item label="节点名称">
+        <span class="muted">{{ node?.display_name || node?.name || '—' }}</span>
       </el-form-item>
       <el-form-item label="地区">
         <el-select
@@ -26,7 +23,7 @@
       <el-alert
         type="info"
         :closable="false"
-        title="覆盖跨刷新保留，不被下轮机场拉取冲掉。仅可改展示名称/地区。"
+        title="覆盖跨刷新保留，不被下轮机场拉取冲掉。仅可改地区；命名请用名称槽位。"
       />
     </el-form>
     <template #footer>
@@ -54,12 +51,10 @@ const emit = defineEmits<{
 const visible = ref(false)
 const saving = ref(false)
 const node = ref<Node | null>(null)
-const displayName = ref('')
 const region = ref('')
 
 const open = (row: Node) => {
   node.value = row
-  displayName.value = row.display_name || ''
   region.value = row.region || ''
   visible.value = true
 }
@@ -68,9 +63,9 @@ const save = async () => {
   if (!node.value) return
   saving.value = true
   try {
+    // 命名已迁移至名称槽位(/api/slots),覆盖层只带 region(ADR 0047)
     await client.put('/nodes/override', {
       node_key: node.value.node_key,
-      display_name: displayName.value,
       region: region.value
     })
     ElMessage.success('已保存，下次生成订阅生效')

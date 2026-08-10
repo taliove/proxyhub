@@ -32,6 +32,21 @@ func (s *Store) SetNodeOverrideForUser(userID int64, nodeKey, displayName, regio
 	return err
 }
 
+// SetNodeRegionOverrideForUser 只写 region 覆盖(ADR 0047 / issue #96):
+// display_name 命名职责已移交名称槽位,region 编辑不得触碰 display_name 列
+// (尤其迁移落选待处理的冲突行,靠残留的 display_name 露出)。与 favorite 同
+// 哲学:同表异列,upsert 只触碰自己的目标列。
+func (s *Store) SetNodeRegionOverrideForUser(userID int64, nodeKey, region string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO node_overrides (user_id, node_key, display_name, region, updated_at)
+		VALUES (?, ?, '', ?, ?)
+		ON CONFLICT(user_id, node_key) DO UPDATE SET
+			region = excluded.region,
+			updated_at = excluded.updated_at
+	`, userID, nodeKey, region, time.Now())
+	return err
+}
+
 // SetNodeFavoriteForUser 设置/取消节点收藏(issue #83)。与 SetNodeOverrideForUser
 // 同表异列:upsert 只触碰 favorite(及 updated_at),不清 display_name/region,
 // 反之亦然——两条写路径互不覆盖对方字段。
