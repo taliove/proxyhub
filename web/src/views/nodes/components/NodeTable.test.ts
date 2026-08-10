@@ -145,8 +145,8 @@ describe('NodeTable 行内屏蔽/解除屏蔽（issue #82）', () => {
     const texts = opsButtonTexts(wrapper, 0)
     expect(texts).not.toContain('屏蔽')
     expect(texts).not.toContain('取消屏蔽')
-    // 自建行保留其自身操作,确认渲染的是自建分支
-    expect(texts).toEqual(['编辑', '刷新名称', '禁用', '删除'])
+    // 自建行保留其自身操作,确认渲染的是自建分支(issue #98 起含「命名」槽位入口)
+    expect(texts).toEqual(['编辑', '命名', '刷新名称', '禁用', '删除'])
   })
 
   it('混合列表中屏蔽按钮只出现在机场行', () => {
@@ -157,5 +157,22 @@ describe('NodeTable 行内屏蔽/解除屏蔽（issue #82）', () => {
 
     expect(opsButtonTexts(wrapper, 0)).toContain('屏蔽')
     expect(opsButtonTexts(wrapper, 1)).not.toContain('屏蔽')
+  })
+
+  it('机场行与自建行都渲染「命名」槽位入口,点击 emit assign-slot(issue #98)', async () => {
+    const wrapper = mountTable([
+      node({ node_key: 'k-airport' }),
+      node({ node_key: 'k-self', source: SELF_HOSTED, self_node_id: 7, enabled: true })
+    ])
+
+    expect(opsButtonTexts(wrapper, 0)).toContain('命名')
+    expect(opsButtonTexts(wrapper, 1)).toContain('命名')
+
+    const btn = wrapper
+      .find('.el-column-stub[data-label="操作"]')
+      .findAll('button')
+      .find((b) => b.text() === '命名')!
+    await btn.trigger('click')
+    expect(wrapper.emitted('assign-slot')).toHaveLength(1)
   })
 })

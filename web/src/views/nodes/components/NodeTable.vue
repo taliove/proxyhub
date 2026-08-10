@@ -31,6 +31,13 @@
         <template #default="{ row }">
           <div class="name-cell">
             <span class="name-primary">{{ nameCell(row).primary }}</span>
+            <el-tooltip
+              v-if="slotKeys.has(row.node_key)"
+              content="名称槽位接管:该名称可在名称槽位区转移给其他节点"
+              placement="top"
+            >
+              <el-tag size="small" type="success" effect="plain" class="slot-tag">槽位</el-tag>
+            </el-tooltip>
             <span v-if="nameCell(row).secondary" class="name-secondary">
               {{ nameCell(row).secondary }}
             </span>
@@ -86,52 +93,10 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <!-- 解锁:通过数摘要,悬浮展开各目标三档语义色 -->
+      <!-- 解锁:通过数摘要,悬浮展开各目标三档语义色;单元格抽 UnlockCell(400 行门禁) -->
       <el-table-column label="解锁" width="88">
         <template #default="{ row }">
-          <el-popover v-if="hasUnlock(row)" placement="left" width="300" trigger="hover">
-            <template #reference>
-              <el-tag size="small" type="info" class="unlock-tag">{{ unlockSummary(row) }}</el-tag>
-            </template>
-            <div class="unlock-detail">
-              <div v-for="item in unlockDisplayRows(row)" :key="item.target" class="unlock-item">
-                <div class="unlock-target">
-                  <strong>{{ item.target }}</strong>
-                  <span class="unlock-badges">
-                    <el-tag
-                      v-if="item.region"
-                      size="small"
-                      type="info"
-                      effect="plain"
-                      class="region-badge"
-                    >
-                      {{ item.region }}
-                    </el-tag>
-                    <el-tag
-                      v-if="isGenericVariant(item.display.variant)"
-                      :type="item.display.tagType"
-                      size="small"
-                    >
-                      {{ item.result.available ? '✓' : '✗' }}
-                    </el-tag>
-                    <el-tag v-else :type="item.display.tagType" size="small">
-                      {{ item.display.label }}
-                    </el-tag>
-                  </span>
-                </div>
-                <div class="unlock-info">
-                  <span v-if="item.result.available" class="muted num"
-                    >{{ item.result.latency }}ms</span
-                  >
-                  <span v-else-if="item.display.variant === 'error'" class="muted">
-                    {{ item.result.error || '检测失败' }}
-                  </span>
-                  <span v-else class="error-text">{{ item.result.error || '不可用' }}</span>
-                </div>
-              </div>
-            </div>
-          </el-popover>
-          <span v-else class="muted">—</span>
+          <UnlockCell :row="row" />
         </template>
       </el-table-column>
       <!-- 出网:体检出口国家码 + 泄露/代理警示 -->
@@ -168,12 +133,13 @@
           <span class="muted num">{{ summaryFor(row)?.relative || '—' }}</span>
         </template>
       </el-table-column>
-      <!-- 操作:自建走 编辑/刷新名称/启停/删除;机场走 编辑/刷新名称/屏蔽;点击行打开详情抽屉 -->
-      <el-table-column label="操作" width="280">
+      <!-- 操作:自建走 编辑/命名/刷新名称/启停/删除;机场走 编辑/命名/刷新名称/屏蔽;点击行打开详情抽屉 -->
+      <el-table-column label="操作" width="320">
         <template #default="{ row }">
           <span class="row-ops" @click.stop>
             <template v-if="isSelfHosted(row)">
               <el-button link type="primary" @click="emit('edit-self', row)">编辑</el-button>
+              <el-button link @click="emit('assign-slot', row)">命名</el-button>
               <el-button link @click="emit('refresh-name', row)">刷新名称</el-button>
               <el-button link @click="emit('toggle-self', row)">
                 {{ row.enabled === false ? '启用' : '禁用' }}
@@ -182,6 +148,7 @@
             </template>
             <template v-else>
               <el-button link type="primary" @click="emit('edit-override', row)">编辑</el-button>
+              <el-button link @click="emit('assign-slot', row)">命名</el-button>
               <el-button link @click="emit('refresh-name', row)">刷新名称</el-button>
               <el-button v-if="row.blocked" link type="warning" @click="emit('unblock', row)">
                 取消屏蔽
@@ -224,8 +191,8 @@
 import { Star, StarFilled, WarningFilled } from '@element-plus/icons-vue'
 import StatusDot from '@/components/StatusDot.vue'
 import NodeTestCell from './NodeTestCell.vue'
+import UnlockCell from './UnlockCell.vue'
 import { isSelfHosted } from '../utils'
-import { isGenericVariant, unlockDisplayRows, unlockSummary } from '../unlock'
 import {
   latencyText,
   nameCell,
@@ -255,8 +222,10 @@ const props = withDefaults(
     examSummaries?: Record<string, NodeExamSummary | undefined>
     // 进行中的 exam 任务 key 集合(node_key),用于显示"查看进度"按钮
     runningExamKeys?: Set<string>
+    // 名称槽位占用的 node_key 集合(issue #98):命中行在名称列加"槽位"标记
+    slotKeys?: Set<string>
   }>(),
-  { examSummaries: () => ({}), runningExamKeys: () => new Set() }
+  { examSummaries: () => ({}), runningExamKeys: () => new Set(), slotKeys: () => new Set() }
 )
 
 const summaryFor = (row: UnifiedNode): NodeExamSummary | undefined =>
@@ -272,6 +241,7 @@ const emit = defineEmits<{
   (e: 'view', row: UnifiedNode): void
   (e: 'toggle-favorite', row: UnifiedNode): void
   (e: 'edit-override', row: UnifiedNode): void
+  (e: 'assign-slot', row: UnifiedNode): void
   (e: 'edit-self', row: UnifiedNode): void
   (e: 'toggle-self', row: UnifiedNode): void
   (e: 'delete-self', row: UnifiedNode): void
@@ -289,9 +259,6 @@ const isSelectable = () => true
 // stale / 禁用节点行置灰
 const rowClassName = ({ row }: { row: UnifiedNode }) =>
   row.stale || row.enabled === false ? 'stale-row' : ''
-
-const hasUnlock = (row: UnifiedNode) =>
-  !!row.unlock_results && Object.keys(row.unlock_results).length > 0
 
 const onRowClick = (row: UnifiedNode, column: { type?: string } | null) => {
   if (column?.type === 'selection') return
@@ -330,6 +297,9 @@ const onRowClick = (row: UnifiedNode, column: { type?: string } | null) => {
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
 }
+.slot-tag {
+  align-self: flex-start;
+}
 .state-tags,
 .tag-cell {
   display: inline-flex;
@@ -340,45 +310,17 @@ const onRowClick = (row: UnifiedNode, column: { type?: string } | null) => {
   margin-top: var(--ph-space-1);
 }
 .egress-cell,
-.unlock-badges,
 .row-ops {
   display: inline-flex;
   align-items: center;
   gap: var(--ph-space-1);
 }
-.egress-code,
-.region-badge {
+.egress-code {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
 }
 .egress-warn {
   color: var(--ph-warning);
-}
-.unlock-tag {
-  cursor: pointer;
-}
-.unlock-detail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ph-space-3);
-}
-.unlock-item {
-  border-bottom: 1px solid var(--ph-border-light);
-  padding-bottom: var(--ph-space-2);
-}
-.unlock-item:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-.unlock-target {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--ph-space-2);
-  margin-bottom: var(--ph-space-1);
-}
-.unlock-info {
-  font-size: var(--ph-text-xs);
 }
 .fav-on {
   color: var(--ph-warning);

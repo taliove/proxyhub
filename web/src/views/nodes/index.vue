@@ -7,6 +7,9 @@
     </PageHeader>
 
     <el-card>
+      <!-- 名称槽位(ADR 0047 / issue #98):用户级统一命名层,综合管理中 -->
+      <SlotSection ref="slotSection" :nodes="unifiedRows" @changed="loadPool" />
+
       <NodeFilterBar
         v-model:source="criteria.source"
         v-model:region="criteria.region"
@@ -61,6 +64,7 @@
         :total="total"
         :exam-summaries="examSummaries"
         :running-exam-keys="runningExamKeys"
+        :slot-keys="slotKeysSet"
         @selection-change="onSelectionChange"
         @sort-change="onSortChange"
         @page-change="setPage"
@@ -68,6 +72,7 @@
         @view="openDetail"
         @toggle-favorite="toggleFavorite"
         @edit-override="openOverride"
+        @assign-slot="openAssignSlot"
         @edit-self="openEditSelf"
         @toggle-self="onToggleSelf"
         @delete-self="onDeleteSelf"
@@ -131,6 +136,7 @@ import NodeTable from './components/NodeTable.vue'
 import type { TestCommand } from './components/node-table-utils'
 import NodeDetailDrawer from './components/NodeDetailDrawer.vue'
 import NodeOverrideDialog from './components/NodeOverrideDialog.vue'
+import SlotSection from './components/SlotSection.vue'
 import SourceBlockDialog from './components/SourceBlockDialog.vue'
 import CleanupDialog from './components/CleanupDialog.vue'
 import PurgeAirportDialog from './components/PurgeAirportDialog.vue'
@@ -269,6 +275,12 @@ watch(detailVisible, (visible) => {
 })
 const overrideDialog = ref<InstanceType<typeof NodeOverrideDialog> | null>(null)
 const openOverride = (row: UnifiedNode) => overrideDialog.value?.open(row)
+
+// 名称槽位(issue #98):状态自持在 SlotSection;此处只接 Keys 集合(名称列标记)
+// 与"命名"入口。槽位变更后 SlotSection 上抛 changed -> 重取节点池(显示名已变)。
+const slotSection = ref<InstanceType<typeof SlotSection> | null>(null)
+const slotKeysSet = computed(() => slotSection.value?.slotKeys ?? new Set<string>())
+const openAssignSlot = (row: UnifiedNode) => slotSection.value?.openAssign(row)
 
 // 单节点检查:自建按 self_node_id、机场按 node_key(与后端 handleTestNode/resolveTestNode 一致)。
 const bwDialog = ref<InstanceType<typeof BandwidthTestDialog> | null>(null)
