@@ -235,6 +235,20 @@ CREATE TABLE IF NOT EXISTS node_overrides (
 	PRIMARY KEY (user_id, node_key)
 );
 
+-- 名称槽位(ADR 0047 / issue #95):命名所有权从节点翻转为用户资产。
+-- (user_id, name) 主键;node_key 空串 = 预建空槽;部分唯一索引保证
+-- 一个节点在同一用户下只占一个槽位。schema 参考:migrations/028_name_slots.sql。
+CREATE TABLE IF NOT EXISTS name_slots (
+	user_id    INTEGER NOT NULL DEFAULT 0,
+	name       TEXT NOT NULL,
+	node_key   TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (user_id, name)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_name_slots_node
+	ON name_slots(user_id, node_key) WHERE node_key != '';
+
 -- 安全审计事件流水：登录成功/失败/蜜罐命中/达阈值封禁。保留 90 天。
 CREATE TABLE IF NOT EXISTS audit_logs (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -444,6 +458,14 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	// 星标,复用 node_overrides 覆盖层存储;与名称/地区覆盖同表异列,读写互不触碰。
 	// 既有行默认 0(未收藏),无需 backfill。
 	if err := s.addColumnIfMissing("node_overrides", "favorite", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	// 名称槽位存量回填(028_name_slots.sql / issue #95):node_overrides 的
+	// display_name 升级为槽位。幂等;同名冲突新占旧让,落选行保留走人工待处理。
+	// 必须在 migrateNodeOwnershipScope((user_id, node_key) 主键)之后。
+	// 注意:此处只建槽位,不清 display_name——旧命名路径在 issue #96 切换前仍在读。
+	if err := s.migrateOverridesToNameSlots(); err != nil {
 		return err
 	}
 
