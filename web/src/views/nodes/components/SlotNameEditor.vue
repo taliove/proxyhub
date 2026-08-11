@@ -27,22 +27,19 @@
       <span v-else class="muted">{{ previewHint }}</span>
     </div>
 
-    <!-- 使用案例 -->
-    <el-collapse class="examples">
-      <el-collapse-item title="使用案例" name="examples">
-        <div class="example-row"><code>主节点</code> → 固定名，转节点不变</div>
-        <div class="example-row">
-          <code>主节点-{region}</code> →
-          挂载香港节点时显示「主节点-香港」，转给美国节点自动变「主节点-美国」
-        </div>
-        <div class="example-row">
-          <code>{emoji} {region} 主力</code> → 带国旗与地区，如「🇭🇰 香港 主力」
-        </div>
-        <div class="example-row">
-          <code>备-{original_name}</code> → 保留机场原名后缀，如「备-HK-01」
-        </div>
-      </el-collapse-item>
-    </el-collapse>
+    <!-- 使用案例:常显,点击直接填入输入框 -->
+    <div class="examples">
+      <div class="examples-title">使用案例（点击填入）</div>
+      <div
+        v-for="ex in EXAMPLES"
+        :key="ex.tpl"
+        class="example-row"
+        :title="`点击填入 ${ex.tpl}`"
+        @click="fill(ex.tpl)"
+      >
+        <code>{{ ex.tpl }}</code> → {{ ex.desc }}
+      </div>
+    </div>
   </div>
 </template>
 
@@ -50,7 +47,7 @@
 import { computed, ref, watch } from 'vue'
 import { previewSlotName } from '@/api/slots'
 
-// SlotNameEditor 槽位名编辑器:变量点击插入 + 挂载节点实时预览 + 案例。
+// SlotNameEditor 槽位名编辑器:变量点击插入 + 挂载节点实时预览 + 可点填案例。
 // 预览走后端渲染(与订阅生成同一 Standardizer),不做前端近似。
 const props = defineProps<{
   modelValue: string
@@ -69,7 +66,21 @@ const VARIABLES = [
   { token: '{region_code}', desc: '地区码，如 HK' },
   { token: '{source}', desc: '来源机场全名' },
   { token: '{source_abbr}', desc: '机场简称' },
-  { token: '{original_name}', desc: '机场原始节点名' }
+  { token: '{original_name}', desc: '机场原始节点名' },
+  { token: '{index}', desc: '序号：渲染前缀相同的槽位自动编号（01、02…）' }
+] as const
+
+const EXAMPLES = [
+  { tpl: '主节点', desc: '固定名，换节点不变' },
+  {
+    tpl: '主节点-{region}',
+    desc: '跟随地区：挂香港显示「主节点-香港」，转美国自动变「主节点-美国」'
+  },
+  {
+    tpl: '{emoji}-主节点-{region}-{index}',
+    desc: '带国旗+序号：同前缀槽位自动编号，如「🇭🇰-主节点-香港-01」'
+  },
+  { tpl: '备-{original_name}', desc: '保留机场原名后缀，如「备-HK-01」' }
 ] as const
 
 const inputRef = ref<{ focus: () => void; input?: HTMLInputElement } | null>(null)
@@ -81,7 +92,6 @@ const insert = (token: string) => {
   if (el && typeof el.selectionStart === 'number') {
     const pos = el.selectionStart
     emit('update:modelValue', cur.slice(0, pos) + token + cur.slice(el.selectionEnd ?? pos))
-    // 等值更新后把光标移到插入内容之后
     requestAnimationFrame(() => {
       el.focus()
       el.setSelectionRange(pos + token.length, pos + token.length)
@@ -89,6 +99,12 @@ const insert = (token: string) => {
     return
   }
   emit('update:modelValue', cur + token)
+}
+
+// 案例点填:整名替换并聚焦
+const fill = (tpl: string) => {
+  emit('update:modelValue', tpl)
+  requestAnimationFrame(() => inputRef.value?.focus())
 }
 
 const hasVar = computed(() => (props.modelValue || '').includes('{'))
@@ -152,14 +168,23 @@ const previewHint = computed(() =>
 .preview-line strong {
   color: var(--ph-text-primary);
 }
-.examples :deep(.el-collapse-item__header) {
+.examples {
+  border-top: 1px dashed var(--ph-border);
+  padding-top: var(--ph-space-2);
+}
+.examples-title {
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
+  margin-bottom: var(--ph-space-1);
 }
 .example-row {
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
-  line-height: 1.8;
+  line-height: 1.9;
+  cursor: pointer;
+}
+.example-row:hover {
+  color: var(--ph-text-primary);
 }
 .example-row code {
   color: var(--ph-text-primary);

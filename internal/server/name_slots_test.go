@@ -102,6 +102,43 @@ func TestApplyNameSlots_TemplateVars(t *testing.T) {
 	}
 }
 
+// TestApplyNameSlots_Index 槽位 {index}:渲染前缀({index} 之前的渲染结果)
+// 相同的多个槽位按槽位名排序自动编号(01/02…),互不撞名;无同前缀者恒 01
+func TestApplyNameSlots_Index(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	hk1 := &subscription.Node{Name: "甲", Server: "hk1.example.com", Port: 443, Source: "机场A", Region: "HK"}
+	hk2 := &subscription.Node{Name: "乙", Server: "hk2.example.com", Port: 443, Source: "机场A", Region: "HK"}
+	us1 := &subscription.Node{Name: "丙", Server: "us1.example.com", Port: 443, Source: "机场A", Region: "US"}
+
+	// 两个前缀同为"主节点-香港-"的槽位({index} 后的后缀不参与前缀分组)
+	// + 一个美国槽位(独占前缀,恒 01)
+	if err := st.CreateNameSlotForUser(0, "主节点-{region}-{index}B", hk1.NodeKey(), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateNameSlotForUser(0, "主节点-{region}-{index}A", hk2.NodeKey(), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateNameSlotForUser(0, "美线-{region}-{index}", us1.NodeKey(), false); err != nil {
+		t.Fatal(err)
+	}
+
+	out := srv.applyNameSlots([]*subscription.Node{hk1, hk2, us1}, 0)
+	got := map[string]string{}
+	for _, n := range out {
+		got[n.Server] = n.DisplayName
+	}
+	// 同前缀组内按槽位名排序:"…{index}A" < "…{index}B" → A=01 B=02;美国独占 01
+	if got["hk2.example.com"] != "主节点-香港-01A" {
+		t.Errorf("hk2 = %q, want 主节点-香港-01A", got["hk2.example.com"])
+	}
+	if got["hk1.example.com"] != "主节点-香港-02B" {
+		t.Errorf("hk1 = %q, want 主节点-香港-02B", got["hk1.example.com"])
+	}
+	if got["us1.example.com"] != "美线-美国-01" {
+		t.Errorf("us1 = %q, want 美线-美国-01", got["us1.example.com"])
+	}
+}
+
 // TestNamingChainOrder 命名链优先级:精选 alias > 槽位名 > 模板标准化 > 原名
 func TestNamingChainOrder(t *testing.T) {
 	srv, st := newTestServer(t, nil)

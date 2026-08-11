@@ -23,6 +23,8 @@ export interface NameSlot {
   created_at: string
   updated_at: string
   node?: SlotNodeSummary
+  // 渲染后实际名称(含变量按挂载节点渲染);未指派/无变量时缺省,回退展示 name
+  display?: string
   // 24 小时探测网格(issue #103):24 格,旧→新;0=无数据 1=全通 2=部分通 3=全断
   probe_grid?: number[]
 }

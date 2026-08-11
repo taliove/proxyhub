@@ -35,6 +35,9 @@ type slotView struct {
 	CreatedAt string        `json:"created_at"`
 	UpdatedAt string        `json:"updated_at"`
 	Node      *slotNodeView `json:"node,omitempty"`
+	// Display 渲染后实际名称(含变量时按挂载节点渲染,如 🇺🇸-主节点-美国);
+	// 未指派/渲染失败时不输出,前端回退展示模板原文
+	Display string `json:"display,omitempty"`
 	// ProbeGrid 24 小时探测网格(issue #103):24 格,旧→新;
 	// 0=无数据 1=全通 2=部分通 3=全断。未指派/监控未开时不输出。
 	ProbeGrid []int `json:"probe_grid,omitempty"`
@@ -128,6 +131,19 @@ func (s *Server) handleListSlots(w http.ResponseWriter, r *http.Request) {
 	}
 
 	idx := s.poolNodeIndex(effUID)
+	// 渲染依赖只在有变量名时加载(与 applyNameSlots 同降级策略)
+	needRender := false
+	for _, sl := range slots {
+		if strings.Contains(sl.Name, "{") {
+			needRender = true
+			break
+		}
+	}
+	var deps *slotRenderDeps
+	if needRender {
+		deps = s.loadSlotRenderDeps()
+	}
+
 	views := make([]slotView, 0, len(slots))
 	for _, sl := range slots {
 		v := slotView{
@@ -142,6 +158,10 @@ func (s *Server) handleListSlots(w http.ResponseWriter, r *http.Request) {
 				v.Node = &slotNodeView{
 					Name: n.Name, Source: n.Source, Region: n.Region,
 					Available: n.Available, Latency: n.Latency, Stale: n.Stale,
+				}
+				// 渲染后实际名称(列表展示用);列表不编号,{index} 恒 01
+				if rendered := renderSlotName(sl.Name, n, deps, 1); rendered != sl.Name {
+					v.Display = rendered
 				}
 			} else {
 				v.Node = &slotNodeView{Missing: true}
@@ -241,22 +261,10 @@ func (s *Server) handlePreviewSlotName(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, resp)
 		return
 	}
-
-	abbrs, err := s.st.AirportAbbreviations()
-	if err != nil {
-		s.logger.Warn("build airport abbreviations failed, preview literal", "error", err)
-		writeJSON(w, resp)
-		return
+	if deps := s.loadSlotRenderDeps(); deps != nil {
+		resp["rendered"] = renderSlotName(name, n, deps, 1)
+		resp["resolved"] = true
 	}
-	abbrs[subscription.SourceSelfHosted] = "SELF"
-	regions, err := s.st.RegionInfoMap()
-	if err != nil {
-		s.logger.Warn("build region info failed, preview literal", "error", err)
-		writeJSON(w, resp)
-		return
-	}
-	resp["rendered"] = subscription.NewStandardizer(name, abbrs, regions).Format(n, 1)
-	resp["resolved"] = true
 	writeJSON(w, resp)
 }
 

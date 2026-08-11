@@ -14,9 +14,15 @@
     </div>
 
     <el-table v-loading="loading" :data="slots" size="small" row-key="name">
-      <el-table-column label="名称" min-width="160">
+      <el-table-column label="名称" min-width="180">
         <template #default="{ row }">
-          <span class="slot-name">{{ row.name }}</span>
+          <div class="name-cell">
+            <!-- 已指派且含变量:展示渲染后实际名称,模板原文降为副标题 -->
+            <span class="slot-name">{{ row.display || row.name }}</span>
+            <span v-if="row.display && row.display !== row.name" class="name-template">
+              {{ row.name }}
+            </span>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="挂载节点" min-width="200">
@@ -58,7 +64,7 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="24 小时" width="230">
+      <el-table-column label="24 小时" width="300">
         <template #default="{ row }">
           <ProbeGrid v-if="row.probe_grid" :grid="row.probe_grid" />
           <span v-else-if="!monitorEnabled" class="muted">设置 → 告警设置里开启</span>
@@ -298,6 +304,15 @@ const clearOverrideRow = async (nodeKey: string) => {
 }
 .slot-name {
   font-weight: 500;
+}
+.name-cell {
+  display: flex;
+  flex-direction: column;
+}
+.name-template {
+  font-size: var(--ph-text-xs);
+  color: var(--ph-text-secondary);
+  font-family: var(--ph-font-mono, monospace);
 }
 .muted {
   color: var(--ph-text-secondary);
