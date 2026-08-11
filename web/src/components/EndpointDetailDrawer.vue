@@ -43,24 +43,28 @@
             <span>{{ endpoint.enabled ? '启用' : '禁用' }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="虚拟状态节点">
-            <el-switch
-              :model-value="endpoint.status_node_enabled"
-              :loading="statusNodeSaving"
-              @change="onStatusNodeChange"
-            />
-            <span class="status-node-hint">在订阅第一位注入节点状态摘要</span>
+            <div class="toggle-row">
+              <el-switch
+                :model-value="endpoint.status_node_enabled"
+                :loading="statusNodeSaving"
+                @change="onStatusNodeChange"
+              />
+              <span class="hint-text">在订阅第一位注入节点状态摘要</span>
+            </div>
           </el-descriptions-item>
           <el-descriptions-item label="节点来源">
-            <el-radio-group
-              :model-value="endpoint.slot_mode ? 'slots' : 'pool'"
-              size="small"
-              :disabled="slotModeSaving"
-              @change="onSlotModeChange"
-            >
-              <el-radio-button label="pool">池模式</el-radio-button>
-              <el-radio-button label="slots">槽位模式</el-radio-button>
-            </el-radio-group>
-            <span class="status-node-hint"> 槽位模式只下发名称槽位挂载的节点，名字即槽位名 </span>
+            <div class="toggle-row">
+              <el-radio-group
+                :model-value="endpoint.slot_mode ? 'slots' : 'pool'"
+                size="small"
+                :disabled="slotModeSaving"
+                @change="onSlotModeChange"
+              >
+                <el-radio-button label="pool">池模式</el-radio-button>
+                <el-radio-button label="slots">槽位模式</el-radio-button>
+              </el-radio-group>
+              <span class="hint-text">槽位模式只下发名称槽位挂载的节点，名字即槽位名</span>
+            </div>
           </el-descriptions-item>
         </el-descriptions>
         <div class="drawer-actions">
@@ -96,61 +100,8 @@
         </div>
       </div>
 
-      <!-- 下发节点清单段:与 /sub 同一生成链的所见即所得(吸收原预览对话框);
-           订阅原文折叠展示,Clash/V2Ray 切换重拉。 -->
-      <div class="drawer-block">
-        <div class="drawer-section-title">下发节点清单</div>
-        <div class="preview-toolbar">
-          <el-radio-group v-model="format" size="small" @change="loadPreview">
-            <el-radio-button label="clash">Clash</el-radio-button>
-            <el-radio-button label="v2ray">V2Ray</el-radio-button>
-          </el-radio-group>
-          <span class="preview-hint">
-            共 {{ preview.count }} 个节点（已应用节点范围条件，与终端拉取到的完全一致）
-          </span>
-        </div>
-        <el-table
-          v-loading="previewLoading"
-          :data="preview.nodes"
-          size="small"
-          border
-          max-height="300"
-        >
-          <el-table-column label="名称" min-width="140" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.display_name || row.name }}</template>
-          </el-table-column>
-          <el-table-column label="地区" width="72">
-            <template #default="{ row }">{{ regionDisplay(row.region) }}</template>
-          </el-table-column>
-          <el-table-column label="延迟" width="80">
-            <template #default="{ row }">
-              <span class="num">{{ nodeLatencyText(row) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="可用" width="80">
-            <template #default="{ row }">
-              <el-tag :type="row.available ? 'success' : 'info'" size="small">
-                {{ row.available ? '可用' : '不可用' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="source" label="来源" width="110" show-overflow-tooltip />
-          <template #empty>
-            <span class="muted">当前节点范围条件下无可下发节点。</span>
-          </template>
-        </el-table>
-        <el-collapse class="raw-collapse">
-          <el-collapse-item title="订阅原文" name="raw">
-            <el-input
-              v-model="preview.content"
-              type="textarea"
-              :rows="8"
-              readonly
-              placeholder="(无节点内容)"
-            />
-          </el-collapse-item>
-        </el-collapse>
-      </div>
+      <!-- 下发节点清单段:抽 EndpointPreviewSection(400 行门禁);与 /sub 同链 WYSIWYG -->
+      <EndpointPreviewSection :endpoint="endpoint" :active="visible" />
 
       <!-- 订阅测试段:关闭抽屉时卸载(v-if),内部轮询随卸载停止;打开不自动测 -->
       <div class="drawer-block">
@@ -201,32 +152,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Endpoint } from '@/types'
-import client from '@/api/client'
 import { updateEndpointTemplate } from '@/api/endpoints'
 import StatusDot from '@/components/StatusDot.vue'
 import IPStatsTable from '@/components/IPStatsTable.vue'
 import EndpointTestSection from '@/components/EndpointTestSection.vue'
+import EndpointPreviewSection from '@/components/EndpointPreviewSection.vue'
 import EndpointGeoConfigSection from '@/components/EndpointGeoConfigSection.vue'
 import { hasConditions } from '@/utils/conditions'
 import { nodePicksCount, nodePicksLabel } from '@/components/endpoint-nodepicks-utils'
 import { nameModeLabel, nameModeTag } from '@/utils/namemode'
 import { useTemplateList } from '@/composables/useTemplateList'
 import { useEndpointToggles } from '@/composables/useEndpointToggles'
-import { regionDisplay } from '@/views/nodes/nodecells'
 import { copyText } from '@/utils/clipboard'
-
-// 预览节点(与后端 toNodeViews 输出对齐,只取本段所需字段)
-interface PreviewNode {
-  name: string
-  display_name?: string
-  region?: string
-  latency?: number
-  source?: string
-  available: boolean
-}
 
 const visible = defineModel<boolean>({ required: true })
 
@@ -290,46 +230,6 @@ const saveTemplateConfig = async () => {
 }
 
 // ---- 下发节点清单段:打开抽屉按当前格式拉一次;切换格式重拉。失败降级空态,不阻塞抽屉。 ----
-const format = ref<'clash' | 'v2ray'>('clash')
-const preview = ref<{ count: number; content: string; nodes: PreviewNode[] }>({
-  count: 0,
-  content: '',
-  nodes: []
-})
-const previewLoading = ref(false)
-
-const loadPreview = async () => {
-  if (!props.endpoint) return
-  previewLoading.value = true
-  try {
-    preview.value = await client.get(
-      `/endpoints/${props.endpoint.id}/preview?format=${format.value}`
-    )
-  } catch {
-    preview.value = { count: 0, content: '', nodes: [] }
-  } finally {
-    previewLoading.value = false
-  }
-}
-
-const nodeLatencyText = (n: PreviewNode): string =>
-  n.latency && n.latency > 0 ? `${n.latency}ms` : '—'
-
-// 打开抽屉/切换端点(父级在启停/命名/范围变更后刷新端点对象)时重拉清单;
-// 关闭时清空,避免下次闪现旧端点数据。
-watch(
-  () => [visible.value, props.endpoint] as const,
-  ([open, endpoint]) => {
-    if (open && endpoint) {
-      format.value = 'clash'
-      loadPreview()
-    } else if (!open) {
-      preview.value = { count: 0, content: '', nodes: [] }
-    }
-  },
-  { immediate: true }
-)
-
 const copyUrl = async () => {
   try {
     await copyText(props.subscriptionUrl)
@@ -350,6 +250,15 @@ const copyUrl = async () => {
 }
 .drawer-actions {
   margin-top: var(--ph-space-3);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ph-space-2);
+}
+/* flex gap 接管间距后,清掉 EP 的兄弟按钮 margin(否则 tooltip 包裹的按钮
+   与裸按钮间距不一,挤成疑似按钮组) */
+.drawer-actions .el-button {
+  margin-left: 0;
 }
 .url-cell {
   display: inline-flex;
@@ -359,8 +268,13 @@ const copyUrl = async () => {
 .url-text {
   word-break: break-all;
 }
-.status-node-hint {
-  margin-left: var(--ph-space-2);
+/* 开关/单选 + 右侧提示:同一行内 flex 垂直居中 */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+}
+.hint-text {
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
 }
