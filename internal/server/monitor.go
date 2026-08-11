@@ -43,6 +43,11 @@ func (s *Server) MonitorTargets() []nodemon.Target {
 			if !ep.Enabled {
 				continue
 			}
+			if ep.SlotMode {
+				// 槽位模式:监控集合 = 槽位挂载节点(池过滤链不参与,见 slotModeDeliverable)
+				out = append(out, toMonitorTargets(uid, s.slotModeMonitorNodes(uid))...)
+				continue
+			}
 			picks := s.endpointNodePicks(ep)
 			nodes := s.filteredNodesForMonitor(pool, uid, picks)
 			nodes = s.applyConditions(nodes, ep)
@@ -50,6 +55,28 @@ func (s *Server) MonitorTargets() []nodemon.Target {
 		}
 	}
 	return out
+}
+
+// slotModeMonitorNodes 槽位模式的监控集合:该用户槽位挂载的节点。
+// stale/屏蔽不监控(已消失/已拉黑没有探测意义);可用性不排除
+// (宕机节点必须在监控中,否则等不到恢复探测)。
+func (s *Server) slotModeMonitorNodes(userID int64) []*subscription.Node {
+	slots, err := s.st.SlotNameByNodeKeyForUser(userID)
+	if err != nil || len(slots) == 0 {
+		return nil
+	}
+	pool := s.mergeSelfHosted(s.nodes.NodesForUser(userID), userID)
+	var nodes []*subscription.Node
+	for _, n := range pool {
+		if _, ok := slots[n.NodeKey()]; ok {
+			nodes = append(nodes, n)
+		}
+	}
+	nodes = filterStaleNodes(nodes)
+	if blocked, berr := s.st.ListBlockedNodesForUser(userID); berr == nil {
+		nodes = filterBlockedNodes(nodes, blocked)
+	}
+	return nodes
 }
 
 func toMonitorTargets(userID int64, nodes []*subscription.Node) []nodemon.Target {
@@ -87,8 +114,19 @@ func (s *Server) monitorImmuneKeys(userID int64) map[string]bool {
 	}
 	pool := s.nodes.NodesForUser(userID)
 	keys := make(map[string]bool)
+	slotModeAdded := false
 	for _, ep := range eps {
 		if !ep.Enabled {
+			continue
+		}
+		if ep.SlotMode {
+			// 槽位模式地址的免疫集 = 槽位挂载节点(只算一次,跨地址同集合)
+			if !slotModeAdded {
+				for _, n := range s.slotModeMonitorNodes(userID) {
+					keys[n.NodeKey()] = true
+				}
+				slotModeAdded = true
+			}
 			continue
 		}
 		nodes := s.filteredNodesForMonitor(pool, userID, s.endpointNodePicks(ep))

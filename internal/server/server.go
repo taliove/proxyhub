@@ -600,6 +600,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/endpoints/{id}/conditions", guard(s.handleUpdateEndpointConditions))
 	mux.HandleFunc("PUT /api/endpoints/{id}/node-picks", guard(s.handleUpdateEndpointNodePicks))
 	mux.HandleFunc("PUT /api/endpoints/{id}/status-node", guard(s.handleUpdateEndpointStatusNode))
+	mux.HandleFunc("PUT /api/endpoints/{id}/slot-mode", guard(s.handleUpdateEndpointSlotMode))
 	mux.HandleFunc("PUT /api/endpoints/{id}/geo-config", guard(s.handleUpdateEndpointGeoConfig))
 	mux.HandleFunc("PUT /api/endpoints/{id}/public-name", guard(s.handleUpdateEndpointPublicName))
 	mux.HandleFunc("POST /api/endpoints/preview-conditions", guard(s.handlePreviewConditions))
@@ -1468,7 +1469,10 @@ func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
 	items := make([]endpointListItem, 0, len(eps))
 	for _, ep := range eps {
 		scoped := base
-		if picks := s.endpointNodePicks(ep); len(picks) > 0 {
+		if ep.SlotMode {
+			// 槽位模式地址的可用性按槽位下发链计算(与实发同口径)
+			scoped = s.slotModeDeliverable(ep)
+		} else if picks := s.endpointNodePicks(ep); len(picks) > 0 {
 			scoped = s.filteredNodesForDelivery(pool, effUID, picks, immuneKeys)
 		}
 		items = append(items, endpointListItem{
@@ -1617,6 +1621,38 @@ func (s *Server) handleUpdateEndpointStatusNode(w http.ResponseWriter, r *http.R
 			return
 		}
 		s.logger.Error("update endpoint status node failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleUpdateEndpointSlotMode 设置槽位模式(ADR 0047 后续)。
+// PUT /api/endpoints/{id}/slot-mode,请求体 {"enabled": true}。
+// 开启后该地址只下发有槽位挂载的节点;精选/节点范围/关键词不再生效。
+func (s *Server) handleUpdateEndpointSlotMode(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if err := s.st.SetEndpointSlotModeForUser(EffectiveUserID(scope), id, req.Enabled); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		s.logger.Error("update endpoint slot mode failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

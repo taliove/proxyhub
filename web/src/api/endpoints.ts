@@ -11,6 +11,11 @@ export function setEndpointStatusNode(id: number, enabled: boolean): Promise<{ o
   return client.put<unknown, { ok: boolean }>(`/endpoints/${id}/status-node`, { enabled })
 }
 
+// 槽位模式开关:开启后只下发有槽位挂载的节点,名字即槽位名
+export function setEndpointSlotMode(id: number, enabled: boolean): Promise<{ ok: boolean }> {
+  return client.put<unknown, { ok: boolean }>(`/endpoints/${id}/slot-mode`, { enabled })
+}
+
 // Update endpoint template binding
 export function updateEndpointTemplate(
   id: number,

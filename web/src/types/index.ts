@@ -14,6 +14,8 @@ export interface Endpoint {
   template_name: string
   // 虚拟状态节点开关(issue #102):true = 订阅第一位注入节点状态摘要哑节点
   status_node_enabled?: boolean
+  // 槽位模式:true = 只下发有槽位挂载的节点(精选/节点范围/关键词不生效)
+  slot_mode?: boolean
   // 地域白名单(pull-guard ticket 07):'off'=不判(默认), 'observe'=只留痕仍下发,
   // 'enforce'=不匹配则 403。两个列表逗号分隔,空=该维度不判(所以 enforce + 双空仍全放行)。
   // 省份维度受内置库限制:当前内置库只有国家级数据,省份列表非空即恒不匹配。

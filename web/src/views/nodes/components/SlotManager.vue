@@ -10,10 +10,26 @@
           <el-icon class="muted"><QuestionFilled /></el-icon>
         </el-tooltip>
       </span>
-      <el-button size="small" type="primary" plain @click="createNew">新建名称</el-button>
+      <span class="slot-tools">
+        <el-input
+          v-model="search"
+          placeholder="搜索名称/节点"
+          clearable
+          size="small"
+          class="slot-search"
+        />
+        <el-select v-model="statusFilter" size="small" class="slot-filter">
+          <el-option label="全部状态" value="all" />
+          <el-option label="在线" value="online" />
+          <el-option label="不可用" value="down" />
+          <el-option label="空槽" value="empty" />
+          <el-option label="已消失" value="gone" />
+        </el-select>
+        <el-button size="small" type="primary" plain @click="createNew">新建名称</el-button>
+      </span>
     </div>
 
-    <el-table v-loading="loading" :data="slots" size="small" row-key="name">
+    <el-table v-loading="loading" :data="filteredSlots" size="small" row-key="name">
       <el-table-column label="名称" min-width="180">
         <template #default="{ row }">
           <div class="name-cell">
@@ -74,7 +90,7 @@
       <el-table-column label="操作" width="200">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openAssign(row)">
-            {{ row.empty || row.node?.missing || row.node?.stale ? '指派节点' : '换人' }}
+            {{ row.empty || row.node?.missing || row.node?.stale ? '指派节点' : '换节点' }}
           </el-button>
           <el-button link size="small" @click="rename(row)">改名</el-button>
           <el-button link type="danger" size="small" @click="remove(row)">删除</el-button>
@@ -82,18 +98,12 @@
       </el-table-column>
     </el-table>
 
-    <!-- 迁移待处理冲突:同名竞争落选行,认领(改成槽位)或放弃(清除覆盖) -->
-    <div v-if="conflicts.length" class="conflict-zone">
-      <div class="conflict-title">待处理冲突（旧名称覆盖同名竞争落选）</div>
-      <div v-for="c in conflicts" :key="c.node_key" class="conflict-row">
-        <span class="conflict-name">{{ c.display_name }}</span>
-        <span class="muted">{{ c.node_key }}</span>
-        <span class="conflict-ops">
-          <el-button link type="primary" size="small" @click="claim(c)">认领为槽位</el-button>
-          <el-button link type="danger" size="small" @click="drop(c)">放弃</el-button>
-        </span>
-      </div>
-    </div>
+    <SlotConflictZone
+      v-if="conflicts.length"
+      :conflicts="conflicts"
+      @claim="claim"
+      @changed="emit('changed')"
+    />
 
     <SlotAssignNodeDialog ref="assignDialog" :nodes="nodes" @saved="emit('changed')" />
 
@@ -116,6 +126,7 @@ import client from '@/api/client'
 import ProbeGrid from './ProbeGrid.vue'
 import SlotNameEditor from './SlotNameEditor.vue'
 import SlotAssignNodeDialog from './SlotAssignNodeDialog.vue'
+import SlotConflictZone from './SlotConflictZone.vue'
 import {
   createSlot,
   deleteSlot,
@@ -148,6 +159,31 @@ const shortProbeTime = (s: string): string => {
   const time = s.slice(11, 19)
   return day === today ? time : `${s.slice(5, 10)} ${s.slice(11, 16)}`
 }
+
+// 搜索 + 状态筛选(槽位当"我的订阅清单"管理,issue #94 后续)
+const search = ref('')
+const statusFilter = ref<'all' | 'online' | 'down' | 'empty' | 'gone'>('all')
+
+const statusOf = (row: NameSlot): 'empty' | 'gone' | 'down' | 'online' => {
+  if (row.empty) return 'empty'
+  if (row.node?.missing || row.node?.stale) return 'gone'
+  if (row.node && !row.node.available) return 'down'
+  return 'online'
+}
+
+const filteredSlots = computed(() => {
+  const kw = search.value.trim().toLowerCase()
+  return props.slots.filter((s) => {
+    if (statusFilter.value !== 'all' && statusOf(s) !== statusFilter.value) return false
+    if (!kw) return true
+    return (
+      s.name.toLowerCase().includes(kw) ||
+      (s.display || '').toLowerCase().includes(kw) ||
+      (s.node?.name || '').toLowerCase().includes(kw) ||
+      (s.node?.source || '').toLowerCase().includes(kw)
+    )
+  })
+})
 
 // 新建/改名编辑器对话框
 const editVisible = ref(false)
@@ -261,22 +297,6 @@ const doClaim = async (c: SlotConflictRow, name: string) => {
   emit('changed')
 }
 
-// 放弃:清掉覆盖行(display_name 残留随行的去留规则清除,收藏保留)
-const drop = async (c: SlotConflictRow) => {
-  try {
-    await ElMessageBox.confirm(
-      `放弃节点 ${c.node_key} 的旧名称「${c.display_name}」？该名称仍被别的节点占用。`,
-      '放弃覆盖',
-      { type: 'warning' }
-    )
-  } catch {
-    return
-  }
-  await clearOverrideRow(c.node_key)
-  ElMessage.success('已放弃')
-  emit('changed')
-}
-
 const clearOverrideRow = async (nodeKey: string) => {
   try {
     await client.delete('/nodes/override', { data: { node_key: nodeKey } })
@@ -302,6 +322,17 @@ const clearOverrideRow = async (nodeKey: string) => {
   align-items: center;
   gap: var(--ph-space-1);
 }
+.slot-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ph-space-2);
+}
+.slot-search {
+  width: 180px;
+}
+.slot-filter {
+  width: 110px;
+}
 .slot-name {
   font-weight: 500;
 }
@@ -323,29 +354,6 @@ const clearOverrideRow = async (nodeKey: string) => {
 }
 .ctl-full {
   width: 100%;
-}
-.conflict-zone {
-  margin-top: var(--ph-space-3);
-  border: 1px dashed var(--ph-warning);
-  border-radius: var(--ph-radius-sm);
-  padding: var(--ph-space-2) var(--ph-space-3);
-}
-.conflict-title {
-  font-size: var(--ph-text-sm);
-  color: var(--ph-warning);
-  margin-bottom: var(--ph-space-2);
-}
-.conflict-row {
-  display: flex;
-  align-items: center;
-  gap: var(--ph-space-3);
-  padding: var(--ph-space-1) 0;
-}
-.conflict-name {
-  font-weight: 500;
-}
-.conflict-ops {
-  margin-left: auto;
 }
 .probe-cell {
   display: inline-flex;

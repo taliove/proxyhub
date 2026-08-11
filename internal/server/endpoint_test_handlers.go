@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/taliove/proxyhub/internal/airporttest"
+	"github.com/taliove/proxyhub/internal/filter"
 	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
@@ -23,15 +24,64 @@ import (
 // issue #101)→ 端点条件 → 名称标准化(跳过槽位节点)
 // → 名称槽位(ADR 0047 / issue #96)→ 精选项别名(命名链最终层,issue #85),
 // 与 /sub 生成链同源(所见即所得)。
+// 槽位模式(ep.SlotMode)走独立精简链,见 slotModeDeliverable。
 // 拉取验证、池快照、现场实测、后台预览四处共用这一个选择逻辑(ADR 0028 决策 1)。
 // 池与自建节点按端点属主分片(ticket 07;UserID 0 = 全局池)。
 func (s *Server) endpointDeliverableNodes(ep *store.Endpoint) []*subscription.Node {
+	if ep.SlotMode {
+		return s.slotModeDeliverable(ep)
+	}
 	picks := s.endpointNodePicks(ep)
 	nodes := s.filteredNodesForDelivery(s.nodes.NodesForUser(ep.UserID), ep.UserID, picks, s.monitorImmuneKeys(ep.UserID))
 	nodes = s.applyConditions(nodes, ep)
 	nodes = s.standardizeNodesForEndpoint(nodes, ep, ep.UserID)
 	nodes = s.applyNameSlots(nodes, ep.UserID)
 	return applyNodePickAliases(nodes, picks)
+}
+
+// slotModeDeliverable 槽位模式下发链(ADR 0047 后续):只下发当前有槽位挂载的
+// 节点——名字即槽位名(applyNameSlots 渲染),顺序按槽位名固定。精选/节点范围/
+// 关键词筛选在此模式不生效;卫生过滤保留:stale(消失)与屏蔽节点不下发,
+// 可用性/延迟遵循监控免疫口径(issue #101:监控集合宕机仍下发)。
+func (s *Server) slotModeDeliverable(ep *store.Endpoint) []*subscription.Node {
+	slots, err := s.st.SlotNameByNodeKeyForUser(ep.UserID)
+	if err != nil {
+		s.logger.Warn("list name slots for slot mode failed", "error", err)
+		return nil // 读失败宁可空(503),不漏出未命名节点
+	}
+	if len(slots) == 0 {
+		return nil
+	}
+
+	pool := s.mergeSelfHosted(s.nodes.NodesForUser(ep.UserID), ep.UserID)
+	var nodes []*subscription.Node
+	for _, n := range pool {
+		if _, ok := slots[n.NodeKey()]; ok {
+			nodes = append(nodes, n)
+		}
+	}
+
+	// 卫生过滤(与主链同语义):stale 剔除 + 屏蔽剔除 + 可用性/延迟(带免疫)
+	nodes = filterStaleNodes(nodes)
+	if blocked, berr := s.st.ListBlockedNodesForUser(ep.UserID); berr != nil {
+		s.logger.Warn("list blocked nodes failed, skipping block filter", "error", berr)
+	} else {
+		nodes = filterBlockedNodes(nodes, blocked)
+	}
+	immune := s.monitorImmuneKeys(ep.UserID)
+	if len(immune) > 0 {
+		nodes = filterAvailableImmune(nodes, immune)
+		nodes = filterLatencyImmune(nodes, s.cfg.HealthCheck.LatencyThreshold, immune)
+	} else {
+		nodes = filter.FilterAvailable(nodes)
+		nodes = filter.FilterByLatencyThreshold(nodes, s.cfg.HealthCheck.LatencyThreshold)
+	}
+
+	// 顺序固定:按槽位名排序(转移节点后订阅布局不变)
+	sort.SliceStable(nodes, func(i, j int) bool {
+		return slots[nodes[i].NodeKey()] < slots[nodes[j].NodeKey()]
+	})
+	return s.applyNameSlots(nodes, ep.UserID)
 }
 
 // formatCheckResult 单格式拉取验证结果。

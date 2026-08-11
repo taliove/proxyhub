@@ -60,6 +60,10 @@ INSERT INTO endpoints (alias, path, token) VALUES ('存量设备', 'legacypath00
 	if err := s.migrateEndpointStatusNode(); err != nil {
 		t.Fatalf("migrateEndpointStatusNode: %v", err)
 	}
+	// slot_mode 同理
+	if err := s.migrateEndpointSlotMode(); err != nil {
+		t.Fatalf("migrateEndpointSlotMode: %v", err)
+	}
 
 	ep, err := s.GetEndpointByPath("legacypath000000")
 	if err != nil {

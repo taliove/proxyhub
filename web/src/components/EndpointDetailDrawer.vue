@@ -1,8 +1,7 @@
 <template>
   <el-drawer v-model="visible" :title="drawerTitle" size="720px">
     <template v-if="endpoint">
-      <!-- 概况段:基础信息 + 轻管理动作(启停/命名设置/节点范围/删除)。
-           变更逻辑全部上抛给订阅管理页既有处理函数,抽屉不持有任何变更逻辑(哑组件)。 -->
+      <!-- 概况段:基础信息 + 轻管理动作;变更逻辑全部上抛订阅管理页(哑组件) -->
       <div class="drawer-block">
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="别名">{{ endpoint.alias }}</el-descriptions-item>
@@ -51,6 +50,18 @@
             />
             <span class="status-node-hint">在订阅第一位注入节点状态摘要</span>
           </el-descriptions-item>
+          <el-descriptions-item label="节点来源">
+            <el-radio-group
+              :model-value="endpoint.slot_mode ? 'slots' : 'pool'"
+              size="small"
+              :disabled="slotModeSaving"
+              @change="onSlotModeChange"
+            >
+              <el-radio-button label="pool">池模式</el-radio-button>
+              <el-radio-button label="slots">槽位模式</el-radio-button>
+            </el-radio-group>
+            <span class="status-node-hint"> 槽位模式只下发名称槽位挂载的节点，名字即槽位名 </span>
+          </el-descriptions-item>
         </el-descriptions>
         <div class="drawer-actions">
           <el-button size="small" @click="emit('toggle', endpoint)">
@@ -58,8 +69,28 @@
           </el-button>
           <el-button size="small" @click="emit('name-config', endpoint)">命名设置</el-button>
           <el-button size="small" @click="emit('public-name', endpoint)">公开名称</el-button>
-          <el-button size="small" @click="emit('conditions', endpoint)">节点范围</el-button>
-          <el-button size="small" @click="emit('picks', endpoint)">精选节点</el-button>
+          <el-tooltip content="槽位模式下由名称槽位决定" :disabled="!endpoint.slot_mode">
+            <span>
+              <el-button
+                size="small"
+                :disabled="endpoint.slot_mode"
+                @click="emit('conditions', endpoint)"
+              >
+                节点范围
+              </el-button>
+            </span>
+          </el-tooltip>
+          <el-tooltip content="槽位模式下由名称槽位决定" :disabled="!endpoint.slot_mode">
+            <span>
+              <el-button
+                size="small"
+                :disabled="endpoint.slot_mode"
+                @click="emit('picks', endpoint)"
+              >
+                精选节点
+              </el-button>
+            </span>
+          </el-tooltip>
           <el-button size="small" @click="openTemplateConfig">配置模板</el-button>
           <el-button size="small" type="danger" @click="emit('delete', endpoint)">删除</el-button>
         </div>
@@ -174,16 +205,16 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Endpoint } from '@/types'
 import client from '@/api/client'
-import { updateEndpointTemplate, setEndpointStatusNode } from '@/api/endpoints'
+import { updateEndpointTemplate } from '@/api/endpoints'
 import StatusDot from '@/components/StatusDot.vue'
 import IPStatsTable from '@/components/IPStatsTable.vue'
 import EndpointTestSection from '@/components/EndpointTestSection.vue'
 import EndpointGeoConfigSection from '@/components/EndpointGeoConfigSection.vue'
 import { hasConditions } from '@/utils/conditions'
-import { extractErrorDetail } from '@/utils/errors'
 import { nodePicksCount, nodePicksLabel } from '@/components/endpoint-nodepicks-utils'
 import { nameModeLabel, nameModeTag } from '@/utils/namemode'
 import { useTemplateList } from '@/composables/useTemplateList'
+import { useEndpointToggles } from '@/composables/useEndpointToggles'
 import { regionDisplay } from '@/views/nodes/nodecells'
 import { copyText } from '@/utils/clipboard'
 
@@ -238,21 +269,13 @@ const openTemplateConfig = async () => {
   templateConfigVisible.value = true
 }
 
-// ---- 虚拟状态节点开关(issue #102/103):直改直存,与模板配置同哲学 ----
-const statusNodeSaving = ref(false)
-const onStatusNodeChange = async (val: string | number | boolean) => {
-  if (!props.endpoint) return
-  statusNodeSaving.value = true
-  try {
-    await setEndpointStatusNode(props.endpoint.id, Boolean(val))
-    ElMessage.success(val ? '已开启：订阅第一位将展示节点状态' : '已关闭')
-    emit('status-node-changed')
-  } catch (e) {
-    ElMessage.error(extractErrorDetail(e) || '保存失败')
-  } finally {
-    statusNodeSaving.value = false
-  }
-}
+// ---- 直改直存开关(虚拟状态节点/槽位模式):逻辑抽 useEndpointToggles(400 行门禁) ----
+// 两个开关变更统一上抛 status-node-changed(父页只负责重取列表)
+const { statusNodeSaving, onStatusNodeChange, slotModeSaving, onSlotModeChange } =
+  useEndpointToggles(
+    computed(() => props.endpoint),
+    () => emit('status-node-changed')
+  )
 
 const saveTemplateConfig = async () => {
   if (!props.endpoint) return

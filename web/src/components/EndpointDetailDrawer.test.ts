@@ -332,7 +332,10 @@ describe('EndpointDetailDrawer', () => {
     const wrapper = mountDrawer(true)
     await flushPromises()
 
-    const radioGroup = wrapper.findComponent({ name: 'ElRadioGroup' })
+    // 抽屉里现有两个 radio-group(节点来源/清单格式),按 modelValue 锁定格式切换器
+    const radioGroup = wrapper
+      .findAllComponents({ name: 'ElRadioGroup' })
+      .find((g) => g.props('modelValue') === 'clash')!
     radioGroup.vm.$emit('update:modelValue', 'v2ray')
     radioGroup.vm.$emit('change', 'v2ray')
     await flushPromises()

@@ -65,6 +65,11 @@ type Endpoint struct {
 	// 输出第一位注入合成哑节点,名称动态展示监控摘要(在线数/故障名单)。
 	// 默认关(零回归)。
 	StatusNodeEnabled bool `json:"status_node_enabled"`
+
+	// SlotMode 槽位模式(ADR 0047 后续):true = 只下发有槽位挂载的节点,
+	// 名字即槽位名、顺序按槽位名固定;精选/节点范围/关键词筛选不生效。
+	// 默认 false = 池模式(现状,零回归)。
+	SlotMode bool `json:"slot_mode"`
 }
 
 // URL 返回订阅地址的相对路径
@@ -83,7 +88,7 @@ func randomHex(bytes int) (string, error) {
 
 // endpointColumns 查询列表共用的列清单(ticket 07 起带 user_id,读取侧三处保持一致)。
 // 与 scanEndpointFrom 的 Scan 目标顺序一一对应,加列必须双处同步。
-const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name, geo_mode, geo_countries, geo_provinces, public_name, node_picks, status_node_enabled`
+const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name, geo_mode, geo_countries, geo_provinces, public_name, node_picks, status_node_enabled, slot_mode`
 
 // CreateEndpoint 创建订阅地址（随机 Path + Token）。
 // 未指定属主(旧调用/直接库调用)时归一到首个 super_admin(ticket 07 Invariant B);
@@ -347,6 +352,12 @@ func (s *Store) migrateEndpointStatusNode() error {
 	return s.addColumnIfMissing("endpoints", "status_node_enabled", "INTEGER NOT NULL DEFAULT 0")
 }
 
+// migrateEndpointSlotMode 槽位模式列(031_endpoint_slot_mode.sql)。
+// 新库由 migrate() 内联 schema 建出;既有库经此幂等补列(双路径同 019/025 先例)。
+func (s *Store) migrateEndpointSlotMode() error {
+	return s.addColumnIfMissing("endpoints", "slot_mode", "INTEGER NOT NULL DEFAULT 0")
+}
+
 // maxPublicNameRunes 公开名称的 rune 上限(issue #38):展示卫生,防超长串
 // 撑爆客户端配置列表;不是安全闸门(/sub 头值整体 base64/percent-encode,
 // CRLF 结构性进不去)。
@@ -448,15 +459,28 @@ func scanEndpointFrom(r rowScanner) (*Endpoint, error) {
 	var ep Endpoint
 	var enabled int
 	var statusNode int
+	var slotMode int
 	if err := r.Scan(&ep.ID, &ep.Alias, &ep.Path, &ep.Token, &enabled, &ep.CreatedAt,
 		&ep.NameMode, &ep.NameTemplate, &ep.Conditions, &ep.UserID, &ep.TemplateName,
 		&ep.GeoMode, &ep.GeoCountries, &ep.GeoProvinces, &ep.PublicName, &ep.NodePicks,
-		&statusNode); err != nil {
+		&statusNode, &slotMode); err != nil {
 		return nil, err
 	}
 	ep.Enabled = enabled != 0
 	ep.StatusNodeEnabled = statusNode != 0
+	ep.SlotMode = slotMode != 0
 	return &ep, nil
+}
+
+// SetEndpointSlotModeForUser 设置槽位模式开关(按属主校验)。
+func (s *Store) SetEndpointSlotModeForUser(userID, id int64, enabled bool) error {
+	res, err := s.db.Exec(
+		`UPDATE endpoints SET slot_mode = ? WHERE id = ? AND user_id = ?`,
+		boolToInt(enabled), id, userID)
+	if err != nil {
+		return err
+	}
+	return checkAffected(res)
 }
 
 // SetEndpointStatusNodeForUser 设置虚拟状态节点开关(issue #102,按属主校验)。

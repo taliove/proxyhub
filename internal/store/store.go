@@ -78,7 +78,10 @@ CREATE TABLE IF NOT EXISTS endpoints (
 	node_picks    TEXT NOT NULL DEFAULT '',
 	-- 虚拟状态节点开关(issue #102):1 = 该地址输出第一位注入监控摘要哑节点。
 	-- 新库由本 schema 建出;既有库靠 migrateEndpointStatusNode 幂等补列。
-	status_node_enabled INTEGER NOT NULL DEFAULT 0
+	status_node_enabled INTEGER NOT NULL DEFAULT 0,
+	-- 槽位模式(issue #94 后续):1 = 只下发有槽位挂载的节点,名字即槽位名。
+	-- 新库由本 schema 建出;既有库靠 migrateEndpointSlotMode 幂等补列。
+	slot_mode INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS pull_logs (
@@ -315,6 +318,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	}
 	// 虚拟状态节点开关(030_endpoint_status_node.sql / issue #102):默认关,零回归。
 	if err := s.migrateEndpointStatusNode(); err != nil {
+		return err
+	}
+	// 槽位模式(031_endpoint_slot_mode.sql):默认关(池模式),零回归。
+	if err := s.migrateEndpointSlotMode(); err != nil {
 		return err
 	}
 	// 订阅地址的节点范围筛选条件(013_endpoint_conditions.sql)。
