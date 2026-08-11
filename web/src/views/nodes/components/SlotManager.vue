@@ -46,13 +46,13 @@
           <el-tag v-else type="success" size="small" effect="plain">在线</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="最近探测" width="150">
+      <el-table-column label="最近探测" width="120">
         <template #default="{ row }">
           <span v-if="row.node?.last_probe_at" class="probe-cell">
             <span :class="row.node.last_probe_ok ? 'probe-ok' : 'probe-fail'">
               {{ row.node.last_probe_ok ? '✓' : '✗' }}
             </span>
-            <span class="muted num">{{ row.node.last_probe_at }}</span>
+            <span class="muted num probe-time">{{ shortProbeTime(row.node.last_probe_at) }}</span>
           </span>
           <span v-else-if="!monitorEnabled" class="muted">监控未开启</span>
           <span v-else class="muted">—</span>
@@ -89,33 +89,14 @@
       </div>
     </div>
 
-    <!-- 指派/换人:从节点池选节点挂到该名称 -->
-    <el-dialog
-      v-model="assignVisible"
-      :title="`指派节点 - ${assignSlot?.name || ''}`"
-      width="480px"
-    >
-      <el-select
-        v-model="assignNodeKey"
-        placeholder="搜索节点（名称/地区）"
-        filterable
-        class="ctl-full"
-      >
-        <el-option
-          v-for="n in assignCandidates"
-          :key="n.node_key"
-          :label="`${n.display_name || n.name} · ${n.region || '—'} · ${n.source}`"
-          :value="n.node_key"
-        >
-          <span>{{ n.display_name || n.name }}</span>
-          <span class="muted option-meta">{{ n.region || '—' }} · {{ n.source }}</span>
-        </el-option>
-      </el-select>
+    <SlotAssignNodeDialog ref="assignDialog" :nodes="nodes" @saved="emit('changed')" />
+
+    <!-- 新建/改名:带变量插入与实时预览的编辑器(改名按当前挂载节点渲染) -->
+    <el-dialog v-model="editVisible" :title="editTitle" width="480px">
+      <SlotNameEditor v-model="editName" :node-key="editNodeKey" placeholder="输入名称" />
       <template #footer>
-        <el-button @click="assignVisible = false">取消</el-button>
-        <el-button type="primary" :disabled="!assignNodeKey" @click="doAssign(false)">
-          确认
-        </el-button>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!editName" @click="saveEdit">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -127,6 +108,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import client from '@/api/client'
 import ProbeGrid from './ProbeGrid.vue'
+import SlotNameEditor from './SlotNameEditor.vue'
+import SlotAssignNodeDialog from './SlotAssignNodeDialog.vue'
 import {
   createSlot,
   deleteSlot,
@@ -152,100 +135,67 @@ const emit = defineEmits<{
   (e: 'changed'): void
 }>()
 
-// 可用节点排前,便于挑替补
-const assignCandidates = computed(() =>
-  [...props.nodes].sort((a, b) => Number(b.available) - Number(a.available))
-)
+// 探测时间紧凑格式:今天只显示时分秒,跨天带月-日(列宽窄,防换行)
+const shortProbeTime = (s: string): string => {
+  const today = new Date().toISOString().slice(0, 10)
+  const day = s.slice(0, 10)
+  const time = s.slice(11, 19)
+  return day === today ? time : `${s.slice(5, 10)} ${s.slice(11, 16)}`
+}
 
-const createNew = async () => {
-  let name: string
-  try {
-    const { value } = await ElMessageBox.prompt('输入新名称（可先起名后挑节点）', '新建名称', {
-      inputPattern: /\S/,
-      inputErrorMessage: '名称不能为空'
-    })
-    name = value
-  } catch {
+// 新建/改名编辑器对话框
+const editVisible = ref(false)
+const editMode = ref<'create' | 'rename' | 'claim'>('create')
+const editTarget = ref<NameSlot | null>(null)
+const editName = ref('')
+const editTitle = computed(() => {
+  if (editMode.value === 'create') return '新建名称'
+  if (editMode.value === 'claim') return `认领为槽位 - ${claimRow.value?.display_name || ''}`
+  return `改名 - ${editTarget.value?.name || ''}`
+})
+// 预览上下文:改名=当前挂载节点;认领=冲突行节点;新建空槽=无(指派后可预览)
+const editNodeKey = computed(() => editTarget.value?.node_key ?? claimRow.value?.node_key ?? '')
+
+const createNew = () => {
+  editMode.value = 'create'
+  editTarget.value = null
+  editName.value = ''
+  editVisible.value = true
+}
+
+const saveEdit = async () => {
+  const name = editName.value
+  if (editMode.value === 'claim' && claimRow.value) {
+    await doClaim(claimRow.value, name)
     return
   }
   try {
-    await createSlot(name)
-    ElMessage.success('已创建空槽，可指派节点')
+    if (editMode.value === 'create') {
+      await createSlot(name)
+      ElMessage.success('已创建空槽，可指派节点')
+    } else if (editTarget.value) {
+      await updateSlot(editTarget.value.name, { newName: name })
+      ElMessage.success('已改名，立即生效')
+    }
+    editVisible.value = false
     emit('changed')
   } catch (e) {
     if (readSlotConflict(e)?.kind === 'name_taken') {
       ElMessage.error(`名称「${name}」已存在`)
     } else {
-      ElMessage.error(apiErrorMessage(e, '创建失败'))
+      ElMessage.error(apiErrorMessage(e, '保存失败'))
     }
   }
 }
 
-const assignVisible = ref(false)
-const assignSlot = ref<NameSlot | null>(null)
-const assignNodeKey = ref('')
+const assignDialog = ref<InstanceType<typeof SlotAssignNodeDialog> | null>(null)
+const openAssign = (row: NameSlot) => assignDialog.value?.open(row)
 
-const openAssign = (row: NameSlot) => {
-  assignSlot.value = row
-  assignNodeKey.value = ''
-  assignVisible.value = true
-}
-
-const doAssign = async (force: boolean) => {
-  if (!assignSlot.value || !assignNodeKey.value) return
-  const slotName = assignSlot.value.name
-  try {
-    await updateSlot(slotName, { nodeKey: assignNodeKey.value, force })
-    ElMessage.success('已生效，所有订阅立即使用新名称')
-    assignVisible.value = false
-    emit('changed')
-  } catch (e) {
-    const conflict = readSlotConflict(e)
-    if (conflict && !force) {
-      let text = ''
-      if (conflict.kind === 'node_occupied') {
-        text = `该节点当前挂在名称「${conflict.holder_name}」上。改挂到「${slotName}」后，「${conflict.holder_name}」将变空槽。确认？`
-      } else if (conflict.kind === 'reassign') {
-        text = `名称「${slotName}」当前挂在节点 ${conflict.holder_node_key} 上，确认换人？`
-      }
-      if (text) {
-        try {
-          await ElMessageBox.confirm(text, '转移确认', { type: 'warning' })
-          await doAssign(true)
-        } catch {
-          /* 用户取消 */
-        }
-        return
-      }
-    }
-    ElMessage.error(apiErrorMessage(e, '指派失败'))
-  }
-}
-
-const rename = async (row: NameSlot) => {
-  let newName: string
-  try {
-    const { value } = await ElMessageBox.prompt('新名称', `改名 - ${row.name}`, {
-      inputValue: row.name,
-      inputPattern: /\S/,
-      inputErrorMessage: '名称不能为空'
-    })
-    newName = value
-  } catch {
-    return
-  }
-  if (newName === row.name) return
-  try {
-    await updateSlot(row.name, { newName })
-    ElMessage.success('已改名，立即生效')
-    emit('changed')
-  } catch (e) {
-    if (readSlotConflict(e)?.kind === 'name_taken') {
-      ElMessage.error(`名称「${newName}」已存在`)
-    } else {
-      ElMessage.error(apiErrorMessage(e, '改名失败'))
-    }
-  }
+const rename = (row: NameSlot) => {
+  editMode.value = 'rename'
+  editTarget.value = row
+  editName.value = row.name
+  editVisible.value = true
 }
 
 const remove = async (row: NameSlot) => {
@@ -265,19 +215,17 @@ const remove = async (row: NameSlot) => {
   }
 }
 
-// 冲突认领:以新名字建槽位挂到该节点,然后清掉覆盖行残留
-const claim = async (c: SlotConflictRow) => {
-  let name: string
-  try {
-    const { value } = await ElMessageBox.prompt(
-      `为节点 ${c.node_key} 起一个新名称（旧名「${c.display_name}」已被占）`,
-      '认领为槽位',
-      { inputValue: c.display_name, inputPattern: /\S/, inputErrorMessage: '名称不能为空' }
-    )
-    name = value
-  } catch {
-    return
-  }
+// 冲突认领:复用编辑器对话框(带变量插入/预览),落库逻辑保留原 force 确认链
+const claimRow = ref<SlotConflictRow | null>(null)
+const claim = (c: SlotConflictRow) => {
+  claimRow.value = c
+  editMode.value = 'claim'
+  editTarget.value = null
+  editName.value = c.display_name
+  editVisible.value = true
+}
+
+const doClaim = async (c: SlotConflictRow, name: string) => {
   try {
     await createSlot(name, c.node_key)
   } catch (e) {
@@ -303,6 +251,7 @@ const claim = async (c: SlotConflictRow) => {
   }
   await clearOverrideRow(c.node_key)
   ElMessage.success('已认领')
+  editVisible.value = false
   emit('changed')
 }
 

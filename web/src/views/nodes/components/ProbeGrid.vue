@@ -32,17 +32,23 @@ const cellClass = (v: number) =>
   height: 14px;
   border-radius: var(--ph-radius-sm);
   display: inline-block;
+  /* 行 hover 底色与空态灰接近,加描边保证空点可见 */
+  border: 1px solid var(--ph-border);
+  box-sizing: border-box;
 }
 .cell-ok {
   background: var(--ph-success);
+  border-color: var(--ph-success);
 }
 .cell-down {
   background: var(--ph-danger);
+  border-color: var(--ph-danger);
 }
 .cell-mixed {
   background: var(--ph-warning);
+  border-color: var(--ph-warning);
 }
 .cell-none {
-  background: var(--ph-border-light);
+  background: transparent;
 }
 </style>

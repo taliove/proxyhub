@@ -78,3 +78,11 @@ export const updateSlot = (
 
 export const deleteSlot = (name: string): Promise<unknown> =>
   client.delete(`/slots/${encodeURIComponent(name)}`)
+
+// previewSlotName 槽位名模板实时预览:按挂载节点渲染出订阅实际显示名
+// (与生成链同一 Standardizer);无变量/无节点时 resolved=false、原样返回
+export const previewSlotName = (
+  name: string,
+  nodeKey = ''
+): Promise<{ rendered: string; resolved: boolean }> =>
+  client.post('/slots/preview-name', { name, node_key: nodeKey })

@@ -184,6 +184,44 @@ func TestSlotsAPI_SelfHostedNodeAssignable(t *testing.T) {
 	}
 }
 
+// TestSlotsAPI_PreviewName 槽位名模板预览:含变量按挂载节点渲染;
+// 无变量/空槽(无 node_key)原样返回 resolved=false
+func TestSlotsAPI_PreviewName(t *testing.T) {
+	node := &subscription.Node{
+		Name: "原名", Server: "hk.example.com", Port: 443, Source: "机场A", Region: "HK",
+	}
+	srv, _ := newTestServer(t, []*subscription.Node{node})
+
+	preview := func(name, key string) (string, bool) {
+		t.Helper()
+		w, req := slotReq(t, http.MethodPost, "/api/slots/preview-name",
+			map[string]any{"name": name, "node_key": key})
+		srv.handlePreviewSlotName(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("preview status = %d, body = %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Rendered string `json:"rendered"`
+			Resolved bool   `json:"resolved"`
+		}
+		decodeSlotResp(t, w, &resp)
+		return resp.Rendered, resp.Resolved
+	}
+
+	got, resolved := preview("主节点-{emoji}{region}", node.NodeKey())
+	if !resolved || got != "主节点-🇭🇰香港" {
+		t.Errorf("rendered = %q resolved=%v, want 主节点-🇭🇰香港", got, resolved)
+	}
+	got, resolved = preview("固定名", node.NodeKey())
+	if resolved || got != "固定名" {
+		t.Errorf("literal = %q resolved=%v, want passthrough unresolved", got, resolved)
+	}
+	got, resolved = preview("主节点-{region}", "") // 空槽无节点
+	if resolved || got != "主节点-{region}" {
+		t.Errorf("no-node = %q resolved=%v, want literal unresolved", got, resolved)
+	}
+}
+
 // TestSlotsAPI_ProbeGrid 24 小时探测网格:按小时聚合,旧→新 24 格,
 // 全通/全断/部分通/无数据四态;响应带 monitor_enabled 开关回显(issue #103)
 func TestSlotsAPI_ProbeGrid(t *testing.T) {

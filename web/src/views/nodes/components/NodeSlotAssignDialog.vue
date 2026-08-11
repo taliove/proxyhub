@@ -8,32 +8,31 @@
         <el-tag size="small" type="success" effect="plain">{{ currentSlot }}</el-tag>
         <span class="muted hint-inline">保存新名称后，旧名称变空槽</span>
       </el-form-item>
-      <el-form-item label="名称">
-        <el-select
-          v-model="name"
-          placeholder="选择空槽名称，或输入新名称"
-          filterable
-          allow-create
-          default-first-option
-          clearable
-          class="ctl-full"
-        >
-          <el-option-group v-if="emptySlotNames.length" label="空槽（待指派）">
-            <el-option v-for="n in emptySlotNames" :key="n" :label="n" :value="n" />
-          </el-option-group>
+      <el-form-item v-if="emptySlotNames.length" label="指派方式">
+        <el-radio-group v-model="mode" size="small">
+          <el-radio-button label="existing">选择空槽</el-radio-button>
+          <el-radio-button label="new">新建名称</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item v-if="mode === 'existing' && emptySlotNames.length" label="空槽">
+        <el-select v-model="pickedEmpty" placeholder="选择待指派的空槽名称" class="ctl-full">
+          <el-option v-for="n in emptySlotNames" :key="n" :label="n" :value="n" />
         </el-select>
       </el-form-item>
+      <el-form-item v-else label="名称">
+        <SlotNameEditor v-model="name" :node-key="node?.node_key" placeholder="输入新名称" />
+      </el-form-item>
       <el-alert
+        v-if="mode === 'existing'"
         type="info"
         :closable="false"
         title="名称立即生效，所有订阅地址统一使用；节点不可用时可把名称转移给别的节点。"
-        description="支持变量 {emoji} {region} {region_code} {source_abbr} {original_name}，随挂载节点自动渲染——例如「主节点-{region}」转移后自动跟随新节点地区。"
       />
     </el-form>
     <template #footer>
       <el-button v-if="currentSlot" type="warning" plain @click="unassign">摘下名称</el-button>
       <el-button @click="visible = false">取消</el-button>
-      <el-button type="primary" :loading="saving" :disabled="!name" @click="save(false)">
+      <el-button type="primary" :loading="saving" :disabled="!effectiveName" @click="save(false)">
         保存
       </el-button>
     </template>
@@ -41,9 +40,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createSlot, readSlotConflict, updateSlot, type SlotConflict } from '@/api/slots'
+import SlotNameEditor from './SlotNameEditor.vue'
 import { apiErrorMessage } from '../utils'
 import type { UnifiedNode } from '../selfmerge'
 
@@ -58,11 +58,21 @@ const saving = ref(false)
 const node = ref<UnifiedNode | null>(null)
 const name = ref('')
 const currentSlot = ref('')
+// 有空槽时默认选空槽,否则直接新建
+const mode = ref<'existing' | 'new'>('new')
+const pickedEmpty = ref('')
+
+// 生效的目标名:选空槽模式取选择值,新建模式取编辑器输入
+const effectiveName = computed(() =>
+  mode.value === 'existing' && props.emptySlotNames.length ? pickedEmpty.value : name.value
+)
 
 const open = (row: UnifiedNode, occupyingSlot = '') => {
   node.value = row
   currentSlot.value = occupyingSlot
   name.value = ''
+  pickedEmpty.value = ''
+  mode.value = props.emptySlotNames.length ? 'existing' : 'new'
   visible.value = true
 }
 
@@ -78,11 +88,12 @@ const confirmText = (c: SlotConflict, target: string): string => {
 }
 
 const save = async (force: boolean) => {
-  if (!node.value || !name.value) return
+  if (!node.value || !effectiveName.value) return
   saving.value = true
   try {
-    const target = name.value
-    if (props.emptySlotNames.includes(target)) {
+    const target = effectiveName.value
+    const isExistingEmpty = props.emptySlotNames.includes(target)
+    if (mode.value === 'existing' || isExistingEmpty) {
       // 选中已有空槽:指派(空槽无 reassign 冲突;node_occupied 走确认)
       await updateSlot(target, { nodeKey: node.value.node_key, force })
     } else {
@@ -94,9 +105,9 @@ const save = async (force: boolean) => {
   } catch (e) {
     const conflict = readSlotConflict(e)
     if (conflict && !force) {
-      const text = confirmText(conflict, name.value)
+      const text = confirmText(conflict, effectiveName.value)
       if (conflict.kind === 'name_taken') {
-        ElMessage.error(`名称「${name.value}」已存在，请换一个名字`)
+        ElMessage.error(`名称「${effectiveName.value}」已存在，请换一个名字`)
       } else if (text) {
         try {
           await ElMessageBox.confirm(text, '转移确认', { type: 'warning' })

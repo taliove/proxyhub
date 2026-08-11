@@ -698,6 +698,7 @@ func (s *Server) Handler() http.Handler {
 	// 名称槽位(ADR 0047 / issue #97):用户级统一命名层
 	mux.HandleFunc("GET /api/slots", guard(s.handleListSlots))
 	mux.HandleFunc("POST /api/slots", guard(s.handleCreateSlot))
+	mux.HandleFunc("POST /api/slots/preview-name", guard(s.handlePreviewSlotName))
 	mux.HandleFunc("PUT /api/slots/{name}", guard(s.handleUpdateSlot))
 	mux.HandleFunc("DELETE /api/slots/{name}", guard(s.handleDeleteSlot))
 

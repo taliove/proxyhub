@@ -211,6 +211,55 @@ func writeSlotError(s *Server, w http.ResponseWriter, err error) {
 	}
 }
 
+// handlePreviewSlotName POST /api/slots/preview-name {name, node_key?}:
+// 槽位名模板变量的实时预览(issue #103 后续):按挂载节点渲染出订阅里实际
+// 下发的名称,与生成链同一 Standardizer,所见即所得。node_key 空(空槽)或
+// 名字不含变量时返回原样 + resolved=false 标记。
+func (s *Server) handlePreviewSlotName(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	effUID := EffectiveUserID(scope)
+
+	var req struct {
+		Name    string `json:"name"`
+		NodeKey string `json:"node_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	name := store.SanitizeSlotName(req.Name)
+	resp := map[string]any{"rendered": name, "resolved": false}
+	if name == "" || !strings.Contains(name, "{") || req.NodeKey == "" {
+		writeJSON(w, resp)
+		return
+	}
+	n, ok := s.poolNodeIndex(effUID)[req.NodeKey]
+	if !ok {
+		writeJSON(w, resp)
+		return
+	}
+
+	abbrs, err := s.st.AirportAbbreviations()
+	if err != nil {
+		s.logger.Warn("build airport abbreviations failed, preview literal", "error", err)
+		writeJSON(w, resp)
+		return
+	}
+	abbrs[subscription.SourceSelfHosted] = "SELF"
+	regions, err := s.st.RegionInfoMap()
+	if err != nil {
+		s.logger.Warn("build region info failed, preview literal", "error", err)
+		writeJSON(w, resp)
+		return
+	}
+	resp["rendered"] = subscription.NewStandardizer(name, abbrs, regions).Format(n, 1)
+	resp["resolved"] = true
+	writeJSON(w, resp)
+}
+
 // handleCreateSlot POST /api/slots:新建槽位 {name, node_key?, force?};
 // node_key 空 = 预建空槽;非空时须存在于本人池(防手误指向幽灵节点)。
 func (s *Server) handleCreateSlot(w http.ResponseWriter, r *http.Request) {
