@@ -27,7 +27,7 @@
     "axios": "^1.19.0",
     "codemirror": "^6.0.2",
     "echarts": "^5.5.1",
-    "element-plus": "^2.5.0",
+    "element-plus": "^2.14.4",
     "html-to-image": "^1.11.13",
     "js-yaml": "^5.2.2",
     "pinia": "^2.1.0",
