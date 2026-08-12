@@ -1,12 +1,15 @@
 # 注意：本文件为内嵌默认模板，修改后需要 go build 重新编译才能生效。
 # 后台管理界面的「配置模板」页面支持热编辑，无需重启。
+# 分流框架吸收 clash-verge 成熟配置（应用分流全集 + 绕过代理/屏蔽访问纪律），
+# 保留 ProxyHub 产品差异：地区 url-test 组与 {{nodes}} 池投影占位。
 
-port: 7890
+mixed-port: 7890
 socks-port: 7891
 allow-lan: false
 mode: rule
 log-level: info
 external-controller: 127.0.0.1:9090
+keep-alive-interval: 360
 
 dns:
     enable: true
@@ -19,15 +22,15 @@ dns:
     fake-ip-filter:
         - '*.lan'
         - localhost.ptlogin2.qq.com
+    # DoH 防污染;nameserver-policy 让国内/苹果/私有域名走本地 DNS
     nameserver:
-        - 223.5.5.5
-        - 119.29.29.29
-    fallback:
-        - tls://1.1.1.1:853
-        - tls://8.8.8.8:853
+        - https://223.5.5.5/dns-query
+        - https://223.6.6.6/dns-query
+        - https://doh.pub/dns-query
+    nameserver-policy:
+        'geosite:cn,apple,private': [119.29.29.29, 223.5.5.5, system]
 
 proxy-groups:
-    # 节点选择
     - name: 🚀 节点选择
       type: select
       proxies:
@@ -37,9 +40,8 @@ proxy-groups:
         - 🇺🇸 美国节点
         - 🇯🇵 日本节点
         - 🇹🇼 台湾节点
-        - '{{nodes}}'  # 全部节点手动选择
+        - '{{nodes}}'
 
-    # 自动选择（全部节点参与测速）
     - name: ♻️ 自动选择
       type: url-test
       url: http://www.gstatic.com/generate_204
@@ -47,7 +49,6 @@ proxy-groups:
       proxies:
         - '{{nodes}}'
 
-    # 地区分组（按地区自动测速）
     - name: 🇭🇰 香港节点
       type: url-test
       url: http://www.gstatic.com/generate_204
@@ -83,8 +84,7 @@ proxy-groups:
       proxies:
         - '{{nodes:region=TW}}'
 
-    # 应用分流
-    - name: 🔎 Google
+    - name: 🌍 国外媒体
       type: select
       proxies:
         - 🚀 节点选择
@@ -92,23 +92,16 @@ proxy-groups:
         - 🇭🇰 香港节点
         - 🇸🇬 新加坡节点
         - 🇺🇸 美国节点
+        - 🇯🇵 日本节点
+        - 🇹🇼 台湾节点
         - DIRECT
 
-    - name: 🧲 OpenAI
+    - name: 🧲 海外AI
       type: select
       proxies:
         - 🚀 节点选择
         - 🇺🇸 美国节点
         - 🇸🇬 新加坡节点
-        - DIRECT
-
-    - name: 🎬 YouTube
-      type: select
-      proxies:
-        - 🚀 节点选择
-        - 🇭🇰 香港节点
-        - 🇸🇬 新加坡节点
-        - 🇺🇸 美国节点
         - DIRECT
 
     - name: 🎬 Netflix
@@ -118,15 +111,33 @@ proxy-groups:
         - 🇭🇰 香港节点
         - 🇸🇬 新加坡节点
         - 🇺🇸 美国节点
+        - 🇯🇵 日本节点
         - DIRECT
 
-    - name: 📲 Telegram
+    - name: 🎬 DisneyPlus
+      type: select
+      proxies:
+        - 🚀 节点选择
+        - 🇭🇰 香港节点
+        - 🇸🇬 新加坡节点
+        - 🇺🇸 美国节点
+        - 🇯🇵 日本节点
+        - DIRECT
+
+    - name: 📲 电报信息
       type: select
       proxies:
         - 🚀 节点选择
         - 🇸🇬 新加坡节点
         - 🇺🇸 美国节点
         - DIRECT
+
+    - name: Ⓜ️ 微软服务
+      type: select
+      proxies:
+        - DIRECT
+        - 🚀 节点选择
+        - 🇺🇸 美国节点
 
     - name: 🍎 苹果服务
       type: select
@@ -135,6 +146,36 @@ proxy-groups:
         - 🚀 节点选择
         - 🇺🇸 美国节点
 
+    - name: 💨 Steam商店
+      type: select
+      proxies:
+        - DIRECT
+        - 🚀 节点选择
+
+    - name: 📢 谷歌FCM
+      type: select
+      proxies:
+        - DIRECT
+        - 🚀 节点选择
+
+    - name: 🛑 广告过滤
+      type: select
+      proxies:
+        - REJECT
+        - DIRECT
+
+    - name: 🚧 屏蔽访问
+      type: select
+      proxies:
+        - REJECT
+        - DIRECT
+
+    - name: 🎯 绕过代理
+      type: select
+      proxies:
+        - DIRECT
+        - 🚀 节点选择
+
     - name: 🐟 漏网之鱼
       type: select
       proxies:
@@ -142,36 +183,106 @@ proxy-groups:
         - DIRECT
 
 rules:
-    # Google
-    - DOMAIN-SUFFIX,google.com,🔎 Google
-    - DOMAIN-SUFFIX,googleapis.com,🔎 Google
-    - DOMAIN-SUFFIX,googleusercontent.com,🔎 Google
-    - DOMAIN-SUFFIX,gstatic.com,🔎 Google
-    - DOMAIN-SUFFIX,youtube.com,🎬 YouTube
-    - DOMAIN-SUFFIX,ytimg.com,🎬 YouTube
-    - DOMAIN-SUFFIX,googlevideo.com,🎬 YouTube
-
-    # OpenAI
-    - DOMAIN-SUFFIX,openai.com,🧲 OpenAI
-    - DOMAIN-SUFFIX,ai.com,🧲 OpenAI
-
-    # Netflix
+    - DOMAIN-SUFFIX,local,🎯 绕过代理
+    - DOMAIN-SUFFIX,localhost,🎯 绕过代理
+    - DOMAIN-SUFFIX,lan,🎯 绕过代理
+    - DOMAIN-SUFFIX,ip6-localhost,🎯 绕过代理
+    - DOMAIN-SUFFIX,ip6-loopback,🎯 绕过代理
+    - IP-CIDR,127.0.0.0/8,no-resolve,🎯 绕过代理
+    - IP-CIDR,10.0.0.0/8,no-resolve,🎯 绕过代理
+    - IP-CIDR,172.16.0.0/12,no-resolve,🎯 绕过代理
+    - IP-CIDR,192.168.0.0/16,no-resolve,🎯 绕过代理
+    - DOMAIN,time.apple.com,🎯 绕过代理
+    - DOMAIN,time.windows.com,🎯 绕过代理
+    - DOMAIN,pool.ntp.org,🎯 绕过代理
+    - DOMAIN,ntp.aliyun.com,🎯 绕过代理
+    - DOMAIN,ntp.tencent.com,🎯 绕过代理
+    - DOMAIN-KEYWORD,aria2,🎯 绕过代理
+    - PROCESS-NAME,aria2c,🎯 绕过代理
+    - PROCESS-NAME,aria2c.exe,🎯 绕过代理
+    - PROCESS-NAME,Thunder.exe,🎯 绕过代理
+    - PROCESS-NAME,Transmission.exe,🎯 绕过代理
+    - PROCESS-NAME,qbittorrent.exe,🎯 绕过代理
+    - PROCESS-NAME,uTorrent.exe,🎯 绕过代理
+    - PROCESS-NAME,fdm.exe,🎯 绕过代理
+    - PROCESS-NAME,baidunetdisk.exe,🎯 绕过代理
+    - PROCESS-NAME,Weiyun.exe,🎯 绕过代理
+    - DOMAIN-SUFFIX,doubleclick.net,🛑 广告过滤
+    - DOMAIN-SUFFIX,googlesyndication.com,🛑 广告过滤
+    - DOMAIN-SUFFIX,google-analytics.com,🛑 广告过滤
+    - DOMAIN-SUFFIX,umeng.com,🛑 广告过滤
+    - DOMAIN-SUFFIX,umengcloud.com,🛑 广告过滤
+    - DOMAIN-SUFFIX,cnzz.com,🛑 广告过滤
+    - DOMAIN-SUFFIX,admaster.com.cn,🛑 广告过滤
+    - DOMAIN,mtalk.google.com,📢 谷歌FCM
+    - DOMAIN,alt1-mtalk.google.com,📢 谷歌FCM
+    - DOMAIN,alt2-mtalk.google.com,📢 谷歌FCM
+    - DOMAIN,alt3-mtalk.google.com,📢 谷歌FCM
+    - DOMAIN,alt4-mtalk.google.com,📢 谷歌FCM
+    - DOMAIN,alt5-mtalk.google.com,📢 谷歌FCM
+    - DOMAIN,alt6-mtalk.google.com,📢 谷歌FCM
+    - DOMAIN,alt7-mtalk.google.com,📢 谷歌FCM
+    - DOMAIN,alt8-mtalk.google.com,📢 谷歌FCM
+    - DOMAIN-SUFFIX,openai.com,🧲 海外AI
+    - DOMAIN-SUFFIX,oaiusercontent.com,🧲 海外AI
+    - DOMAIN-SUFFIX,chatgpt.com,🧲 海外AI
+    - DOMAIN-SUFFIX,anthropic.com,🧲 海外AI
+    - DOMAIN-SUFFIX,claude.ai,🧲 海外AI
+    - DOMAIN-SUFFIX,generativelanguage.googleapis.com,🧲 海外AI
+    - DOMAIN-SUFFIX,deepmind.google,🧲 海外AI
+    - DOMAIN-SUFFIX,gemini.google.com,🧲 海外AI
+    - DOMAIN-SUFFIX,google.com,🌍 国外媒体
+    - DOMAIN-SUFFIX,googleapis.com,🌍 国外媒体
+    - DOMAIN-SUFFIX,googleusercontent.com,🌍 国外媒体
+    - DOMAIN-SUFFIX,gstatic.com,🌍 国外媒体
+    - DOMAIN-SUFFIX,youtube.com,🌍 国外媒体
+    - DOMAIN-SUFFIX,ytimg.com,🌍 国外媒体
+    - DOMAIN-SUFFIX,googlevideo.com,🌍 国外媒体
+    - DOMAIN-SUFFIX,abema.tv,🌍 国外媒体
+    - DOMAIN-SUFFIX,abema.io,🌍 国外媒体
+    - DOMAIN-SUFFIX,disneyplus.com,🎬 DisneyPlus
+    - DOMAIN-SUFFIX,disney-plus.net,🎬 DisneyPlus
+    - DOMAIN-SUFFIX,dssott.com,🎬 DisneyPlus
+    - DOMAIN-SUFFIX,bamgrid.com,🎬 DisneyPlus
+    - DOMAIN-SUFFIX,disneystreaming.com,🎬 DisneyPlus
     - DOMAIN-SUFFIX,netflix.com,🎬 Netflix
     - DOMAIN-SUFFIX,nflxvideo.net,🎬 Netflix
-
-    # Telegram
-    - DOMAIN-SUFFIX,telegram.org,📲 Telegram
-    - DOMAIN-SUFFIX,t.me,📲 Telegram
-    - IP-CIDR,91.108.4.0/22,📲 Telegram,no-resolve
-    - IP-CIDR,91.108.56.0/22,📲 Telegram,no-resolve
-    - IP-CIDR,149.154.160.0/20,📲 Telegram,no-resolve
-
-    # Apple
+    - DOMAIN-SUFFIX,nflxext.com,🎬 Netflix
+    - DOMAIN-SUFFIX,nflximg.net,🎬 Netflix
+    - DOMAIN-SUFFIX,nflxso.net,🎬 Netflix
+    - DOMAIN-SUFFIX,fast.com,🎬 Netflix
+    - DOMAIN-SUFFIX,telegram.org,📲 电报信息
+    - DOMAIN-SUFFIX,telegram.me,📲 电报信息
+    - DOMAIN-SUFFIX,t.me,📲 电报信息
+    - DOMAIN-SUFFIX,tdesktop.com,📲 电报信息
+    - DOMAIN-SUFFIX,telegra.ph,📲 电报信息
+    - DOMAIN-SUFFIX,telesco.pe,📲 电报信息
+    - IP-CIDR,91.108.4.0/22,no-resolve,📲 电报信息
+    - IP-CIDR,91.108.56.0/22,no-resolve,📲 电报信息
+    - IP-CIDR,149.154.160.0/20,no-resolve,📲 电报信息
+    - DOMAIN-SUFFIX,microsoft.com,Ⓜ️ 微软服务
+    - DOMAIN-SUFFIX,windows.com,Ⓜ️ 微软服务
+    - DOMAIN-SUFFIX,office.com,Ⓜ️ 微软服务
+    - DOMAIN-SUFFIX,office365.com,Ⓜ️ 微软服务
+    - DOMAIN-SUFFIX,outlook.com,Ⓜ️ 微软服务
+    - DOMAIN-SUFFIX,live.com,Ⓜ️ 微软服务
+    - DOMAIN-SUFFIX,onedrive.com,Ⓜ️ 微软服务
+    - DOMAIN-SUFFIX,azure.com,Ⓜ️ 微软服务
+    - DOMAIN-SUFFIX,bing.com,Ⓜ️ 微软服务
+    - DOMAIN-SUFFIX,xbox.com,Ⓜ️ 微软服务
+    - DOMAIN-KEYWORD,1drv,Ⓜ️ 微软服务
     - DOMAIN-SUFFIX,apple.com,🍎 苹果服务
     - DOMAIN-SUFFIX,icloud.com,🍎 苹果服务
-
-    # China
-    - GEOIP,CN,DIRECT
-
-    # Final
+    - DOMAIN-SUFFIX,itunes.com,🍎 苹果服务
+    - DOMAIN-SUFFIX,appstore.com,🍎 苹果服务
+    - DOMAIN-SUFFIX,mzstatic.com,🍎 苹果服务
+    - DOMAIN-SUFFIX,aaplimg.com,🍎 苹果服务
+    - DOMAIN-SUFFIX,apple-cloudkit.com,🍎 苹果服务
+    - DOMAIN-SUFFIX,apple.co,🍎 苹果服务
+    - DOMAIN-SUFFIX,steampowered.com,💨 Steam商店
+    - DOMAIN-SUFFIX,steamcontent.com,💨 Steam商店
+    - DOMAIN-SUFFIX,steamstatic.com,💨 Steam商店
+    - DOMAIN-SUFFIX,steamserver.net,💨 Steam商店
+    - DOMAIN-SUFFIX,steamchina.com,💨 Steam商店
+    - GEOIP,CN,🎯 绕过代理
     - MATCH,🐟 漏网之鱼
