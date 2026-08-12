@@ -15,10 +15,12 @@ import (
 // 设为 2 供未来调优(现串行实现,带注释常量)。
 const batchExamConcurrency = 2
 
-// 批量体检模式:simplified(默认,出网+稳定性+基准下行)| full(完整四段,与单节点深度体检同口径)。
+// 批量体检模式:simplified(默认,出网+稳定性+基准下行)| full(完整四段,与单节点深度体检同口径)|
+// backfill(补齐信息:出网画像+解锁+短采样稳定性,跳多地域与基准,见 exam_backfill.go)。
 const (
 	BatchExamModeSimplified = "simplified"
 	BatchExamModeFull       = "full"
+	BatchExamModeBackfill   = "backfill"
 )
 
 // normalizeBatchExamMode 归一化批量体检模式:空(老任务 params 无此字段,或调用方未指定)
@@ -29,6 +31,8 @@ func normalizeBatchExamMode(mode string) (string, error) {
 		return BatchExamModeSimplified, nil
 	case BatchExamModeFull:
 		return BatchExamModeFull, nil
+	case BatchExamModeBackfill:
+		return BatchExamModeBackfill, nil
 	default:
 		return "", fmt.Errorf("batch_exam: unknown mode %q", mode)
 	}
@@ -74,6 +78,7 @@ type SimplifiedExamRunner func(ctx context.Context, node *subscription.Node, emi
 type batchExamKind struct {
 	runSimplified SimplifiedExamRunner
 	runFull       ExamRunner                                            // full 模式:完整四段,与单节点深度体检同口径
+	runBackfill   SimplifiedExamRunner                                  // backfill 模式:补齐信息(轻量,见 exam_backfill.go)
 	onComplete    func(userID int64, nodeKey string, report ExamReport) // 落历史 + 触发标签重算
 	onErr         func(error)
 	nodes         sync.Map // examNodeRef -> *subscription.Node(活节点,仅内存)
@@ -94,8 +99,8 @@ func (k *batchExamKind) CancelEvent() (json.RawMessage, bool) {
 	return b, true
 }
 
-// resolveRunner 按 params mode 选 runner:空/simplified 用精简 runner,full 用完整 runner。
-// SimplifiedExamRunner 与 ExamRunner 签名一致,选中后统一为同一调用形态。
+// resolveRunner 按 params mode 选 runner:空/simplified 用精简 runner,full 用完整 runner,
+// backfill 用补齐 runner。SimplifiedExamRunner 与 ExamRunner 签名一致,选中后统一为同一调用形态。
 func (k *batchExamKind) resolveRunner(mode string) (SimplifiedExamRunner, error) {
 	normalized, err := normalizeBatchExamMode(mode)
 	if err != nil {
@@ -106,6 +111,12 @@ func (k *batchExamKind) resolveRunner(mode string) (SimplifiedExamRunner, error)
 			return nil, fmt.Errorf("batch_exam: full mode requested but full runner not configured")
 		}
 		return SimplifiedExamRunner(k.runFull), nil
+	}
+	if normalized == BatchExamModeBackfill {
+		if k.runBackfill == nil {
+			return nil, fmt.Errorf("batch_exam: backfill mode requested but backfill runner not configured")
+		}
+		return k.runBackfill, nil
 	}
 	if k.runSimplified == nil {
 		return nil, fmt.Errorf("batch_exam: simplified runner not configured")
@@ -181,8 +192,10 @@ func (k *batchExamKind) Run(ctx context.Context, params json.RawMessage, cursor 
 			return ctx.Err()
 		}
 
-		// 有稳定性段才落历史(与单节点体检语义一致)
-		if report.Stability != nil && k.onComplete != nil {
+		// 有稳定性段才走完成回调(与单节点体检语义一致);backfill 例外——
+		// 死节点/出网全失败/建会话失败时报告无稳定性段,但"补齐信息"恰恰要把
+		// connectivity=不可用 写回 node_health(Check H1:否则死节点永远是空杠)。
+		if (report.Stability != nil || report.Source == ExamSourceBackfill) && k.onComplete != nil {
 			k.onComplete(p.UserID, nodeKey, report)
 		}
 
@@ -232,8 +245,9 @@ type BatchExamJobManager struct {
 type BatchExamJobOption func(*batchExamJobConfig)
 
 type batchExamJobConfig struct {
-	store *jobs.Store
-	onErr func(error)
+	store       *jobs.Store
+	onErr       func(error)
+	runBackfill SimplifiedExamRunner
 }
 
 // WithBatchExamJobStore 注入 jobs 表存储:任务生命周期持久化。
@@ -244,6 +258,11 @@ func WithBatchExamJobStore(st *jobs.Store) BatchExamJobOption {
 // WithBatchExamErrorHandler 注入错误回调。
 func WithBatchExamErrorHandler(h func(error)) BatchExamJobOption {
 	return func(c *batchExamJobConfig) { c.onErr = h }
+}
+
+// WithBatchExamBackfillRunner 注入「补齐信息」运行器(mode=backfill);未注入时 backfill 请求报错。
+func WithBatchExamBackfillRunner(r SimplifiedExamRunner) BatchExamJobOption {
+	return func(c *batchExamJobConfig) { c.runBackfill = r }
 }
 
 // NewBatchExamJobManager 构造批量体检任务管理器。
@@ -259,6 +278,7 @@ func NewBatchExamJobManager(runSimplified SimplifiedExamRunner, runFull ExamRunn
 	k := &batchExamKind{
 		runSimplified: runSimplified,
 		runFull:       runFull,
+		runBackfill:   cfg.runBackfill,
 		onComplete:    onComplete,
 		onErr:         cfg.onErr,
 	}

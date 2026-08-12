@@ -182,6 +182,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS fs.FS, log
 			func(userID int64, nodeKey string, report detection.ExamReport) {
 				s.onExamComplete(userID, nodeKey, report, s.findRunningJobIDForUser(userID, "batch_exam", "batch_exam"))
 			},
+			detection.WithBatchExamBackfillRunner(detectionService.ExamStreamBackfill),
 			detection.WithBatchExamJobStore(st.Jobs()),
 			detection.WithBatchExamErrorHandler(func(err error) {
 				logger.Warn("batch exam job persistence", "error", err)
@@ -306,14 +307,68 @@ func (s *Server) airportTestConflict(airportID int64) (string, bool) {
 // 三步均为 best-effort:任一失败只记日志,不影响体检结果本身(下一场体检会再算)。
 // jobID=0 表示未关联(持久化退化或测试直调),落库后与旧数据同口径,查询侧走时间窗回退。
 // userID 为任务属主(ticket 07):写回时按它选择目标池与自建节点表;0 = 全局池。
+// source=backfill(补齐信息)额外把解锁/connectivity 写回 node_health 与内存池——
+// 列表的延迟/可用性/解锁列读 node_health,体检族此前不回写(空杠反馈的根因)。
 func (s *Server) onExamComplete(userID int64, nodeKey string, report detection.ExamReport, jobID int64) {
-	if err := s.st.SaveExamHistoryWithJobForUser(userID, nodeKey, report, jobID); err != nil {
-		s.logger.Warn("save exam history failed", "error", err)
+	// 落历史维持"无稳定性段不落库"旧不变量;backfill 死节点报告(无稳定性段)
+	// 不落历史但仍走下方写回(拆开两件事,Check H1)。
+	if report.Stability != nil {
+		if err := s.st.SaveExamHistoryWithJobForUser(userID, nodeKey, report, jobID); err != nil {
+			s.logger.Warn("save exam history failed", "error", err)
+		}
 	}
 	if err := s.st.RecomputeNodeTags(nodeKey); err != nil {
 		s.logger.Warn("recompute node tags after exam failed", "error", err)
 	}
 	s.writebackRegionIfNeeded(userID, nodeKey, report)
+	if report.Source == detection.ExamSourceBackfill {
+		s.writebackBackfillHealth(userID, nodeKey, report)
+	}
+}
+
+// writebackBackfillHealth 补齐信息的列表字段写回:
+// - 解锁各目标 → node_health(列表「解锁」列的数据源);
+// - connectivity(可用性=出网段非全失败,延迟=短采样中位 RTT)→ node_health + 内存池
+//   (列表「状态/延迟」列),修"补齐后延迟仍空杠"。
+// 全部 best-effort:失败记日志,不重试(下一轮补齐/夜间任务会再来)。
+func (s *Server) writebackBackfillHealth(userID int64, nodeKey string, report detection.ExamReport) {
+	var results []detection.Result
+	if report.Unlock != nil {
+		for _, r := range report.Unlock.Results {
+			r.NodeKey = nodeKey
+			results = append(results, r)
+		}
+	}
+
+	// 出网段没跑成(建会话失败,Egress 为 nil)按不可用记,不允许 nil 被误判为可用。
+	available := report.Egress != nil && !detection.ExamEgressAllFailed(report.Egress)
+	latency := 0
+	if report.Stability != nil && report.Stability.MedianMs > 0 {
+		latency = int(report.Stability.MedianMs)
+	}
+	results = append(results, detection.Result{
+		NodeKey:    nodeKey,
+		TargetName: "connectivity",
+		Available:  available,
+		Latency:    latency,
+	})
+
+	// 节点名/来源从池取(自建节点也在池内,serve-time 合并口径)
+	var node *subscription.Node
+	for _, n := range s.nodes.NodesForUser(userID) {
+		if n.NodeKey() == nodeKey {
+			node = n
+			break
+		}
+	}
+	name, source := nodeKey, ""
+	if node != nil {
+		name, source = node.Name, node.Source
+	}
+	if err := s.st.SaveDetectionResults(results, name, source); err != nil {
+		s.logger.Warn("backfill: save detection results failed", "node_key", nodeKey, "error", err)
+	}
+	s.nodes.UpdateNodeTestResultForUser(userID, nodeKey, "real", available, latency, 0, 0, "", "")
 }
 
 // findRunningJobID 反查进行中任务的 jobs 行 id(未归属分片,旧语义)。

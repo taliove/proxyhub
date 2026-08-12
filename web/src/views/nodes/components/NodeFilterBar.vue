@@ -3,7 +3,7 @@
     <el-alert v-if="detecting" type="info" :closable="false" class="detect-alert">
       <template #title>
         <div class="detect-alert-row">
-          <span>正在检测节点解锁状态...</span>
+          <span>正在检测节点解锁状态……</span>
           <el-button size="small" @click="emit('cancel-detect')">取消</el-button>
         </div>
       </template>

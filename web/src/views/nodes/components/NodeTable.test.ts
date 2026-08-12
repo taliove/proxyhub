@@ -52,6 +52,29 @@ const passthrough = (name: string, className: string) =>
       return () => h('div', { class: className }, slots.default?.())
     }
   })
+// el-dropdown 桩(与 AirportDetailDrawer.test 同一模式):菜单项内联渲染为 button,
+// 点击经 provide/inject 派发 command,等价真实下拉。
+const ElDropdownStub = defineComponent({
+  name: 'ElDropdown',
+  emits: ['command'],
+  setup(_, { slots, emit }) {
+    provide('dropdown-command', (cmd: unknown) => emit('command', cmd))
+    return () => h('div', { class: 'el-dropdown-stub' }, [slots.default?.(), slots.dropdown?.()])
+  }
+})
+const ElDropdownItemStub = defineComponent({
+  name: 'ElDropdownItem',
+  props: { command: { type: [String, Number, Boolean], default: undefined } },
+  setup(props, { slots }) {
+    const fire = inject<(cmd: unknown) => void>('dropdown-command')!
+    return () =>
+      h(
+        'button',
+        { class: 'el-dropdown-item-stub', onClick: () => fire(props.command) },
+        slots.default?.()
+      )
+  }
+})
 
 const node = (over: Partial<UnifiedNode> = {}): UnifiedNode =>
   ({
@@ -84,6 +107,9 @@ const mountTable = (nodes: UnifiedNode[]) =>
         'el-popover': passthrough('ElPopover', 'el-popover-stub'),
         'el-tooltip': passthrough('ElTooltip', 'el-tooltip-stub'),
         'el-icon': passthrough('ElIcon', 'el-icon-stub'),
+        'el-dropdown': ElDropdownStub,
+        'el-dropdown-menu': passthrough('ElDropdownMenu', 'el-dropdown-menu-stub'),
+        'el-dropdown-item': ElDropdownItemStub,
         'el-pagination': passthrough('ElPagination', 'el-pagination-stub'),
         StatusDot: passthrough('StatusDot', 'status-dot-stub'),
         NodeTestCell: passthrough('NodeTestCell', 'node-test-cell-stub')
@@ -145,8 +171,8 @@ describe('NodeTable 行内屏蔽/解除屏蔽（issue #82）', () => {
     const texts = opsButtonTexts(wrapper, 0)
     expect(texts).not.toContain('屏蔽')
     expect(texts).not.toContain('取消屏蔽')
-    // 自建行保留其自身操作,确认渲染的是自建分支(issue #98 起含「命名」槽位入口)
-    expect(texts).toEqual(['编辑', '命名', '刷新名称', '禁用', '删除'])
+    // 密度收敛后行布局统一为「详情 | 编辑 | 更多▾(命名/刷新名称/启停/删除)」(critique P1)
+    expect(texts).toEqual(['详情', '编辑', '更多', '命名', '刷新名称', '禁用', '删除'])
   })
 
   it('混合列表中屏蔽按钮只出现在机场行', () => {

@@ -10,12 +10,15 @@ import (
 )
 
 // Scheduler manages periodic task execution based on settings-driven schedules.
-// Currently supports a single nightly retag_all task.
+// Supports nightly retag_all and nightly 全员补齐(batch_exam mode=backfill,触发器由
+// server 注入,因活节点池与凭证旁路只在 server 层可达)。
 type Scheduler struct {
 	manager *Manager
 	store   schedulerStore
 	logger  *slog.Logger
 	clock   func() time.Time
+
+	examAllTrigger func() // SetExamAllTrigger 注入;nil = 定时全员补齐不可用(跳过)
 }
 
 // schedulerStore defines the minimal store interface needed by the scheduler.
@@ -34,6 +37,11 @@ func NewScheduler(mgr *Manager, store schedulerStore, logger *slog.Logger) *Sche
 	}
 }
 
+// SetExamAllTrigger 注入「全员补齐」触发器(server 层持池,main.go 在 Server 创建后接线)。
+func (s *Scheduler) SetExamAllTrigger(fn func()) {
+	s.examAllTrigger = fn
+}
+
 // Run starts the scheduler loop, checking every minute until context is cancelled.
 func (s *Scheduler) Run(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
@@ -49,43 +57,53 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-// tick performs one scheduler check: read config, check if time matches, check if already ran, trigger if needed.
+// tick performs one scheduler check for each nightly task: read config, check if time matches,
+// check if already ran, trigger if needed.
 func (s *Scheduler) tick() {
-	// Read schedule configuration
-	timeStr, err := s.store.GetSetting("schedule_retag_time")
+	s.tickTask("retag_all", "nightly", "schedule_retag_time", "schedule_retag_enabled", s.triggerRetagAll)
+	if s.examAllTrigger != nil {
+		// 去重口径:当日若已有 batch_exam 任务记录(含手动触发)则跳过——信息当日已产出一轮。
+		s.tickTask("batch_exam", "batch_exam", "schedule_exam_time", "schedule_exam_enabled", s.examAllTrigger)
+	}
+}
+
+// tickTask 单个夜间任务的检查:时刻匹配 + 当日未跑 + 开关打开,三者齐备才触发。
+func (s *Scheduler) tickTask(kind, key, timeKey, enabledKey string, trigger func()) {
+	timeStr, err := s.store.GetSetting(timeKey)
 	if err != nil {
 		return // No config = no schedule
 	}
 
-	enabledStr, err := s.store.GetSetting("schedule_retag_enabled")
+	enabledStr, err := s.store.GetSetting(enabledKey)
 	if err != nil || enabledStr != "true" {
 		return // Disabled or missing
 	}
 
-	// Parse schedule time
 	schedHour, schedMin, err := parseScheduleTime(timeStr)
 	if err != nil {
-		s.logger.Warn("invalid schedule time", "value", timeStr, "error", err)
+		s.logger.Warn("invalid schedule time", "key", timeKey, "value", timeStr, "error", err)
 		return
 	}
 
-	// Check if current time matches schedule
 	now := s.clock()
 	if now.Hour() != schedHour || now.Minute() != schedMin {
 		return // Not time yet
 	}
 
-	// Check if already ran today
-	lastJob, err := s.store.GetLatestJobByKindKey("retag_all", "nightly")
-	if err == nil && lastJob != nil {
-		// Job exists - check if it ran today
+	// 非 not-found 错误(DB 瞬时故障)按"今日可能已跑"保守跳过本 tick(Check L1:
+	// 落穿到 trigger 会到点重复触发);not-found 由实现返回 (nil, nil),不走这里。
+	lastJob, err := s.store.GetLatestJobByKindKey(kind, key)
+	if err != nil {
+		s.logger.Warn("check last job failed, skip this tick", "kind", kind, "key", key, "error", err)
+		return
+	}
+	if lastJob != nil {
 		if sameDay(lastJob.CreatedAt, now) {
 			return // Already ran today
 		}
 	}
 
-	// Trigger the job
-	s.triggerRetagAll()
+	trigger()
 }
 
 // triggerRetagAll opens a retag_all job with key "nightly".

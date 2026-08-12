@@ -53,20 +53,26 @@ export function useBatchJob(opts: BatchJobOptions, onDone?: () => void) {
     }
   }
 
-  // start 启动批量任务。extraBody 供动作差异化参数(如深度体检 mode=full)。
-  const start = async (nodeKeys: string[], extraBody: Record<string, unknown> = {}) => {
+  // start 启动批量任务。extraBody 供动作差异化参数(如体检 mode=full/backfill);
+  // label 供同 kind 多动作差异化提示(补齐信息 vs 深度体检),缺省用 opts.actionLabel。
+  const start = async (
+    nodeKeys: string[],
+    extraBody: Record<string, unknown> = {},
+    label?: string
+  ) => {
+    const actionLabel = label ?? opts.actionLabel
     if (running.value) return
     try {
       await client.post(opts.startUrl, { node_keys: nodeKeys, ...extraBody })
       running.value = true
       completed.value = 0
       total.value = nodeKeys.length
-      ElMessage.info(`${opts.actionLabel}已启动（${nodeKeys.length} 个节点）`)
+      ElMessage.info(`${actionLabel}已启动（${nodeKeys.length} 个节点）`)
       stopPolling()
       pollTimer = window.setInterval(poll, POLL_INTERVAL_MS)
     } catch (e) {
       running.value = false
-      ElMessage.error(e instanceof Error ? e.message : `启动${opts.actionLabel}失败`)
+      ElMessage.error(e instanceof Error ? e.message : `启动${actionLabel}失败`)
     }
   }
 

@@ -491,8 +491,10 @@ func (s *Server) handleBatchExam(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// mode 校验:空按 simplified(老客户端不变);未知值 400,不静默降级。
-	if req.Mode != "" && req.Mode != detection.BatchExamModeSimplified && req.Mode != detection.BatchExamModeFull {
-		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid mode: want simplified or full"})
+	switch req.Mode {
+	case "", detection.BatchExamModeSimplified, detection.BatchExamModeFull, detection.BatchExamModeBackfill:
+	default:
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid mode: want simplified, full or backfill"})
 		return
 	}
 
@@ -526,6 +528,35 @@ func (s *Server) handleBatchExam(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]string{"status": "started", "key": key})
+}
+
+// TriggerScheduledExamAll 定时「全员补齐」(spec-node-info-backfill;CONTEXT「检查动作」):
+// 对每个池非空的用户发起 batch_exam mode=backfill(scope=all),等价逐用户点一次「补齐信息」。
+// 由 jobs.Scheduler 在 schedule_exam_time 到点调用;单用户启动冲突(已在跑)记日志继续,不中断其余用户。
+func (s *Server) TriggerScheduledExamAll() {
+	if s.batchExamJobs == nil {
+		return
+	}
+	users, err := s.st.ListUsers()
+	if err != nil {
+		s.logger.Error("scheduled exam all: list users failed", "error", err)
+		return
+	}
+	for _, u := range users {
+		pool := s.nodes.NodesForUser(u.ID)
+		if len(pool) == 0 {
+			continue
+		}
+		nodeKeys := make([]string, 0, len(pool))
+		for _, n := range pool {
+			nodeKeys = append(nodeKeys, n.NodeKey())
+		}
+		if _, err := s.batchExamJobs.StartFor(u.ID, nodeKeys, pool, "all", detection.BatchExamModeBackfill); err != nil {
+			s.logger.Warn("scheduled exam all: start failed", "user_id", u.ID, "error", err)
+			continue
+		}
+		s.logger.Info("scheduled exam all started", "user_id", u.ID, "nodes", len(nodeKeys))
+	}
 }
 
 // handleBatchExamStream 订阅批量体检任务事件流(SSE):回放 + 直播。

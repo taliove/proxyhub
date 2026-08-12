@@ -68,6 +68,9 @@
           <el-descriptions-item label="gRPC Service">{{
             node.grpc_service_name || '—'
           }}</el-descriptions-item>
+          <el-descriptions-item label="gRPC Host">{{
+            node.grpc_authority || '—'
+          }}</el-descriptions-item>
           <el-descriptions-item label="跳过证书校验">{{
             node.insecure ? '是' : '否'
           }}</el-descriptions-item>
@@ -147,14 +150,12 @@
         />
       </div>
 
-      <!-- 抽屉内检查动作:与行内/批量面同名同义的 4 动作(见 CONTEXT「检查动作」),外加本机实测/二维码。 -->
+      <!-- 抽屉内检查动作:主入口「补齐信息」在前,子集动作与深度体检随后(与行内/批量同词汇)。 -->
       <div class="drawer-actions">
-        <el-button
-          type="primary"
-          size="small"
-          :disabled="detecting"
-          @click="emit('action', node, 'detect')"
-        >
+        <el-button type="primary" size="small" @click="emit('action', node, 'backfill')">
+          补齐信息
+        </el-button>
+        <el-button size="small" :disabled="detecting" @click="emit('action', node, 'detect')">
           {{ detecting ? '出网快速检测（进行中）' : '出网快速检测' }}
         </el-button>
         <el-button size="small" @click="emit('action', node, 'stability')">出网+稳定性</el-button>
@@ -173,7 +174,7 @@
 
     <!-- 节点二维码对话框 -->
     <el-dialog v-model="qrVisible" title="节点分享二维码" width="400px">
-      <div v-if="qrLoading" class="qr-loading">生成二维码中...</div>
+      <div v-if="qrLoading" class="qr-loading">生成二维码中……</div>
       <div v-else-if="qrError" class="qr-error">
         <el-alert type="error" :closable="false">{{ qrError }}</el-alert>
       </div>
@@ -281,8 +282,16 @@ const showNodeQR = async (node: Node) => {
   font-weight: 600;
   margin-bottom: var(--ph-space-2);
 }
+/* 按钮组:换行场景用 flex-wrap + gap,EP 默认的兄弟 margin-left 清零,
+   否则折行后上下行挤压无行距(用户反馈)。 */
 .drawer-actions {
   margin-top: var(--ph-space-4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ph-space-2);
+}
+.drawer-actions .el-button {
+  margin-left: 0;
 }
 .muted {
   color: var(--ph-text-secondary);

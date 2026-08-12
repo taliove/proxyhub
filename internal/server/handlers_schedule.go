@@ -8,49 +8,76 @@ import (
 	"github.com/taliove/proxyhub/internal/store"
 )
 
-// scheduleConfig 晚间标签重算调度配置(读写 schedule_retag_* 两个 settings 键)。
+// scheduleConfig 夜间调度配置:标签重算(retag_all)+ 全员补齐(batch_exam mode=backfill)。
 type scheduleConfig struct {
 	RetagTime    string `json:"retag_time"`    // "HH:MM" 24 小时零填充
 	RetagEnabled bool   `json:"retag_enabled"` // 是否启用晚间重算
+	ExamTime     string `json:"exam_time"`     // 全员补齐时刻,默认与重算错开 30 分钟
+	ExamEnabled  bool   `json:"exam_enabled"`  // 是否启用定时全员补齐(默认关,同 ADR 0042 成本纪律)
 }
 
 const (
 	settingKeyRetagTime    = "schedule_retag_time"
 	settingKeyRetagEnabled = "schedule_retag_enabled"
+	settingKeyExamTime     = "schedule_exam_time"
+	settingKeyExamEnabled  = "schedule_exam_enabled"
 	defaultRetagTime       = "03:30"
+	defaultExamTime        = "04:00"
 )
 
-// handleGetSchedule GET /api/settings/schedule 读取晚间标签重算调度配置。
+// handleGetSchedule GET /api/settings/schedule 读取夜间调度配置。
 func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	if s.st == nil {
 		http.Error(w, "storage not initialized", http.StatusServiceUnavailable)
 		return
 	}
 
-	cfg := scheduleConfig{RetagTime: defaultRetagTime, RetagEnabled: false}
-
-	if v, err := s.st.GetSetting(settingKeyRetagTime); err == nil {
-		if v != "" {
-			cfg.RetagTime = v
-		}
-	} else if !errors.Is(err, store.ErrNotFound) {
-		s.logger.Error("get schedule time failed", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+	cfg := scheduleConfig{
+		RetagTime: defaultRetagTime,
+		ExamTime:  defaultExamTime,
 	}
 
-	if v, err := s.st.GetSetting(settingKeyRetagEnabled); err == nil {
-		cfg.RetagEnabled = v == "true"
-	} else if !errors.Is(err, store.ErrNotFound) {
-		s.logger.Error("get schedule enabled failed", "error", err)
+	getStr := func(key string) (string, bool) {
+		v, err := s.st.GetSetting(key)
+		if err == nil {
+			return v, true
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			s.logger.Error("get schedule setting failed", "key", key, "error", err)
+			return "", false
+		}
+		return "", true
+	}
+
+	if v, ok := getStr(settingKeyRetagTime); !ok {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	} else if v != "" {
+		cfg.RetagTime = v
+	}
+	if v, ok := getStr(settingKeyRetagEnabled); !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	} else {
+		cfg.RetagEnabled = v == "true"
+	}
+	if v, ok := getStr(settingKeyExamTime); !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	} else if v != "" {
+		cfg.ExamTime = v
+	}
+	if v, ok := getStr(settingKeyExamEnabled); !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	} else {
+		cfg.ExamEnabled = v == "true"
 	}
 
 	writeJSON(w, cfg)
 }
 
-// handleSaveSchedule PUT /api/settings/schedule 写入晚间标签重算调度配置。
+// handleSaveSchedule PUT /api/settings/schedule 写入夜间调度配置。
 func (s *Server) handleSaveSchedule(w http.ResponseWriter, r *http.Request) {
 	if s.st == nil {
 		http.Error(w, "storage not initialized", http.StatusServiceUnavailable)
@@ -63,29 +90,40 @@ func (s *Server) handleSaveSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 兼容老客户端(不带 exam 字段):空 ExamTime 落默认,不作为非法输入。
+	if cfg.ExamTime == "" {
+		cfg.ExamTime = defaultExamTime
+	}
+
 	// 校验 "HH:MM" 零填充格式(与调度器 parseScheduleTime 契约一致)。
-	if !validScheduleTime(cfg.RetagTime) {
+	if !validScheduleTime(cfg.RetagTime) || !validScheduleTime(cfg.ExamTime) {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid time format, expected HH:MM (zero-padded)"})
 		return
 	}
 
-	if err := s.st.SetSetting(settingKeyRetagTime, cfg.RetagTime); err != nil {
-		s.logger.Error("save schedule time failed", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+	boolStr := func(b bool) string {
+		if b {
+			return "true"
+		}
+		return "false"
+	}
+	pairs := [][2]string{
+		{settingKeyRetagTime, cfg.RetagTime},
+		{settingKeyRetagEnabled, boolStr(cfg.RetagEnabled)},
+		{settingKeyExamTime, cfg.ExamTime},
+		{settingKeyExamEnabled, boolStr(cfg.ExamEnabled)},
+	}
+	for _, p := range pairs {
+		if err := s.st.SetSetting(p[0], p[1]); err != nil {
+			s.logger.Error("save schedule setting failed", "key", p[0], "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 	}
 
-	enabled := "false"
-	if cfg.RetagEnabled {
-		enabled = "true"
-	}
-	if err := s.st.SetSetting(settingKeyRetagEnabled, enabled); err != nil {
-		s.logger.Error("save schedule enabled failed", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	s.logger.Info("schedule saved", "retag_time", cfg.RetagTime, "retag_enabled", cfg.RetagEnabled)
+	s.logger.Info("schedule saved",
+		"retag_time", cfg.RetagTime, "retag_enabled", cfg.RetagEnabled,
+		"exam_time", cfg.ExamTime, "exam_enabled", cfg.ExamEnabled)
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

@@ -145,7 +145,8 @@ func run(configPath string) error {
 	monitor.SetListener(nodemon.NewStateMachine(st, agg, alerter, logger))
 	go monitor.Run(ctx)
 
-	// 启动调度器(晚间标签重算)
+	// 启动调度器(晚间标签重算 + 定时全员补齐;后者触发器在 server 层,持活节点池)
+	scheduler.SetExamAllTrigger(srv.TriggerScheduledExamAll)
 	go scheduler.Run(ctx)
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	httpServer := &http.Server{

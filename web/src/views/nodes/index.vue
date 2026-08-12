@@ -39,7 +39,6 @@
         :actions="batchActions"
         @block="blockSelected"
         @unblock="unblockSelected"
-        @refresh-names="refreshNamesSelected"
         @start="onBatchStart"
         @cancel="onBatchCancel"
         @more-command="onMoreCommand"
@@ -65,6 +64,7 @@
         :exam-summaries="examSummaries"
         :running-exam-keys="runningExamKeys"
         :slot-keys="slotKeysSet"
+        :has-active-filter="isActiveCriteria(criteria)"
         @selection-change="onSelectionChange"
         @sort-change="onSortChange"
         @page-change="setPage"
@@ -82,6 +82,7 @@
         @test="runTest"
         @copy-link="copyNodeShareLink"
         @show-qr="showNodeQR"
+        @go-airports="router.push({ name: 'Airports' })"
       />
 
       <NodeDetailDrawer
@@ -156,6 +157,7 @@ import { buildUnifiedRows, selfNodeIndex, type UnifiedNode } from './selfmerge'
 import { applyFavoriteOverrides, useNodeFavorites } from './composables/useNodeFavorites'
 import { tagsOf, unlockTargetsOf } from './nodecells'
 import { formatTime, isSelfHosted, SELF_HOSTED } from './utils'
+import { isActiveCriteria } from './predicates'
 import { copyNodeLink, getNodeShareLink } from '@/composables/useNodeShare'
 
 const router = useRouter()
@@ -239,6 +241,7 @@ const {
 const {
   detecting,
   detectOne,
+  backfillOne,
   cancelDetection,
   triggerCleanupDetection,
   batchActions,
@@ -255,7 +258,8 @@ const sourceBlockDialog = ref<InstanceType<typeof SourceBlockDialog> | null>(nul
 const cleanupDialog = ref<InstanceType<typeof CleanupDialog> | null>(null)
 const purgeDialog = ref<InstanceType<typeof PurgeAirportDialog> | null>(null)
 const onMoreCommand = (cmd: string) => {
-  if (cmd === 'block-source') sourceBlockDialog.value?.open()
+  if (cmd === 'refresh-names') refreshNamesSelected()
+  else if (cmd === 'block-source') sourceBlockDialog.value?.open()
   else if (cmd === 'purge-airport') purgeDialog.value?.open()
   else if (cmd === 'cleanup') cleanupDialog.value?.open()
 }
@@ -295,17 +299,15 @@ const testTarget = (row: UnifiedNode) =>
 const goSpeedtest = (row: UnifiedNode) =>
   router.push({ path: '/speedtest', query: { node_key: row.node_key } })
 
-// 行内/抽屉单节点检查:4 动作与批量面同名同义(见 CONTEXT「检查动作」)。
-//   detect    → 全语义任务口径:与批量同走 batch_detection(含解锁落库 + 重算标签),
-//               进行中复用全局 detecting 态(行内按钮标注/禁用)。
-//   stability → 出网+稳定性 SSE 弹框。
-//   speedtest → 快速测速 SSE 弹框(必须带 mode=speedtest 走基准口径,见 issue 0031 实现注)。
-//   exam      → 深度体检 SSE 弹框(进行中自动附加,回放+续传)。
+// 行内/抽屉单节点检查:主入口 backfill = 补齐信息(batch_exam backfill 单键,完成自动刷新);
+// detect 与批量同走 batch_detection;stability/speedtest/exam 走各自 SSE 弹框;
 // client-speedtest → 本机实测(跳独立页)。
 const runNodeAction = (row: UnifiedNode, cmd: TestCommand) => {
   const label = row.display_name || row.name
   const target = testTarget(row)
   switch (cmd) {
+    case 'backfill':
+      return backfillOne(row)
     case 'detect':
       // 全语义任务口径:与批量共用 batch_detection(单节点即 node_keys 只含本节点)。
       return detectOne(row)

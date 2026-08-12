@@ -42,6 +42,12 @@
       <el-form-item v-if="show('grpc_service_name')" label="gRPC Service">
         <el-input v-model="form.grpc_service_name" placeholder="例如 my-grpc-service" />
       </el-form-item>
+      <el-form-item v-if="show('grpc_authority')" label="gRPC Host">
+        <el-input
+          v-model="form.grpc_authority"
+          placeholder="可选，例如 grpc.example.com（Clash 里写作 servername）"
+        />
+      </el-form-item>
       <el-form-item v-if="show('tls')" label="TLS">
         <el-switch v-model="form.tls" />
       </el-form-item>

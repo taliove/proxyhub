@@ -127,6 +127,11 @@ func egressAllFailed(egress *EgressMetrics) bool {
 	return ipv4Fail && ipv6Fail && dnsFail
 }
 
+// ExamEgressAllFailed 导出 egressAllFailed:server 层补齐信息写回需要同一判定口径。
+func ExamEgressAllFailed(egress *EgressMetrics) bool {
+	return egressAllFailed(egress)
+}
+
 // stabilityStage 构造稳定性采样段:1Hz 探测,逐样本推 sample,段末推 section_done + 指标。
 func stabilityStage(cfg ExamConfig, clk samplerClock, probe StabilityProbe) examStage {
 	return examStage{

@@ -200,3 +200,9 @@ func (ds *DetectionService) ExamStreamSimplified(ctx context.Context, node *subs
 func (ds *DetectionService) ExamStreamEgressStability(ctx context.Context, node *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
 	return ds.detector.ExamStreamEgressStability(ctx, node, emit)
 }
+
+// ExamStreamBackfill 单节点「补齐信息」流式版本:出网画像 + 解锁 + 短采样稳定性,
+// 跳多地域与基准测速;报告带 source=backfill 来源标记。
+func (ds *DetectionService) ExamStreamBackfill(ctx context.Context, node *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
+	return ds.detector.ExamStreamBackfill(ctx, node, emit)
+}

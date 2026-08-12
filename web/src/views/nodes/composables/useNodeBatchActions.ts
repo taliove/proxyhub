@@ -6,9 +6,10 @@ import { useBatchExam } from './useBatchExam'
 import { useBatchStability } from './useBatchStability'
 import { useBatchSpeedtest } from './useBatchSpeedtest'
 
-// useNodeBatchActions 统一 4 个检查动作的编排(见 CONTEXT「检查动作」):
-//   1 出网快速检测 = 解锁检测(batch_detection,含解锁落库 + 重算标签),全局单例;
-//   2 出网+稳定性、3 快速测速、4 深度体检 = 三个同构批量任务(jobs 轮询进度)。
+// useNodeBatchActions 统一检查动作的编排(见 CONTEXT「检查动作」):
+//   主入口 补齐信息 = batch_exam mode=backfill(出网+解锁+短稳定性,跳多地域/基准);
+//   高级下拉:出网快速检测(batch_detection,全局单例)/ 出网+稳定性 / 快速测速 /
+//   深度体检(batch_exam mode=full)。
 // 单节点与批量共用同一套启动器(单节点即 node_keys 只含本节点),保证口径一致。
 // detecting 全页共享(页头告警条 / 批量栏 / 行内下拉 / 清理弹窗都消费),故在此单点持有。
 export function useNodeBatchActions(
@@ -38,16 +39,33 @@ export function useNodeBatchActions(
   const triggerCleanupDetection = (onComplete: () => void) =>
     trigger({ type: 'all' }, onComplete, '检测已启动，完成后自动刷新失败列表')
 
-  // 动作 2/3/4:同构批量任务,完成后刷新体检摘要(测速另需 reload 以刷带宽列)。
+  // 动作 2/3/4:同构批量任务,完成后刷新列表与体检摘要
+  // (backfill 写回 node_health 与内存池,必须 reload 才能看到延迟/可用性/解锁列)。
   const batchStability = useBatchStability(reloadExam)
   const batchSpeedtest = useBatchSpeedtest(() => {
     reload()
     reloadExam()
   })
-  const batchExam = useBatchExam(reloadExam)
+  const batchExam = useBatchExam(async () => {
+    await reload()
+    reloadExam()
+  })
+
+  // 单节点补齐信息:与批量同走 batch_exam backfill(单键),完成后自动刷新。
+  const backfillOne = (node: UnifiedNode) => batchExam.start([node.node_key], 'backfill')
 
   // 批量栏渲染描述(顺序即 CONTEXT「检查动作」顺序);label 单点定义,进度实时。
+  // exam = 主入口「补齐信息」(backfill);exam-full = 高级「深度体检」(完整四段)。
   const batchActions = computed<BatchAction[]>(() => [
+    {
+      id: 'exam',
+      label: '补齐信息',
+      state: {
+        running: batchExam.running.value,
+        completed: batchExam.completed.value,
+        total: batchExam.total.value
+      }
+    },
     {
       id: 'detect',
       label: '出网快速检测',
@@ -76,7 +94,7 @@ export function useNodeBatchActions(
       }
     },
     {
-      id: 'exam',
+      id: 'exam-full',
       label: '深度体检',
       state: {
         running: batchExam.running.value,
@@ -89,21 +107,23 @@ export function useNodeBatchActions(
   // 批量分发:统一从选中集取作用域,交由对应任务启动器/取消。
   const onBatchStart = (id: BatchActionId) => {
     const keys = selectedKeys()
-    if (id === 'detect') detectSelected()
+    if (id === 'exam') batchExam.start(keys, 'backfill')
+    else if (id === 'exam-full') batchExam.start(keys, 'full')
+    else if (id === 'detect') detectSelected()
     else if (id === 'stability') batchStability.start(keys)
     else if (id === 'speedtest') batchSpeedtest.start(keys)
-    else if (id === 'exam') batchExam.start(keys)
   }
   const onBatchCancel = (id: BatchActionId) => {
-    if (id === 'detect') cancelDetection()
+    if (id === 'exam' || id === 'exam-full') batchExam.cancel()
+    else if (id === 'detect') cancelDetection()
     else if (id === 'stability') batchStability.cancel()
     else if (id === 'speedtest') batchSpeedtest.cancel()
-    else if (id === 'exam') batchExam.cancel()
   }
 
   return {
     detecting,
     detectOne,
+    backfillOne,
     cancelDetection,
     triggerCleanupDetection,
     batchActions,

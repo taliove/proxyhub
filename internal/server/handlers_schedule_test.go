@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestScheduleAPI_GetDefault 未配置时返回默认值(03:30 / disabled)。
+// TestScheduleAPI_GetDefault 未配置时返回默认值(03:30 / 04:00 / 均 disabled)。
 func TestScheduleAPI_GetDefault(t *testing.T) {
 	srv, _ := newTestServer(t, nil)
 	h := srv.Handler()
@@ -32,6 +32,12 @@ func TestScheduleAPI_GetDefault(t *testing.T) {
 	if resp.RetagEnabled {
 		t.Error("retag_enabled = true, want false by default")
 	}
+	if resp.ExamTime != "04:00" {
+		t.Errorf("exam_time = %q, want 04:00", resp.ExamTime)
+	}
+	if resp.ExamEnabled {
+		t.Error("exam_enabled = true, want false by default")
+	}
 }
 
 // TestScheduleAPI_RequiresAuth 无会话拒绝。
@@ -53,7 +59,7 @@ func TestScheduleAPI_SaveAndGet(t *testing.T) {
 	h := srv.Handler()
 	cookie := authCookie(t, h)
 
-	body, _ := json.Marshal(scheduleConfig{RetagTime: "02:15", RetagEnabled: true})
+	body, _ := json.Marshal(scheduleConfig{RetagTime: "02:15", RetagEnabled: true, ExamTime: "04:30", ExamEnabled: true})
 	req := httptest.NewRequest("PUT", "/api/settings/schedule", bytes.NewReader(body))
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
@@ -62,12 +68,18 @@ func TestScheduleAPI_SaveAndGet(t *testing.T) {
 		t.Fatalf("PUT status = %d, want 200 (body: %s)", w.Code, w.Body.String())
 	}
 
-	// 调度器读取 schedule_retag_time / schedule_retag_enabled,断言写入契约。
+	// 调度器读取 schedule_retag_* / schedule_exam_*,断言写入契约。
 	if v, _ := st.GetSetting("schedule_retag_time"); v != "02:15" {
 		t.Errorf("stored retag time = %q, want 02:15", v)
 	}
 	if v, _ := st.GetSetting("schedule_retag_enabled"); v != "true" {
 		t.Errorf("stored retag enabled = %q, want true", v)
+	}
+	if v, _ := st.GetSetting("schedule_exam_time"); v != "04:30" {
+		t.Errorf("stored exam time = %q, want 04:30", v)
+	}
+	if v, _ := st.GetSetting("schedule_exam_enabled"); v != "true" {
+		t.Errorf("stored exam enabled = %q, want true", v)
 	}
 
 	req2 := httptest.NewRequest("GET", "/api/settings/schedule", nil)
@@ -77,7 +89,32 @@ func TestScheduleAPI_SaveAndGet(t *testing.T) {
 	var resp scheduleConfig
 	json.Unmarshal(w2.Body.Bytes(), &resp)
 	if resp.RetagTime != "02:15" || !resp.RetagEnabled {
-		t.Errorf("readback = %+v, want {02:15 true}", resp)
+		t.Errorf("readback = %+v, want retag {02:15 true}", resp)
+	}
+	if resp.ExamTime != "04:30" || !resp.ExamEnabled {
+		t.Errorf("readback = %+v, want exam {04:30 true}", resp)
+	}
+}
+
+// TestScheduleAPI_ExamFieldsDefault 老客户端不带 exam 字段:落默认时刻 04:00,不报错。
+func TestScheduleAPI_ExamFieldsDefault(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+
+	body, _ := json.Marshal(scheduleConfig{RetagTime: "02:15", RetagEnabled: true})
+	req := httptest.NewRequest("PUT", "/api/settings/schedule", bytes.NewReader(body))
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+	if v, _ := st.GetSetting("schedule_exam_time"); v != "04:00" {
+		t.Errorf("stored exam time = %q, want 04:00 (default)", v)
+	}
+	if v, _ := st.GetSetting("schedule_exam_enabled"); v != "false" {
+		t.Errorf("stored exam enabled = %q, want false", v)
 	}
 }
 

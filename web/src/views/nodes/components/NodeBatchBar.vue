@@ -12,24 +12,33 @@
 
     <el-divider direction="vertical" />
 
-    <!-- 4 个检查动作主按钮:全部作用于勾选集,0 勾选禁用;任一动作运行中禁用其余动作,
-         避免多批量任务并发争用检测会话。运行中的动作就地显示进度(x/N)与取消。 -->
-    <template v-for="a in actions" :key="a.id">
-      <el-button
-        :type="a.id === 'detect' ? 'primary' : 'default'"
-        size="small"
-        :disabled="count === 0 || anyRunning"
-        @click="emit('start', a.id)"
-      >
-        {{ a.label }}
+    <!-- 主入口「补齐信息」= 深度体检全量(CONTEXT「检查动作」);三个子集动作收进「高级」下拉。
+         0 勾选禁用;任一动作运行中禁用其余动作(串行,避免争用检测会话)。 -->
+    <el-button
+      type="primary"
+      size="small"
+      :disabled="count === 0 || anyRunning"
+      @click="emit('start', 'exam')"
+    >
+      补齐信息
+    </el-button>
+    <el-dropdown trigger="click" @command="(id: BatchActionId) => emit('start', id)">
+      <el-button size="small" :disabled="count === 0 || anyRunning">
+        高级
+        <el-icon class="el-icon--right"><ArrowDown /></el-icon>
       </el-button>
-    </template>
+      <template #dropdown>
+        <el-dropdown-menu>
+          <el-dropdown-item v-for="a in subActions" :key="a.id" :command="a.id">
+            {{ a.label }}
+          </el-dropdown-item>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
 
     <el-divider direction="vertical" />
 
-    <el-button size="small" @click="emit('refresh-names')">刷新名称</el-button>
-
-    <!-- 页面级非检查命令(与勾选集无关)收进「更多」:按机场屏蔽 / 清空机场节点 / 清理失败节点。
+    <!-- 页面级与低频命令收进「更多」:刷新名称 / 按机场屏蔽 / 清空机场节点 / 清理失败节点。
          清空/清理是不可逆感操作,标危险色。 -->
     <el-dropdown trigger="click" @command="(cmd: string) => emit('more-command', cmd)">
       <el-button size="small">
@@ -38,6 +47,7 @@
       </el-button>
       <template #dropdown>
         <el-dropdown-menu>
+          <el-dropdown-item command="refresh-names">刷新名称</el-dropdown-item>
           <el-dropdown-item command="block-source">按机场屏蔽</el-dropdown-item>
           <el-dropdown-item command="purge-airport" divided>
             <span class="danger-item">清空机场节点</span>
@@ -67,8 +77,8 @@ import { ArrowDown } from '@element-plus/icons-vue'
 // 与既有勾选操作(屏蔽/取消屏蔽/刷新名称),以及页面级非检查命令(「更多」菜单)。
 // 4 动作词汇与单节点面同名同义(见 CONTEXT「检查动作」)。进度复用 jobs 轮询(完成 x/N,可取消)。
 
-// BatchActionId 检查动作标识;顺序即批量栏渲染顺序(与 CONTEXT「检查动作」一致)。
-export type BatchActionId = 'detect' | 'stability' | 'speedtest' | 'exam'
+// BatchActionId 检查动作标识;exam = 主入口「补齐信息」(backfill),exam-full = 高级「深度体检」。
+export type BatchActionId = 'detect' | 'stability' | 'speedtest' | 'exam' | 'exam-full'
 
 // BatchActionState 单个动作的运行态与进度。
 export interface BatchActionState {
@@ -93,7 +103,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'block'): void
   (e: 'unblock'): void
-  (e: 'refresh-names'): void
   (e: 'start', id: BatchActionId): void
   (e: 'cancel', id: BatchActionId): void
   (e: 'more-command', cmd: string): void
@@ -103,6 +112,8 @@ const emit = defineEmits<{
 const anyRunning = computed(() => props.actions.some((a) => a.state.running))
 // 当前运行中的动作(至多一个),用于显示进度与取消。
 const runningAction = computed(() => props.actions.find((a) => a.state.running) ?? null)
+// 「高级」下拉 = 三个子集动作(主入口 exam 不在其中,避免重复)
+const subActions = computed(() => props.actions.filter((a) => a.id !== 'exam'))
 </script>
 
 <style scoped>

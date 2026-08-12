@@ -22,10 +22,12 @@ export interface Job {
   updated_at: string
 }
 
-// ScheduleConfig 晚间标签重算调度配置。
+// ScheduleConfig 夜间调度配置:标签重算 + 全员补齐(batch_exam mode=backfill 轻量管线)。
 export interface ScheduleConfig {
   retag_time: string // "HH:MM" 零填充
   retag_enabled: boolean
+  exam_time: string // 全员补齐时刻,默认 04:00(与重算错开 30 分钟)
+  exam_enabled: boolean // 默认关(同 ADR 0042 成本纪律)
 }
 
 // ListJobsFilter 任务列表可选过滤(对应后端 handleListJobs 的 kind/status 查询参数;

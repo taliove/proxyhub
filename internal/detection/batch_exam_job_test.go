@@ -369,6 +369,7 @@ func TestNormalizeBatchExamMode(t *testing.T) {
 		{"empty defaults to simplified", "", BatchExamModeSimplified, false},
 		{"explicit simplified", "simplified", BatchExamModeSimplified, false},
 		{"full", "full", BatchExamModeFull, false},
+		{"backfill", "backfill", BatchExamModeBackfill, false},
 		{"uppercase rejected", "FULL", "", true},
 		{"unknown rejected", "deep", "", true},
 	}
@@ -572,5 +573,81 @@ func TestBatchExamKind_CancelEvent(t *testing.T) {
 
 	if phase, ok := ev["phase"].(string); !ok || phase != "cancelled" {
 		t.Errorf("CancelEvent() phase = %q, want %q", phase, "cancelled")
+	}
+}
+
+// TestBatchExamKind_Run_ModeBackfill_UsesBackfillRunner 补齐信息档:mode=backfill
+// 走 backfill runner(轻量),报告 source=backfill 透传给 onComplete(server 层据此写回
+// node_health 与内存池)。
+func TestBatchExamKind_Run_ModeBackfill_UsesBackfillRunner(t *testing.T) {
+	node := &subscription.Node{Name: "bf-node", Type: "ss", Server: "example.com", Port: 443}
+
+	var simplifiedCalled, fullCalled, backfillCalled bool
+	var completedReport ExamReport
+
+	k := &batchExamKind{
+		runSimplified: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			simplifiedCalled = true
+			return ExamReport{Stability: &StabilityMetrics{Total: 5, Succeeded: 5, Score: 90}}
+		},
+		runFull: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			fullCalled = true
+			return ExamReport{Stability: &StabilityMetrics{Score: 90}}
+		},
+		runBackfill: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			backfillCalled = true
+			return ExamReport{
+				Source:    ExamSourceBackfill,
+				Stability: &StabilityMetrics{Total: 5, Succeeded: 4, Score: 72},
+				Unlock:    &UnlockMetrics{},
+			}
+		},
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {
+			completedReport = report
+		},
+	}
+	k.nodes.Store(examNodeRef{userID: 0, nodeKey: node.NodeKey()}, node)
+
+	params, _ := json.Marshal(batchExamParams{NodeKeys: []string{node.NodeKey()}, Mode: BatchExamModeBackfill})
+	err := k.Run(context.Background(), params, "", func(data json.RawMessage) {}, func(cursor string) {})
+
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if simplifiedCalled || fullCalled {
+		t.Errorf("simplified=%v full=%v, want neither called in backfill mode", simplifiedCalled, fullCalled)
+	}
+	if !backfillCalled {
+		t.Error("runBackfill was not called in backfill mode")
+	}
+	if completedReport.Source != ExamSourceBackfill {
+		t.Errorf("onComplete report.Source = %q, want %q", completedReport.Source, ExamSourceBackfill)
+	}
+}
+
+// TestBatchExamKind_Run_BackfillDeadNodeStillCompletes Check H1 回归:backfill 死节点报告
+// (无稳定性段)也必须触发 onComplete——否则 connectivity=不可用 永远写不回去。
+func TestBatchExamKind_Run_BackfillDeadNodeStillCompletes(t *testing.T) {
+	node := &subscription.Node{Name: "dead", Type: "ss", Server: "dead.example.com", Port: 443}
+
+	var completed *ExamReport
+	k := &batchExamKind{
+		runBackfill: func(ctx context.Context, n *subscription.Node, emit func(ExamEvent)) ExamReport {
+			// 建会话失败形状:只有 Source,无稳定性段
+			return ExamReport{Source: ExamSourceBackfill}
+		},
+		onComplete: func(userID int64, nodeKey string, report ExamReport) {
+			r := report
+			completed = &r
+		},
+	}
+	k.nodes.Store(examNodeRef{userID: 0, nodeKey: node.NodeKey()}, node)
+
+	params, _ := json.Marshal(batchExamParams{NodeKeys: []string{node.NodeKey()}, Mode: BatchExamModeBackfill})
+	if err := k.Run(context.Background(), params, "", func(data json.RawMessage) {}, func(cursor string) {}); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if completed == nil || completed.Source != ExamSourceBackfill {
+		t.Errorf("onComplete not called for dead-node backfill report (Stability=nil), H1 regression")
 	}
 }

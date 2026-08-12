@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -215,4 +216,60 @@ func (m *mockSchedulerStore) GetSetting(key string) (string, error) {
 
 func (m *mockSchedulerStore) GetLatestJobByKindKey(kind, key string) (*Record, error) {
 	return m.lastJob, nil
+}
+
+// mockExamStore 全员补齐定时档的 settings 桩:只认 schedule_exam_* 键,retag 键报不存在。
+type mockExamStore struct {
+	lastJob *Record
+}
+
+func (m *mockExamStore) GetSetting(key string) (string, error) {
+	switch key {
+	case "schedule_exam_time":
+		return "04:00", nil
+	case "schedule_exam_enabled":
+		return "true", nil
+	}
+	return "", fmt.Errorf("no such setting: %s", key)
+}
+
+func (m *mockExamStore) GetLatestJobByKindKey(kind, key string) (*Record, error) {
+	return m.lastJob, nil
+}
+
+// TestSchedulerTick_ExamAllTask 定时全员补齐:触发器已注入且配置齐备时到点触发;
+// 当日已有 batch_exam 记录(含手动触发)则跳过(信息当日已产出)。
+func TestSchedulerTick_ExamAllTask(t *testing.T) {
+	clock := &mockClock{now: time.Date(2026, 7, 20, 4, 0, 0, 0, time.Local)}
+	var triggered int
+
+	store := &mockExamStore{}
+	s := NewScheduler(nil, store, nil)
+	s.clock = clock.Now
+	s.SetExamAllTrigger(func() { triggered++ })
+
+	s.tick()
+	if triggered != 1 {
+		t.Errorf("triggered at exam time = %d, want 1", triggered)
+	}
+
+	// 当日已有 batch_exam 记录(如手动补齐过):不再触发
+	store.lastJob = &Record{
+		Kind:      "batch_exam",
+		Key:       "batch_exam",
+		Status:    StatusDone,
+		CreatedAt: time.Date(2026, 7, 20, 1, 0, 0, 0, time.Local),
+	}
+	s.tick()
+	if triggered != 1 {
+		t.Errorf("triggered with same-day exam job = %d, want 1 (skip)", triggered)
+	}
+}
+
+// TestSchedulerTick_ExamAllWithoutTrigger 未注入触发器时 exam 档静默跳过(不 panic)。
+func TestSchedulerTick_ExamAllWithoutTrigger(t *testing.T) {
+	clock := &mockClock{now: time.Date(2026, 7, 20, 4, 0, 0, 0, time.Local)}
+	s := NewScheduler(nil, &mockExamStore{}, nil)
+	s.clock = clock.Now
+	s.tick() // 不 panic 即通过
 }

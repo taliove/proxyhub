@@ -127,34 +127,41 @@
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
-      <!-- 体检时间:最近一次体检相对时间(无历史走占位) -->
-      <el-table-column label="体检时间" width="110">
-        <template #default="{ row }">
-          <span class="muted num">{{ summaryFor(row)?.relative || '—' }}</span>
-        </template>
-      </el-table-column>
-      <!-- 操作:自建走 编辑/命名/刷新名称/启停/删除;机场走 编辑/命名/刷新名称/屏蔽;点击行打开详情抽屉 -->
-      <el-table-column label="操作" width="320">
+      <!-- (体检时间列已隐藏:信息密度纪律,用户反馈无意义占位;数据仍在详情抽屉) -->
+      <!-- 操作:两来源行布局统一为「详情 | 编辑 | 更多▾」——详情是键盘可达入口(行点击无等价物),
+           低频与危险动作收进更多下拉;自建/机场同位同义,消除占位漂移(critique P1)。 -->
+      <el-table-column label="操作" width="150">
         <template #default="{ row }">
           <span class="row-ops" @click.stop>
-            <template v-if="isSelfHosted(row)">
-              <el-button link type="primary" @click="emit('edit-self', row)">编辑</el-button>
-              <el-button link @click="emit('assign-slot', row)">命名</el-button>
-              <el-button link @click="emit('refresh-name', row)">刷新名称</el-button>
-              <el-button link @click="emit('toggle-self', row)">
-                {{ row.enabled === false ? '启用' : '禁用' }}
+            <el-button link type="primary" @click="emit('view', row)">详情</el-button>
+            <el-button v-if="isSelfHosted(row)" link type="primary" @click="emit('edit-self', row)"
+              >编辑</el-button
+            >
+            <el-button v-else link type="primary" @click="emit('edit-override', row)"
+              >编辑</el-button
+            >
+            <el-dropdown trigger="click" @command="(cmd: string) => onRowOp(cmd, row)">
+              <el-button link>
+                更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
               </el-button>
-              <el-button link type="danger" @click="emit('delete-self', row)">删除</el-button>
-            </template>
-            <template v-else>
-              <el-button link type="primary" @click="emit('edit-override', row)">编辑</el-button>
-              <el-button link @click="emit('assign-slot', row)">命名</el-button>
-              <el-button link @click="emit('refresh-name', row)">刷新名称</el-button>
-              <el-button v-if="row.blocked" link type="warning" @click="emit('unblock', row)">
-                取消屏蔽
-              </el-button>
-              <el-button v-else link type="warning" @click="emit('block', row)">屏蔽</el-button>
-            </template>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="assign-slot">命名</el-dropdown-item>
+                  <el-dropdown-item command="refresh-name">刷新名称</el-dropdown-item>
+                  <template v-if="isSelfHosted(row)">
+                    <el-dropdown-item command="toggle-self">
+                      {{ row.enabled === false ? '启用' : '禁用' }}
+                    </el-dropdown-item>
+                    <el-dropdown-item command="delete-self" divided>
+                      <span class="danger-item">删除</span>
+                    </el-dropdown-item>
+                  </template>
+                  <el-dropdown-item v-else command="toggle-block" divided>
+                    <span class="warning-item">{{ row.blocked ? '取消屏蔽' : '屏蔽' }}</span>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </span>
         </template>
       </el-table-column>
@@ -171,6 +178,16 @@
           />
         </template>
       </el-table-column>
+      <!-- 空态分两种(critique P2):筛选无匹配 vs 池真空;池空给第一步引导(去机场页) -->
+      <template #empty>
+        <div class="table-empty">
+          <p v-if="hasActiveFilter">当前筛选下无匹配节点，试试调整筛选条件。</p>
+          <template v-else>
+            <p>节点池为空。添加机场并刷新后，节点经健康检查入池、出现在这里。</p>
+            <el-button type="primary" @click="emit('go-airports')">去添加机场</el-button>
+          </template>
+        </div>
+      </template>
     </el-table>
 
     <div class="pager">
@@ -188,7 +205,7 @@
 </template>
 
 <script setup lang="ts">
-import { Star, StarFilled, WarningFilled } from '@element-plus/icons-vue'
+import { Star, StarFilled, WarningFilled, ArrowDown } from '@element-plus/icons-vue'
 import StatusDot from '@/components/StatusDot.vue'
 import NodeTestCell from './NodeTestCell.vue'
 import UnlockCell from './UnlockCell.vue'
@@ -224,8 +241,15 @@ const props = withDefaults(
     runningExamKeys?: Set<string>
     // 名称槽位占用的 node_key 集合(issue #98):命中行在名称列加"槽位"标记
     slotKeys?: Set<string>
+    // 空态分流:有有效筛选 = 筛选无匹配文案;无 = 池空引导(由装配层用 isActiveCriteria 求值)
+    hasActiveFilter?: boolean
   }>(),
-  { examSummaries: () => ({}), runningExamKeys: () => new Set(), slotKeys: () => new Set() }
+  {
+    examSummaries: () => ({}),
+    runningExamKeys: () => new Set(),
+    slotKeys: () => new Set(),
+    hasActiveFilter: false
+  }
 )
 
 const summaryFor = (row: UnifiedNode): NodeExamSummary | undefined =>
@@ -251,6 +275,8 @@ const emit = defineEmits<{
   (e: 'test', row: UnifiedNode, mode: TestCommand): void
   (e: 'copy-link', row: UnifiedNode): void
   (e: 'show-qr', row: UnifiedNode): void
+  // 池空空态的引导动作(装配层负责路由)
+  (e: 'go-airports'): void
 }>()
 
 // 自建节点也参与批量操作;屏蔽语义仅适用机场节点,处理器内按来源过滤。
@@ -263,6 +289,18 @@ const rowClassName = ({ row }: { row: UnifiedNode }) =>
 const onRowClick = (row: UnifiedNode, column: { type?: string } | null) => {
   if (column?.type === 'selection') return
   emit('view', row)
+}
+
+// 「更多」下拉命令 → 行事件映射(自建/机场分支模板内已分,这里只做派发)
+const onRowOp = (cmd: string, row: UnifiedNode) => {
+  if (cmd === 'assign-slot') emit('assign-slot', row)
+  else if (cmd === 'refresh-name') emit('refresh-name', row)
+  else if (cmd === 'toggle-self') emit('toggle-self', row)
+  else if (cmd === 'delete-self') emit('delete-self', row)
+  else if (cmd === 'toggle-block') {
+    if (row.blocked) emit('unblock', row)
+    else emit('block', row)
+  }
 }
 </script>
 
@@ -331,7 +369,21 @@ const onRowClick = (row: UnifiedNode, column: { type?: string } | null) => {
 .fav-btn:hover .fav-off {
   color: var(--ph-warning);
 }
+.danger-item {
+  color: var(--ph-danger);
+}
+.warning-item {
+  color: var(--ph-warning);
+}
 :deep(.stale-row) {
   opacity: 0.55;
+}
+.table-empty {
+  padding: var(--ph-space-6) 0;
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-sm);
+}
+.table-empty p {
+  margin: 0 0 var(--ph-space-3);
 }
 </style>

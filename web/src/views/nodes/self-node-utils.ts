@@ -6,8 +6,8 @@ export type SelfNodeForm = Omit<SelfNode, 'id'>
 export const PROTOCOL_FIELDS: Record<string, string[]> = {
   ss: ['cipher', 'password'],
   trojan: ['password'],
-  vmess: ['uuid', 'alter_id', 'cipher', 'network', 'tls', 'grpc_service_name'],
-  vless: ['uuid', 'network', 'tls', 'grpc_service_name']
+  vmess: ['uuid', 'alter_id', 'cipher', 'network', 'tls', 'grpc_service_name', 'grpc_authority'],
+  vless: ['uuid', 'network', 'tls', 'grpc_service_name', 'grpc_authority']
 }
 
 export const emptyForm = (): SelfNodeForm => ({
@@ -22,12 +22,13 @@ export const emptyForm = (): SelfNodeForm => ({
   network: 'tcp',
   tls: false,
   grpc_service_name: '',
+  grpc_authority: '',
   enabled: true
 })
 
-// 表单字段可见性:按协议决定;grpc_service_name 仅在 network=grpc 且协议支持时显示
+// 表单字段可见性:按协议决定;grpc 两字段仅在 network=grpc 且协议支持时显示
 export const fieldVisible = (form: SelfNodeForm, field: string): boolean => {
-  if (field === 'grpc_service_name') {
+  if (field === 'grpc_service_name' || field === 'grpc_authority') {
     return form.network === 'grpc' && (form.protocol === 'vmess' || form.protocol === 'vless')
   }
   return (PROTOCOL_FIELDS[form.protocol] || []).includes(field)
@@ -52,6 +53,8 @@ const parseVlessUrl = (url: string): Partial<SelfNodeForm> => {
     network: params.get('type') || 'tcp',
     tls: params.get('security') === 'tls',
     grpc_service_name: params.get('serviceName') || '',
+    // authority 缺省回退 host(与后端解析层同口径:部分机场按 vmess host 约定承载)
+    grpc_authority: params.get('authority') || params.get('host') || '',
     enabled: true
   }
 }
@@ -72,6 +75,8 @@ const parseVmessUrl = (url: string): Partial<SelfNodeForm> => {
     network: json.net || 'tcp',
     tls: json.tls === 'tls',
     grpc_service_name: json.path || '',
+    // vmess JSON:net=grpc 时 host 即 grpc authority(v2rayN 约定)
+    grpc_authority: json.net === 'grpc' ? json.host || '' : '',
     enabled: true
   }
 }
