@@ -137,3 +137,33 @@ func TestStore_GetLatestJobByKindKey(t *testing.T) {
 		t.Errorf("expected nil for different key, got %+v", rec)
 	}
 }
+
+// TestStore_GetLatestJobByKindKeyForUser 按属主过滤:他人同 kind/key 任务不可见
+// (夜间全员补齐按用户去重的查询契约,pre-push 评审 MEDIUM)。
+func TestStore_GetLatestJobByKindKeyForUser(t *testing.T) {
+	st := newTestStore(t)
+	js := st.Jobs()
+
+	// user 1 与用户 2 各跑一个 batch_exam;另有一条未归属(0)
+	idU1, err := js.InsertForUser(1, "batch_exam", "batch_exam", nil)
+	if err != nil {
+		t.Fatalf("InsertFor u1: %v", err)
+	}
+	if _, err := js.InsertForUser(2, "batch_exam", "batch_exam", nil); err != nil {
+		t.Fatalf("InsertFor u2: %v", err)
+	}
+
+	rec, err := st.GetLatestJobByKindKeyForUser(1, "batch_exam", "batch_exam")
+	if err != nil {
+		t.Fatalf("GetLatestJobByKindKeyForUser: %v", err)
+	}
+	if rec == nil || rec.ID != idU1 {
+		t.Errorf("user 1 latest = %+v, want id %d", rec, idU1)
+	}
+
+	// 无任务的用户拿到 nil(不是他人的)
+	rec0, err := st.GetLatestJobByKindKeyForUser(99, "batch_exam", "batch_exam")
+	if err != nil || rec0 != nil {
+		t.Errorf("user 99 latest = %+v err=%v, want nil", rec0, err)
+	}
+}

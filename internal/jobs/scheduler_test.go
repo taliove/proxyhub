@@ -237,8 +237,9 @@ func (m *mockExamStore) GetLatestJobByKindKey(kind, key string) (*Record, error)
 	return m.lastJob, nil
 }
 
-// TestSchedulerTick_ExamAllTask 定时全员补齐:触发器已注入且配置齐备时到点触发;
-// 当日已有 batch_exam 记录(含手动触发)则跳过(信息当日已产出)。
+// TestSchedulerTick_ExamAllTask 定时全员补齐:触发器已注入且配置齐备时到点触发。
+// "当日已产出"去重自 pre-push 评审后移到 server 层按用户做(GetLatestJobByKindKeyForUser),
+// 调度器对 batch_exam 不再全局去重(任一用户手动跑过不该跳过所有用户)。
 func TestSchedulerTick_ExamAllTask(t *testing.T) {
 	clock := &mockClock{now: time.Date(2026, 7, 20, 4, 0, 0, 0, time.Local)}
 	var triggered int
@@ -253,7 +254,7 @@ func TestSchedulerTick_ExamAllTask(t *testing.T) {
 		t.Errorf("triggered at exam time = %d, want 1", triggered)
 	}
 
-	// 当日已有 batch_exam 记录(如手动补齐过):不再触发
+	// 全局同日记录不再抑制触发(按用户去重在 server 层)
 	store.lastJob = &Record{
 		Kind:      "batch_exam",
 		Key:       "batch_exam",
@@ -261,8 +262,8 @@ func TestSchedulerTick_ExamAllTask(t *testing.T) {
 		CreatedAt: time.Date(2026, 7, 20, 1, 0, 0, 0, time.Local),
 	}
 	s.tick()
-	if triggered != 1 {
-		t.Errorf("triggered with same-day exam job = %d, want 1 (skip)", triggered)
+	if triggered != 2 {
+		t.Errorf("triggered with same-day global job = %d, want 2 (per-user dedup is server-side)", triggered)
 	}
 }
 

@@ -543,6 +543,16 @@ func (s *Server) TriggerScheduledExamAll() {
 		return
 	}
 	for _, u := range users {
+		// 按用户去重(pre-push 评审 MEDIUM):该用户当天已有 batch_exam 记录
+		// (手动补齐/体检或今晚已跑)则跳过他本人,不影响其他用户。
+		last, err := s.st.GetLatestJobByKindKeyForUser(u.ID, "batch_exam", "batch_exam")
+		if err != nil {
+			s.logger.Warn("scheduled exam all: check last job failed, skip user", "user_id", u.ID, "error", err)
+			continue
+		}
+		if last != nil && sameDayLocal(last.CreatedAt, time.Now()) {
+			continue
+		}
 		pool := s.nodes.NodesForUser(u.ID)
 		if len(pool) == 0 {
 			continue
@@ -765,4 +775,11 @@ func (s *Server) handleBatchSpeedtestCancel(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, map[string]string{"status": "cancelled"})
+}
+
+// sameDayLocal 两时间点是否同一本地日历日(夜间任务按用户去重用;与 jobs.sameDay 同口径)。
+func sameDayLocal(t1, t2 time.Time) bool {
+	y1, m1, d1 := t1.Local().Date()
+	y2, m2, d2 := t2.Local().Date()
+	return y1 == y2 && m1 == m2 && d1 == d2
 }

@@ -60,15 +60,16 @@ func (s *Scheduler) Run(ctx context.Context) {
 // tick performs one scheduler check for each nightly task: read config, check if time matches,
 // check if already ran, trigger if needed.
 func (s *Scheduler) tick() {
-	s.tickTask("retag_all", "nightly", "schedule_retag_time", "schedule_retag_enabled", s.triggerRetagAll)
+	s.tickTask("retag_all", "nightly", "schedule_retag_time", "schedule_retag_enabled", true, s.triggerRetagAll)
 	if s.examAllTrigger != nil {
-		// 去重口径:当日若已有 batch_exam 任务记录(含手动触发)则跳过——信息当日已产出一轮。
-		s.tickTask("batch_exam", "batch_exam", "schedule_exam_time", "schedule_exam_enabled", s.examAllTrigger)
+		// 全员补齐的"当日已产出"去重在 server 层按用户做(GetLatestJobByKindKeyForUser):
+		// batch_exam 按属主分片,全局去重会让任一用户的手动跑跳过所有用户(pre-push 评审 MEDIUM)。
+		s.tickTask("batch_exam", "batch_exam", "schedule_exam_time", "schedule_exam_enabled", false, s.examAllTrigger)
 	}
 }
 
-// tickTask 单个夜间任务的检查:时刻匹配 + 当日未跑 + 开关打开,三者齐备才触发。
-func (s *Scheduler) tickTask(kind, key, timeKey, enabledKey string, trigger func()) {
+// tickTask 单个夜间任务的检查:时刻匹配 + 开关打开 + (dedupToday 时)当日未跑,齐备才触发。
+func (s *Scheduler) tickTask(kind, key, timeKey, enabledKey string, dedupToday bool, trigger func()) {
 	timeStr, err := s.store.GetSetting(timeKey)
 	if err != nil {
 		return // No config = no schedule
@@ -90,6 +91,10 @@ func (s *Scheduler) tickTask(kind, key, timeKey, enabledKey string, trigger func
 		return // Not time yet
 	}
 
+	if !dedupToday {
+		trigger()
+		return
+	}
 	// 非 not-found 错误(DB 瞬时故障)按"今日可能已跑"保守跳过本 tick(Check L1:
 	// 落穿到 trigger 会到点重复触发);not-found 由实现返回 (nil, nil),不走这里。
 	lastJob, err := s.store.GetLatestJobByKindKey(kind, key)

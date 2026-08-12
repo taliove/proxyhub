@@ -43,3 +43,36 @@ func (s *Store) GetLatestJobByKindKey(kind, key string) (*jobs.Record, error) {
 	rec.UpdatedAt = parseSQLiteTime(updatedStr)
 	return &rec, nil
 }
+
+// GetLatestJobByKindKeyForUser 同 GetLatestJobByKindKey,但按任务属主过滤(多租户):
+// 夜间全员补齐等按用户去重的调度用它,避免任一用户当天手动跑过就跳过所有用户
+// (pre-push 评审 MEDIUM)。
+func (s *Store) GetLatestJobByKindKeyForUser(userID int64, kind, key string) (*jobs.Record, error) {
+	var (
+		rec        jobs.Record
+		params     string
+		status     string
+		createdStr string
+		updatedStr string
+	)
+	err := s.db.QueryRow(`
+		SELECT id, kind, key, params_json, status, cursor, created_at, updated_at
+		FROM jobs
+		WHERE kind = ? AND key = ? AND user_id = ?
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, kind, key, userID).Scan(&rec.ID, &rec.Kind, &rec.Key, &params, &status, &rec.Cursor, &createdStr, &updatedStr)
+
+	if err != nil {
+		if isNoRows(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get latest job for user: %w", err)
+	}
+
+	rec.Params = []byte(params)
+	rec.Status = jobs.Status(status)
+	rec.CreatedAt = parseSQLiteTime(createdStr)
+	rec.UpdatedAt = parseSQLiteTime(updatedStr)
+	return &rec, nil
+}
