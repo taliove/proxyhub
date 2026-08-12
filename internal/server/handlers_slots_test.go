@@ -250,8 +250,12 @@ func TestSlotsAPI_ProbeGrid(t *testing.T) {
 	var resp struct {
 		MonitorEnabled bool `json:"monitor_enabled"`
 		Slots          []struct {
-			Name      string `json:"name"`
-			ProbeGrid []int  `json:"probe_grid"`
+			Name       string `json:"name"`
+			ProbeGrid  []int  `json:"probe_grid"`
+			ProbeStats []struct {
+				T int `json:"t"`
+				O int `json:"o"`
+			} `json:"probe_stats"`
 		} `json:"slots"`
 	}
 	decodeSlotResp(t, w, &resp)
@@ -273,6 +277,20 @@ func TestSlotsAPI_ProbeGrid(t *testing.T) {
 	}
 	if grid[20] != 1 {
 		t.Errorf("3h ago = %d, want 1 (ok)", grid[20])
+	}
+	// probe_stats 与 grid 同序:每格探测/成功次数(hover 提示用)
+	stats := resp.Slots[0].ProbeStats
+	if len(stats) != 24 {
+		t.Fatalf("probe_stats = %+v, want 24 cells", stats)
+	}
+	if stats[23].T != 3 || stats[23].O != 2 {
+		t.Errorf("current hour stats = %+v, want {t:3 o:2}", stats[23])
+	}
+	if stats[22].T != 1 || stats[22].O != 0 {
+		t.Errorf("1h ago stats = %+v, want {t:1 o:0}", stats[22])
+	}
+	if stats[21].T != 0 {
+		t.Errorf("2h ago stats = %+v, want {t:0}", stats[21])
 	}
 }
 

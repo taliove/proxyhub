@@ -27,6 +27,8 @@ export interface NameSlot {
   display?: string
   // 24 小时探测网格(issue #103):24 格,旧→新;0=无数据 1=全通 2=部分通 3=全断
   probe_grid?: number[]
+  // 与 probe_grid 同序的每格探测计数(t=探测次数, o=成功次数),hover 提示用
+  probe_stats?: { t: number; o: number }[]
 }
 
 // 迁移落选冲突行(display_name 残留待人工处理)

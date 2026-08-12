@@ -25,11 +25,26 @@
           <el-option label="空槽" value="empty" />
           <el-option label="已消失" value="gone" />
         </el-select>
+        <el-radio-group v-model="viewMode" size="small">
+          <el-radio-button value="cards">卡片</el-radio-button>
+          <el-radio-button value="table">表格</el-radio-button>
+        </el-radio-group>
+        <!-- 一键抵达告警配置(⑥ 深链);超管专属 tab,普通用户不显示 -->
+        <el-button v-if="authStore.isSuperAdmin" size="small" @click="goAlert">告警设置</el-button>
         <el-button size="small" type="primary" plain @click="createNew">新建名称</el-button>
       </span>
     </div>
 
-    <el-table v-loading="loading" :data="filteredSlots" size="small" row-key="name">
+    <!-- 卡片墙(默认):按状态分组、异常排前的可观测视图;表格视图保留批量扫读与删除 -->
+    <SlotCardGrid
+      v-if="viewMode === 'cards'"
+      :slots="filteredSlots"
+      :monitor-enabled="monitorEnabled"
+      @assign="openAssign"
+      @rename="rename"
+    />
+
+    <el-table v-else v-loading="loading" :data="filteredSlots" size="small" row-key="name">
       <el-table-column label="名称" min-width="180">
         <template #default="{ row }">
           <div class="name-cell">
@@ -82,8 +97,10 @@
       </el-table-column>
       <el-table-column label="24 小时" width="300">
         <template #default="{ row }">
-          <ProbeGrid v-if="row.probe_grid" :grid="row.probe_grid" />
-          <span v-else-if="!monitorEnabled" class="muted">设置 → 告警设置里开启</span>
+          <ProbeGrid v-if="row.probe_grid" :grid="row.probe_grid" :stats="row.probe_stats" />
+          <el-link v-else-if="!monitorEnabled" type="primary" @click="goAlert">
+            设置 → 告警设置里开启
+          </el-link>
           <span v-else class="muted">—</span>
         </template>
       </el-table-column>
@@ -119,14 +136,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import client from '@/api/client'
 import ProbeGrid from './ProbeGrid.vue'
+import SlotCardGrid from './SlotCardGrid.vue'
 import SlotNameEditor from './SlotNameEditor.vue'
 import SlotAssignNodeDialog from './SlotAssignNodeDialog.vue'
 import SlotConflictZone from './SlotConflictZone.vue'
+import { statusOf } from './slotstatus'
+import { useAuthStore } from '@/stores/auth'
 import {
   createSlot,
   deleteSlot,
@@ -160,16 +181,19 @@ const shortProbeTime = (s: string): string => {
   return day === today ? time : `${s.slice(5, 10)} ${s.slice(11, 16)}`
 }
 
-// 搜索 + 状态筛选(槽位当"我的订阅清单"管理,issue #94 后续)
+// 搜索 + 状态筛选(槽位当"我的订阅清单"管理,issue #94 后续);statusOf 与卡片墙共享(slotstatus.ts)
 const search = ref('')
 const statusFilter = ref<'all' | 'online' | 'down' | 'empty' | 'gone'>('all')
 
-const statusOf = (row: NameSlot): 'empty' | 'gone' | 'down' | 'online' => {
-  if (row.empty) return 'empty'
-  if (row.node?.missing || row.node?.stale) return 'gone'
-  if (row.node && !row.node.available) return 'down'
-  return 'online'
-}
+// 卡片/表格视图切换(spec-slot-observability-cards):默认卡片,选择持久化
+const router = useRouter()
+const authStore = useAuthStore()
+const VIEW_KEY = 'ph-slot-view'
+const viewMode = ref<'cards' | 'table'>(
+  localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'cards'
+)
+watch(viewMode, (v) => localStorage.setItem(VIEW_KEY, v))
+const goAlert = () => router.push({ name: 'Settings', query: { tab: 'alert' } })
 
 const filteredSlots = computed(() => {
   const kw = search.value.trim().toLowerCase()

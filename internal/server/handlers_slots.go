@@ -41,6 +41,15 @@ type slotView struct {
 	// ProbeGrid 24 小时探测网格(issue #103):24 格,旧→新;
 	// 0=无数据 1=全通 2=部分通 3=全断。未指派/监控未开时不输出。
 	ProbeGrid []int `json:"probe_grid,omitempty"`
+	// ProbeStats 与 ProbeGrid 同序的每格探测次数(t=探测次数, o=成功次数),
+	// 供 hover 提示「探测 N 次,成功 M 次」;与 ProbeGrid 同生同灭。
+	ProbeStats []probeStat `json:"probe_stats,omitempty"`
+}
+
+// probeStat 单格(一小时)的探测计数。
+type probeStat struct {
+	T int `json:"t"`
+	O int `json:"o"`
 }
 
 // 探测网格状态值(与前端 ProbeGrid 组件对齐)
@@ -51,18 +60,18 @@ const (
 	probeDown  = 3
 )
 
-// buildProbeGrid 把 24 小时内的打点聚成 24 个按小时的格子(旧→新,本地时区)。
-func (s *Server) buildProbeGrid(nodeKey string) []int {
+// buildProbeGrid 把 24 小时内的打点聚成 24 个按小时的格子(旧→新,本地时区),
+// 同时返回每格的探测/成功次数(hover 提示用)。
+func (s *Server) buildProbeGrid(nodeKey string) ([]int, []probeStat) {
 	samples, err := s.st.ListMonitorSamplesSince(nodeKey, time.Now().Add(-24*time.Hour))
 	if err != nil {
 		s.logger.Warn("list monitor samples for grid failed", "key", nodeKey, "error", err)
-		return nil
+		return nil, nil
 	}
 	if len(samples) == 0 {
-		return nil
+		return nil, nil
 	}
-	type bucket struct{ total, ok int }
-	buckets := make([]bucket, 24)
+	buckets := make([]probeStat, 24)
 	now := time.Now()
 	hasData := false
 	for _, smp := range samples {
@@ -71,29 +80,29 @@ func (s *Server) buildProbeGrid(nodeKey string) []int {
 			continue
 		}
 		idx := 23 - hoursAgo
-		buckets[idx].total++
+		buckets[idx].T++
 		if smp.OK {
-			buckets[idx].ok++
+			buckets[idx].O++
 		}
 		hasData = true
 	}
 	if !hasData {
-		return nil
+		return nil, nil
 	}
 	grid := make([]int, 24)
 	for i, b := range buckets {
 		switch {
-		case b.total == 0:
+		case b.T == 0:
 			grid[i] = probeNone
-		case b.ok == b.total:
+		case b.O == b.T:
 			grid[i] = probeOK
-		case b.ok == 0:
+		case b.O == 0:
 			grid[i] = probeDown
 		default:
 			grid[i] = probeMixed
 		}
 	}
-	return grid
+	return grid, buckets
 }
 
 // poolNodeIndex 建 node_key → 池节点索引(含 stale,供槽位摘要判 missing/stale)。
@@ -176,7 +185,7 @@ func (s *Server) handleListSlots(w http.ResponseWriter, r *http.Request) {
 			} else if serr != nil {
 				s.logger.Warn("list monitor samples failed", "key", sl.NodeKey, "error", serr)
 			}
-			v.ProbeGrid = s.buildProbeGrid(sl.NodeKey)
+			v.ProbeGrid, v.ProbeStats = s.buildProbeGrid(sl.NodeKey)
 		}
 		views = append(views, v)
 	}
