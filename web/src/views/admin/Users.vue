@@ -299,7 +299,7 @@ defineExpose({
   font-variant-numeric: tabular-nums;
 }
 .muted {
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 .form-hint {
   margin-top: var(--ph-space-1);

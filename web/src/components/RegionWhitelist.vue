@@ -5,7 +5,7 @@
       订阅生成时只下发白名单地区的节点（空=全部下发）。不影响节点池本身，所有机场节点仍会入池。
     </p>
 
-    <div v-if="loading" class="loading">加载中...</div>
+    <div v-if="loading" class="loading">加载中……</div>
     <div v-else>
       <div class="region-grid">
         <el-checkbox-group v-model="selectedRegions">
@@ -139,7 +139,7 @@ onMounted(loadData)
 .loading {
   text-align: center;
   padding: var(--ph-space-5);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 
 .region-grid {

@@ -231,7 +231,7 @@ describe('AlertPanel', () => {
     vi.mocked(client.get).mockReturnValue(new Promise(() => {}) as never)
     const wrapper = mountPanel()
 
-    expect(wrapper.find('.panel-empty').text()).toBe('加载中...')
+    expect(wrapper.find('.panel-empty').text()).toBe('加载中……')
   })
 
   it('单路接口失败时静默降级，其余异常照常展示', async () => {

@@ -2,14 +2,14 @@
   <div>
     <PageHeader />
     <el-card>
-      <el-tabs>
-        <el-tab-pane v-if="authStore.isSuperAdmin" label="安全设置">
+      <el-tabs v-model="activeTab">
+        <el-tab-pane v-if="authStore.isSuperAdmin" label="安全设置" name="security">
           <el-form :model="settings" label-width="180px" class="settings-form">
             <el-form-item label="登录失败封禁阈值">
               <el-input-number v-model="settings.ban_threshold" :min="3" :max="10" />
             </el-form-item>
             <el-form-item label="封禁时长">
-              <el-input v-model="settings.ban_duration" placeholder="1h" />
+              <DurationField v-model="settings.ban_duration" />
             </el-form-item>
             <el-form-item label="验证码触发次数">
               <el-input-number
@@ -49,18 +49,17 @@
               </span>
             </el-form-item>
             <el-form-item label="自动黑名单时长">
-              <el-input v-model="settings.pull_blacklist_duration" placeholder="24h" />
-              <span class="hint">
-                自动拉黑规则的有效期，格式如 1h/24h/168h。默认
-                {{ PULL_BLACKLIST_DURATION_DEFAULT }}。
-              </span>
+              <DurationField v-model="settings.pull_blacklist_duration" />
+              <span class="hint"
+                >自动拉黑规则的有效期。默认 {{ PULL_BLACKLIST_DURATION_DEFAULT }}。</span
+              >
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="saveSettings">保存</el-button>
             </el-form-item>
           </el-form>
         </el-tab-pane>
-        <el-tab-pane v-if="authStore.isSuperAdmin" label="告警设置">
+        <el-tab-pane v-if="authStore.isSuperAdmin" label="告警设置" name="alert">
           <el-form :model="settings" label-width="180px" class="settings-form">
             <el-form-item label="飞书 Webhook">
               <el-input v-model="settings.feishu_webhook" placeholder="https://..." />
@@ -74,7 +73,7 @@
           </el-form>
           <MonitorSettings />
         </el-tab-pane>
-        <el-tab-pane label="订阅设置">
+        <el-tab-pane label="订阅设置" name="subscription">
           <el-form :model="settings" label-width="180px" class="settings-form">
             <el-form-item label="定时刷新机场">
               <template #label>
@@ -162,7 +161,7 @@
           </el-form>
         </el-tab-pane>
 
-        <el-tab-pane v-if="authStore.isSuperAdmin" label="带宽测试配置">
+        <el-tab-pane v-if="authStore.isSuperAdmin" label="带宽测试配置" name="bandwidth">
           <el-form label-width="180px" class="settings-form">
             <el-alert
               type="info"
@@ -206,15 +205,15 @@
           </el-form>
         </el-tab-pane>
 
-        <el-tab-pane v-if="authStore.isSuperAdmin" label="直连出口">
+        <el-tab-pane v-if="authStore.isSuperAdmin" label="直连出口" name="egress">
           <DirectEgressSettings />
         </el-tab-pane>
 
-        <el-tab-pane label="检测目标配置">
+        <el-tab-pane label="检测目标配置" name="detection">
           <DetectionTargets />
         </el-tab-pane>
 
-        <el-tab-pane label="两步验证">
+        <el-tab-pane label="两步验证" name="mfa">
           <h4 class="mfa-section-title">受信 IP</h4>
           <TrustedIPList />
           <h4 class="mfa-section-title">恢复码</h4>
@@ -226,8 +225,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
-import { ElMessage, ElTag, ElButton } from 'element-plus'
+import { ref, onMounted, provide } from 'vue'
+import { ElMessage } from 'element-plus'
 import {
   getSettings,
   saveSettings as persistSettings,
@@ -236,6 +235,9 @@ import {
 } from '@/api/settings'
 import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/PageHeader.vue'
+import DurationField from '@/components/DurationField.vue'
+import TenantBadge from '@/components/TenantBadge.vue'
+import { useTabQuery } from '@/composables/useTabQuery'
 import RegionWhitelist from '@/components/RegionWhitelist.vue'
 import DirectEgressSettings from '@/components/DirectEgressSettings.vue'
 import MonitorSettings from '@/components/MonitorSettings.vue'
@@ -257,25 +259,14 @@ import {
 
 const authStore = useAuthStore()
 
-const overridden = ref<Record<string, boolean>>({})
+// tab 深链(?tab=security|alert|subscription|bandwidth|egress|detection|mfa):
+// 超管专属 tab 对普通用户落到其首个可见 tab(逻辑在 useTabQuery)。
+const { activeTab } = useTabQuery(
+  () => (authStore.isSuperAdmin ? 'security' : 'subscription'),
+  authStore.isSuperAdmin ? [] : ['security', 'alert', 'bandwidth', 'egress']
+)
 
-// TenantBadge 租户级键的状态徽标:跟随全局默认 / 已自定义 + 重置。
-const TenantBadge = (props: { k: string }) => {
-  const isCustom = overridden.value[props.k] === true
-  return h('span', { class: 'tenant-badge' }, [
-    h(ElTag, { size: 'small', effect: 'plain', type: isCustom ? 'warning' : 'info' }, () =>
-      isCustom ? '已自定义' : '跟随全局默认'
-    ),
-    isCustom
-      ? h(
-          ElButton,
-          { size: 'small', link: true, type: 'danger', onClick: () => resetTenantKey(props.k) },
-          () => '重置'
-        )
-      : null
-  ])
-}
-TenantBadge.props = ['k']
+const overridden = ref<Record<string, boolean>>({})
 
 const resetTenantKey = async (k: string) => {
   await persistSettings({}, [k])
@@ -284,6 +275,9 @@ const resetTenantKey = async (k: string) => {
   overridden.value = o
   ElMessage.success('已重置为跟随全局默认')
 }
+
+// TenantBadge 的状态与重置动作经 provide 注入(调用点只传 k)
+provide('tenantBadge', { overridden, reset: resetTenantKey })
 
 const pickKeys = (src: Record<string, string>, keys: readonly string[]) =>
   Object.fromEntries(keys.filter((k) => k in src).map((k) => [k, src[k]]))
@@ -389,12 +383,5 @@ const saveSettings = async () => {
 }
 .mfa-section-title:first-child {
   margin-top: 0;
-}
-.tenant-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ph-space-1);
-  margin-left: var(--ph-space-2);
-  vertical-align: middle;
 }
 </style>

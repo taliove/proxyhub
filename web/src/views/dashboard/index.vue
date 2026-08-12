@@ -3,10 +3,12 @@
   <div class="dashboard">
     <PageHeader />
     <StatCards />
+    <GettingStarted />
     <AlertPanel />
+    <!-- 订阅地址是产品的核心交付物(「一个链接全设备通用」),紧随异常面板之后 -->
+    <QuickEndpoints />
     <TopNodes />
     <PullStats />
-    <QuickEndpoints />
     <ActivityFeed />
   </div>
 </template>
@@ -14,6 +16,7 @@
 <script setup lang="ts">
 import PageHeader from '@/components/PageHeader.vue'
 import StatCards from './components/StatCards.vue'
+import GettingStarted from './components/GettingStarted.vue'
 import AlertPanel from './components/AlertPanel.vue'
 import TopNodes from './components/TopNodes.vue'
 import PullStats from './components/PullStats.vue'

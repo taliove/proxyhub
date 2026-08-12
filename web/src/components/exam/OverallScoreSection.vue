@@ -161,7 +161,7 @@ const displayScore = computed(() => {
 }
 .overall-score-hint {
   font-size: var(--ph-text-xs);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
   text-align: center;
 }
 </style>

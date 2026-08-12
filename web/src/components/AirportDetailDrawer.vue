@@ -1,8 +1,7 @@
 <template>
-  <el-drawer v-model="visible" :title="drawerTitle" size="720px">
+  <el-drawer v-model="visible" :title="drawerTitle" size="640px">
     <template v-if="airport">
-      <!-- 概况段:基础信息 + 轻管理动作(编辑/启停/删除/刷新/测试/二维码)。
-           动作全部上抛给 Airport 管理页既有处理函数,抽屉不持有任何变更逻辑。 -->
+      <!-- 概况段:基础信息 + 轻管理动作;动作全部上抛给管理页,抽屉不持有变更逻辑 -->
       <div class="drawer-block">
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="名称">{{ airport.name }}</el-descriptions-item>
@@ -42,27 +41,34 @@
         </el-descriptions>
         <div class="drawer-actions">
           <el-button size="small" type="primary" @click="emit('edit', airport)">编辑</el-button>
-          <el-button size="small" @click="emit('toggle', airport)">
-            {{ airport.enabled ? '禁用' : '启用' }}
-          </el-button>
           <el-button size="small" :loading="refreshing" @click="emit('refresh', airport)">
             {{ isManual ? '重新粘贴' : '刷新' }}
           </el-button>
-          <!-- 拉取型机场也可粘贴/文件导入(一次性,下次 URL 刷新成功覆盖回来) -->
-          <el-button v-if="!isManual" size="small" @click="emit('import', airport)">
-            导入节点
-          </el-button>
-          <el-button size="small" @click="emit('test', airport)">测试</el-button>
-          <el-button v-if="!isManual" size="small" @click="emit('qrcode', airport)"
-            >二维码</el-button
-          >
-          <el-button size="small" type="danger" @click="emit('delete', airport)">删除</el-button>
+          <!-- 其余轻管理动作收进「更多」(密度纪律:主操作 2 个,危险项压底分栏);
+               拉取型机场也可粘贴导入/二维码(一次性,下次 URL 刷新成功覆盖回来) -->
+          <el-dropdown trigger="click" @command="onAction">
+            <el-button size="small">
+              更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="toggle">
+                  {{ airport.enabled ? '禁用' : '启用' }}
+                </el-dropdown-item>
+                <el-dropdown-item v-if="!isManual" command="import">导入节点</el-dropdown-item>
+                <el-dropdown-item command="test">测试</el-dropdown-item>
+                <el-dropdown-item v-if="!isManual" command="qrcode">二维码</el-dropdown-item>
+                <el-dropdown-item command="delete" divided>
+                  <span class="danger">删除</span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </div>
 
-      <!-- 池内节点明细段:该机场在池内节点的可用性/延迟/最近实测时间(纯读取池快照,
-           打开抽屉不触发任何测试/检活)。服务端分页 + keyword 搜索(名称/地区),
-           不再一次取全。行轻动作限复制分享链接与触发体检;屏蔽等状态变更归节点管理页。 -->
+      <!-- 池内节点明细段:该机场在池内节点的可用性/延迟/最近实测(纯读取池快照,不触发测试);
+           服务端分页 + keyword 搜索。行轻动作限复制分享链接与触发体检。 -->
       <div class="drawer-block">
         <div class="drawer-section-title">池内节点明细</div>
         <el-input
@@ -123,14 +129,13 @@
           />
         </div>
       </div>
-      <!-- 最近测试报告段:展示最近一次 completed run 的报告(查看不产生新 run);
-           「重新测试」「测全部」为显式动作,意图上抛由管理页打开运行模式对话框。 -->
+      <!-- 最近测试报告段:展示最近一次 completed run 的报告(查看不产生新 run) -->
       <div ref="reportSectionEl" class="drawer-block">
         <AirportTestReport :runs="testRuns" :loading="runsLoading" @run-test="onRunTest" />
       </div>
     </template>
 
-    <!-- 节点体检:复用节点管理页同一对话框;打开/进行中不影响抽屉本体。 -->
+    <!-- 节点体检:复用节点管理页同一对话框 -->
     <NodeExamDialog ref="examDialog" />
   </el-drawer>
 </template>
@@ -138,6 +143,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
 import type { Airport, Node, NodeListParams, NodePage } from '@/types'
 import client from '@/api/client'
 import StatusDot from '@/components/StatusDot.vue'
@@ -172,8 +178,7 @@ const props = withDefaults(
 // 手动机场(CONTEXT.md):无订阅 URL——概况段隐藏 URL/二维码,"刷新"语义是重新粘贴导入
 const isManual = computed(() => props.airport?.source_type === 'manual')
 
-// 官网链接渲染前 scheme 白名单兜底(后端入库已过滤,此处防历史脏数据):
-// 非 http/https(javascript: 等)不渲染为链接(XSS 防线,Check H2)。
+// 官网链接 scheme 白名单兜底(非 http/https 不渲染为链接,XSS 防线,Check H2)
 const safeWebPageUrl = computed(() => {
   const u = props.airport?.web_page_url?.trim()
   if (!u) return null
@@ -211,6 +216,16 @@ const emit = defineEmits<{
   // 报告段显式重跑:full=false 抽样,full=true 测全部
   (e: 'run-test', payload: { airport: Airport; full: boolean }): void
 }>()
+
+// 「更多」下拉命令 → 管理动作上抛(与列表行内同源,抽屉不持有变更逻辑)
+const onAction = (cmd: string) => {
+  if (!props.airport) return
+  if (cmd === 'toggle') emit('toggle', props.airport)
+  else if (cmd === 'import') emit('import', props.airport)
+  else if (cmd === 'test') emit('test', props.airport)
+  else if (cmd === 'qrcode') emit('qrcode', props.airport)
+  else if (cmd === 'delete') emit('delete', props.airport)
+}
 
 const drawerTitle = computed(() =>
   props.airport ? `机场详情 - ${props.airport.name}` : '机场详情'
@@ -263,9 +278,8 @@ const onNodePageChange = (p: number) => {
 const poolEmptyText = computed(() => {
   const kw = nodeKeyword.value.trim()
   if (kw) return `未找到匹配「${kw}」的节点`
-  return isManual.value
-    ? '该机场当前在池内无节点，可点上方「重新粘贴」导入。'
-    : '该机场当前在池内无节点，可点上方「刷新」拉取入池。'
+  const action = isManual.value ? '「重新粘贴」导入' : '「刷新」拉取入池'
+  return `该机场当前在池内无节点，可点上方${action}。`
 })
 
 // 最近测试报告:打开抽屉时拉取一次;重跑完成后由父级调 reloadReport 刷新。
@@ -284,8 +298,7 @@ const loadRuns = async () => {
   }
 }
 
-// 打开抽屉 / 切换机场时拉取池快照与测试记录;关闭时清空并重置分页/搜索,避免下次闪现旧机场数据。
-// 测试记录是纯读取(GET /test/runs),不产生新 run。
+// 打开抽屉/切换机场时拉取池快照与测试记录;关闭时清空重置,避免下次闪现旧数据。
 watch(
   () => [visible.value, props.airport?.name] as const,
   ([open, name]) => {
@@ -312,13 +325,10 @@ const onRunTest = (full: boolean) => {
   emit('run-test', { airport: props.airport, full })
 }
 
-// 报告段锚点:列表点分数打开抽屉后由父级调 focusReport 定位到「最近测试」。
-const reportSectionEl = ref<HTMLElement | null>(null)
-
+const reportSectionEl = ref<HTMLElement | null>(null) // 报告段锚点:父级 focusReport 定位用
 defineExpose({
-  // 重跑完成后刷新报告段数据
+  // 重跑完成后刷新报告段数据;focusReport 滚动定位到「最近测试」段(jsdom 无 scrollIntoView,可选调用)
   reloadReport: loadRuns,
-  // 滚动定位到「最近测试」段(jsdom 无 scrollIntoView,故可选调用)
   focusReport: () => {
     nextTick(() => {
       reportSectionEl.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
@@ -382,7 +392,7 @@ const openExam = (node: Node) => {
   font-size: var(--ph-text-sm);
 }
 .danger {
-  color: var(--el-color-danger);
+  color: var(--ph-danger);
 }
 .num {
   font-variant-numeric: tabular-nums;

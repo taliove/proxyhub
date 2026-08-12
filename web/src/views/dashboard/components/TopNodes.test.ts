@@ -247,7 +247,7 @@ describe('TopNodes', () => {
     vi.mocked(client.get).mockReturnValue(new Promise(() => {}) as never)
     const wrapper = mountTopNodes()
 
-    expect(wrapper.find('.panel-empty').text()).toBe('加载中...')
+    expect(wrapper.find('.panel-empty').text()).toBe('加载中……')
   })
 
   it('请求失败时降级为失败提示（全局拦截器已 toast）', async () => {

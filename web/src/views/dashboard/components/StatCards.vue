@@ -77,15 +77,17 @@ const statCards = computed(() => [
   margin-bottom: var(--ph-space-1);
 }
 .stat-value {
-  font-size: var(--ph-text-2xl);
-  font-weight: 600;
+  /* 主视觉大数字:display 档(DESIGN.md 数字纪律),等宽数字纵向扫读 */
+  font-size: var(--ph-text-display-sm);
+  font-weight: 700;
   line-height: 1.2;
+  font-variant-numeric: tabular-nums;
   color: var(--ph-text-primary);
 }
 .stat-caption {
   margin-top: var(--ph-space-1);
   font-size: var(--ph-text-xs);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 .status-strip {
   display: flex;

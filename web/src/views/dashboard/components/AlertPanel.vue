@@ -3,7 +3,7 @@
     <template #header>
       <span class="panel-title">异常告警</span>
     </template>
-    <div v-if="loading" class="panel-empty">加载中...</div>
+    <div v-if="loading" class="panel-empty">加载中……</div>
     <template v-else>
       <div v-if="alerts.length === 0" class="panel-empty">一切正常</div>
       <ul v-else class="alert-list">
@@ -65,7 +65,7 @@ const goRoute = (route: string) => {
   padding: var(--ph-space-6) 0;
   text-align: center;
   font-size: var(--ph-text-sm);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 .alert-list {
   margin: 0;
@@ -102,7 +102,7 @@ const goRoute = (route: string) => {
   padding-top: var(--ph-space-2);
   border-top: 1px solid var(--ph-border-light);
   font-size: var(--ph-text-xs);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
   cursor: pointer;
 }
 .panel-hint:hover {

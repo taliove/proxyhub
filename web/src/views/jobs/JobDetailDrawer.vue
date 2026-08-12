@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" title="任务详情" :width="isWideDetail ? '720px' : '560px'">
+  <el-drawer v-model="visible" title="任务详情" size="640px">
     <template v-if="job">
       <el-descriptions :column="2" border size="small">
         <el-descriptions-item label="任务类型">{{ kindLabel(job.kind) }}</el-descriptions-item>
@@ -13,8 +13,12 @@
           {{ progressText }}
           <span v-if="isRunning(job.status)" class="muted">(已完成数)</span>
         </el-descriptions-item>
-        <el-descriptions-item label="创建时间">{{ job.created_at }}</el-descriptions-item>
-        <el-descriptions-item label="更新时间">{{ job.updated_at }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{
+          formatTime(job.created_at)
+        }}</el-descriptions-item>
+        <el-descriptions-item label="更新时间">{{
+          formatTime(job.updated_at)
+        }}</el-descriptions-item>
         <el-descriptions-item label="原始标识" :span="2">
           <span class="mono">{{ job.kind }}/{{ job.key }}</span>
         </el-descriptions-item>
@@ -35,9 +39,11 @@
             <el-descriptions-item label="最终入池">{{
               refreshRun.final_nodes
             }}</el-descriptions-item>
-            <el-descriptions-item label="开始">{{ refreshRun.started_at }}</el-descriptions-item>
+            <el-descriptions-item label="开始">{{
+              formatTime(refreshRun.started_at)
+            }}</el-descriptions-item>
             <el-descriptions-item label="结束" :span="2">
-              {{ refreshRun.finished_at || '-' }}
+              {{ refreshRun.finished_at ? formatTime(refreshRun.finished_at) : '-' }}
             </el-descriptions-item>
             <el-descriptions-item v-if="refreshRun.error" label="备注" :span="3">
               {{ refreshRun.error }}
@@ -158,7 +164,7 @@
         </el-collapse-item>
       </el-collapse>
     </template>
-  </el-dialog>
+  </el-drawer>
 </template>
 
 <script setup lang="ts">
@@ -180,7 +186,8 @@ import {
   scopeLabel
 } from './jobmeta'
 
-// 任务详情弹框:展示 jobs 表全字段 + 启动参数(折叠);
+// 任务详情抽屉(「抽屉看、对话办」纪律,由 dialog 改抽屉,critique P1):
+// 展示 jobs 表全字段 + 启动参数(折叠);
 // kind=refresh 时追加关联 refresh_runs 的统计与事件流(按 job_id 反查)。
 const visible = defineModel<boolean>({ required: true })
 
@@ -276,9 +283,7 @@ const toggleReport = (nodeKey: string) => {
     : [...expandedReports.value, nodeKey]
 }
 
-// 报告类任务(体检/机场测试)详情加宽容纳报告卡
-const isWideDetail = computed(() => isExamKind.value || props.job?.kind === 'airport_test')
-
+// 报告类任务(体检/机场测试)详情统一 640px 抽屉档(含子表宽度档,DESIGN.md)。
 const scoreTagType = (score: number): 'success' | 'warning' | 'danger' => {
   const lv = scoreLevel(score)
   if (lv === 'good') return 'success'
@@ -307,6 +312,8 @@ const eventTagType = (level: string): 'primary' | 'success' | 'warning' | 'dange
 }
 
 const formatEventTime = (ts: string) => (ts.length > 19 ? ts.slice(11, 19) : ts)
+// 绝对时间统一本地化呈现(与任务列表同一手法),不裸渲染 ISO 串
+const formatTime = (t: string) => (t ? new Date(t).toLocaleString('zh-CN') : '-')
 </script>
 
 <style scoped>
@@ -329,10 +336,9 @@ const formatEventTime = (ts: string) => (ts.length > 19 ? ts.slice(11, 19) : ts)
   color: var(--ph-text-secondary);
   font-size: var(--ph-text-sm);
 }
-.refresh-stats {
-  margin-bottom: var(--ph-space-3);
-}
-.refresh-diags {
+.refresh-stats,
+.refresh-diags,
+.fallback-alert {
   margin-bottom: var(--ph-space-3);
 }
 .diag-fail-tag {
@@ -342,9 +348,6 @@ const formatEventTime = (ts: string) => (ts.length > 19 ? ts.slice(11, 19) : ts)
   max-height: 320px;
   overflow: auto;
   padding-left: 2px;
-}
-.fallback-alert {
-  margin-bottom: var(--ph-space-3);
 }
 .batch-report-list {
   list-style: none;

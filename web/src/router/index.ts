@@ -61,7 +61,7 @@ const routes: RouteRecordRaw[] = [
         path: 'endpoints',
         name: 'Endpoints',
         component: () => import('@/views/Endpoints.vue'),
-        meta: { title: '我的订阅', icon: 'Link', group: 'resources' }
+        meta: { title: '订阅地址', icon: 'Link', group: 'resources' }
       },
       {
         path: 'template',

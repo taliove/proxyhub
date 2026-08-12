@@ -1,5 +1,5 @@
 <template>
-  <el-drawer v-model="visible" title="事件详情" size="500px">
+  <el-drawer v-model="visible" title="事件详情" size="480px">
     <div v-if="event" class="detail-content">
       <div class="detail-row">
         <div class="detail-label">事件类型</div>

@@ -3,7 +3,7 @@
     <template #header>
       <span class="panel-title">活动流水</span>
     </template>
-    <div v-if="loading" class="panel-empty">加载中...</div>
+    <div v-if="loading" class="panel-empty">加载中……</div>
     <div v-else-if="jobs.length === 0" class="panel-empty">暂无任务</div>
     <ul v-else class="feed-list">
       <li v-for="job in jobs" :key="job.id" class="feed-item" @click="goJob(job)">
@@ -47,7 +47,7 @@ const goJob = (job: Job) => {
   padding: var(--ph-space-6) 0;
   text-align: center;
   font-size: var(--ph-text-sm);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 .feed-list {
   margin: 0;
@@ -88,7 +88,7 @@ const goJob = (job: Job) => {
 .item-trigger {
   flex-shrink: 0;
   font-size: var(--ph-text-xs);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 .item-time {
   flex-shrink: 0;

@@ -1,5 +1,5 @@
 <template>
-  <el-drawer v-model="visible" :title="drawerTitle" size="720px">
+  <el-drawer v-model="visible" :title="drawerTitle" size="640px">
     <template v-if="endpoint">
       <!-- 概况段:基础信息 + 轻管理动作;变更逻辑全部上抛订阅管理页(哑组件) -->
       <div class="drawer-block">

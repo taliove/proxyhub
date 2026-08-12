@@ -158,3 +158,9 @@ html.dark {
   --el-box-shadow-lighter: var(--ph-shadow-sm);
   --el-box-shadow-dark: var(--ph-shadow-lg);
 }
+
+/* 数字对齐纪律(DESIGN.md「数字对齐 Rule」):表格单元格数字全局 tabular-nums,
+   页面不再逐个手贴 .num(critique 次要观察收口)。CJK 字形不受 tabular-nums 影响。 */
+.el-table .cell {
+  font-variant-numeric: tabular-nums;
+}

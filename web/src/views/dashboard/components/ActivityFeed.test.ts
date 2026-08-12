@@ -108,7 +108,7 @@ describe('ActivityFeed', () => {
     vi.mocked(listJobs).mockReturnValue(new Promise(() => {}))
     const wrapper = mountFeed()
 
-    expect(wrapper.find('.panel-empty').text()).toBe('加载中...')
+    expect(wrapper.find('.panel-empty').text()).toBe('加载中……')
   })
 
   it('请求失败时静默降级为空态（全局拦截器已提示）', async () => {

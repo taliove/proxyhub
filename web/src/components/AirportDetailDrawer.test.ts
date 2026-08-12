@@ -142,6 +142,36 @@ const ElInputStub = defineComponent({
       })
   }
 })
+// el-dropdown 测试桩(与 AirportRowTestMenu.test 同一模式):菜单项内联渲染为 button,
+// 点击经 provide/inject 派发 command,等价真实下拉的 command 事件。
+const ElDropdownStub = defineComponent({
+  name: 'ElDropdown',
+  emits: ['command'],
+  setup(_, { slots, emit }) {
+    provide('dropdown-command', (cmd: unknown) => emit('command', cmd))
+    return () => h('div', { class: 'el-dropdown-stub' }, [slots.default?.(), slots.dropdown?.()])
+  }
+})
+const ElDropdownItemStub = defineComponent({
+  name: 'ElDropdownItem',
+  props: { command: { type: [String, Number, Boolean], default: undefined } },
+  setup(props, { slots }) {
+    const fire = inject<(cmd: unknown) => void>('dropdown-command')!
+    return () =>
+      h(
+        'button',
+        { class: 'el-dropdown-item-stub', onClick: () => fire(props.command) },
+        slots.default?.()
+      )
+  }
+})
+const SimpleSlotStub = (name: string) =>
+  defineComponent({
+    name,
+    setup(_, { slots }) {
+      return () => h('span', { class: `${name}-stub` }, slots.default?.())
+    }
+  })
 // el-pagination 测试桩:渲染 total,暴露 next 按钮触发 current-change
 const ElPaginationStub = defineComponent({
   name: 'ElPagination',
@@ -218,7 +248,11 @@ const mountDrawer = (modelValue: boolean, nodeList: Node[] = [poolNode], nodeTot
         'el-button': ElButtonStub,
         'el-tag': ElTagStub,
         'el-input': ElInputStub,
-        'el-pagination': ElPaginationStub
+        'el-pagination': ElPaginationStub,
+        'el-dropdown': ElDropdownStub,
+        'el-dropdown-menu': SimpleSlotStub('ElDropdownMenu'),
+        'el-dropdown-item': ElDropdownItemStub,
+        'el-icon': SimpleSlotStub('ElIcon')
       }
     }
   })
@@ -453,7 +487,11 @@ describe('AirportDetailDrawer', () => {
           'el-button': ElButtonStub,
           'el-tag': ElTagStub,
           'el-input': ElInputStub,
-          'el-pagination': ElPaginationStub
+          'el-pagination': ElPaginationStub,
+          'el-dropdown': ElDropdownStub,
+          'el-dropdown-menu': SimpleSlotStub('ElDropdownMenu'),
+          'el-dropdown-item': ElDropdownItemStub,
+          'el-icon': SimpleSlotStub('ElIcon')
         }
       }
     })

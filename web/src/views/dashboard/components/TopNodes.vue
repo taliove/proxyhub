@@ -6,7 +6,7 @@
         <span class="panel-caption">按体检总分取 Top 10</span>
       </div>
     </template>
-    <div v-if="loading" class="panel-empty">加载中...</div>
+    <div v-if="loading" class="panel-empty">加载中……</div>
     <div v-else-if="failed" class="panel-empty">加载失败，请稍后重试</div>
     <div v-else-if="items.length === 0" class="panel-empty">
       还没有体检过的节点，
@@ -118,13 +118,13 @@ const showQR = async (item: TopNodeItem): Promise<void> => {
 }
 .panel-caption {
   font-size: var(--ph-text-xs);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 .panel-empty {
   padding: var(--ph-space-6) 0;
   text-align: center;
   font-size: var(--ph-text-sm);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 .empty-link {
   color: var(--ph-color-primary);
@@ -149,7 +149,7 @@ const showQR = async (item: TopNodeItem): Promise<void> => {
   width: 20px;
   text-align: right;
   font-size: var(--ph-text-xs);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 .item-region {
   flex-shrink: 0;
@@ -187,7 +187,7 @@ const showQR = async (item: TopNodeItem): Promise<void> => {
 .node-item.is-unavailable .item-region,
 .node-item.is-unavailable .item-score {
   font-weight: 400;
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 .item-tags {
   flex: 1;
@@ -203,7 +203,7 @@ const showQR = async (item: TopNodeItem): Promise<void> => {
 .tags-overflow {
   flex-shrink: 0;
   font-size: var(--ph-text-xs);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 .item-source {
   flex-shrink: 0;

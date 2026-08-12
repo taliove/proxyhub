@@ -20,10 +20,12 @@ const emptyStats = (): DashboardStats => ({
   avgLatency: 0
 })
 
-// useDashboardStats 拉取主页统计(/dashboard/stats),供 StatCards 模块消费。
-// 失败时全局拦截器已提示,此处静默保留空态默认值。
+// useDashboardStats 拉取主页统计(/dashboard/stats),供 StatCards / GettingStarted 模块消费。
+// 失败时全局拦截器已提示,此处静默保留空态默认值。loaded 区分「未回来」与「真为零」,
+// 供首日引导等按零值呈现的模块避免加载期闪现。
 export function useDashboardStats() {
   const stats = ref<DashboardStats>(emptyStats())
+  const loaded = ref(false)
 
   onMounted(async () => {
     try {
@@ -31,8 +33,10 @@ export function useDashboardStats() {
       stats.value = data
     } catch {
       // 全局拦截器已提示;保留空态
+    } finally {
+      loaded.value = true
     }
   })
 
-  return { stats }
+  return { stats, loaded }
 }

@@ -75,6 +75,16 @@
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
           </template>
         </el-table-column>
+        <!-- 空态引导(critique P2):区分「一个都没有」与「筛选无匹配」 -->
+        <template #empty>
+          <div class="table-empty">
+            <template v-if="endpoints.length === 0">
+              <p>还没有订阅地址。订阅地址是发给设备的唯一链接，新建后配进客户端即可。</p>
+              <el-button type="primary" @click="createVisible = true">新建订阅地址</el-button>
+            </template>
+            <p v-else>当前筛选下无订阅地址。</p>
+          </div>
+        </template>
       </el-table>
     </el-card>
 
@@ -235,7 +245,12 @@ const toggleEndpoint = async (row: Endpoint) => {
 }
 
 const deleteEndpoint = async (row: Endpoint) => {
-  await ElMessageBox.confirm('确定删除此订阅地址？', '确认')
+  // 不可逆且即时生效:/sub 入口随删除立刻 404,在用设备的下一次拉取即失败。
+  await ElMessageBox.confirm(
+    `删除订阅地址「${row.alias}」后不可恢复：正在使用此地址的设备将立即拉取失败，需改用新地址重新配置。`,
+    '删除订阅地址',
+    { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }
+  )
   await client.delete(`/endpoints/${row.id}`)
   ElMessage.success('已删除')
   // 删除发生在抽屉内时,关闭抽屉(对象已不存在)
@@ -336,7 +351,7 @@ onMounted(() => {
   border-radius: 0;
 }
 .url-actions .el-button + .el-button {
-  border-left: 1px solid var(--el-border-color);
+  border-left: 1px solid var(--ph-border);
 }
 .cfg-hint {
   font-size: var(--ph-text-xs);
@@ -349,5 +364,13 @@ onMounted(() => {
 }
 .muted {
   color: var(--ph-text-secondary);
+}
+.table-empty {
+  padding: var(--ph-space-6) 0;
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-sm);
+}
+.table-empty p {
+  margin: 0 0 var(--ph-space-3);
 }
 </style>

@@ -1,6 +1,6 @@
 <template>
   <el-dialog v-model="visible" :title="title" width="400px">
-    <div v-if="loading" class="qr-loading">生成二维码中...</div>
+    <div v-if="loading" class="qr-loading">生成二维码中……</div>
     <div v-else-if="error" class="qr-error">
       <el-alert type="error" :closable="false">{{ error }}</el-alert>
     </div>

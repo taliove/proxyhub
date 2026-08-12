@@ -1,10 +1,18 @@
 <template>
   <div class="ph-navbar">
     <div class="ph-navbar__left">
-      <el-icon class="ph-navbar__toggle" @click="emit('toggle')">
-        <IconLayoutSidebarLeftCollapse v-if="!collapsed" :size="26" />
-        <IconLayoutSidebarLeftExpand v-else :size="26" />
-      </el-icon>
+      <!-- 原生 button 承载图标动作:键盘可聚焦、Enter/Space 可触发(critique P2 无障碍) -->
+      <button
+        type="button"
+        class="ph-navbar__toggle"
+        :aria-label="collapsed ? '展开侧边栏' : '折叠侧边栏'"
+        @click="emit('toggle')"
+      >
+        <el-icon>
+          <IconLayoutSidebarLeftCollapse v-if="!collapsed" :size="26" />
+          <IconLayoutSidebarLeftExpand v-else :size="26" />
+        </el-icon>
+      </button>
     </div>
 
     <div class="ph-navbar__right">
@@ -20,16 +28,25 @@
       </div>
 
       <el-tooltip :content="isDark ? '切换亮色' : '切换暗色'" placement="bottom">
-        <el-icon class="ph-navbar__action" @click="layout.toggleDark()">
-          <IconMoon v-if="!isDark" :size="22" />
-          <IconSun v-else :size="22" />
-        </el-icon>
+        <button
+          type="button"
+          class="ph-navbar__action"
+          :aria-label="isDark ? '切换亮色' : '切换暗色'"
+          @click="layout.toggleDark()"
+        >
+          <el-icon>
+            <IconMoon v-if="!isDark" :size="22" />
+            <IconSun v-else :size="22" />
+          </el-icon>
+        </button>
       </el-tooltip>
 
       <el-tooltip content="全屏" placement="bottom">
-        <el-icon class="ph-navbar__action" @click="toggleFullscreen">
-          <IconMaximize :size="22" />
-        </el-icon>
+        <button type="button" class="ph-navbar__action" aria-label="全屏" @click="toggleFullscreen">
+          <el-icon>
+            <IconMaximize :size="22" />
+          </el-icon>
+        </button>
       </el-tooltip>
 
       <el-dropdown @command="onCommand">
@@ -132,10 +149,13 @@ async function onCommand(command: string): Promise<void> {
 
 .ph-navbar__toggle,
 .ph-navbar__action {
-  /* EP .el-icon 把盒子钉死 1em,border-box 下 padding 会吃掉内容区把图标挤没;
-     放开宽高让盒子 = 图标 + padding */
-  width: auto;
-  height: auto;
+  /* 原生 button 重置 + 图标盒子;font-size 定的是图标尺寸(1em 盒),不是文本 */
+  background: none;
+  border: none;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 22px;
   cursor: pointer;
   color: var(--ph-text-regular);
@@ -156,6 +176,13 @@ async function onCommand(command: string): Promise<void> {
 .ph-navbar__action:hover {
   background: var(--ph-bg-hover);
   color: var(--ph-primary);
+}
+
+/* 键盘焦点环与主色一致(仪器焦点环) */
+.ph-navbar__toggle:focus-visible,
+.ph-navbar__action:focus-visible {
+  outline: 2px solid var(--ph-primary);
+  outline-offset: 1px;
 }
 
 .ph-navbar__user {

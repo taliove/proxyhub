@@ -155,13 +155,12 @@ onMounted(async () => {
   width: 100%;
 }
 
-/* 组标签:小号弱色,与菜单项左边距对齐 */
+/* 组标签:小号弱色,与菜单项左边距对齐;汉字不用拉丁字距手法 */
 .nav-group-label {
   padding: var(--ph-space-4) var(--ph-space-4) var(--ph-space-1);
   font-size: var(--ph-text-xs);
   font-weight: 500;
-  letter-spacing: 0.1em;
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
   white-space: nowrap;
 }
 
@@ -210,7 +209,7 @@ onMounted(async () => {
   flex-shrink: 0;
   padding: var(--ph-space-3) var(--ph-space-4);
   font-size: var(--ph-text-xs);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
   border-top: 1px solid var(--ph-border-light);
   white-space: nowrap;
 }

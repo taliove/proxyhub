@@ -4,7 +4,7 @@
       <span class="panel-title">订阅地址</span>
     </template>
 
-    <div v-if="loading" class="panel-empty">加载中...</div>
+    <div v-if="loading" class="panel-empty">加载中……</div>
     <div v-else-if="error" class="panel-empty">加载失败，请稍后再试</div>
     <div v-else-if="endpoints.length === 0" class="panel-empty">
       还没有订阅地址，<router-link class="empty-link" to="/endpoints">去创建</router-link>
@@ -73,7 +73,7 @@ const showQR = (row: Endpoint) => {
   padding: var(--ph-space-6) 0;
   text-align: center;
   font-size: var(--ph-text-sm);
-  color: var(--ph-text-placeholder);
+  color: var(--ph-text-secondary);
 }
 .empty-link {
   color: var(--ph-color-primary);

@@ -1,8 +1,9 @@
 <template>
   <div>
     <PageHeader>
-      <el-button type="success" :loading="refreshing" @click="refreshNodes">
-        <el-icon><Refresh /></el-icon> 立即刷新节点
+      <!-- CONTEXT.md「全量刷新」:拉取所有启用机场+健康检查;页面主行动是「添加机场」,此动作用 default -->
+      <el-button :loading="refreshing" @click="refreshNodes">
+        <el-icon><Refresh /></el-icon> 全量刷新
       </el-button>
       <el-button type="primary" @click="openAddDialog">添加机场</el-button>
     </PageHeader>
@@ -81,6 +82,13 @@
             <AirportRowTestMenu @test="(full: boolean) => testDialog?.start(row, full)" />
           </template>
         </el-table-column>
+        <!-- 空态引导(critique P2):首日无机场时指出第一步,不放默认「暂无数据」 -->
+        <template #empty>
+          <div class="table-empty">
+            <p>还没有机场。机场是节点的来源——接入上游订阅 URL，或粘贴导出内容建手动机场。</p>
+            <el-button type="primary" @click="openAddDialog">添加机场</el-button>
+          </div>
+        </template>
       </el-table>
     </el-card>
 
@@ -308,7 +316,12 @@ const toggleAirport = async (row: Airport) => {
 }
 
 const deleteAirport = async (row: Airport) => {
-  await ElMessageBox.confirm('确定删除此机场？', '确认')
+  // 不可逆:DeleteAirport 不清池,节点在下轮全量刷新后 stale 下架(stale_semantics_test 锁定此语义)。
+  await ElMessageBox.confirm(
+    `删除机场「${row.name}」后不可恢复：该机场不再参与聚合，其节点将在下次全量刷新后从订阅中下架。`,
+    '删除机场',
+    { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }
+  )
   await client.delete(`/airports/${row.id}`)
   ElMessage.success('已删除')
   // 删除发生在抽屉内时,关闭抽屉(对象已不存在)
@@ -374,5 +387,13 @@ onMounted(loadAirports)
 .failed-test,
 .no-test {
   color: var(--ph-text-secondary);
+}
+.table-empty {
+  padding: var(--ph-space-6) 0;
+  color: var(--ph-text-secondary);
+  font-size: var(--ph-text-sm);
+}
+.table-empty p {
+  margin: 0 0 var(--ph-space-3);
 }
 </style>

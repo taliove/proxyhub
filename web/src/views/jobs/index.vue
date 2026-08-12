@@ -33,10 +33,10 @@
           <template #default="{ row }">{{ parseProgress(row.cursor) }}</template>
         </el-table-column>
         <el-table-column label="创建时间" width="180">
-          <template #default="{ row }">{{ row.created_at }}</template>
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="更新时间" width="180">
-          <template #default="{ row }">{{ row.updated_at }}</template>
+          <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="90">
           <template #default="{ row }">
@@ -54,7 +54,7 @@
       />
     </el-card>
 
-    <JobDetailDialog v-model="detailVisible" :job="detailJob" />
+    <JobDetailDrawer v-model="detailVisible" :job="detailJob" />
   </div>
 </template>
 
@@ -64,10 +64,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { listJobs, cancelJob, getJob, type Job } from '@/api/jobs'
 import { kindLabel, statusMeta, isRunning, parseProgress, scopeLabel, jobTrigger } from './jobmeta'
+
+// 绝对时间统一本地化呈现(与 Audit/IPStatsTable 同一手法),不再裸渲染 ISO 串
+const formatTime = (t: string) => (t ? new Date(t).toLocaleString('zh-CN') : '-')
 import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/PageHeader.vue'
 import ScheduleCard from './ScheduleCard.vue'
-import JobDetailDialog from './JobDetailDialog.vue'
+import JobDetailDrawer from './JobDetailDrawer.vue'
 
 const authStore = useAuthStore()
 
