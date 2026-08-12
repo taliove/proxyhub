@@ -85,3 +85,6 @@ cmd/server/server
 scripts/release/rehearsal.local.conf
 __pycache__/
 config.dev.yaml
+
+# Impeccable design-tool local state (detector config + critique snapshots)
+.impeccable/
