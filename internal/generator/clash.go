@@ -45,10 +45,20 @@ func ClashProxy(node *subscription.Node, name string) (map[string]any, error) {
 		if node.TLS {
 			base["tls"] = true
 		}
-		// gRPC 传输选项(spec #72):与 vless 分支同约定,仅 grpc-service-name
-		if node.Network == "grpc" && node.GrpcServiceName != "" {
-			base["grpc-opts"] = map[string]any{
-				"grpc-service-name": node.GrpcServiceName,
+		// gRPC 传输选项(spec #72):serviceName → grpc-opts.grpc-service-name;
+		// authority → servername(mihomo gun 传输的 Host 取自代理级 servername,
+		// 见 mihomo adapter/outbound vless/vmess 的 gun.Config.Host = option.ServerName)。
+		// reality 段的 servername(SNI)优先,这里只在未设时兜底。
+		if node.Network == "grpc" {
+			if node.GrpcServiceName != "" {
+				base["grpc-opts"] = map[string]any{
+					"grpc-service-name": node.GrpcServiceName,
+				}
+			}
+			if node.GrpcAuthority != "" {
+				if _, ok := base["servername"]; !ok {
+					base["servername"] = node.GrpcAuthority
+				}
 			}
 		}
 	case "vless":
@@ -60,10 +70,18 @@ func ClashProxy(node *subscription.Node, name string) (map[string]any, error) {
 		if node.TLS {
 			base["tls"] = true
 		}
-		// gRPC 传输选项
-		if node.Network == "grpc" && node.GrpcServiceName != "" {
-			base["grpc-opts"] = map[string]any{
-				"grpc-service-name": node.GrpcServiceName,
+		// gRPC 传输选项(与 vmess 分支同约定;authority → servername 兜底,
+		// reality 段的 SNI 后写覆盖,优先保证 TLS 握手)
+		if node.Network == "grpc" {
+			if node.GrpcServiceName != "" {
+				base["grpc-opts"] = map[string]any{
+					"grpc-service-name": node.GrpcServiceName,
+				}
+			}
+			if node.GrpcAuthority != "" {
+				if _, ok := base["servername"]; !ok {
+					base["servername"] = node.GrpcAuthority
+				}
 			}
 		}
 		// reality 节点(spec #58 / issue #60):RealityPublicKey 非空即 reality,

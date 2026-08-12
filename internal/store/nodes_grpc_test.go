@@ -124,12 +124,12 @@ func TestSelfHostedNode_GrpcAuthorityRoundTrip(t *testing.T) {
 			sn.GrpcServiceName, sn.GrpcAuthority)
 	}
 
-	// 更新路径:service_name 可改写(编辑表单持有);authority 不在编辑面,
-	// 更新时被保留而不是清零(pre-push 评审 H1:编辑面未持有的字段静默擦除)。
+	// 更新路径:service_name 与 authority 都归编辑面(gRPC Host 已进自建表单,2026-08),
+	// 改写即生效;不再沿用"authority 不在编辑面、更新时保留"的旧契约。
 	updated := &SelfHostedNode{
 		ID: got.ID, Name: "自建Grpc", Protocol: "vless", Server: "self01.example.com", Port: 443,
 		UUID: "00000000-0000-0000-0000-000000000000", Network: "grpc", TLS: true,
-		GrpcServiceName: "selfsvc02", GrpcAuthority: "",
+		GrpcServiceName: "selfsvc02", GrpcAuthority: "selfauth2.example.com",
 		Enabled: true,
 	}
 	if err := st.UpdateSelfHostedNode(updated); err != nil {
@@ -139,8 +139,8 @@ func TestSelfHostedNode_GrpcAuthorityRoundTrip(t *testing.T) {
 	if all[0].GrpcServiceName != "selfsvc02" {
 		t.Errorf("更新后 grpc service_name = %q, want selfsvc02", all[0].GrpcServiceName)
 	}
-	if all[0].GrpcAuthority != "selfauth.example.com" {
-		t.Errorf("更新后 grpc authority = %q, want 保留创建值 selfauth.example.com", all[0].GrpcAuthority)
+	if all[0].GrpcAuthority != "selfauth2.example.com" {
+		t.Errorf("更新后 grpc authority = %q, want 编辑面改写值 selfauth2.example.com", all[0].GrpcAuthority)
 	}
 
 	// 零回归:非 grpc 自建节点两字段为空

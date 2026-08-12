@@ -179,8 +179,10 @@ func TestVmessLink_Grpc(t *testing.T) {
 	})
 }
 
-// TestClashProxy_Grpc Clash 输出缝:grpc-opts 仅 grpc-service-name
-// (mihomo 无 authority 概念);vless/vmess 两协议一致;空 serviceName 省略。
+// TestClashProxy_Grpc Clash 输出缝:grpc-opts 仅 grpc-service-name;
+// authority 走代理级 servername(mihomo gun 传输 Host = servername,实证
+// adapter/outbound vless/vmess 的 gun.Config.Host = option.ServerName);
+// vless/vmess 两协议一致;空 serviceName 省略。
 func TestClashProxy_Grpc(t *testing.T) {
 	for _, typ := range []string{"vless", "vmess"} {
 		t.Run(typ+" grpc 带 grpc-opts", func(t *testing.T) {
@@ -203,9 +205,12 @@ func TestClashProxy_Grpc(t *testing.T) {
 			if opts["grpc-service-name"] != "grpcsvc" {
 				t.Errorf("grpc-service-name = %v, want grpcsvc", opts["grpc-service-name"])
 			}
-			// mihomo 无 authority:不得泄漏
+			// authority 不进 grpc-opts(mihomo grpc-opts 无该键),而是代理级 servername
 			if _, exists := opts["authority"]; exists {
 				t.Errorf("grpc-opts must not carry authority: %v", opts)
+			}
+			if p["servername"] != "auth.example.com" {
+				t.Errorf("servername = %v, want auth.example.com (grpc authority)", p["servername"])
 			}
 		})
 
@@ -221,6 +226,9 @@ func TestClashProxy_Grpc(t *testing.T) {
 			}
 			if _, exists := p["grpc-opts"]; exists {
 				t.Errorf("non-grpc %s must not emit grpc-opts: %v", typ, p)
+			}
+			if _, exists := p["servername"]; exists {
+				t.Errorf("non-grpc %s must not emit servername: %v", typ, p)
 			}
 		})
 	}

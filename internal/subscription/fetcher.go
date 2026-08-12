@@ -340,6 +340,12 @@ func (f *Fetcher) parseVLessNode(line, source string) (*Node, error) {
 	// security=reality 语义上仍走 TLS 握手,TLS 记 true。
 	// gRPC 参数(spec #72):serviceName/authority 同样不丢;非 grpc 链接
 	// 不带这两个参数,字段自然为空(零回归)。
+	// authority 缺省且 network=grpc 时回退读 host=(部分机场按 vmess 的
+	// host 约定承载 grpc authority;ws 等非 grpc 链接不读,host 是 ws 语义缺口,出界)。
+	grpcAuthority := query.Get("authority")
+	if grpcAuthority == "" && network == "grpc" {
+		grpcAuthority = query.Get("host")
+	}
 	return &Node{
 		Name:              name,
 		Type:              "vless",
@@ -350,7 +356,7 @@ func (f *Fetcher) parseVLessNode(line, source string) (*Node, error) {
 		TLS:               security == "tls" || security == "reality",
 		SNI:               sni,
 		GrpcServiceName:   query.Get("serviceName"),
-		GrpcAuthority:     query.Get("authority"),
+		GrpcAuthority:     grpcAuthority,
 		Flow:              query.Get("flow"),
 		RealityPublicKey:  query.Get("pbk"),
 		RealityShortID:    query.Get("sid"),

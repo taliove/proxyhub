@@ -1918,6 +1918,7 @@ type nodeView struct {
 	Plugin          string `json:"plugin,omitempty"`      // SS 插件(simple-obfs/v2ray-plugin)
 	PluginOpts      string `json:"plugin_opts,omitempty"` // 插件参数原始串("obfs=http;obfs-host=x")
 	GrpcServiceName string `json:"grpc_service_name,omitempty"`
+	GrpcAuthority   string `json:"grpc_authority,omitempty"` // gRPC Host(mihomo 读 servername)
 	Insecure        bool   `json:"insecure,omitempty"` // 跳过证书校验(订阅里的 insecure=1)
 	Region          string `json:"region"`
 	Source          string `json:"source"`
@@ -1961,7 +1962,7 @@ func toNodeViews(nodes []*subscription.Node, blocked map[string]bool, unlockResu
 			Server: n.Server, Port: n.Port, Network: n.Network, TLS: n.TLS, SNI: n.SNI,
 			Cipher: n.Cipher, AlterID: n.AlterID,
 			Plugin: n.Plugin, PluginOpts: n.PluginOpts,
-			GrpcServiceName: n.GrpcServiceName, Insecure: n.Insecure,
+			GrpcServiceName: n.GrpcServiceName, GrpcAuthority: n.GrpcAuthority, Insecure: n.Insecure,
 			Source: n.Source, Latency: n.Latency, Available: n.Available,
 			NodeKey: key, Blocked: blocked[key], Stale: n.Stale,
 			AvailabilitySource:  n.AvailabilitySource(),

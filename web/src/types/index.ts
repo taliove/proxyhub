@@ -96,6 +96,7 @@ export interface Node {
   plugin?: string // SS 插件（simple-obfs/v2ray-plugin）
   plugin_opts?: string // 插件参数原始串（"obfs=http;obfs-host=x"）
   grpc_service_name?: string
+  grpc_authority?: string // gRPC Host(mihomo 读 servername;spec #72)
   insecure?: boolean // 跳过证书校验（订阅里的 insecure=1）
   // 可用性判定来源(与后端 subscription.AvailabilitySource* 对齐):
   // never=从未检测 / health=仅健康检查(TCP 快检)/ real=真实代理检测
@@ -159,6 +160,7 @@ export interface SelfNode {
   network: string
   tls: boolean
   grpc_service_name: string
+  grpc_authority?: string
   enabled: boolean
 }
 

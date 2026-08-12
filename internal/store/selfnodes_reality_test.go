@@ -79,8 +79,9 @@ func TestSelfHostedNode_RealityGrpcCreateRoundtrip(t *testing.T) {
 	}
 }
 
-// 更新 → 读回:编辑面不持有的列(sni/flow/reality_*/grpc_authority)保持原值——
-// UI 表单不含这些字段,请求体解码零值不得静默擦除既有 reality/grpc 参数(H1 回归)。
+// 更新 → 读回:编辑面不持有的列(sni/flow/reality_*)保持原值——
+// UI 表单不含这些字段,请求体解码零值不得静默擦除既有 reality 参数(H1 回归)。
+// (grpc_authority 自 2026-08 起归编辑面:gRPC Host 进自建表单,更新即生效。)
 func TestSelfHostedNode_RealityGrpcPreservedOnUpdate(t *testing.T) {
 	s := newTestStore(t)
 
@@ -91,13 +92,14 @@ func TestSelfHostedNode_RealityGrpcPreservedOnUpdate(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("list: n=%d err=%v", len(rows), err)
 	}
-	// 模拟 UI 编辑请求的形状:只有表单字段,其余零值(改名 + 改 service_name)。
+	// 模拟 UI 编辑请求的形状:表单字段全部回带(含 grpc_authority),其余零值。
 	ui := &SelfHostedNode{
 		ID: rows[0].ID, Name: "改名后", Protocol: "vless",
 		Server: "pool.example.com", Port: 443,
 		UUID: "00000000-0000-0000-0000-000000000000",
 		Network: "grpc", TLS: true, GrpcServiceName: "renamed-svc",
-		Enabled: true,
+		GrpcAuthority: "auth2.example.com", // 编辑面持有:改写应生效
+		Enabled:       true,
 	}
 	if err := s.UpdateSelfHostedNodeForUser(1, ui); err != nil {
 		t.Fatalf("update: %v", err)
@@ -110,7 +112,10 @@ func TestSelfHostedNode_RealityGrpcPreservedOnUpdate(t *testing.T) {
 	if after[0].Name != "改名后" || after[0].GrpcServiceName != "renamed-svc" {
 		t.Errorf("编辑面字段未生效: name=%q svc=%q", after[0].Name, after[0].GrpcServiceName)
 	}
-	// 非编辑面字段全部保留原值(service_name 归编辑面,上方已断言改写生效)
+	if after[0].GrpcAuthority != "auth2.example.com" {
+		t.Errorf("GrpcAuthority = %q, want auth2.example.com (编辑面持有,改写生效)", after[0].GrpcAuthority)
+	}
+	// 非编辑面字段全部保留原值(service_name/authority 归编辑面,上方已断言改写生效)
 	got := after[0]
 	preserved := map[string][2]string{
 		"SNI":               {got.SNI, "sni.example.com"},
@@ -118,7 +123,6 @@ func TestSelfHostedNode_RealityGrpcPreservedOnUpdate(t *testing.T) {
 		"RealityPublicKey":  {got.RealityPublicKey, "synthetic-public-key"},
 		"RealityShortID":    {got.RealityShortID, "01ab"},
 		"ClientFingerprint": {got.ClientFingerprint, "chrome"},
-		"GrpcAuthority":     {got.GrpcAuthority, "authority.example.com"},
 	}
 	for field, pair := range preserved {
 		if pair[0] != pair[1] {

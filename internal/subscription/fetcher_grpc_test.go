@@ -36,6 +36,15 @@ func TestParseVLessGrpcNode(t *testing.T) {
 			},
 		},
 		{
+			name: "grpc authority 缺省时回退 host=(机场按 vmess host 约定承载)",
+			line: "vless://" + uuid + "@grpc04.example.com:443?type=grpc&security=tls&serviceName=grpcsvc04&host=auth04.example.com#Grpc04",
+			want: Node{
+				Name: "Grpc04", Type: "vless", Server: "grpc04.example.com", Port: 443,
+				UUID: uuid, Network: "grpc", TLS: true,
+				GrpcServiceName: "grpcsvc04", GrpcAuthority: "auth04.example.com",
+			},
+		},
+		{
 			name: "grpc + reality 叠加(spec #58 与 #72 并存,两类参数同时保真)",
 			line: "vless://" + uuid + "@grpc03.example.com:443?type=grpc&security=reality&sni=img.example.com&pbk=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&sid=d28a3d8c&fp=chrome&flow=xtls-rprx-vision&serviceName=grpcsvc03&authority=auth03.example.com#GrpcReality03",
 			want: Node{
