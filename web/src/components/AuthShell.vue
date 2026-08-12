@@ -1,10 +1,7 @@
 <template>
   <div class="auth-shell">
-    <!-- 装饰背景:渐变网格 + 漂浮光斑,明暗自适应 -->
+    <!-- 仪器底版:纸灰底 + 细网格,网格随径向淡出;不放光斑/渐变块,主角只有光标字标 -->
     <div class="auth-shell__bg" aria-hidden="true">
-      <span class="blob blob--1"></span>
-      <span class="blob blob--2"></span>
-      <span class="blob blob--3"></span>
       <div class="grid"></div>
     </div>
 
@@ -18,7 +15,7 @@
       <el-icon :size="18"><Moon v-if="!isDark" /><Sunny v-else /></el-icon>
     </button>
 
-    <div class="auth-shell__card">
+    <div class="auth-shell__card" :class="{ 'auth-shell__card--wide': wide }">
       <div class="brand">
         <Wordmark class="brand__wordmark" />
         <p class="brand__subtitle">{{ subtitle }}</p>
@@ -29,9 +26,9 @@
 </template>
 
 <script setup lang="ts">
-// AuthShell 是免登录/强制流程页(登录、改密、MFA 绑定)的外壳:
-// 装饰背景 + 主题切换 + 玻璃卡片 + 品牌头。这些样式此前在每个页面里各抄一份,
-// 新页(ticket 08)改为复用本组件,老页保持原样以免牵动其既有测试。
+// AuthShell 是免登录/强制流程页(登录、改密、MFA 绑定、Setup)的外壳:
+// 仪器底版 + 主题切换 + 白卡片 + 品牌头。DESIGN.md 明令禁止渐变光斑与玻璃拟态,
+// 所有认证页统一走本组件,不允许页面自抄一份外壳样式。
 import { storeToRefs } from 'pinia'
 import { Moon, Sunny } from '@element-plus/icons-vue'
 import { useLayoutStore } from '@/stores/layout'
@@ -40,6 +37,8 @@ import Wordmark from '@/components/Wordmark.vue'
 defineProps<{
   // subtitle 是品牌名下的一行说明,由具体页面给出。
   subtitle: string
+  // wide 给 Setup 这类含步骤条/宽表单的页:卡片 460px → 640px。
+  wide?: boolean
 }>()
 
 const layout = useLayoutStore()
@@ -58,7 +57,7 @@ const { isDark } = storeToRefs(layout)
   background: var(--ph-bg-page);
 }
 
-/* ---------- 装饰背景 ---------- */
+/* ---------- 仪器底版 ---------- */
 .auth-shell__bg {
   position: absolute;
   inset: 0;
@@ -72,57 +71,16 @@ const { isDark } = storeToRefs(layout)
     linear-gradient(to right, var(--ph-border-light) 1px, transparent 1px),
     linear-gradient(to bottom, var(--ph-border-light) 1px, transparent 1px);
   background-size: 42px 42px;
-  mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 75%);
-  -webkit-mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 75%);
+  /* mask 只看 alpha 通道:取任一全透明度过渡即可,text-primary 是不透明语义令牌(明暗色皆然) */
+  mask-image: radial-gradient(circle at 50% 45%, var(--ph-text-primary) 0%, transparent 75%);
+  -webkit-mask-image: radial-gradient(
+    circle at 50% 45%,
+    var(--ph-text-primary) 0%,
+    transparent 75%
+  );
   opacity: 0.6;
 }
 
-.blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(64px);
-  opacity: 0.5;
-  will-change: transform;
-}
-.blob--1 {
-  width: 460px;
-  height: 460px;
-  top: -120px;
-  left: -100px;
-  background: radial-gradient(circle, var(--ph-color-primary), transparent 70%);
-  animation: drift 18s ease-in-out infinite;
-}
-.blob--2 {
-  width: 380px;
-  height: 380px;
-  bottom: -140px;
-  right: -80px;
-  background: radial-gradient(circle, var(--ph-color-primary-hover), transparent 70%);
-  animation: drift 22s ease-in-out infinite reverse;
-  opacity: 0.35;
-}
-.blob--3 {
-  width: 300px;
-  height: 300px;
-  top: 40%;
-  right: 18%;
-  background: radial-gradient(circle, var(--ph-color-primary-active), transparent 70%);
-  animation: drift 26s ease-in-out infinite;
-  opacity: 0.25;
-}
-
-@keyframes drift {
-  0%,
-  100% {
-    transform: translate(0, 0) scale(1);
-  }
-  33% {
-    transform: translate(40px, -30px) scale(1.08);
-  }
-  66% {
-    transform: translate(-30px, 24px) scale(0.94);
-  }
-}
 /* ---------- 主题切换 ---------- */
 .auth-shell__theme {
   position: absolute;
@@ -151,7 +109,7 @@ const { isDark } = storeToRefs(layout)
   transform: translateY(-1px);
 }
 
-/* ---------- 卡片 ---------- */
+/* ---------- 卡片:仪器表面白,静置微影,无玻璃拟态 ---------- */
 .auth-shell__card {
   position: relative;
   z-index: 1;
@@ -160,11 +118,12 @@ const { isDark } = storeToRefs(layout)
   padding: 40px 36px 28px;
   border-radius: var(--ph-radius-lg);
   border: 1px solid var(--ph-border-light);
-  background: color-mix(in srgb, var(--ph-bg-surface) 82%, transparent);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  box-shadow: var(--ph-shadow-lg);
+  background: var(--ph-bg-surface);
+  box-shadow: var(--ph-shadow-sm);
   animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.auth-shell__card--wide {
+  max-width: 640px;
 }
 
 @keyframes rise {
@@ -202,7 +161,6 @@ const { isDark } = storeToRefs(layout)
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .blob,
   .auth-shell__card {
     animation: none;
   }
