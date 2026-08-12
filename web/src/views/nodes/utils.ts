@@ -10,7 +10,13 @@ export const isSelfHosted = (row: Node): boolean => row.source === SELF_HOSTED
 
 // 解锁检测结果展示(分档/徽标/汇总)见 ./unlock。
 
-export const formatTime = (t: string): string => (t ? new Date(t).toLocaleString('zh-CN') : '')
+// 零值/早期年份守卫:Go 零值时间(0001-01-01)在 zh-CN 下会被 LMT 偏移格式化成
+// 1/1/1 08:05:43;年份 <2000 一律按"无数据"处理(后端已守,前端双保险)。
+export const formatTime = (t: string): string => {
+  if (!t) return ''
+  const d = new Date(t)
+  return Number.isNaN(d.getTime()) || d.getFullYear() < 2000 ? '' : d.toLocaleString('zh-CN')
+}
 
 // 可用性判定来源文案(与后端 subscription.AvailabilitySource* 对齐,见 ticket 0016)。
 // 未知/缺省值一律按"从未检测"展示,与后端兜底口径一致。

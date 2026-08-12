@@ -2024,8 +2024,16 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		views[i].Favorite = favorites[views[i].NodeKey]
 	}
 
+	// last_update 零值守卫(与 dashboard/stats 同口径):进程启动后从未刷新过时
+	// LastUpdateForUser 是 Go 零值,直接序列化会被前端格式化成 1/1/1 08:05:43(LMT 偏移)。
+	lastUpdate := s.nodes.LastUpdateForUser(effUID)
+	lastUpdateStr := ""
+	if !lastUpdate.IsZero() {
+		lastUpdateStr = lastUpdate.Format(time.RFC3339)
+	}
+
 	writeJSON(w, map[string]any{
-		"last_update": s.nodes.LastUpdateForUser(effUID),
+		"last_update": lastUpdateStr,
 		"nodes":       views,
 		"total":       res.Total,
 		"page":        res.Page,
