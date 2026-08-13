@@ -25,6 +25,10 @@ const (
 	// PullStatusBadToken unknown /sub path, or a path that exists with a token
 	// that does not match. Both answer a uniform 404 to the client.
 	PullStatusBadToken = "bad_token"
+	// PullStatusGraceOK the pull was served via the previous-generation link
+	// while the reset grace window is still alive(issue #117):与正常 ok 区分,
+	// 供管理员观察蹭用是否在迁移窗口内消失。
+	PullStatusGraceOK = "grace_ok"
 )
 
 // pullStatuses is the closed set accepted by RecordPull. Keeping it closed makes
@@ -38,6 +42,7 @@ var pullStatuses = map[string]struct{}{
 	PullStatusBlacklisted:   {},
 	PullStatusDisabled:      {},
 	PullStatusBadToken:      {},
+	PullStatusGraceOK:       {},
 }
 
 // IsValidPullStatus reports whether status is a known pull outcome.

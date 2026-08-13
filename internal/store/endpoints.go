@@ -70,6 +70,13 @@ type Endpoint struct {
 	// 名字即槽位名、顺序按槽位名固定;精选/节点范围/关键词筛选不生效。
 	// 默认 false = 池模式(现状,零回归)。
 	SlotMode bool `json:"slot_mode"`
+
+	// 订阅链接重置(issue #117):重置时旧 path/token 移入 prev 槽位,
+	// GraceExpiresAt 为旧链接的最后可用时刻(UTC 文本,空 = 无宽限)。
+	// prev 对只服务订阅校验链,不进 API 响应(json:"-");到期时间透出供前端展示。
+	PrevPath       string `json:"-"`
+	PrevToken      string `json:"-"`
+	GraceExpiresAt string `json:"grace_expires_at,omitempty"`
 }
 
 // URL 返回订阅地址的相对路径
@@ -88,7 +95,7 @@ func randomHex(bytes int) (string, error) {
 
 // endpointColumns 查询列表共用的列清单(ticket 07 起带 user_id,读取侧三处保持一致)。
 // 与 scanEndpointFrom 的 Scan 目标顺序一一对应,加列必须双处同步。
-const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name, geo_mode, geo_countries, geo_provinces, public_name, node_picks, status_node_enabled, slot_mode`
+const endpointColumns = `id, alias, path, token, enabled, created_at, name_mode, name_template, conditions, user_id, template_name, geo_mode, geo_countries, geo_provinces, public_name, node_picks, status_node_enabled, slot_mode, prev_path, prev_token, grace_expires_at`
 
 // CreateEndpoint 创建订阅地址（随机 Path + Token）。
 // 未指定属主(旧调用/直接库调用)时归一到首个 super_admin(ticket 07 Invariant B);
@@ -463,7 +470,7 @@ func scanEndpointFrom(r rowScanner) (*Endpoint, error) {
 	if err := r.Scan(&ep.ID, &ep.Alias, &ep.Path, &ep.Token, &enabled, &ep.CreatedAt,
 		&ep.NameMode, &ep.NameTemplate, &ep.Conditions, &ep.UserID, &ep.TemplateName,
 		&ep.GeoMode, &ep.GeoCountries, &ep.GeoProvinces, &ep.PublicName, &ep.NodePicks,
-		&statusNode, &slotMode); err != nil {
+		&statusNode, &slotMode, &ep.PrevPath, &ep.PrevToken, &ep.GraceExpiresAt); err != nil {
 		return nil, err
 	}
 	ep.Enabled = enabled != 0

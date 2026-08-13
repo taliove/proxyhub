@@ -652,6 +652,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/endpoints", guard(s.handleListEndpoints))
 	mux.HandleFunc("POST /api/endpoints", guard(s.handleCreateEndpoint))
 	mux.HandleFunc("POST /api/endpoints/{id}/toggle", guard(s.handleToggleEndpoint))
+	mux.HandleFunc("POST /api/endpoints/{id}/reset-link", guard(s.handleResetEndpointLink))
+	mux.HandleFunc("POST /api/endpoints/{id}/reset-link/extend", guard(s.handleExtendEndpointGrace))
 	mux.HandleFunc("PUT /api/endpoints/{id}/name-config", guard(s.handleUpdateEndpointNameConfig))
 	mux.HandleFunc("PUT /api/endpoints/{id}/template", guard(s.handleUpdateEndpointTemplate))
 	mux.HandleFunc("PUT /api/endpoints/{id}/conditions", guard(s.handleUpdateEndpointConditions))
@@ -832,6 +834,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/users/{id}/enable", adminGuard(s.handleAdminEnableUser))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", adminGuard(s.handleAdminDeleteUser))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-password", adminGuard(s.handleAdminResetPassword))
+	mux.HandleFunc("POST /api/admin/users/{id}/endpoints/{eid}/reset-link", adminGuard(s.handleAdminResetEndpointLink))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-mfa", adminGuard(s.handleAdminResetMFA))
 	// 清空目标用户受信 IP(ticket 10):设备/网络疑似失陷时逼回完整 MFA 挑战。
 	mux.HandleFunc("POST /api/admin/users/{id}/trusted-ips/clear", adminGuard(s.handleAdminClearTrustedIPs))
@@ -1040,16 +1043,28 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 
 	// 校验段的每个早退都留痕(pull-guard ticket 01):对外一律 404,内部记原因。
 	ep, err := s.st.GetEndpointByPath(path)
+	viaGrace := false
 	if err != nil {
-		// path 未知:没有可归属的订阅地址,记全局桶(endpoint_id=0)。
-		s.recordPullStatus(r, 0, store.PullStatusBadToken)
-		http.NotFound(w, r)
-		return
+		// 链接重置(issue #117):path 未命中现行链接时,试宽限期内的上一代链接。
+		// prev 命中后仍要走 token 比较与宽限存活判定,任一不过与"查无此端点"同 404。
+		ep, err = s.st.GetEndpointByPrevPath(path)
+		if err != nil {
+			// path 未知:没有可归属的订阅地址,记全局桶(endpoint_id=0)。
+			s.recordPullStatus(r, 0, store.PullStatusBadToken)
+			http.NotFound(w, r)
+			return
+		}
+		viaGrace = true
 	}
 
-	// Token 校验（常数时间比较，防时序攻击）
+	// Token 校验（常数时间比较，防时序攻击）;宽限路径比对上一代 token。
 	token := r.URL.Query().Get("token")
-	if subtle.ConstantTimeCompare([]byte(token), []byte(ep.Token)) != 1 {
+	expected := ep.Token
+	if viaGrace {
+		expected = ep.PrevToken
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 ||
+		(viaGrace && !ep.GraceAlive(time.Now().UTC())) {
 		s.recordPullStatus(r, ep.ID, store.PullStatusBadToken)
 		http.NotFound(w, r) // 故意返回 404 而不是 403，不暴露端点存在
 		return
@@ -1112,7 +1127,12 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	// 记录拉取统计:内容已生成成功,本次为真实下发。
 	// 池空(503)与生成失败(500)两个出口不留痕——那是服务端自身状态,
 	// 不是客户端可归因的拉取结果,也没有对应的 status 取值。
-	s.recordPullStatus(r, ep.ID, store.PullStatusOK)
+	// 宽限期内的上一代链接记 grace_ok(issue #117),供管理员观察蹭用迁移。
+	pullStatus := store.PullStatusOK
+	if viaGrace {
+		pullStatus = store.PullStatusGraceOK
+	}
+	s.recordPullStatus(r, ep.ID, pullStatus)
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Profile-Update-Interval", "1") // 建议客户端每小时更新

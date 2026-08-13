@@ -1,0 +1,99 @@
+package server
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+
+	"github.com/taliove/proxyhub/internal/store"
+)
+
+// 订阅链接重置(issue #117)的三个 HTTP 入口:
+// 用户自助重置、用户自助延长宽限、管理员代为重置。
+// 共用同一 store 方法;宽限语义与审计约定见 endpoint_reset.go。
+
+// handleResetEndpointLink 用户自助重置:原位轮换 path+token,端点配置全保留,
+// 旧链接开启 3 天宽限。行属他人 404(与端点不存在无差别)。
+func (s *Server) handleResetEndpointLink(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	ep, err := s.st.ResetEndpointLinkForUser(EffectiveUserID(scope), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		s.logger.Error("reset endpoint link failed", "endpoint_id", id, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("endpoint link reset",
+		"operator_user_id", EffectiveUserID(scope), "endpoint_id", ep.ID, "endpoint_owner", ep.UserID)
+	writeJSON(w, ep)
+}
+
+// handleExtendEndpointGrace 延长宽限 +3 天(仅宽限存活期;过期/从未重置
+// 与端点不存在同 404,不可复活)。
+func (s *Server) handleExtendEndpointGrace(w http.ResponseWriter, r *http.Request) {
+	scope, ok := s.mustUserScope(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	ep, err := s.st.ExtendEndpointGraceForUser(EffectiveUserID(scope), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		s.logger.Error("extend endpoint grace failed", "endpoint_id", id, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("endpoint grace extended",
+		"operator_user_id", EffectiveUserID(scope), "endpoint_id", ep.ID)
+	writeJSON(w, ep)
+}
+
+// handleAdminResetEndpointLink 管理员代为重置指定用户的订阅链接(adminGuard 之后):
+// 先按属主反查端点(行不属该用户 404),再原位轮换。用户失联/链接泄露应急用。
+func (s *Server) handleAdminResetEndpointLink(w http.ResponseWriter, r *http.Request) {
+	uid, err := parseAdminUserID(r)
+	if err != nil {
+		http.Error(w, "invalid user id", http.StatusBadRequest)
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("eid"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid endpoint id", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.st.GetEndpointByIDForUser(uid, id); err != nil {
+		http.NotFound(w, r) // 行不属该用户:与端点不存在无差别
+		return
+	}
+	ep, err := s.st.ResetEndpointLinkForUser(uid, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		s.logger.Error("admin reset endpoint link failed", "endpoint_id", id, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("endpoint link reset by admin",
+		"target_user_id", uid, "endpoint_id", ep.ID)
+	writeJSON(w, ep)
+}
