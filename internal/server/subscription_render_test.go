@@ -209,13 +209,14 @@ func TestRenderSubscription_MergesUpstreamHosts(t *testing.T) {
 	srv, st := newEndpointTestServer(t, endpointTestPool())
 	userID := int64(789)
 
-	// 机场记录带 hosts 映射
+	// 机场记录带 hosts 映射(一条指向池内节点域名,一条钉扎无关域名)
 	airport, err := st.CreateAirportForUser(userID, "机场A", "https://example.com/sub")
 	if err != nil {
 		t.Fatalf("create airport: %v", err)
 	}
 	if err := st.UpdateAirportHosts(airport.ID, map[string]string{
-		"poisoned.example.com": "alias.example.com",
+		"x.example.com":       "alias.example.com",
+		"unrelated.example.com": "evil.example.com",
 	}); err != nil {
 		t.Fatalf("update airport hosts: %v", err)
 	}
@@ -225,7 +226,7 @@ func TestRenderSubscription_MergesUpstreamHosts(t *testing.T) {
 		t.Fatalf("create endpoint: %v", err)
 	}
 
-	// 池里带该机场来源的节点 → 输出应含合并 hosts
+	// 池里带该机场来源的节点 → 输出应含合并 hosts(仅节点域名)
 	nodes := []*subscription.Node{
 		{Name: "n1", Type: "ss", Server: "x.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Source: "机场A"},
 	}
@@ -235,6 +236,10 @@ func TestRenderSubscription_MergesUpstreamHosts(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "alias.example.com") {
 		t.Errorf("rendered config should contain merged hosts, got:\n%s", string(data))
+	}
+	// 非该机场节点域名的 hosts 键被过滤(pre-push H1:防任意域名钉扎)
+	if strings.Contains(string(data), "evil.example.com") {
+		t.Errorf("unrelated hosts key should be filtered out, got:\n%s", string(data))
 	}
 
 	// 自建来源不参与 hosts 合并(查不到对应机场记录,输出无 hosts)

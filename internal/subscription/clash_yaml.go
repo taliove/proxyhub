@@ -81,6 +81,8 @@ func (r *ParseResult) addClashFailure(line int, reason string) {
 // parseClashHosts 捕获上游顶层 hosts 映射(issue #116):标量键→标量值原样收集。
 // hosts 缺失返回 nil;不是 map 或条目非标量时计入解析失败(与 proxies 容错口径
 // 一致),不阻断导入。值统一按标量文本取(域名或 IP 字符串)。
+// 条目数封顶 maxClashHosts:恶意/故障上游的单次拉取不应膨胀机场行与每次渲染
+// 的合并成本(pre-push L2),溢出计一次解析失败并截断。
 func parseClashHosts(node *yaml.Node, result *ParseResult) map[string]string {
 	if node == nil {
 		return nil
@@ -91,6 +93,10 @@ func parseClashHosts(node *yaml.Node, result *ParseResult) map[string]string {
 	}
 	hosts := make(map[string]string, len(node.Content)/2)
 	for i := 0; i+1 < len(node.Content); i += 2 {
+		if len(hosts) >= maxClashHosts {
+			result.addClashFailure(node.Line, "hosts exceeds entry limit")
+			break
+		}
 		k, v := node.Content[i], node.Content[i+1]
 		if k.Kind != yaml.ScalarNode || v.Kind != yaml.ScalarNode {
 			result.addClashFailure(k.Line, "hosts entry is not a scalar mapping")
@@ -103,6 +109,9 @@ func parseClashHosts(node *yaml.Node, result *ParseResult) map[string]string {
 	}
 	return hosts
 }
+
+// maxClashHosts 上游 hosts 条目数上限(pre-push L2)。
+const maxClashHosts = 256
 
 // clashProxyToNode 将单个 Clash proxy map 映射为 Node(只落模型已有字段,spec #64 映射表)。
 func clashProxyToNode(m map[string]any, source string) (*Node, error) {

@@ -2521,15 +2521,28 @@ func (s *Server) renderSubscriptionForEndpoint(nodes []*subscription.Node, forma
 // (issue #116)。合并顺序按来源名字典序,同键后并者覆盖(确定性语义);模板自带
 // hosts 在生成器内再覆盖一层,优先级最高。查询失败降级为空映射——hosts 是解析
 // 辅助,不应让订阅下发因它失败。
+//
+// 安全边界(pre-push H1):mihomo 的 hosts 作用于客户端全部域名解析,含按规则
+// DIRECT 的流量。因此每个机场的 hosts 键**只保留该机场池内节点的 server 域名**——
+// 合法用途本就是把被污染的节点域名改指别名;任意域名钉扎(机场借此把 DIRECT
+// 流量引到攻击者 IP)在合并处被直接挡掉。
 func (s *Server) upstreamHostsForNodes(ep *store.Endpoint, nodes []*subscription.Node) map[string]string {
 	seen := make(map[string]bool)
 	names := make([]string, 0, 4)
+	// serverDomains[来源] = 该来源池内节点的 server 域名集合(hosts 键白名单)
+	serverDomains := make(map[string]map[string]bool)
 	for _, n := range nodes {
-		if n.Source == "" || n.Source == subscription.SourceSelfHosted || seen[n.Source] {
+		if n.Source == "" || n.Source == subscription.SourceSelfHosted {
 			continue
 		}
-		seen[n.Source] = true
-		names = append(names, n.Source)
+		if serverDomains[n.Source] == nil {
+			serverDomains[n.Source] = make(map[string]bool)
+		}
+		serverDomains[n.Source][n.Server] = true
+		if !seen[n.Source] {
+			seen[n.Source] = true
+			names = append(names, n.Source)
+		}
 	}
 	if len(names) == 0 {
 		return nil
@@ -2543,6 +2556,9 @@ func (s *Server) upstreamHostsForNodes(ep *store.Endpoint, nodes []*subscription
 	var merged map[string]string
 	for _, name := range names {
 		for k, v := range perAirport[name] {
+			if !serverDomains[name][k] {
+				continue // 非该机场节点域名的 hosts 键不进入公开订阅
+			}
 			if merged == nil {
 				merged = make(map[string]string, len(perAirport[name]))
 			}

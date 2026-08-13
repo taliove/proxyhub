@@ -16,7 +16,9 @@ const graceDuration = 72 * time.Hour
 // ResetEndpointLinkForUser 原位轮换订阅链接(issue #117):重新生成 path+token,
 // 旧对移入 prev 槽位并开启 3 天宽限;端点上的全部配置(筛选/精选/模板/地域)不变。
 // 再次重置:prev 槽位被覆盖,只保留一代宽限,不叠加。
-// 行属他人时 ErrNotFound;userID=0 跳过属主校验(管理端代重置路径)。
+// 行属他人时 ErrNotFound。userID=0 跳过属主校验——与包内其他 ForUser 方法同约定
+// (store 内部/测试用);当前所有 HTTP 入口(用户自助/管理端代重置)均传非零 uid,
+// 属主校验始终生效。
 func (s *Store) ResetEndpointLinkForUser(userID, id int64) (*Endpoint, error) {
 	path, err := randomHex(8)
 	if err != nil {
@@ -50,7 +52,8 @@ func (s *Store) ResetEndpointLinkForUser(userID, id int64) (*Endpoint, error) {
 
 // ExtendEndpointGraceForUser 延长宽限 +3 天(issue #117):自当前到期时间累加。
 // 宽限不存在(从未重置)或已过期(不可复活)时 ErrNotFound,对外与"端点不存在"
-// 无差别。行属他人时 ErrNotFound;userID=0 跳过属主校验。
+// 无差别。行属他人时 ErrNotFound。userID=0 跳过属主校验——与包内其他 ForUser
+// 方法同约定(store 内部/测试用);当前 HTTP 入口均传非零 uid。
 func (s *Store) ExtendEndpointGraceForUser(userID, id int64) (*Endpoint, error) {
 	ep, err := s.GetEndpointByIDForUser(userID, id)
 	if err != nil {
