@@ -27,21 +27,20 @@
       <el-button @click="visible = false">关闭</el-button>
     </template>
 
-    <!-- 代重置结果:新链接只展示一次 -->
-    <el-dialog v-model="resultVisible" title="订阅链接已重置" width="560px" append-to-body>
-      <p class="form-hint">
-        新链接已生成并转交用户。旧链接在宽限期(至 {{ resetResult?.grace_expires_at }}
-        UTC)内仍可使用:
-      </p>
-      <el-input :model-value="resultUrl" readonly>
-        <template #append>
-          <el-button @click="copyResult">复制</el-button>
-        </template>
-      </el-input>
-      <template #footer>
-        <el-button type="primary" @click="resultVisible = false">关闭</el-button>
-      </template>
-    </el-dialog>
+    <!-- 代重置结果:复用用户侧同一结果弹窗(新链接+复制+二维码) -->
+    <EndpointResetResultDialog
+      v-model="resultVisible"
+      :endpoint="resetResult"
+      :url="resultUrl"
+      @qrcode="(url) => qrDialog?.show(url)"
+    />
+    <QRCodeDialog
+      ref="qrDialog"
+      v-model="qrVisible"
+      title="订阅地址二维码"
+      hint="使用客户端扫码即可导入订阅"
+      append-to-body
+    />
   </el-dialog>
 </template>
 
@@ -51,7 +50,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { AdminUser } from '@/api/users'
 import type { Endpoint } from '@/types'
 import { adminListUserEndpoints, adminResetEndpointLink } from '@/api/users'
-import { copyPassword } from '@/utils/useradmin'
+import EndpointResetResultDialog from '@/components/EndpointResetResultDialog.vue'
+import QRCodeDialog from '@/components/QRCodeDialog.vue'
 
 const visible = defineModel<boolean>({ required: true })
 
@@ -65,6 +65,8 @@ const resettingId = ref<number | null>(null)
 const resultVisible = ref(false)
 const resetResult = ref<Endpoint | null>(null)
 const resultUrl = ref('')
+const qrVisible = ref(false)
+const qrDialog = ref<InstanceType<typeof QRCodeDialog>>()
 
 const subscriptionUrl = (ep: Endpoint) =>
   `${window.location.origin}/sub/${ep.path}?token=${ep.token}`
@@ -107,8 +109,6 @@ const onResetLink = async (ep: Endpoint) => {
     resettingId.value = null
   }
 }
-
-const copyResult = () => copyPassword(resultUrl.value)
 </script>
 
 <style scoped>
@@ -119,11 +119,5 @@ const copyResult = () => copyPassword(resultUrl.value)
 }
 .muted {
   color: var(--ph-text-secondary);
-}
-.form-hint {
-  font-size: var(--ph-text-xs);
-  color: var(--ph-text-secondary);
-  line-height: 1.6;
-  margin: 0 0 var(--ph-space-3);
 }
 </style>

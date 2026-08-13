@@ -87,7 +87,8 @@ func (s *Server) handleAdminListUserEndpoints(w http.ResponseWriter, r *http.Req
 }
 
 // handleAdminResetEndpointLink 管理员代为重置指定用户的订阅链接(adminGuard 之后):
-// 先按属主反查端点(行不属该用户 404),再原位轮换。用户失联/链接泄露应急用。
+// 原位轮换;行不属该用户或轮换失败 ErrNotFound 时 404(与端点不存在无差别)。
+// 用户失联/链接泄露应急用。
 func (s *Server) handleAdminResetEndpointLink(w http.ResponseWriter, r *http.Request) {
 	uid, err := parseAdminUserID(r)
 	if err != nil {
@@ -97,10 +98,6 @@ func (s *Server) handleAdminResetEndpointLink(w http.ResponseWriter, r *http.Req
 	id, err := strconv.ParseInt(r.PathValue("eid"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid endpoint id", http.StatusBadRequest)
-		return
-	}
-	if _, err := s.st.GetEndpointByIDForUser(uid, id); err != nil {
-		http.NotFound(w, r) // 行不属该用户:与端点不存在无差别
 		return
 	}
 	ep, err := s.st.ResetEndpointLinkForUser(uid, id)
@@ -113,7 +110,8 @@ func (s *Server) handleAdminResetEndpointLink(w http.ResponseWriter, r *http.Req
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	operatorID, _ := UserScopeFromContext(r.Context())
 	s.logger.Info("endpoint link reset by admin",
-		"target_user_id", uid, "endpoint_id", ep.ID)
+		"operator_admin_id", operatorID.UserID, "target_user_id", uid, "endpoint_id", ep.ID)
 	writeJSON(w, ep)
 }
