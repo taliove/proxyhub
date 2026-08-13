@@ -11,18 +11,54 @@ log-level: info
 external-controller: 127.0.0.1:9090
 keep-alive-interval: 360
 
+unified-delay: true
+
 dns:
     enable: true
     ipv6: false
     # 只绑回环:0.0.0.0 会把客户端机器变成开放 DNS 解析器(放大反射源),
     # 与上方 allow-lan: false 的立场一致。
-    listen: 127.0.0.1:53
+    # 端口必须 >=1024:Android 客户端无 root 绑不了特权端口(issue #114)。
+    listen: 127.0.0.1:1053
     enhanced-mode: fake-ip
     fake-ip-range: 198.18.0.1/16
+    use-hosts: true
+    use-system-hosts: true
     fake-ip-filter:
         - '*.lan'
+        - '*.localdomain'
+        - '*.localhost'
+        - '*.local'
+        - '*.home.arpa'
         - localhost.ptlogin2.qq.com
-    # DoH 防污染;nameserver-policy 让国内/苹果/私有域名走本地 DNS
+        - 'time.*.com'
+        - 'time.*.apple.com'
+        - 'ntp.*.com'
+        - '+.pool.ntp.org'
+        - '+.ntp.org.cn'
+        - '+.time.edu.cn'
+        - captive.apple.com
+        - www.msftconnecttest.com
+        - connect.rom.miui.com
+        - wifi.vivo.com.cn
+        - connectivitycheck.platform.hicloud.com
+        - '+.bilivideo.com'
+        - '+.douyinvod.com'
+        - '+.chat.bilibili.com'
+        - '+.feishu.cn'
+        - '+.dingtalk.com'
+        - 'stun.*.*'
+        - 'stun.*.*.*'
+    # 引导用纯 UDP:解析下方 DoH 主机名与系统默认路径兜底。
+    default-nameserver:
+        - 223.5.5.5
+        - 119.29.29.29
+    # 节点域名解析独立通道:节点能否拨通不依赖主 nameserver 状态。
+    proxy-server-nameserver:
+        - 223.5.5.5
+        - 119.29.29.29
+    # DoH 防污染;nameserver-policy 让国内/苹果/私有域名走本地 DNS。
+    # 禁用境外 DoT/DoH 作 fallback:境内直连不可达,会拖死全部境外域名解析。
     nameserver:
         - https://223.5.5.5/dns-query
         - https://223.6.6.6/dns-query
