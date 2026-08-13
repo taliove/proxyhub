@@ -165,6 +165,7 @@ func (f *Fetcher) FetchContext(ctx context.Context, name, subscriptionURL string
 		Name:  name,
 		URL:   subscriptionURL,
 		Nodes: parsed.Nodes,
+		Hosts: parsed.Hosts,
 	}, diag, nil
 }
 

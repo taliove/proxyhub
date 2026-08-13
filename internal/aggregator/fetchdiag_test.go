@@ -154,3 +154,37 @@ func TestRunSingle_FetchFailureWritesDiag(t *testing.T) {
 		t.Errorf("diag = %+v, want 401/0 nodes/error", d)
 	}
 }
+
+// issue #116:单机场刷新(runSingle)与全量刷新同口径,拉取成功即覆盖落库上游 hosts。
+func TestRunSingle_PersistsAirportHosts(t *testing.T) {
+	agg, st := newTestAggregator(t)
+
+	yamlContent := `proxies:
+  - {name: "SS-01", type: ss, server: ss.example.com, port: 8388, cipher: aes-256-gcm, password: pw}
+hosts:
+  poisoned.example.com: alias.example.com
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(yamlContent))
+	}))
+	t.Cleanup(srv.Close)
+
+	ap, err := st.CreateAirport("hosts机场", srv.URL)
+	if err != nil {
+		t.Fatalf("CreateAirport() error = %v", err)
+	}
+
+	jobID, _, started, err := agg.StartAirportRefreshJob(store.RefreshTriggerManual, ap.ID)
+	if err != nil || !started {
+		t.Fatalf("StartAirportRefreshJob() started = %v, err = %v", started, err)
+	}
+	waitJobStatus(t, st, jobID)
+
+	got, err := st.GetAirportByID(ap.ID)
+	if err != nil {
+		t.Fatalf("GetAirportByID() error = %v", err)
+	}
+	if got.Hosts["poisoned.example.com"] != "alias.example.com" {
+		t.Errorf("Hosts = %v, want captured on single-airport refresh", got.Hosts)
+	}
+}

@@ -31,10 +31,13 @@ func parseClashYAML(content, source string) (*ParseResult, bool) {
 	root := doc.Content[0]
 
 	var proxiesNode *yaml.Node
+	var hostsNode *yaml.Node
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == "proxies" {
+		switch root.Content[i].Value {
+		case "proxies":
 			proxiesNode = root.Content[i+1]
-			break
+		case "hosts":
+			hostsNode = root.Content[i+1]
 		}
 	}
 	if proxiesNode == nil || proxiesNode.Kind != yaml.SequenceNode || len(proxiesNode.Content) == 0 {
@@ -42,6 +45,7 @@ func parseClashYAML(content, source string) (*ParseResult, bool) {
 	}
 
 	result := &ParseResult{}
+	result.Hosts = parseClashHosts(hostsNode, result)
 	for _, item := range proxiesNode.Content {
 		// 失败计数口径与行解析一致;Line 取 YAML 节点的真实源行号
 		result.TotalLines++
@@ -72,6 +76,32 @@ func (r *ParseResult) addClashFailure(line int, reason string) {
 	if len(r.Failures) < maxLineFailures {
 		r.Failures = append(r.Failures, LineFailure{Line: line, Reason: reason})
 	}
+}
+
+// parseClashHosts 捕获上游顶层 hosts 映射(issue #116):标量键→标量值原样收集。
+// hosts 缺失返回 nil;不是 map 或条目非标量时计入解析失败(与 proxies 容错口径
+// 一致),不阻断导入。值统一按标量文本取(域名或 IP 字符串)。
+func parseClashHosts(node *yaml.Node, result *ParseResult) map[string]string {
+	if node == nil {
+		return nil
+	}
+	if node.Kind != yaml.MappingNode {
+		result.addClashFailure(node.Line, "hosts is not a map")
+		return nil
+	}
+	hosts := make(map[string]string, len(node.Content)/2)
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		k, v := node.Content[i], node.Content[i+1]
+		if k.Kind != yaml.ScalarNode || v.Kind != yaml.ScalarNode {
+			result.addClashFailure(k.Line, "hosts entry is not a scalar mapping")
+			continue
+		}
+		hosts[k.Value] = v.Value
+	}
+	if len(hosts) == 0 {
+		return nil
+	}
+	return hosts
 }
 
 // clashProxyToNode 将单个 Clash proxy map 映射为 Node(只落模型已有字段,spec #64 映射表)。

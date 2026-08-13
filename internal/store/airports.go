@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/taliove/proxyhub/internal/subscription"
@@ -37,6 +39,10 @@ type Airport struct {
 	UsageTotal    int64  `json:"usage_total"`
 	UsageExpire   int64  `json:"usage_expire"` // unix 秒;0 = 未知
 	WebPageURL    string `json:"web_page_url"`
+	// Hosts 上游 Clash YAML 顶层 hosts 映射(域名→域名/IP;issue #116):
+	// 机场用来把被 DNS 污染的节点域名改指到可解析别名。拉取型每次成功拉取覆盖更新,
+	// 手动型粘贴导入时覆盖更新;空 = 无映射。渲染订阅时合并进输出 hosts 段。
+	Hosts map[string]string `json:"hosts,omitempty"`
 }
 
 // SelfHostedNode 自建节点
@@ -161,19 +167,34 @@ func (s *Store) createAirportForUser(userID int64, name, url, sourceType string)
 }
 
 // airportColumns 机场查询共用的列清单(ticket 07 起带 user_id;
-// spec-manual-airport-import 起带 source_type 与用量信息列)。
+// spec-manual-airport-import 起带 source_type 与用量信息列;issue #116 起带 hosts)。
 const airportColumns = `id, name, url, abbr, enabled, created_at, user_id,
-	source_type, usage_upload, usage_download, usage_total, usage_expire, web_page_url`
+	source_type, usage_upload, usage_download, usage_total, usage_expire, web_page_url, hosts`
 
 // scanAirport 扫描一行机场(airportColumns 列序的唯一事实源)。
 func scanAirport(row interface{ Scan(...any) error }, a *Airport) error {
 	var enabled int
+	var hosts string
 	if err := row.Scan(&a.ID, &a.Name, &a.URL, &a.Abbr, &enabled, &a.CreatedAt, &a.UserID,
-		&a.SourceType, &a.UsageUpload, &a.UsageDownload, &a.UsageTotal, &a.UsageExpire, &a.WebPageURL); err != nil {
+		&a.SourceType, &a.UsageUpload, &a.UsageDownload, &a.UsageTotal, &a.UsageExpire, &a.WebPageURL, &hosts); err != nil {
 		return err
 	}
 	a.Enabled = enabled == 1
+	a.Hosts = decodeAirportHosts(hosts)
 	return nil
+}
+
+// decodeAirportHosts 反序列化 hosts 列;空串/非法 JSON 一律零值(列内容只来自
+// 本包的覆盖写路径,非法值视为无映射,不报错)。
+func decodeAirportHosts(raw string) map[string]string {
+	if raw == "" {
+		return nil
+	}
+	var hosts map[string]string
+	if err := json.Unmarshal([]byte(raw), &hosts); err != nil {
+		return nil
+	}
+	return hosts
 }
 
 // ListAirports 列出所有机场(跨用户,全量视角;
@@ -249,6 +270,85 @@ func (s *Store) GetAirportByIDForUser(userID, id int64) (*Airport, error) {
 		return nil, fmt.Errorf("query airport: %w", err)
 	}
 	return &a, nil
+}
+
+// UpdateAirportHosts 覆盖更新机场 hosts 映射(拉取捕获路径,issue #116)。
+// 空/nil = 显式清空:上游不再声明 hosts 时不残留旧映射。
+func (s *Store) UpdateAirportHosts(id int64, hosts map[string]string) error {
+	_, err := s.db.Exec(`UPDATE airports SET hosts = ? WHERE id = ?`, encodeAirportHosts(hosts), id)
+	return err
+}
+
+// UpdateAirportHostsForUser 按属主覆盖更新机场 hosts 映射(手动粘贴导入路径)。
+// 行属他人时 ErrNotFound;userID=0 跳过属主校验(与 SetAirportUsageForUser 一致)。
+func (s *Store) UpdateAirportHostsForUser(userID, id int64, hosts map[string]string) error {
+	if userID == 0 {
+		return s.UpdateAirportHosts(id, hosts)
+	}
+	res, err := s.db.Exec(`UPDATE airports SET hosts = ? WHERE id = ? AND user_id = ?`,
+		encodeAirportHosts(hosts), id, userID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// encodeAirportHosts 序列化 hosts 映射;空映射落空串(= 无映射)。
+func encodeAirportHosts(hosts map[string]string) string {
+	if len(hosts) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(hosts)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// GetAirportsHostsForUser 按来源名取各机场的 hosts 映射(渲染订阅时按端点可见
+// 节点池的来源集合查询,issue #116)。返回 map[机场名]hosts;未知机场名不出现在
+// 结果里。userID=0 退化为全量视角(与 ListAirports 一致,供超管分片使用)。
+func (s *Store) GetAirportsHostsForUser(userID int64, names []string) (map[string]map[string]string, error) {
+	out := make(map[string]map[string]string, len(names))
+	if len(names) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, 0, len(names))
+	args := make([]any, 0, len(names)+1)
+	for _, n := range names {
+		placeholders = append(placeholders, "?")
+		args = append(args, n)
+	}
+	query := `SELECT name, hosts FROM airports WHERE name IN (` + strings.Join(placeholders, ",") + `)`
+	if userID != 0 {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	// 同名机场(表无 UNIQUE(user_id,name),与节点池按机场名折叠的既有模型一致):
+	// 按 id 排序,同名后建者胜——注释固定此语义,折叠结果确定。
+	query += ` ORDER BY id`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query airport hosts: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name, raw string
+		if err := rows.Scan(&name, &raw); err != nil {
+			return nil, fmt.Errorf("scan airport hosts: %w", err)
+		}
+		if hosts := decodeAirportHosts(raw); len(hosts) > 0 {
+			out[name] = hosts
+		}
+	}
+	return out, rows.Err()
 }
 
 // UpdateAirportUsage 覆盖更新机场用量信息(拉取捕获路径,spec-manual-airport-import)。

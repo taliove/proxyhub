@@ -477,3 +477,68 @@ func TestDefaultTemplate_Valid(t *testing.T) {
 		t.Errorf("last rule = %q, want MATCH catch-all", last)
 	}
 }
+
+// --- issue #116:渲染时合并上游 hosts ---
+
+func TestRenderTemplateWithHosts_MergesUpstream(t *testing.T) {
+	tmpl := `
+proxy-groups:
+  - name: 手动切换
+    type: select
+    proxies: [DIRECT, '{{nodes}}']
+rules:
+  - MATCH,手动切换
+`
+	upstream := map[string]string{"poisoned.example.com": "alias.example.com"}
+	data, err := RenderTemplateWithHosts(tmpl, sampleNodes(), upstream)
+	if err != nil {
+		t.Fatalf("RenderTemplateWithHosts() error = %v", err)
+	}
+	doc := parseClash(t, data)
+	if doc.Hosts["poisoned.example.com"] != "alias.example.com" {
+		t.Errorf("upstream hosts not merged: %v", doc.Hosts)
+	}
+}
+
+func TestRenderTemplateWithHosts_TemplateWinsOnConflict(t *testing.T) {
+	// 键冲突语义:模板自带 hosts 覆盖上游同键(模板是运营者显式意图)
+	tmpl := `
+hosts:
+  poisoned.example.com: 203.0.113.1
+proxy-groups:
+  - name: 手动切换
+    type: select
+    proxies: [DIRECT, '{{nodes}}']
+rules:
+  - MATCH,手动切换
+`
+	upstream := map[string]string{"poisoned.example.com": "alias.example.com"}
+	data, err := RenderTemplateWithHosts(tmpl, sampleNodes(), upstream)
+	if err != nil {
+		t.Fatalf("RenderTemplateWithHosts() error = %v", err)
+	}
+	doc := parseClash(t, data)
+	if doc.Hosts["poisoned.example.com"] != "203.0.113.1" {
+		t.Errorf("conflict: hosts = %v, want template value 203.0.113.1", doc.Hosts)
+	}
+}
+
+func TestRenderTemplateWithHosts_NilHostsNoSection(t *testing.T) {
+	// 无上游 hosts 且模板未声明:输出不产生 hosts 段(零回归)
+	tmpl := `
+proxy-groups:
+  - name: 手动切换
+    type: select
+    proxies: [DIRECT, '{{nodes}}']
+rules:
+  - MATCH,手动切换
+`
+	data, err := RenderTemplateWithHosts(tmpl, sampleNodes(), nil)
+	if err != nil {
+		t.Fatalf("RenderTemplateWithHosts() error = %v", err)
+	}
+	doc := parseClash(t, data)
+	if doc.Hosts != nil {
+		t.Errorf("hosts = %v, want absent", doc.Hosts)
+	}
+}

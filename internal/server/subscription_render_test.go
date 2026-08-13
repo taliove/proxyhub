@@ -202,3 +202,50 @@ proxy-groups:
 		t.Errorf("v2ray format should not use Clash template")
 	}
 }
+
+// --- issue #116:渲染合并上游 hosts ---
+
+func TestRenderSubscription_MergesUpstreamHosts(t *testing.T) {
+	srv, st := newEndpointTestServer(t, endpointTestPool())
+	userID := int64(789)
+
+	// 机场记录带 hosts 映射
+	airport, err := st.CreateAirportForUser(userID, "机场A", "https://example.com/sub")
+	if err != nil {
+		t.Fatalf("create airport: %v", err)
+	}
+	if err := st.UpdateAirportHosts(airport.ID, map[string]string{
+		"poisoned.example.com": "alias.example.com",
+	}); err != nil {
+		t.Fatalf("update airport hosts: %v", err)
+	}
+
+	ep, err := st.CreateEndpointForUser(userID, "test-ep-hosts")
+	if err != nil {
+		t.Fatalf("create endpoint: %v", err)
+	}
+
+	// 池里带该机场来源的节点 → 输出应含合并 hosts
+	nodes := []*subscription.Node{
+		{Name: "n1", Type: "ss", Server: "x.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Source: "机场A"},
+	}
+	data, _, err := srv.renderSubscriptionForEndpoint(nodes, "clash", ep)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(string(data), "alias.example.com") {
+		t.Errorf("rendered config should contain merged hosts, got:\n%s", string(data))
+	}
+
+	// 自建来源不参与 hosts 合并(查不到对应机场记录,输出无 hosts)
+	selfNodes := []*subscription.Node{
+		{Name: "self", Type: "ss", Server: "y.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Source: subscription.SourceSelfHosted},
+	}
+	data, _, err = srv.renderSubscriptionForEndpoint(selfNodes, "clash", ep)
+	if err != nil {
+		t.Fatalf("render self: %v", err)
+	}
+	if strings.Contains(string(data), "alias.example.com") {
+		t.Errorf("self-hosted nodes should not pull airport hosts, got:\n%s", string(data))
+	}
+}

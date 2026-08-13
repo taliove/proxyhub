@@ -103,3 +103,36 @@ proxies:
 		t.Errorf("pool 缺节点: reality=%v ss=%v", reality, ssFound)
 	}
 }
+
+// issue #116:粘贴 YAML 的 hosts 段随导入覆盖落库到机场记录。
+func TestImportAirport_ClashYAML_HostsCaptured(t *testing.T) {
+	s, st := newTestServer(t, nil)
+	id := createManualAirport(t, s, "YAML机场-hosts")
+
+	content := `proxies:
+  - name: 'SS-01'
+    type: ss
+    server: ss01.example.com
+    port: 8388
+    cipher: aes-256-gcm
+    password: ss-password
+hosts:
+  poisoned.example.com: alias.example.com
+`
+	payload, _ := json.Marshal(map[string]any{"content": content})
+	req := httptest.NewRequest(http.MethodPost, "/airports/1/import", bytes.NewReader(payload))
+	req.SetPathValue("id", formatID(id))
+	w := httptest.NewRecorder()
+	s.handleImportAirport(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	airport, err := st.GetAirportByID(id)
+	if err != nil {
+		t.Fatalf("GetAirportByID() error = %v", err)
+	}
+	if airport.Hosts["poisoned.example.com"] != "alias.example.com" {
+		t.Errorf("airport hosts = %v, want captured from pasted YAML", airport.Hosts)
+	}
+}

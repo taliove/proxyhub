@@ -136,6 +136,14 @@ func (s *Server) handleImportAirport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// hosts 保真(issue #116):粘贴内容里的上游 hosts 映射覆盖落库(空 = 显式清空)。
+	// 顺序同用量:先入池成功再写,避免冲突 409 时 hosts 已被覆写。
+	if err := s.st.UpdateAirportHostsForUser(effUID, id, parsed.Hosts); err != nil {
+		s.logger.Error("update airport hosts failed", "airport_id", id, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	// 用量信息可选同贴,仅手动机场生效(拉取型机场的用量由响应头自动捕获,
 	// 随贴字段一律忽略不报错——与设置接口忽略非适用键的惯例一致,design-airports.md)。
 	// 顺序(Check L3):先入池成功再写用量,避免冲突 409 时用量已被覆写。

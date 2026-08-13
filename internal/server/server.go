@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -327,9 +328,10 @@ func (s *Server) onExamComplete(userID int64, nodeKey string, report detection.E
 }
 
 // writebackBackfillHealth 补齐信息的列表字段写回:
-// - 解锁各目标 → node_health(列表「解锁」列的数据源);
-// - connectivity(可用性=出网段非全失败,延迟=短采样中位 RTT)→ node_health + 内存池
-//   (列表「状态/延迟」列),修"补齐后延迟仍空杠"。
+//   - 解锁各目标 → node_health(列表「解锁」列的数据源);
+//   - connectivity(可用性=出网段非全失败,延迟=短采样中位 RTT)→ node_health + 内存池
+//     (列表「状态/延迟」列),修"补齐后延迟仍空杠"。
+//
 // 全部 best-effort:失败记日志,不重试(下一轮补齐/夜间任务会再来)。
 func (s *Server) writebackBackfillHealth(userID int64, nodeKey string, report detection.ExamReport) {
 	var results []detection.Result
@@ -1919,7 +1921,7 @@ type nodeView struct {
 	PluginOpts      string `json:"plugin_opts,omitempty"` // 插件参数原始串("obfs=http;obfs-host=x")
 	GrpcServiceName string `json:"grpc_service_name,omitempty"`
 	GrpcAuthority   string `json:"grpc_authority,omitempty"` // gRPC Host(mihomo 读 servername)
-	Insecure        bool   `json:"insecure,omitempty"` // 跳过证书校验(订阅里的 insecure=1)
+	Insecure        bool   `json:"insecure,omitempty"`       // 跳过证书校验(订阅里的 insecure=1)
 	Region          string `json:"region"`
 	Source          string `json:"source"`
 	Latency         int    `json:"latency"`
@@ -2489,9 +2491,44 @@ func (s *Server) renderSubscriptionForEndpoint(nodes []*subscription.Node, forma
 		if tErr != nil {
 			return nil, "", fmt.Errorf("resolve template: %w", tErr)
 		}
-		data, err = generator.RenderTemplate(tmpl, nodes)
+		data, err = generator.RenderTemplateWithHosts(tmpl, nodes, s.upstreamHostsForNodes(ep, nodes))
 		return data, "text/yaml; charset=utf-8", err
 	}
+}
+
+// upstreamHostsForNodes 合并端点可见节点池所涉来源(机场)的上游 hosts 映射
+// (issue #116)。合并顺序按来源名字典序,同键后并者覆盖(确定性语义);模板自带
+// hosts 在生成器内再覆盖一层,优先级最高。查询失败降级为空映射——hosts 是解析
+// 辅助,不应让订阅下发因它失败。
+func (s *Server) upstreamHostsForNodes(ep *store.Endpoint, nodes []*subscription.Node) map[string]string {
+	seen := make(map[string]bool)
+	names := make([]string, 0, 4)
+	for _, n := range nodes {
+		if n.Source == "" || n.Source == subscription.SourceSelfHosted || seen[n.Source] {
+			continue
+		}
+		seen[n.Source] = true
+		names = append(names, n.Source)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	perAirport, err := s.st.GetAirportsHostsForUser(ep.UserID, names)
+	if err != nil {
+		s.logger.Warn("get airport hosts failed, render without hosts", "endpoint_id", ep.ID, "error", err)
+		return nil
+	}
+	var merged map[string]string
+	for _, name := range names {
+		for k, v := range perAirport[name] {
+			if merged == nil {
+				merged = make(map[string]string, len(perAirport[name]))
+			}
+			merged[k] = v
+		}
+	}
+	return merged
 }
 
 // resolveTemplateForEndpoint implements the 4-level fallback chain for template resolution.
