@@ -34,7 +34,9 @@ const DrawerStub = defineComponent({
     'public-name',
     'conditions',
     'delete',
-    'qrcode'
+    'qrcode',
+    'reset-link',
+    'extend-grace'
   ],
   setup(props, { emit }) {
     return () =>
@@ -63,6 +65,19 @@ const DrawerStub = defineComponent({
                 'button',
                 { class: 'drawer-delete-btn', onClick: () => emit('delete', props.endpoint) },
                 '抽屉删除'
+              ),
+              h(
+                'button',
+                { class: 'drawer-reset-btn', onClick: () => emit('reset-link', props.endpoint) },
+                '抽屉重置链接'
+              ),
+              h(
+                'button',
+                {
+                  class: 'drawer-extend-btn',
+                  onClick: () => emit('extend-grace', props.endpoint)
+                },
+                '抽屉延长宽限'
               )
             ]
           )
@@ -285,5 +300,73 @@ describe('Endpoints(行内极简 + 详情抽屉)', () => {
     })
     // 保存后刷新列表
     expect(vi.mocked(client.get)).toHaveBeenCalledWith('/endpoints')
+  })
+})
+
+// --- issue #117:链接重置交互 ---
+describe('Endpoints 链接重置(issue #117)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('抽屉「重置链接」:确认后调重置接口并弹出成功弹窗', async () => {
+    const rotated: Endpoint = {
+      ...endpoint,
+      path: 'newpath1',
+      token: 'newtok1',
+      grace_expires_at: '2026-08-16 00:00:00'
+    }
+    vi.mocked(client.post).mockResolvedValue(rotated as never)
+    const wrapper = mountView()
+    await flushPromises()
+
+    // 打开抽屉 → 点桩里的重置按钮
+    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    await detailBtn!.trigger('click')
+    await flushPromises()
+    const resetBtn = wrapper.findAll('button').find((b) => b.text() === '抽屉重置链接')
+    await resetBtn!.trigger('click')
+    await flushPromises()
+
+    expect(client.post).toHaveBeenCalledWith('/endpoints/7/reset-link')
+    // 成功弹窗打开,展示新 URL
+    const dialog = wrapper.findComponent({ name: 'EndpointResetResultDialog' })
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.props('url')).toBe('http://localhost:3000/sub/newpath1?token=newtok1')
+  })
+
+  it('抽屉「延长宽限」:调用延长接口并刷新', async () => {
+    vi.mocked(client.post).mockResolvedValue({
+      ...endpoint,
+      grace_expires_at: '2026-08-19 00:00:00'
+    } as never)
+    const wrapper = mountView()
+    await flushPromises()
+
+    const detailBtn = wrapper.findAll('button').find((b) => b.text() === '详情')
+    await detailBtn!.trigger('click')
+    await flushPromises()
+    const extBtn = wrapper.findAll('button').find((b) => b.text() === '抽屉延长宽限')
+    await extBtn!.trigger('click')
+    await flushPromises()
+
+    expect(client.post).toHaveBeenCalledWith('/endpoints/7/reset-link/extend')
+    // 刷新列表(client.get 至少 2 次:首载 + 刷新)
+    expect(vi.mocked(client.get).mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('「全部重置链接」:确认后逐条调用端点级重置接口', async () => {
+    const second: Endpoint = { ...endpoint, id: 8, alias: '第二条' }
+    vi.mocked(client.post).mockResolvedValue(endpoint as never)
+    const wrapper = mountView([endpoint, second])
+    await flushPromises()
+
+    const allBtn = wrapper.findAll('button').find((b) => b.text() === '全部重置链接')
+    await allBtn!.trigger('click')
+    await flushPromises()
+
+    expect(client.post).toHaveBeenCalledWith('/endpoints/7/reset-link')
+    expect(client.post).toHaveBeenCalledWith('/endpoints/8/reset-link')
+    expect(vi.mocked(client.post).mock.calls.length).toBe(2)
   })
 })

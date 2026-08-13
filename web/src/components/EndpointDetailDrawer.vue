@@ -34,6 +34,16 @@
           <el-descriptions-item label="配置模板">
             <span>{{ templateDisplay }}</span>
           </el-descriptions-item>
+          <!-- 链接重置宽限(issue #117):仅重置后存在旧链接宽限期时展示;
+               过期后端不再可延(会 404),前端按时间先藏掉延长入口 -->
+          <el-descriptions-item v-if="graceAlive" label="旧链接宽限">
+            <div class="toggle-row">
+              <el-tag type="warning" size="small">至 {{ endpoint?.grace_expires_at }} UTC</el-tag>
+              <el-button link type="primary" @click="emit('extend-grace', endpoint!)">
+                延长 +3 天
+              </el-button>
+            </div>
+          </el-descriptions-item>
           <el-descriptions-item label="状态">
             <StatusDot
               :tone="endpoint.enabled ? 'success' : 'muted'"
@@ -96,6 +106,9 @@
             </span>
           </el-tooltip>
           <el-button size="small" @click="openTemplateConfig">配置模板</el-button>
+          <el-button size="small" type="warning" @click="emit('reset-link', endpoint)">
+            重置链接
+          </el-button>
           <el-button size="small" type="danger" @click="emit('delete', endpoint)">删除</el-button>
         </div>
       </div>
@@ -184,6 +197,8 @@ const emit = defineEmits<{
   (e: 'picks', endpoint: Endpoint): void
   (e: 'delete', endpoint: Endpoint): void
   (e: 'qrcode', endpoint: Endpoint): void
+  (e: 'reset-link', endpoint: Endpoint): void
+  (e: 'extend-grace', endpoint: Endpoint): void
   (e: 'template-changed'): void
   (e: 'status-node-changed'): void
 }>()
@@ -191,6 +206,13 @@ const emit = defineEmits<{
 const drawerTitle = computed(() =>
   props.endpoint ? `订阅详情 - ${props.endpoint.alias}` : '订阅详情'
 )
+
+// 宽限存活判定(UTC 文本同格式比较;空串 = 无宽限)
+const graceAlive = computed(() => {
+  const g = props.endpoint?.grace_expires_at
+  if (!g) return false
+  return g > new Date().toISOString().slice(0, 19).replace('T', ' ')
+})
 
 // ---- 模板配置:显示当前模板,提供改绑入口 ----
 const templateDisplay = computed(() => {

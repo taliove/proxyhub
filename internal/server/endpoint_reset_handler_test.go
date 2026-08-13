@@ -155,3 +155,33 @@ func TestAdminResetLinkAPI(t *testing.T) {
 		t.Errorf("admin reset did not rotate path")
 	}
 }
+
+// 管理端列出指定用户的订阅地址(代为重置界面的数据源)。
+func TestAdminListUserEndpoints(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+
+	ep, _ := st.CreateEndpoint("被列出的订阅")
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/admin/users/"+strconv.FormatInt(ep.UserID, 10)+"/endpoints", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var list []store.Endpoint
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	found := false
+	for _, e := range list {
+		if e.ID == ep.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("endpoint %d not in admin list response", ep.ID)
+	}
+}

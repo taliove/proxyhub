@@ -6,6 +6,7 @@
 // - Usage counts are top-level (airport_count / endpoint_count), not on quota.
 // - quota is null when the user has no quota row (e.g. the seeded super admin).
 import client from './client'
+import type { Endpoint } from '@/types'
 
 // UserQuota describes per-user resource limits configured by the admin.
 export interface UserQuota {
@@ -148,4 +149,14 @@ export function exitSwitch(): Promise<{ ok: boolean }> {
 // "viewing as X" when impersonating.
 export function currentView(): Promise<CurrentViewResponse> {
   return client.get<unknown, CurrentViewResponse>('/admin/current-view')
+}
+
+// 管理员代为重置(issue #117):列出指定用户的订阅地址,供管理端逐条操作。
+export function adminListUserEndpoints(userId: number): Promise<Endpoint[]> {
+  return client.get<unknown, Endpoint[]>(`/admin/users/${userId}/endpoints`)
+}
+
+// 管理员代为重置指定用户某条订阅链接(原位轮换,旧链接开启 3 天宽限)
+export function adminResetEndpointLink(userId: number, endpointId: number): Promise<Endpoint> {
+  return client.post<unknown, Endpoint>(`/admin/users/${userId}/endpoints/${endpointId}/reset-link`)
 }

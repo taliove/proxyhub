@@ -25,6 +25,8 @@ export interface Endpoint {
   // 订阅 profile 公开名称(issue #38):非空时客户端显示「ProxyHub · <公开名>」,
   // 空串=未设=裸品牌名;与私有 alias(绝不下发)相对。
   public_name: string
+  // 链接重置宽限(issue #117):旧链接的最后可用时刻(UTC 文本);'' = 无宽限
+  grace_expires_at?: string
   // 精选节点集(issue #80,后端 issue #79):NodeKey 数组的 JSON 字符串;
   // ''=未配置=全量,解析失败按空(与后端 endpointNodePicks 降级语义一致)。
   // NodeKey = server:port(节点 SNI 非空时 server:port:sni),改名仍命中、下架自然失效。

@@ -66,6 +66,26 @@ func (s *Server) handleExtendEndpointGrace(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, ep)
 }
 
+// handleAdminListUserEndpoints 列出指定用户的订阅地址(adminGuard 之后),
+// 供管理端"代为重置"界面逐条操作。只读,不改任何状态。
+func (s *Server) handleAdminListUserEndpoints(w http.ResponseWriter, r *http.Request) {
+	uid, err := parseAdminUserID(r)
+	if err != nil {
+		http.Error(w, "invalid user id", http.StatusBadRequest)
+		return
+	}
+	eps, err := s.st.ListEndpointsByUser(uid)
+	if err != nil {
+		s.logger.Error("admin list user endpoints failed", "user_id", uid, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if eps == nil {
+		eps = []*store.Endpoint{}
+	}
+	writeJSON(w, eps)
+}
+
 // handleAdminResetEndpointLink 管理员代为重置指定用户的订阅链接(adminGuard 之后):
 // 先按属主反查端点(行不属该用户 404),再原位轮换。用户失联/链接泄露应急用。
 func (s *Server) handleAdminResetEndpointLink(w http.ResponseWriter, r *http.Request) {

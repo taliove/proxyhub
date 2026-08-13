@@ -834,6 +834,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/users/{id}/enable", adminGuard(s.handleAdminEnableUser))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", adminGuard(s.handleAdminDeleteUser))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-password", adminGuard(s.handleAdminResetPassword))
+	mux.HandleFunc("GET /api/admin/users/{id}/endpoints", adminGuard(s.handleAdminListUserEndpoints))
 	mux.HandleFunc("POST /api/admin/users/{id}/endpoints/{eid}/reset-link", adminGuard(s.handleAdminResetEndpointLink))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-mfa", adminGuard(s.handleAdminResetMFA))
 	// 清空目标用户受信 IP(ticket 10):设备/网络疑似失陷时逼回完整 MFA 挑战。

@@ -60,6 +60,7 @@
               </el-button>
               <el-button v-else link type="warning" @click="onDisable(row)">禁用</el-button>
               <el-button link type="primary" @click="onResetPassword(row)">重置密码</el-button>
+              <el-button link type="warning" @click="openEndpointsDialog(row)">订阅链接</el-button>
               <el-button link type="warning" @click="onClearTrustedIPs(row)">
                 清空受信 IP
               </el-button>
@@ -146,6 +147,9 @@
         <el-button type="primary" @click="passwordResultVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 代为重置订阅链接(issue #117):独立组件,内部自管列表/确认/结果弹窗 -->
+    <AdminUserEndpointsDialog v-model="endpointsVisible" :user="endpointsUser" />
   </div>
 </template>
 
@@ -153,6 +157,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
+import AdminUserEndpointsDialog from '@/components/AdminUserEndpointsDialog.vue'
 import { copyPassword, generatePassword, toastCreateUserError } from '@/utils/useradmin'
 import type { AdminUser } from '@/api/users'
 import { listUsers, createUser, updateUser } from '@/api/users'
@@ -282,6 +287,14 @@ async function submitEdit() {
 
 onMounted(load)
 
+// ---- 代为重置订阅链接(issue #117):打开独立对话框组件即可 ----
+const endpointsVisible = ref(false)
+const endpointsUser = ref<AdminUser | null>(null)
+const openEndpointsDialog = (row: AdminUser) => {
+  endpointsUser.value = row
+  endpointsVisible.value = true
+}
+
 // Exposed for component tests (script-setup bindings stay internal otherwise).
 defineExpose({
   createForm,
@@ -324,5 +337,8 @@ defineExpose({
 }
 .pw-append :deep(.el-input-group__append .el-button + .el-button) {
   border-left: var(--el-border);
+}
+.muted {
+  color: var(--ph-text-secondary);
 }
 </style>
