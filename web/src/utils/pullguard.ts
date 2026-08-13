@@ -32,7 +32,9 @@ const PULL_STATUS_META: Record<string, LabelMeta> = {
   // 订阅地址存在但已停用
   disabled: { label: '已禁用', tag: 'info' },
   // 未知 path 或 token 不匹配(对客户端统一 404)
-  bad_token: { label: '错误令牌', tag: 'danger' }
+  bad_token: { label: '错误令牌', tag: 'danger' },
+  // 链接重置宽限期内的上一代链接下发(issue #117):供管理员观察蹭用迁移
+  grace_ok: { label: '宽限下发', tag: 'warning' }
 }
 
 /** pullStatusLabel 返回拉取状态的中文展示名;空值给"未知",未知取值原样返回。 */

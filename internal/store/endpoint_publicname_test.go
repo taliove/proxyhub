@@ -63,6 +63,10 @@ INSERT INTO endpoints (alias, path, token) VALUES ('example.com', 'legacypath000
 	if err := s.migrateEndpointSlotMode(); err != nil {
 		t.Fatalf("migrateEndpointSlotMode: %v", err)
 	}
+	// prev_path/prev_token/grace_expires_at(issue #117)同理
+	if err := s.migrateEndpointLinkReset(); err != nil {
+		t.Fatalf("migrateEndpointLinkReset: %v", err)
+	}
 
 	ep, err := s.GetEndpointByPath("legacypath000000")
 	if err != nil {

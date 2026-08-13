@@ -35,6 +35,13 @@ func DefaultTemplate() string {
 //
 // 节点名会先去重（Clash 要求唯一），组里展开的名称与 proxies 字段里的名称保持一致。
 func RenderTemplate(template string, nodes []*subscription.Node) ([]byte, error) {
+	return RenderTemplateWithHosts(template, nodes, nil)
+}
+
+// RenderTemplateWithHosts 同 RenderTemplate,额外把上游机场的 hosts 映射合并进
+// 输出的 hosts 段(issue #116):上游映射为底,模板自带 hosts 同键覆盖(模板是
+// 运营者显式意图,优先级最高)。上游与模板都没有 hosts 时输出不产生 hosts 段。
+func RenderTemplateWithHosts(template string, nodes []*subscription.Node, upstreamHosts map[string]string) ([]byte, error) {
 	if template == "" {
 		return nil, fmt.Errorf("template is empty")
 	}
@@ -50,6 +57,8 @@ func RenderTemplate(template string, nodes []*subscription.Node) ([]byte, error)
 		// 模板仅含空白/注释，解析出的映射为空
 		return nil, fmt.Errorf("template has no content")
 	}
+
+	mergeUpstreamHosts(cfg, upstreamHosts)
 
 	// 生成节点的完整代理配置 + 与之一一对应的（去重后）名称列表。
 	proxies, names, err := buildProxies(nodes)
@@ -77,6 +86,23 @@ func RenderTemplate(template string, nodes []*subscription.Node) ([]byte, error)
 		return nil, fmt.Errorf("marshal clash config: %w", err)
 	}
 	return data, nil
+}
+
+// mergeUpstreamHosts 把上游 hosts 合并进 cfg["hosts"]:模板自带条目同键胜出。
+func mergeUpstreamHosts(cfg map[string]any, upstream map[string]string) {
+	if len(upstream) == 0 {
+		return
+	}
+	merged := make(map[string]any, len(upstream))
+	for k, v := range upstream {
+		merged[k] = v
+	}
+	if existing, ok := cfg["hosts"].(map[string]any); ok {
+		for k, v := range existing {
+			merged[k] = v
+		}
+	}
+	cfg["hosts"] = merged
 }
 
 // buildProxies 把节点池转换为 Clash proxies 列表，并返回去重后的名称序列。

@@ -507,3 +507,56 @@ mode: rule
 			result.TotalLines, result.ParseFailures)
 	}
 }
+
+// --- issue #116:上游 hosts 保真,解析缝 ---
+
+func TestParseClashYAML_CapturesHosts(t *testing.T) {
+	content := `proxies:
+  - {name: "SS-01", type: ss, server: ss.example.com, port: 12000, cipher: aes-128-gcm, password: p}
+hosts:
+  poisoned.example.com: alias.example.com
+  static.example.com: 192.0.2.1
+`
+	res := ParseWithStats(content, "test")
+	if len(res.Nodes) != 1 {
+		t.Fatalf("nodes = %d, want 1", len(res.Nodes))
+	}
+	if res.Hosts["poisoned.example.com"] != "alias.example.com" {
+		t.Errorf("hosts not captured: %v", res.Hosts)
+	}
+	if res.Hosts["static.example.com"] != "192.0.2.1" {
+		t.Errorf("hosts IP value not captured: %v", res.Hosts)
+	}
+}
+
+func TestParseClashYAML_NoHosts(t *testing.T) {
+	content := `proxies:
+  - {name: "SS-01", type: ss, server: ss.example.com, port: 12000, cipher: aes-128-gcm, password: p}
+`
+	res := ParseWithStats(content, "test")
+	if len(res.Nodes) != 1 {
+		t.Fatalf("nodes = %d, want 1", len(res.Nodes))
+	}
+	if res.Hosts != nil {
+		t.Errorf("Hosts = %v, want nil(未声明 hosts 时保持零值)", res.Hosts)
+	}
+}
+
+func TestParseClashYAML_MalformedHosts(t *testing.T) {
+	// hosts 不是 map:计入解析失败统计,不阻断导入,节点照常解析
+	content := `proxies:
+  - {name: "SS-01", type: ss, server: ss.example.com, port: 12000, cipher: aes-128-gcm, password: p}
+hosts:
+  - not-a-map
+`
+	res := ParseWithStats(content, "test")
+	if len(res.Nodes) != 1 {
+		t.Fatalf("nodes = %d, want 1(节点不应被 hosts 形态问题连坐)", len(res.Nodes))
+	}
+	if res.ParseFailures == 0 {
+		t.Error("malformed hosts should count as parse failure")
+	}
+	if res.Hosts != nil {
+		t.Errorf("Hosts = %v, want nil on malformed hosts", res.Hosts)
+	}
+}

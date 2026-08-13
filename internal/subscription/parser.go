@@ -22,6 +22,10 @@ type ParseResult struct {
 	ParseFailures int
 	// Failures 失败行明细(加法式附加;条数上限 maxLineFailures,ParseFailures 是全量计数)。
 	Failures []LineFailure
+	// Hosts 上游 Clash YAML 顶层 hosts 映射(域名→域名/IP),机场用来把被 DNS 污染
+	// 的节点域名改指到可解析别名(issue #116)。仅 Clash YAML 形态有;行解析形态无此
+	// 概念,保持 nil。渲染订阅时合并进输出的 hosts 段。
+	Hosts map[string]string
 }
 
 // DedupeByNodeKey 行内去重(手动机场粘贴导入):同 NodeKey 后条覆盖前条,

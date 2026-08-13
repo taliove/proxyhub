@@ -1,6 +1,6 @@
 // Endpoint (subscription address) API client
 import client from './client'
-import type { NodePick } from '@/types'
+import type { Endpoint, NodePick } from '@/types'
 
 export interface UpdateEndpointTemplateRequest {
   template_name: string // Empty string to unbind (follow default)
@@ -68,4 +68,15 @@ export function updateEndpointPublicName(id: number, publicName: string): Promis
   return client.put<unknown, { ok: boolean }>(`/endpoints/${id}/public-name`, {
     public_name: publicName
   })
+}
+
+// 订阅链接重置(issue #117):原位轮换 path+token,端点配置全保留,
+// 旧链接开启 3 天宽限。响应为轮换后的完整端点(新 path/token/grace_expires_at)。
+export function resetEndpointLink(id: number): Promise<Endpoint> {
+  return client.post<unknown, Endpoint>(`/endpoints/${id}/reset-link`)
+}
+
+// 延长宽限 +3 天(仅宽限存活期;过期/从未重置后端 404)
+export function extendEndpointGrace(id: number): Promise<Endpoint> {
+  return client.post<unknown, Endpoint>(`/endpoints/${id}/reset-link/extend`)
 }

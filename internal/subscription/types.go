@@ -160,6 +160,8 @@ type Subscription struct {
 	Name  string  // 机场名称
 	URL   string  // 订阅 URL
 	Nodes []*Node // 节点列表
+	// Hosts 上游 Clash YAML 顶层 hosts 映射(issue #116);非 Clash YAML 形态为 nil。
+	Hosts map[string]string
 }
 
 // NodeList 节点列表（用于排序和过滤）

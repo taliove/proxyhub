@@ -106,6 +106,7 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 	}
 	rl.fetchDiag(airport, diag, "")
 	k.agg.persistAirportUsage(airport, diag)
+	k.agg.persistAirportHosts(airport, sub) // issue #116:与全量刷新同口径,拉取成功即落库
 	rl.event(levelInfo, stageFetch, fmt.Sprintf("「%s」拉取成功,%d 个节点", airport.Name, len(sub.Nodes)),
 		map[string]any{
 			"airport": airport.Name, "nodes": len(sub.Nodes),

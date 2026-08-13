@@ -499,6 +499,18 @@ func (a *Aggregator) persistAirportUsage(airport *store.Airport, diag *subscript
 	}
 }
 
+// persistAirportHosts 拉取成功后覆盖落库上游 hosts 映射(issue #116;含空映射
+// 清空:上游不再声明 hosts 时不残留旧映射)。落库失败不阻断拉取主路径。
+// 全量与单机场刷新共用;拉取失败/取消的旧映射原样保留(与 per-source 合并语义一致)。
+func (a *Aggregator) persistAirportHosts(airport *store.Airport, sub *subscription.Subscription) {
+	if sub == nil {
+		return
+	}
+	if err := a.st.UpdateAirportHosts(airport.ID, sub.Hosts); err != nil {
+		a.logger.Warn("update airport hosts failed", "airport", airport.Name, "error", err)
+	}
+}
+
 // fetchResult 拉取阶段产出
 type fetchResult struct {
 	airportNodes map[string][]*subscription.Node // 按机场分组（拉取失败的为 nil），供告警判断
@@ -751,6 +763,7 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 			}
 			rl.fetchDiag(airport, diag, "")
 			a.persistAirportUsage(airport, diag)
+			a.persistAirportHosts(airport, sub)
 			rl.event(levelInfo, stageFetch, fmt.Sprintf("「%s」拉取成功，%d 个节点", airport.Name, len(sub.Nodes)),
 				map[string]any{
 					"airport": airport.Name, "nodes": len(sub.Nodes),

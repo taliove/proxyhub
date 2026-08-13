@@ -5,13 +5,15 @@
     </PageHeader>
 
     <el-card>
-      <!-- 精选状态筛选(issue #87):全部 / 全量 / 已精选,前端过滤不改接口 -->
       <div class="list-toolbar">
         <el-radio-group v-model="picksFilter" size="small">
           <el-radio-button label="all">全部</el-radio-button>
           <el-radio-button label="full">全量</el-radio-button>
           <el-radio-button label="picked">已精选</el-radio-button>
         </el-radio-group>
+        <el-button size="small" :loading="resetAllLoading" @click="resetAllLinks"
+          >全部重置链接</el-button
+        >
       </div>
       <el-table v-loading="loading" :data="filteredEndpoints" row-key="id">
         <el-table-column prop="alias" label="别名" />
@@ -165,11 +167,19 @@
       @picks="openNodePicks"
       @delete="deleteEndpoint"
       @qrcode="showSubscriptionQR"
+      @reset-link="resetLink"
+      @extend-grace="extendGrace"
       @template-changed="loadEndpoints"
       @status-node-changed="loadEndpoints"
     />
 
-    <!-- 订阅地址二维码:扫码导入客户端 -->
+    <EndpointResetResultDialog
+      v-model="resetSuccessVisible"
+      :endpoint="resetResult"
+      :url="resetNewUrl"
+      @qrcode="(url) => qrDialog?.show(url)"
+    />
+
     <QRCodeDialog
       ref="qrDialog"
       v-model="qrVisible"
@@ -191,7 +201,9 @@ import EndpointCreateDialog from '@/components/EndpointCreateDialog.vue'
 import EndpointNodePicksDialog from '@/components/EndpointNodePicksDialog.vue'
 import EndpointNodePicksTag from '@/components/EndpointNodePicksTag.vue'
 import EndpointDetailDrawer from '@/components/EndpointDetailDrawer.vue'
+import EndpointResetResultDialog from '@/components/EndpointResetResultDialog.vue'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
+import { useEndpointResetLink } from '@/composables/useEndpointResetLink'
 import { hasConditions } from '@/utils/conditions'
 import { nameModeLabel, nameModeTag } from '@/utils/namemode'
 import {
@@ -208,7 +220,6 @@ const createVisible = ref(false)
 const picksFilter = ref<PicksStatusFilter>('all')
 const filteredEndpoints = computed(() => filterEndpointsByPicks(endpoints.value, picksFilter.value))
 
-// 详情抽屉状态:行内「详情」打开;抽屉内动作复用本页既有处理函数(事件上抛)。
 const detailVisible = ref(false)
 const detailEndpoint = ref<Endpoint | null>(null)
 const openDetail = (row: Endpoint) => {
@@ -326,6 +337,17 @@ const showSubscriptionQR = async (row: Endpoint) => {
   qrDialog.value?.show(url)
 }
 
+// ---- 链接重置(issue #117):逻辑抽 composable(400 行门禁),本页只接线 ----
+const {
+  resetSuccessVisible,
+  resetResult,
+  resetNewUrl,
+  resetLink,
+  extendGrace,
+  resetAllLoading,
+  resetAllLinks
+} = useEndpointResetLink(endpoints, getSubscriptionUrl, loadEndpoints)
+
 onMounted(() => {
   loadEndpoints()
 })
@@ -335,6 +357,8 @@ onMounted(() => {
 .list-toolbar {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: var(--ph-space-3);
   margin-bottom: var(--ph-space-3);
 }
 /* append 槽内容器:EP 默认给 append 内 el-button 设 flex:1 + margin:0 -20px(单按钮填满),

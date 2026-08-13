@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -327,9 +328,10 @@ func (s *Server) onExamComplete(userID int64, nodeKey string, report detection.E
 }
 
 // writebackBackfillHealth 补齐信息的列表字段写回:
-// - 解锁各目标 → node_health(列表「解锁」列的数据源);
-// - connectivity(可用性=出网段非全失败,延迟=短采样中位 RTT)→ node_health + 内存池
-//   (列表「状态/延迟」列),修"补齐后延迟仍空杠"。
+//   - 解锁各目标 → node_health(列表「解锁」列的数据源);
+//   - connectivity(可用性=出网段非全失败,延迟=短采样中位 RTT)→ node_health + 内存池
+//     (列表「状态/延迟」列),修"补齐后延迟仍空杠"。
+//
 // 全部 best-effort:失败记日志,不重试(下一轮补齐/夜间任务会再来)。
 func (s *Server) writebackBackfillHealth(userID int64, nodeKey string, report detection.ExamReport) {
 	var results []detection.Result
@@ -650,6 +652,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/endpoints", guard(s.handleListEndpoints))
 	mux.HandleFunc("POST /api/endpoints", guard(s.handleCreateEndpoint))
 	mux.HandleFunc("POST /api/endpoints/{id}/toggle", guard(s.handleToggleEndpoint))
+	mux.HandleFunc("POST /api/endpoints/{id}/reset-link", guard(s.handleResetEndpointLink))
+	mux.HandleFunc("POST /api/endpoints/{id}/reset-link/extend", guard(s.handleExtendEndpointGrace))
 	mux.HandleFunc("PUT /api/endpoints/{id}/name-config", guard(s.handleUpdateEndpointNameConfig))
 	mux.HandleFunc("PUT /api/endpoints/{id}/template", guard(s.handleUpdateEndpointTemplate))
 	mux.HandleFunc("PUT /api/endpoints/{id}/conditions", guard(s.handleUpdateEndpointConditions))
@@ -830,6 +834,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/users/{id}/enable", adminGuard(s.handleAdminEnableUser))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", adminGuard(s.handleAdminDeleteUser))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-password", adminGuard(s.handleAdminResetPassword))
+	mux.HandleFunc("GET /api/admin/users/{id}/endpoints", adminGuard(s.handleAdminListUserEndpoints))
+	mux.HandleFunc("POST /api/admin/users/{id}/endpoints/{eid}/reset-link", adminGuard(s.handleAdminResetEndpointLink))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-mfa", adminGuard(s.handleAdminResetMFA))
 	// 清空目标用户受信 IP(ticket 10):设备/网络疑似失陷时逼回完整 MFA 挑战。
 	mux.HandleFunc("POST /api/admin/users/{id}/trusted-ips/clear", adminGuard(s.handleAdminClearTrustedIPs))
@@ -1038,16 +1044,28 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 
 	// 校验段的每个早退都留痕(pull-guard ticket 01):对外一律 404,内部记原因。
 	ep, err := s.st.GetEndpointByPath(path)
+	viaGrace := false
 	if err != nil {
-		// path 未知:没有可归属的订阅地址,记全局桶(endpoint_id=0)。
-		s.recordPullStatus(r, 0, store.PullStatusBadToken)
-		http.NotFound(w, r)
-		return
+		// 链接重置(issue #117):path 未命中现行链接时,试宽限期内的上一代链接。
+		// prev 命中后仍要走 token 比较与宽限存活判定,任一不过与"查无此端点"同 404。
+		ep, err = s.st.GetEndpointByPrevPath(path)
+		if err != nil {
+			// path 未知:没有可归属的订阅地址,记全局桶(endpoint_id=0)。
+			s.recordPullStatus(r, 0, store.PullStatusBadToken)
+			http.NotFound(w, r)
+			return
+		}
+		viaGrace = true
 	}
 
-	// Token 校验（常数时间比较，防时序攻击）
+	// Token 校验（常数时间比较，防时序攻击）;宽限路径比对上一代 token。
 	token := r.URL.Query().Get("token")
-	if subtle.ConstantTimeCompare([]byte(token), []byte(ep.Token)) != 1 {
+	expected := ep.Token
+	if viaGrace {
+		expected = ep.PrevToken
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 ||
+		(viaGrace && !ep.GraceAlive(time.Now().UTC())) {
 		s.recordPullStatus(r, ep.ID, store.PullStatusBadToken)
 		http.NotFound(w, r) // 故意返回 404 而不是 403，不暴露端点存在
 		return
@@ -1110,7 +1128,12 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	// 记录拉取统计:内容已生成成功,本次为真实下发。
 	// 池空(503)与生成失败(500)两个出口不留痕——那是服务端自身状态,
 	// 不是客户端可归因的拉取结果,也没有对应的 status 取值。
-	s.recordPullStatus(r, ep.ID, store.PullStatusOK)
+	// 宽限期内的上一代链接记 grace_ok(issue #117),供管理员观察蹭用迁移。
+	pullStatus := store.PullStatusOK
+	if viaGrace {
+		pullStatus = store.PullStatusGraceOK
+	}
+	s.recordPullStatus(r, ep.ID, pullStatus)
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Profile-Update-Interval", "1") // 建议客户端每小时更新
@@ -1919,7 +1942,7 @@ type nodeView struct {
 	PluginOpts      string `json:"plugin_opts,omitempty"` // 插件参数原始串("obfs=http;obfs-host=x")
 	GrpcServiceName string `json:"grpc_service_name,omitempty"`
 	GrpcAuthority   string `json:"grpc_authority,omitempty"` // gRPC Host(mihomo 读 servername)
-	Insecure        bool   `json:"insecure,omitempty"` // 跳过证书校验(订阅里的 insecure=1)
+	Insecure        bool   `json:"insecure,omitempty"`       // 跳过证书校验(订阅里的 insecure=1)
 	Region          string `json:"region"`
 	Source          string `json:"source"`
 	Latency         int    `json:"latency"`
@@ -2489,9 +2512,60 @@ func (s *Server) renderSubscriptionForEndpoint(nodes []*subscription.Node, forma
 		if tErr != nil {
 			return nil, "", fmt.Errorf("resolve template: %w", tErr)
 		}
-		data, err = generator.RenderTemplate(tmpl, nodes)
+		data, err = generator.RenderTemplateWithHosts(tmpl, nodes, s.upstreamHostsForNodes(ep, nodes))
 		return data, "text/yaml; charset=utf-8", err
 	}
+}
+
+// upstreamHostsForNodes 合并端点可见节点池所涉来源(机场)的上游 hosts 映射
+// (issue #116)。合并顺序按来源名字典序,同键后并者覆盖(确定性语义);模板自带
+// hosts 在生成器内再覆盖一层,优先级最高。查询失败降级为空映射——hosts 是解析
+// 辅助,不应让订阅下发因它失败。
+//
+// 安全边界(pre-push H1):mihomo 的 hosts 作用于客户端全部域名解析,含按规则
+// DIRECT 的流量。因此每个机场的 hosts 键**只保留该机场池内节点的 server 域名**——
+// 合法用途本就是把被污染的节点域名改指别名;任意域名钉扎(机场借此把 DIRECT
+// 流量引到攻击者 IP)在合并处被直接挡掉。
+func (s *Server) upstreamHostsForNodes(ep *store.Endpoint, nodes []*subscription.Node) map[string]string {
+	seen := make(map[string]bool)
+	names := make([]string, 0, 4)
+	// serverDomains[来源] = 该来源池内节点的 server 域名集合(hosts 键白名单)
+	serverDomains := make(map[string]map[string]bool)
+	for _, n := range nodes {
+		if n.Source == "" || n.Source == subscription.SourceSelfHosted {
+			continue
+		}
+		if serverDomains[n.Source] == nil {
+			serverDomains[n.Source] = make(map[string]bool)
+		}
+		serverDomains[n.Source][n.Server] = true
+		if !seen[n.Source] {
+			seen[n.Source] = true
+			names = append(names, n.Source)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	perAirport, err := s.st.GetAirportsHostsForUser(ep.UserID, names)
+	if err != nil {
+		s.logger.Warn("get airport hosts failed, render without hosts", "endpoint_id", ep.ID, "error", err)
+		return nil
+	}
+	var merged map[string]string
+	for _, name := range names {
+		for k, v := range perAirport[name] {
+			if !serverDomains[name][k] {
+				continue // 非该机场节点域名的 hosts 键不进入公开订阅
+			}
+			if merged == nil {
+				merged = make(map[string]string, len(perAirport[name]))
+			}
+			merged[k] = v
+		}
+	}
+	return merged
 }
 
 // resolveTemplateForEndpoint implements the 4-level fallback chain for template resolution.

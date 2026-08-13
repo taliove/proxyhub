@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -339,6 +340,72 @@ func TestRenderTemplate_EmptyTemplate(t *testing.T) {
 	}
 }
 
+func TestDefaultTemplate_AndroidCompat(t *testing.T) {
+	// Android(mihomo/FLClash)客户端原样使用订阅内的 dns 段,桌面/iOS 客户端普遍覆写它,
+	// 所以默认模板的 dns 基线必须在 Android 直连环境下自洽(issue #114):
+	// - listen 禁 <1024 端口(Android 无 root 绑不了),且只绑回环
+	// - 禁 fallback / 境外 DoT(境内直连不可达,fallback-filter 会拖死全部境外域名解析)
+	// - 必备 default-nameserver 与 proxy-server-nameserver(节点域名解析独立通道)
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(DefaultTemplate()), &doc); err != nil {
+		t.Fatalf("embedded default template is not valid YAML: %v", err)
+	}
+
+	dns, ok := doc["dns"].(map[string]any)
+	if !ok {
+		t.Fatal("default template has no dns section")
+	}
+
+	listen, _ := dns["listen"].(string)
+	host, port, _ := strings.Cut(listen, ":")
+	if host != "127.0.0.1" {
+		t.Errorf("dns.listen host = %q, want loopback(与 allow-lan: false 立场一致)", host)
+	}
+	var portNum int
+	if _, err := fmt.Sscanf(port, "%d", &portNum); err != nil || portNum < 1024 {
+		t.Errorf("dns.listen port = %q, want >=1024(Android 无 root 绑不了特权端口)", port)
+	}
+
+	if _, has := dns["fallback"]; has {
+		t.Error("dns.fallback 存在:境外 DoT 境内直连不可达,会拖死全部境外域名解析")
+	}
+
+	assertStringList := func(key string) []string {
+		t.Helper()
+		raw, ok := dns[key].([]any)
+		if !ok || len(raw) == 0 {
+			t.Fatalf("dns.%s 缺失或为空", key)
+		}
+		out := make([]string, 0, len(raw))
+		for _, v := range raw {
+			out = append(out, fmt.Sprint(v))
+		}
+		return out
+	}
+
+	for _, key := range []string{"default-nameserver", "proxy-server-nameserver", "nameserver"} {
+		for _, ns := range assertStringList(key) {
+			if strings.Contains(ns, "1.1.1.1") || strings.Contains(ns, "8.8.8.8") || strings.HasPrefix(ns, "tls://") {
+				t.Errorf("dns.%s 含境外/DoT 地址 %q:境内直连不可达", key, ns)
+			}
+		}
+	}
+
+	for _, key := range []string{"use-hosts", "use-system-hosts"} {
+		if dns[key] != true {
+			t.Errorf("dns.%s = %v, want true(hosts 保真依赖)", key, dns[key])
+		}
+	}
+
+	if doc["unified-delay"] != true {
+		t.Errorf("unified-delay = %v, want true", doc["unified-delay"])
+	}
+
+	if raw, ok := dns["fake-ip-filter"].([]any); !ok || len(raw) < 10 {
+		t.Errorf("fake-ip-filter 条目 = %d, want 通行清单规模(>=10)", len(raw))
+	}
+}
+
 func TestDefaultTemplate_Valid(t *testing.T) {
 	// 内嵌默认模板必须可渲染,且产出结构与模板自身一致。
 	// 断言从模板内容推导(首组名、顶层段),不硬编码规模数字——模板再调整不会炸同类问题。
@@ -408,5 +475,70 @@ func TestDefaultTemplate_Valid(t *testing.T) {
 	// 必须有 MATCH 兜底规则收尾
 	if last := doc.Rules[len(doc.Rules)-1]; !strings.HasPrefix(last, "MATCH,") {
 		t.Errorf("last rule = %q, want MATCH catch-all", last)
+	}
+}
+
+// --- issue #116:渲染时合并上游 hosts ---
+
+func TestRenderTemplateWithHosts_MergesUpstream(t *testing.T) {
+	tmpl := `
+proxy-groups:
+  - name: 手动切换
+    type: select
+    proxies: [DIRECT, '{{nodes}}']
+rules:
+  - MATCH,手动切换
+`
+	upstream := map[string]string{"poisoned.example.com": "alias.example.com"}
+	data, err := RenderTemplateWithHosts(tmpl, sampleNodes(), upstream)
+	if err != nil {
+		t.Fatalf("RenderTemplateWithHosts() error = %v", err)
+	}
+	doc := parseClash(t, data)
+	if doc.Hosts["poisoned.example.com"] != "alias.example.com" {
+		t.Errorf("upstream hosts not merged: %v", doc.Hosts)
+	}
+}
+
+func TestRenderTemplateWithHosts_TemplateWinsOnConflict(t *testing.T) {
+	// 键冲突语义:模板自带 hosts 覆盖上游同键(模板是运营者显式意图)
+	tmpl := `
+hosts:
+  poisoned.example.com: 203.0.113.1
+proxy-groups:
+  - name: 手动切换
+    type: select
+    proxies: [DIRECT, '{{nodes}}']
+rules:
+  - MATCH,手动切换
+`
+	upstream := map[string]string{"poisoned.example.com": "alias.example.com"}
+	data, err := RenderTemplateWithHosts(tmpl, sampleNodes(), upstream)
+	if err != nil {
+		t.Fatalf("RenderTemplateWithHosts() error = %v", err)
+	}
+	doc := parseClash(t, data)
+	if doc.Hosts["poisoned.example.com"] != "203.0.113.1" {
+		t.Errorf("conflict: hosts = %v, want template value 203.0.113.1", doc.Hosts)
+	}
+}
+
+func TestRenderTemplateWithHosts_NilHostsNoSection(t *testing.T) {
+	// 无上游 hosts 且模板未声明:输出不产生 hosts 段(零回归)
+	tmpl := `
+proxy-groups:
+  - name: 手动切换
+    type: select
+    proxies: [DIRECT, '{{nodes}}']
+rules:
+  - MATCH,手动切换
+`
+	data, err := RenderTemplateWithHosts(tmpl, sampleNodes(), nil)
+	if err != nil {
+		t.Fatalf("RenderTemplateWithHosts() error = %v", err)
+	}
+	doc := parseClash(t, data)
+	if doc.Hosts != nil {
+		t.Errorf("hosts = %v, want absent", doc.Hosts)
 	}
 }

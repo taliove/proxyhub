@@ -81,7 +81,13 @@ CREATE TABLE IF NOT EXISTS endpoints (
 	status_node_enabled INTEGER NOT NULL DEFAULT 0,
 	-- 槽位模式(issue #94 后续):1 = 只下发有槽位挂载的节点,名字即槽位名。
 	-- 新库由本 schema 建出;既有库靠 migrateEndpointSlotMode 幂等补列。
-	slot_mode INTEGER NOT NULL DEFAULT 0
+	slot_mode INTEGER NOT NULL DEFAULT 0,
+	-- 订阅链接重置(issue #117):prev_path/prev_token 为上一代链接,
+	-- grace_expires_at 为旧链接最后可用时刻(UTC 文本);空串 = 无宽限。
+	-- 新库由本 schema 建出;既有库靠 migrateEndpointLinkReset 幂等补列。
+	prev_path        TEXT NOT NULL DEFAULT '',
+	prev_token       TEXT NOT NULL DEFAULT '',
+	grace_expires_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS pull_logs (
@@ -136,7 +142,10 @@ CREATE TABLE IF NOT EXISTS airports (
 	name       TEXT NOT NULL,
 	url        TEXT NOT NULL,
 	enabled    INTEGER NOT NULL DEFAULT 1,
-	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	-- hosts 上游 hosts 映射(JSON object,空串 = 无;issue #116);
+	-- 既有库由 migrateAirportHosts 幂等补列。
+	hosts      TEXT NOT NULL DEFAULT ''
 );
 
 -- 自建节点表
@@ -581,6 +590,18 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	// 订阅地址精选(spec #70 / issue #79):endpoints 补 node_picks 列,
 	// 默认空串 = 未配置精选,存量端点过滤行为不变。
 	if err := s.migrateEndpointNodePicks(); err != nil {
+		return err
+	}
+
+	// 机场 hosts 保真(issue #116):airports 补 hosts 列,
+	// 默认空串 = 无 hosts 映射,存量机场行为不变。
+	if err := s.migrateAirportHosts(); err != nil {
+		return err
+	}
+
+	// 订阅链接重置(issue #117):endpoints 补 prev_path/prev_token/grace_expires_at,
+	// 默认空串 = 无宽限,存量端点行为不变。
+	if err := s.migrateEndpointLinkReset(); err != nil {
 		return err
 	}
 
