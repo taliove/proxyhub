@@ -77,11 +77,12 @@ func TestSitePath_ConfiguredPrefixAllows(t *testing.T) {
 	}
 
 	// 订阅端点在前缀下完整可用
+	// (显式 format=clash:UA 分流默认 base64(issue #122),本断言针对 YAML 内容)
 	ep, err := st.CreateEndpointForUser(1, "dev")
 	if err != nil {
 		t.Fatalf("CreateEndpoint: %v", err)
 	}
-	w := get(t, h, "/"+testSitePath+"/sub/"+ep.Path+"?token="+ep.Token)
+	w := get(t, h, "/"+testSitePath+"/sub/"+ep.Path+"?token="+ep.Token+"&format=clash")
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET /<site-path>/sub/...: status = %d, want 200 (body: %s)", w.Code, w.Body.String())
 	}
@@ -133,7 +134,8 @@ func TestSitePath_SubRootNamespacePassThrough(t *testing.T) {
 	}
 
 	// 根命名空间直通:合法 token 200 且含节点内容
-	w := get(t, h, "/sub/"+ep.Path+"?token="+ep.Token)
+	// (显式 format=clash:UA 分流默认 base64(issue #122),本断言针对 YAML 内容)
+	w := get(t, h, "/sub/"+ep.Path+"?token="+ep.Token+"&format=clash")
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET /sub/...: status = %d, want 200 (body: %s)", w.Code, w.Body.String())
 	}

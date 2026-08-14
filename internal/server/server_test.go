@@ -432,7 +432,8 @@ func TestSubscription_TokenGating(t *testing.T) {
 	}
 
 	// 正确 token → 200
-	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token, nil)
+	// (显式 format=clash:UA 分流默认 base64(issue #122),本断言针对 YAML 内容)
+	req := httptest.NewRequest("GET", "/sub/"+ep.Path+"?token="+ep.Token+"&format=clash", nil)
 	req.RemoteAddr = "1.2.3.4:5678"
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)

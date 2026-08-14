@@ -27,6 +27,13 @@ _Avoid_: 裸用"订阅"、链接
 单个节点的 URI(`vmess://`/`vless://`/`trojan://`/`ss://`/`anytls://`),供客户端导入单节点使用。share-uri 端点优先回放解析期保留的机场原始链接(`Node.RawLink`,含凭证故 `json:"-"`,不入视图/日志/持久化);缺失时(自建节点、重启后未刷新)回退为按节点字段重建,重建不保证 ws path 等传输参数保真(VLESS Reality 参数自 spec #58 起重建保真)。
 _区别_: 订阅地址是多节点聚合的出站端点;分享链接是单节点 URI。
 
+**订阅格式 (Subscription Format)**:
+订阅地址输出内容的格式,两个取值:**clash**(Clash YAML,模板引擎渲染,含规则/策略组/hosts)与 **base64**(通用订阅:逐行分享链接 `\n` 连接后整体 base64 编码,仅节点连接串)。格式由请求方决定:显式 `format` 参数优先(`base64` 为规范值,`v2ray` 为永久别名),否则按 UA 分流。base64 是编码不是加密,其价值在于对非 Clash 请求方的最小必要暴露(YAML 内含的模板/规则/面板指纹不下发)。
+_Avoid_: v2ray 格式(历史名,仅作 format 参数别名保留)
+
+**UA 分流 (UA Negotiation)**:
+订阅地址按请求方 User-Agent 判定订阅格式的机制:命中 Clash 系 UA 名单(clash/mihomo/stash 等,名单为可维护常量表)→ clash;其余一切请求(含空 UA、浏览器、curl、未知客户端)→ base64。默认方向是最小暴露:认不出的一律给信息最少的格式。只做格式分流,不做客户端封禁。
+
 **节点 (Node)**:
 单个代理服务器(VMess / VLESS / Trojan / Shadowsocks)。
 

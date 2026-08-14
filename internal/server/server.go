@@ -1038,7 +1038,8 @@ func (s *Server) setupCallerAllowed(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1
 }
 
-// handleSubscription 订阅拉取端点：/sub/{path}?token=xxx&format=clash|v2ray
+// handleSubscription 订阅拉取端点：/sub/{path}?token=xxx&format=clash|base64
+// (v2ray 为 base64 的永久别名,见 subscription_format.go)
 func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 
@@ -1101,15 +1102,13 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	// 在空池 503 判定之后:状态节点不应把空订阅伪装成非空。
 	nodes = s.prependStatusNode(nodes, ep)
 
-	// 格式：显式参数优先，否则按 User-Agent 猜测，默认 Clash
-	format := r.URL.Query().Get("format")
+	// 格式：显式参数优先(base64 为规范值,v2ray 为永久别名,issue #121)，
+	// 否则 UA 分流(issue #122 / ADR 0049):Clash 系 UA 得 YAML,
+	// 其余一切默认 base64(最小必要暴露)。
+	format := normalizeSubscriptionFormat(r.URL.Query().Get("format"))
 	ua := strings.ToLower(r.Header.Get("User-Agent"))
 	if format == "" {
-		if strings.Contains(ua, "v2ray") || strings.Contains(ua, "shadowrocket") {
-			format = "v2ray"
-		} else {
-			format = "clash"
-		}
+		format = subscriptionFormatForUA(ua)
 	}
 
 	data, contentType, err := s.renderSubscriptionForEndpoint(nodes, format, ep)
@@ -1119,9 +1118,9 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 小火箭订阅命名(issue #39):只给 Shadowrocket UA 的 v2ray 格式注入
-	// REMARKS 行;其他客户端原样(Clash 系走下面的命名响应头,v2ray 系无此约定)。
-	if format == "v2ray" && strings.Contains(ua, "shadowrocket") {
+	// 小火箭订阅命名(issue #39):只给 Shadowrocket UA 的 base64 格式注入
+	// REMARKS 行;其他客户端原样(Clash 系走下面的命名响应头,base64 系无此约定)。
+	if format == formatBase64 && strings.Contains(ua, "shadowrocket") {
 		data = injectShadowrocketRemarks(data, ep)
 	}
 
@@ -1136,6 +1135,9 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	s.recordPullStatus(r, ep.ID, pullStatus)
 
 	w.Header().Set("Content-Type", contentType)
+	// 带 token 的订阅内容永不进中间缓存(issue #121):CDN/反代不得缓存
+	// 订阅响应(反例:TAG 系面板订阅被 Cloudflare 缓存 15 分钟)。
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Profile-Update-Interval", "1") // 建议客户端每小时更新
 	// profile 命名头(issue #38):与 Content-Type 同处,即守卫链之后、
 	// 成功下发路径;404/429/403 各守卫出口绝不经过这里。
@@ -2653,9 +2655,9 @@ func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	format := r.URL.Query().Get("format")
-	if format != "v2ray" {
-		format = "clash"
+	format := normalizeSubscriptionFormat(r.URL.Query().Get("format"))
+	if format != formatBase64 {
+		format = formatClash
 	}
 
 	// 与 /sub 同源的会下发节点集合(过滤链 + 条件 + 标准化),四处共用,见 endpoint_test.go

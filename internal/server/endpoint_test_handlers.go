@@ -44,7 +44,7 @@ func (s *Server) endpointDeliverableNodes(ep *store.Endpoint) []*subscription.No
 // 关键词筛选在此模式不生效;卫生过滤保留:stale(消失)与屏蔽节点不下发,
 // 可用性/延迟遵循监控免疫口径(issue #101:监控集合宕机仍下发)。
 func (s *Server) slotModeDeliverable(ep *store.Endpoint) []*subscription.Node {
-	slots, err := s.st.SlotNameByNodeKeyForUser(ep.UserID)
+	slots, err := s.st.AssignedNameSlotsForUser(ep.UserID)
 	if err != nil {
 		s.logger.Warn("list name slots for slot mode failed", "error", err)
 		return nil // 读失败宁可空(503),不漏出未命名节点
@@ -52,11 +52,19 @@ func (s *Server) slotModeDeliverable(ep *store.Endpoint) []*subscription.Node {
 	if len(slots) == 0 {
 		return nil
 	}
+	// 重名 {index} 模板(issue #113)多槽位同key不撞:node_key 唯一约束保证
+	// 一节点一槽;排序按 (槽位名, 槽位 ID) 与渲染层编号同序,跨请求确定。
+	nameOf := make(map[string]string, len(slots))
+	idOf := make(map[string]int64, len(slots))
+	for _, sl := range slots {
+		nameOf[sl.NodeKey] = sl.Name
+		idOf[sl.NodeKey] = sl.ID
+	}
 
 	pool := s.mergeSelfHosted(s.nodes.NodesForUser(ep.UserID), ep.UserID)
 	var nodes []*subscription.Node
 	for _, n := range pool {
-		if _, ok := slots[n.NodeKey()]; ok {
+		if _, ok := nameOf[n.NodeKey()]; ok {
 			nodes = append(nodes, n)
 		}
 	}
@@ -77,9 +85,14 @@ func (s *Server) slotModeDeliverable(ep *store.Endpoint) []*subscription.Node {
 		nodes = filter.FilterByLatencyThreshold(nodes, s.cfg.HealthCheck.LatencyThreshold)
 	}
 
-	// 顺序固定:按槽位名排序(转移节点后订阅布局不变)
+	// 顺序固定:按 (槽位名, 槽位 ID) 排序(转移节点后订阅布局不变;
+	// 重名模板按创建顺序排,与 {index} 编号一致)
 	sort.SliceStable(nodes, func(i, j int) bool {
-		return slots[nodes[i].NodeKey()] < slots[nodes[j].NodeKey()]
+		ni, nj := nameOf[nodes[i].NodeKey()], nameOf[nodes[j].NodeKey()]
+		if ni != nj {
+			return ni < nj
+		}
+		return idOf[nodes[i].NodeKey()] < idOf[nodes[j].NodeKey()]
 	})
 	return s.applyNameSlots(nodes, ep.UserID)
 }
@@ -139,7 +152,10 @@ func (s *Server) handleEndpointTest(w http.ResponseWriter, r *http.Request) {
 
 // validateFormat 生成单格式订阅内容并校验合法性。空集合不生成(生成器对空集报错),
 // 直接判 invalid 并给出原因。按端点解析模板(四级回退,含端点绑定),与真实 /sub 同口径。
+// format 入参接受规范值与 v2ray 别名(响应 map 键沿用 v2ray 是 API 面兼容,
+// 内部一律折叠为规范值)。
 func (s *Server) validateFormat(nodes []*subscription.Node, format string, ep *store.Endpoint) formatCheckResult {
+	format = normalizeSubscriptionFormat(format)
 	if len(nodes) == 0 {
 		return formatCheckResult{Valid: false, Error: "no deliverable nodes"}
 	}
@@ -153,7 +169,7 @@ func (s *Server) validateFormat(nodes []*subscription.Node, format string, ep *s
 
 	var count int
 	var vErr error
-	if format == "v2ray" {
+	if format == formatBase64 {
 		count, vErr = validateV2RayContent(data)
 	} else {
 		count, vErr = validateClashContent(data)
@@ -313,6 +329,10 @@ type endpointAvailability struct {
 type endpointListItem struct {
 	*store.Endpoint
 	Availability endpointAvailability `json:"availability"`
+	// PicksError 精选配置损坏标记(issue #91):node_picks 非空但解析失败时
+	// 下发按 fail-open 降级为全量(与过滤链读取失败同哲学)——列表露出该状态,
+	// 不再是静默降级。
+	PicksError bool `json:"picks_error,omitempty"`
 }
 
 // availabilityFor 计算单个端点会下发集合的可用 x/y。
