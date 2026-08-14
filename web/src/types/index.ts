@@ -31,6 +31,9 @@ export interface Endpoint {
   // ''=未配置=全量,解析失败按空(与后端 endpointNodePicks 降级语义一致)。
   // NodeKey = server:port(节点 SNI 非空时 server:port:sni),改名仍命中、下架自然失效。
   node_picks?: string
+  // 精选配置损坏标记(issue #91):node_picks 非空但解析失败,
+  // 下发已 fail-open 降级为全量;列表据此显示异常标记
+  picks_error?: boolean
   // 会下发集合的可用性汇总(列表接口加性附加,池状态实时算,见 ADR 0028 决策 2)
   availability?: { available: number; total: number }
 }
@@ -163,6 +166,13 @@ export interface SelfNode {
   tls: boolean
   grpc_service_name: string
   grpc_authority?: string
+  // VLESS Reality / TLS 参数(issue #90:分享链接导入保真,见 ADR 0043);
+  // 空串/缺省 = 非 reality。后端 UPDATE 不含这些列(编辑不覆盖),表单只读展示。
+  sni?: string
+  flow?: string // xtls-rprx-vision
+  reality_public_key?: string // 分享链接 pbk
+  reality_short_id?: string // 分享链接 sid
+  client_fingerprint?: string // 分享链接 fp,如 chrome
   enabled: boolean
 }
 

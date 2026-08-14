@@ -51,6 +51,15 @@
       <el-form-item v-if="show('tls')" label="TLS">
         <el-switch v-model="form.tls" />
       </el-form-item>
+      <!-- Reality 参数(issue #90):导入时从分享链接保真捕获,只读展示供核对;
+           后端 UPDATE 不含这些列,普通编辑不会覆盖 -->
+      <el-form-item v-if="form.reality_public_key" label="Reality">
+        <el-alert type="success" :closable="false" class="reality-alert">
+          已识别 VLESS Reality 参数：SNI {{ form.sni || '—' }} · 公钥
+          {{ form.reality_public_key }} · ShortID {{ form.reality_short_id || '—' }} · flow
+          {{ form.flow || '—' }} · 指纹 {{ form.client_fingerprint || '—' }}
+        </el-alert>
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="visible = false">取消</el-button>
@@ -123,5 +132,9 @@ watch(visible, (open) => {
 <style scoped>
 .full-width {
   width: 100%;
+}
+.reality-alert {
+  line-height: 1.6;
+  word-break: break-all;
 }
 </style>

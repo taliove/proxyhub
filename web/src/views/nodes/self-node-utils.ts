@@ -23,6 +23,11 @@ export const emptyForm = (): SelfNodeForm => ({
   tls: false,
   grpc_service_name: '',
   grpc_authority: '',
+  sni: '',
+  flow: '',
+  reality_public_key: '',
+  reality_short_id: '',
+  client_fingerprint: '',
   enabled: true
 })
 
@@ -44,6 +49,10 @@ const parseVlessUrl = (url: string): Partial<SelfNodeForm> => {
   const port = parseInt(portStr)
   const params = new URLSearchParams(query || '')
 
+  // security 判定(issue #90):reality 与 tls 一样必须置 TLS,且 reality 参数
+  // (pbk/sid/flow/fp/sni)全量保留——丢失会静默造出明文 VLESS 坏节点(ADR 0043)。
+  const security = params.get('security') || ''
+
   return {
     name: name ? decodeURIComponent(name) : `VLESS-${server}`,
     protocol: 'vless',
@@ -51,10 +60,15 @@ const parseVlessUrl = (url: string): Partial<SelfNodeForm> => {
     port,
     uuid,
     network: params.get('type') || 'tcp',
-    tls: params.get('security') === 'tls',
+    tls: security === 'tls' || security === 'reality',
     grpc_service_name: params.get('serviceName') || '',
     // authority 缺省回退 host(与后端解析层同口径:部分机场按 vmess host 约定承载)
     grpc_authority: params.get('authority') || params.get('host') || '',
+    sni: params.get('sni') || '',
+    flow: params.get('flow') || '',
+    reality_public_key: params.get('pbk') || '',
+    reality_short_id: params.get('sid') || '',
+    client_fingerprint: params.get('fp') || '',
     enabled: true
   }
 }

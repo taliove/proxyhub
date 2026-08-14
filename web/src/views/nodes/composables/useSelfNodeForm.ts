@@ -32,6 +32,7 @@ export function useSelfNodeForm(opts: {
     if (!sn) return
     const { name, protocol, server, port, uuid, password, cipher } = sn
     const { alter_id, network, tls, grpc_service_name, grpc_authority, enabled } = sn
+    const { sni, flow, reality_public_key, reality_short_id, client_fingerprint } = sn
     selfEditMode.value = true
     selfEditingId.value = sn.id
     selfForm.value = {
@@ -47,6 +48,11 @@ export function useSelfNodeForm(opts: {
       tls,
       grpc_service_name,
       grpc_authority,
+      sni,
+      flow,
+      reality_public_key,
+      reality_short_id,
+      client_fingerprint,
       enabled
     }
     selfDialogVisible.value = true
