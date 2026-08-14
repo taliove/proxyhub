@@ -303,3 +303,49 @@ func TestHandleNodeShareURI_SelfHosted(t *testing.T) {
 		t.Errorf("uri = %q, want 含服务器地址", resp.URI)
 	}
 }
+
+// TestHandleListNodes_SelfHostedSourcePresent issue #50 回归钉死:自建节点经
+// serve-time 合并进 /nodes 视图,且 source 字段恒为 "self-hosted"(前端来源
+// 筛选「自建节点」按此精确匹配)。启用行来自合并;禁用行不在池(前端经
+// /self-nodes 合并补入,见 web/src/views/nodes/selfmerge.test.ts 对应缝)。
+func TestHandleListNodes_SelfHostedSourcePresent(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	if err := st.CreateSelfHostedNode(&store.SelfHostedNode{
+		Name:     "自建HK",
+		Protocol: "trojan",
+		Server:   "self50.example.com",
+		Port:     443,
+		Password: "p",
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("CreateSelfHostedNode: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/nodes", nil)
+	rec := httptest.NewRecorder()
+	srv.handleListNodes(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Nodes []struct {
+			Name   string `json:"name"`
+			Source string `json:"source"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	found := false
+	for _, n := range resp.Nodes {
+		if n.Name == "自建HK" {
+			found = true
+			if n.Source != "self-hosted" {
+				t.Errorf("self-hosted row source = %q, want \"self-hosted\" (精确匹配筛选依赖)", n.Source)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("enabled self-hosted node missing from /nodes view: %+v", resp.Nodes)
+	}
+}

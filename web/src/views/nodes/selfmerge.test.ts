@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { Node, SelfNode } from '@/types'
 import { selfIdentity, selfNodeToRow, buildUnifiedRows, selfNodeIndex } from './selfmerge'
+import { emptyCriteria, filterNodes } from './predicates'
 import { SELF_HOSTED } from './utils'
 
 const selfNode = (over: Partial<SelfNode> = {}): SelfNode => ({
@@ -102,5 +103,32 @@ describe('selfNodeIndex', () => {
     const idx = selfNodeIndex([selfNode({ id: 1 }), selfNode({ id: 2, name: 'b' })])
     expect(idx.get(2)?.name).toBe('b')
     expect(idx.has(3)).toBe(false)
+  })
+})
+
+// issue #50 回归钉死:来源筛选「自建节点」必须在合并行集上命中全部自建行
+// (启用行来自池,禁用行由合并补入),而不是空白。
+describe('buildUnifiedRows + 来源筛选(issue #50)', () => {
+  it('source=self-hosted 命中启用与禁用自建行', () => {
+    const pool = [
+      poolNode({ source: '机场A', node_key: 'airport-1' }),
+      poolNode({
+        source: SELF_HOSTED,
+        type: 'trojan',
+        server: '203.0.113.1',
+        port: 443,
+        node_key: 'self-1'
+      })
+    ]
+    const rows = buildUnifiedRows(pool, [
+      selfNode({ id: 9, enabled: true }),
+      selfNode({ id: 10, enabled: false, server: '203.0.113.2', name: '自建备用' })
+    ])
+    const matched = filterNodes(rows, { ...emptyCriteria(), source: SELF_HOSTED })
+    const ids = matched.map((r) => (r as { self_node_id?: number }).self_node_id)
+    expect(matched).toHaveLength(2)
+    expect(ids).toContain(9)
+    expect(ids).toContain(10)
+    expect(matched.every((r) => r.source === SELF_HOSTED)).toBe(true)
   })
 })
