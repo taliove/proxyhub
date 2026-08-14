@@ -4,12 +4,22 @@ import {
   parseNodePicks,
   nodePicksCount,
   nodePicksLabel,
+  nodePicksBroken,
   filterPicksPool,
   paginateSlice,
   mergePicks,
   filterEndpointsByPicks,
   type NodePick
 } from './endpoint-nodepicks-utils'
+
+// nodePicksBroken(issue #91):以后端 picks_error 标记为单一事实源
+describe('nodePicksBroken 精选损坏标记', () => {
+  it('picks_error === true 才算损坏', () => {
+    expect(nodePicksBroken({ picks_error: true })).toBe(true)
+    expect(nodePicksBroken({ picks_error: false })).toBe(false)
+    expect(nodePicksBroken({})).toBe(false)
+  })
+})
 
 // 订阅地址精选纯函数缝(issue #85 双格式解析;#86 池过滤/分页/全选)。
 // fixture 全合成(example.com)。

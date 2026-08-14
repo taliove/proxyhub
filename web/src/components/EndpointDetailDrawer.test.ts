@@ -328,7 +328,7 @@ describe('EndpointDetailDrawer', () => {
     expect(wrapper.find('.ip-stats-stub').attributes('data-endpoint-id')).toBe('7')
   })
 
-  it('切换 Clash/V2Ray 重新拉取对应格式清单', async () => {
+  it('切换 Clash/通用 base64 重新拉取对应格式清单', async () => {
     const wrapper = mountDrawer(true)
     await flushPromises()
 
@@ -336,11 +336,11 @@ describe('EndpointDetailDrawer', () => {
     const radioGroup = wrapper
       .findAllComponents({ name: 'ElRadioGroup' })
       .find((g) => g.props('modelValue') === 'clash')!
-    radioGroup.vm.$emit('update:modelValue', 'v2ray')
-    radioGroup.vm.$emit('change', 'v2ray')
+    radioGroup.vm.$emit('update:modelValue', 'base64')
+    radioGroup.vm.$emit('change', 'base64')
     await flushPromises()
 
     const getCalls = vi.mocked(client.get).mock.calls.map(([url]) => String(url))
-    expect(getCalls).toContain('/endpoints/7/preview?format=v2ray')
+    expect(getCalls).toContain('/endpoints/7/preview?format=base64')
   })
 })

@@ -1556,9 +1556,20 @@ func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
 		items = append(items, endpointListItem{
 			Endpoint:     ep,
 			Availability: s.availabilityFor(scoped, ep),
+			PicksError:   nodePicksBroken(ep),
 		})
 	}
 	writeJSON(w, items)
+}
+
+// nodePicksBroken 精选配置损坏判定(issue #91):node_picks 非空但解析失败。
+// fail-open 下发语义不变,本判定只用于列表告警面。
+func nodePicksBroken(ep *store.Endpoint) bool {
+	if ep.NodePicks == "" {
+		return false
+	}
+	_, err := store.ParseNodePicks(ep.NodePicks)
+	return err != nil
 }
 
 func (s *Server) handleCreateEndpoint(w http.ResponseWriter, r *http.Request) {

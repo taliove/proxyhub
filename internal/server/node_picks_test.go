@@ -49,7 +49,31 @@ func putNodePicks(t *testing.T, h http.Handler, cookie *http.Cookie, id int64, b
 	return w
 }
 
-// TestNodePicks_SubOnlyPickedNodes 配精选后 /sub 只含精选节点;
+// TestNodePicksBrokenMarker issue #91:精选 JSON 损坏时 fail-open 语义不变,
+// 但列表标记 picks_error=true 露出告警面;合法/未配置端点不标记。
+// (损坏态只能经库外直写产生——store 写路径 fail fast 拒收脏 JSON;
+// 故此处直接钉 nodePicksBroken 判定函数,列表接线是同字段直读。)
+func TestNodePicksBrokenMarker(t *testing.T) {
+	cases := []struct {
+		label string
+		raw   string
+		want  bool
+	}{
+		{"未配置", "", false},
+		{"合法精选", `["a.example.com:8388"]`, false},
+		{"合法对象形态", `[{"key":"a.example.com:8388","alias":"x"}]`, false},
+		{"损坏 JSON", `[{"key":`, true},
+		{"非数组", `{"key":"a"}`, true},
+		{"非法元素形状", `[1,2]`, true},
+	}
+	for _, tc := range cases {
+		if got := nodePicksBroken(&store.Endpoint{NodePicks: tc.raw}); got != tc.want {
+			t.Errorf("%s: nodePicksBroken(%q) = %v, want %v", tc.label, tc.raw, got, tc.want)
+		}
+	}
+}
+
+
 // 后台预览走同一条链(ADR 0005 预览=下发不破坏)。
 func TestNodePicks_SubOnlyPickedNodes(t *testing.T) {
 	srv, st := newTestServer(t, picksPool())

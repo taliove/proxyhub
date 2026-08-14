@@ -40,6 +40,13 @@ export function nodePicksLabel(ep: { node_picks?: string }): string {
   return n > 0 ? `精选 ${n} 个节点` : '全量'
 }
 
+// nodePicksBroken 精选配置损坏标记(issue #91):以后端 picks_error 为准
+// (单一事实源,不与后端 ParseNodePicks 形状校验各算一套)。损坏时下发已
+// fail-open 降级为全量,UI 据此显示异常标记。
+export function nodePicksBroken(ep: { picks_error?: boolean }): boolean {
+  return ep.picks_error === true
+}
+
 // ===== 订阅列表精选状态筛选(issue #87)=====
 
 // PicksStatusFilter 精选状态:all 全部 | full 仅全量(未配精选) | picked 仅已精选。
