@@ -19,10 +19,10 @@ func TestSlotModeDeliverable(t *testing.T) {
 	srv, st := newTestServer(t, []*subscription.Node{unnamed, named2, named1})
 
 	// 两个槽位(码位序:美国主力 < 香港主力)
-	if err := st.CreateNameSlotForUser(0, "美国主力", named2.NodeKey(), false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "美国主力", named2.NodeKey(), false); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CreateNameSlotForUser(0, "香港主力", named1.NodeKey(), false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "香港主力", named1.NodeKey(), false); err != nil {
 		t.Fatal(err)
 	}
 	ep, err := st.CreateEndpointForUser(0, "槽位订阅")
@@ -61,7 +61,7 @@ func TestSlotModeEndToEnd(t *testing.T) {
 		Server: "d.example.com", Port: 443, Source: "机场A", Available: true}
 	srv, st := newTestServer(t, []*subscription.Node{named, unnamed})
 	h := srv.Handler()
-	if err := st.CreateNameSlotForUser(0, "我的主力", named.NodeKey(), false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "我的主力", named.NodeKey(), false); err != nil {
 		t.Fatal(err)
 	}
 	ep, _ := st.CreateEndpointForUser(0, "e2e")

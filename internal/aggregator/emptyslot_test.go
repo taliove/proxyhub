@@ -24,11 +24,11 @@ func TestAlertEmptySlots(t *testing.T) {
 	agg.alerter = nt
 
 	gone := &subscription.Node{Name: "旧节点", Server: "gone.example.com", Port: 443, Source: "机场A"}
-	if err := st.CreateNameSlotForUser(0, "🇭🇰 香港01", gone.NodeKey(), false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "🇭🇰 香港01", gone.NodeKey(), false); err != nil {
 		t.Fatal(err)
 	}
 	// 预建空槽:不告警
-	if err := st.CreateNameSlotForUser(0, "预建名", "", false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "预建名", "", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -63,7 +63,7 @@ func TestAlertEmptySlotsStale(t *testing.T) {
 	agg.alerter = nt
 
 	n := &subscription.Node{Name: "节点", Server: "x.example.com", Port: 443, Source: "机场A", Stale: true}
-	if err := st.CreateNameSlotForUser(0, "名", n.NodeKey(), false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "名", n.NodeKey(), false); err != nil {
 		t.Fatal(err)
 	}
 	agg.alertEmptySlots(0, []*subscription.Node{n})

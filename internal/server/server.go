@@ -759,8 +759,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/slots", guard(s.handleListSlots))
 	mux.HandleFunc("POST /api/slots", guard(s.handleCreateSlot))
 	mux.HandleFunc("POST /api/slots/preview-name", guard(s.handlePreviewSlotName))
-	mux.HandleFunc("PUT /api/slots/{name}", guard(s.handleUpdateSlot))
-	mux.HandleFunc("DELETE /api/slots/{name}", guard(s.handleDeleteSlot))
+	mux.HandleFunc("PUT /api/slots/{id}", guard(s.handleUpdateSlot))
+	mux.HandleFunc("DELETE /api/slots/{id}", guard(s.handleDeleteSlot))
 
 	// 系统设置
 	mux.HandleFunc("GET /api/settings", guard(s.handleGetSettings))

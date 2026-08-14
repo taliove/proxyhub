@@ -5,18 +5,18 @@
         <span class="muted">{{ node?.display_name || node?.name || '—' }}</span>
       </el-form-item>
       <el-form-item v-if="currentSlot" label="当前名称">
-        <el-tag size="small" type="success" effect="plain">{{ currentSlot }}</el-tag>
+        <el-tag size="small" type="success" effect="plain">{{ currentSlot.name }}</el-tag>
         <span class="muted hint-inline">保存新名称后，旧名称变空槽</span>
       </el-form-item>
-      <el-form-item v-if="emptySlotNames.length" label="指派方式">
+      <el-form-item v-if="emptySlots.length" label="指派方式">
         <el-radio-group v-model="mode" size="small">
           <el-radio-button label="existing">选择空槽</el-radio-button>
           <el-radio-button label="new">新建名称</el-radio-button>
         </el-radio-group>
       </el-form-item>
-      <el-form-item v-if="mode === 'existing' && emptySlotNames.length" label="空槽">
-        <el-select v-model="pickedEmpty" placeholder="选择待指派的空槽名称" class="ctl-full">
-          <el-option v-for="n in emptySlotNames" :key="n" :label="n" :value="n" />
+      <el-form-item v-if="mode === 'existing' && emptySlots.length" label="空槽">
+        <el-select v-model="pickedEmptyID" placeholder="选择待指派的空槽名称" class="ctl-full">
+          <el-option v-for="s in emptySlots" :key="s.id" :label="s.name" :value="s.id" />
         </el-select>
       </el-form-item>
       <el-form-item v-else label="名称">
@@ -42,12 +42,18 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createSlot, readSlotConflict, updateSlot, type SlotConflict } from '@/api/slots'
+import {
+  createSlot,
+  readSlotConflict,
+  updateSlot,
+  type NameSlot,
+  type SlotConflict
+} from '@/api/slots'
 import SlotNameEditor from './SlotNameEditor.vue'
-import { apiErrorMessage } from '../utils'
+import { apiErrorMessage, slotNameTakenMessage } from '../utils'
 import type { UnifiedNode } from '../selfmerge'
 
-const props = defineProps<{ emptySlotNames: string[] }>()
+const props = defineProps<{ emptySlots: NameSlot[] }>()
 
 const emit = defineEmits<{
   (e: 'saved'): void
@@ -57,22 +63,28 @@ const visible = ref(false)
 const saving = ref(false)
 const node = ref<UnifiedNode | null>(null)
 const name = ref('')
-const currentSlot = ref('')
+// 当前占用本节点的槽位(按 ID 寻址,issue #112);null = 未占槽
+const currentSlot = ref<NameSlot | null>(null)
 // 有空槽时默认选空槽,否则直接新建
 const mode = ref<'existing' | 'new'>('new')
-const pickedEmpty = ref('')
+const pickedEmptyID = ref<number | ''>('')
+
+// 选中的空槽对象(existing 模式)
+const pickedSlot = computed(
+  () => props.emptySlots.find((s) => s.id === pickedEmptyID.value) ?? null
+)
 
 // 生效的目标名:选空槽模式取选择值,新建模式取编辑器输入
 const effectiveName = computed(() =>
-  mode.value === 'existing' && props.emptySlotNames.length ? pickedEmpty.value : name.value
+  mode.value === 'existing' && props.emptySlots.length ? (pickedSlot.value?.name ?? '') : name.value
 )
 
-const open = (row: UnifiedNode, occupyingSlot = '') => {
+const open = (row: UnifiedNode, occupyingSlot: NameSlot | null = null) => {
   node.value = row
   currentSlot.value = occupyingSlot
   name.value = ''
-  pickedEmpty.value = ''
-  mode.value = props.emptySlotNames.length ? 'existing' : 'new'
+  pickedEmptyID.value = ''
+  mode.value = props.emptySlots.length ? 'existing' : 'new'
   visible.value = true
 }
 
@@ -92,10 +104,14 @@ const save = async (force: boolean) => {
   saving.value = true
   try {
     const target = effectiveName.value
-    const isExistingEmpty = props.emptySlotNames.includes(target)
-    if (mode.value === 'existing' || isExistingEmpty) {
-      // 选中已有空槽:指派(空槽无 reassign 冲突;node_occupied 走确认)
-      await updateSlot(target, { nodeKey: node.value.node_key, force })
+    // 选中已有空槽(或新建名恰好命中空槽):按槽位 ID 指派
+    // (空槽无 reassign 冲突;node_occupied 走确认)
+    const existing =
+      mode.value === 'existing'
+        ? pickedSlot.value
+        : (props.emptySlots.find((s) => s.name === target) ?? null)
+    if (existing) {
+      await updateSlot(existing.id, { nodeKey: node.value.node_key, force })
     } else {
       await createSlot(target, node.value.node_key, force)
     }
@@ -107,7 +123,7 @@ const save = async (force: boolean) => {
     if (conflict && !force) {
       const text = confirmText(conflict, effectiveName.value)
       if (conflict.kind === 'name_taken') {
-        ElMessage.error(`名称「${effectiveName.value}」已存在，请换一个名字`)
+        ElMessage.error(slotNameTakenMessage(effectiveName.value))
       } else if (text) {
         try {
           await ElMessageBox.confirm(text, '转移确认', { type: 'warning' })
@@ -130,7 +146,7 @@ const unassign = async () => {
   if (!currentSlot.value) return
   try {
     await ElMessageBox.confirm(
-      `摘下后「${currentSlot.value}」变空槽，该节点回退模板/原始名称。确认？`,
+      `摘下后「${currentSlot.value.name}」变空槽，该节点回退模板/原始名称。确认？`,
       '摘下名称',
       { type: 'warning' }
     )
@@ -138,7 +154,7 @@ const unassign = async () => {
     return
   }
   try {
-    await updateSlot(currentSlot.value, { nodeKey: '' })
+    await updateSlot(currentSlot.value.id, { nodeKey: '' })
     ElMessage.success('已摘下，名称保留为空槽')
     visible.value = false
     emit('saved')

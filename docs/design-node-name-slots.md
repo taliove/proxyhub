@@ -39,20 +39,29 @@
 
 ```sql
 CREATE TABLE IF NOT EXISTS name_slots (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,  -- 槽位身份(issue #112):与名字解耦
   user_id    INTEGER NOT NULL,
   name       TEXT    NOT NULL,
   node_key   TEXT    NOT NULL DEFAULT '',  -- 空串 = 预建空槽(先起名后挑节点)
   created_at TIMESTAMP NOT NULL,
-  updated_at TIMESTAMP NOT NULL,
-  PRIMARY KEY (user_id, name)
+  updated_at TIMESTAMP NOT NULL
 );
+-- 字面名(不含 {index})唯一;含 {index} 模板原文可重复(issue #113)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_name_slots_name_literal
+  ON name_slots(user_id, name) WHERE name NOT LIKE '%{index}%';
 -- 双向唯一:一个节点在同一用户下只能占一个槽位
 CREATE UNIQUE INDEX IF NOT EXISTS idx_name_slots_node
   ON name_slots(user_id, node_key) WHERE node_key != '';
 ```
 
-- **双向唯一**:名字是主键;node_key 在用户内同样唯一。占冲突一律拒绝并返回
-  当前占用信息,由前端弹确认后走转移(带 `force` 参数重试)。
+- **身份按内部 ID(issue #112)**:槽位身份是自增 ID 主键,API 变更/删除按 ID
+  寻址;改名不再触碰身份,为「含 {index} 模板重名放行」铺路。
+- **唯一性(issue #113 修订)**:不含 {index} 的字面名在 (user_id, name) 上唯一;
+  含 {index} 的模板名允许重复(同模板挂多节点或预建空槽),渲染层按
+  (前缀, 槽位名, 槽位 ID) 排序从 01 自动编号——不变量从「同名撞车在模型层
+  不可能」改写为「渲染结果不撞名;含 {index} 模板原文可重复」。
+  node_key 双向唯一不变:一个节点在同一用户下只能占一个槽位。占冲突一律拒绝
+  并返回当前占用信息,由前端弹确认后走转移(带 `force` 参数重试)。
 - **多租户**:继承 `node_overrides` 的 per-user 隔离语义,超管不跨用户代管。
 - `node_overrides` 的 `region`/`favorite` 不动,仍是节点级注解;`display_name`
   列弃用(见迁移节)。

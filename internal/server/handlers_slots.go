@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ type slotNodeView struct {
 
 // slotView 槽位对外视图
 type slotView struct {
+	ID        int64         `json:"id"`
 	Name      string        `json:"name"`
 	NodeKey   string        `json:"node_key"`
 	Empty     bool          `json:"empty"` // 空槽(未指派节点)
@@ -152,10 +154,17 @@ func (s *Server) handleListSlots(w http.ResponseWriter, r *http.Request) {
 	if needRender {
 		deps = s.loadSlotRenderDeps()
 	}
+	// {index} 真实分组序号(issue #113):列表预览与订阅输出同一求值路径
+	// (computeSlotIndices),不再是恒 01——重名模板在列表里即所见 01/02/03。
+	var slotIndices map[string]int
+	if deps != nil {
+		slotIndices = computeSlotIndices(slots, idx, deps)
+	}
 
 	views := make([]slotView, 0, len(slots))
 	for _, sl := range slots {
 		v := slotView{
+			ID:        sl.ID,
 			Name:      sl.Name,
 			NodeKey:   sl.NodeKey,
 			Empty:     sl.NodeKey == "",
@@ -168,8 +177,13 @@ func (s *Server) handleListSlots(w http.ResponseWriter, r *http.Request) {
 					Name: n.Name, Source: n.Source, Region: n.Region,
 					Available: n.Available, Latency: n.Latency, Stale: n.Stale,
 				}
-				// 渲染后实际名称(列表展示用);列表不编号,{index} 恒 01
-				if rendered := renderSlotName(sl.Name, n, deps, 1); rendered != sl.Name {
+				// 渲染后实际名称(列表展示用):{index} 取真实分组序号(issue #113),
+				// 与订阅下发同一求值路径;未参与编号的(空槽不在此分支)恒 1
+				slotIdx := slotIndices[sl.NodeKey]
+				if slotIdx == 0 {
+					slotIdx = 1
+				}
+				if rendered := renderSlotName(sl.Name, n, deps, slotIdx); rendered != sl.Name {
 					v.Display = rendered
 				}
 			} else {
@@ -307,14 +321,16 @@ func (s *Server) handleCreateSlot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.st.CreateNameSlotForUser(effUID, req.Name, req.NodeKey, req.Force); err != nil {
+	id, err := s.st.CreateNameSlotForUser(effUID, req.Name, req.NodeKey, req.Force)
+	if err != nil {
 		writeSlotError(s, w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"success": true})
+	// 创建响应携带新槽位 ID(issue #112):前端后续变更按 ID 寻址
+	writeJSON(w, map[string]any{"success": true, "id": id})
 }
 
-// handleUpdateSlot PUT /api/slots/{name}:改名/指派/转移/摘下。
+// handleUpdateSlot PUT /api/slots/{id}:改名/指派/转移/摘下,按 ID 寻址(issue #112)。
 // {new_name?, node_key?, force?};new_name/node_key 缺省=不变,node_key 显式空串=摘下变空槽。
 func (s *Server) handleUpdateSlot(w http.ResponseWriter, r *http.Request) {
 	scope, ok := s.mustUserScope(w, r)
@@ -322,7 +338,17 @@ func (s *Server) handleUpdateSlot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	effUID := EffectiveUserID(scope)
-	name := r.PathValue("name")
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	// 先按 ID 取现行槽位:不存在(或不属本人)统一 404,不暴露存在性。
+	cur, err := s.st.GetNameSlotByIDForUser(effUID, id)
+	if err != nil {
+		writeSlotError(s, w, err)
+		return
+	}
 
 	var req struct {
 		NewName *string `json:"new_name"`
@@ -355,14 +381,13 @@ func (s *Server) handleUpdateSlot(w http.ResponseWriter, r *http.Request) {
 
 	// 摘下(node_key 显式空串)与改名/指派拆开执行,store 层语义保持单一
 	if req.NodeKey != nil && nodeKey == "" {
-		if req.NewName != nil && newName != name {
-			if err := s.st.UpdateNameSlotForUser(effUID, name, newName, "", req.Force); err != nil {
+		if req.NewName != nil && newName != cur.Name {
+			if err := s.st.UpdateNameSlotForUser(effUID, id, newName, "", req.Force); err != nil {
 				writeSlotError(s, w, err)
 				return
 			}
-			name = newName
 		}
-		if err := s.st.UnassignNameSlotForUser(effUID, name); err != nil {
+		if err := s.st.UnassignNameSlotForUser(effUID, id); err != nil {
 			writeSlotError(s, w, err)
 			return
 		}
@@ -370,20 +395,26 @@ func (s *Server) handleUpdateSlot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.st.UpdateNameSlotForUser(effUID, name, newName, nodeKey, req.Force); err != nil {
+	if err := s.st.UpdateNameSlotForUser(effUID, id, newName, nodeKey, req.Force); err != nil {
 		writeSlotError(s, w, err)
 		return
 	}
 	writeJSON(w, map[string]any{"success": true})
 }
 
-// handleDeleteSlot DELETE /api/slots/{name}:删除槽位,节点回退模板/原名。
+// handleDeleteSlot DELETE /api/slots/{id}:删除槽位,按 ID 寻址(issue #112),
+// 节点回退模板/原名。
 func (s *Server) handleDeleteSlot(w http.ResponseWriter, r *http.Request) {
 	scope, ok := s.mustUserScope(w, r)
 	if !ok {
 		return
 	}
-	if err := s.st.DeleteNameSlotForUser(EffectiveUserID(scope), r.PathValue("name")); err != nil {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if err := s.st.DeleteNameSlotForUser(EffectiveUserID(scope), id); err != nil {
 		writeSlotError(s, w, err)
 		return
 	}

@@ -15,7 +15,7 @@ func TestApplyNameSlots(t *testing.T) {
 		{Name: "原名A", Server: "a.example.com", Port: 443, Source: "机场A"},
 		{Name: "原名B", Server: "b.example.com", Port: 443, Source: "机场A"},
 	}
-	if err := st.CreateNameSlotForUser(0, "🇭🇰 香港01", nodes[0].NodeKey(), false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "🇭🇰 香港01", nodes[0].NodeKey(), false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -47,7 +47,7 @@ func TestApplyStandardization_SkipsSlotNodes(t *testing.T) {
 		{Name: "丙", Server: "c.example.com", Port: 443, Source: "机场A", Region: "HK"},
 	}
 	// 乙被槽位接管
-	if err := st.CreateNameSlotForUser(0, "我的香港", nodes[1].NodeKey(), false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "我的香港", nodes[1].NodeKey(), false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -74,7 +74,8 @@ func TestApplyNameSlots_TemplateVars(t *testing.T) {
 	srv, st := newTestServer(t, nil)
 	hk := &subscription.Node{Name: "原名", Server: "hk.example.com", Port: 443, Source: "机场A", Region: "HK"}
 	us := &subscription.Node{Name: "US原", Server: "us.example.com", Port: 443, Source: "机场A", Region: "US"}
-	if err := st.CreateNameSlotForUser(0, "主节点-{emoji}{region}", hk.NodeKey(), false); err != nil {
+	slotID, err := st.CreateNameSlotForUser(0, "主节点-{emoji}{region}", hk.NodeKey(), false)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -83,8 +84,8 @@ func TestApplyNameSlots_TemplateVars(t *testing.T) {
 		t.Fatalf("rendered = %q, want 主节点-🇭🇰香港", out[0].DisplayName)
 	}
 
-	// 转移到美国节点:同一槽位名渲染出美国(槽位不变,文案跟随节点)
-	if err := st.UpdateNameSlotForUser(0, "主节点-{emoji}{region}", "", us.NodeKey(), true); err != nil {
+	// 转移到美国节点:同一槽位(ID 寻址)渲染出美国(槽位不变,文案跟随节点)
+	if err := st.UpdateNameSlotForUser(0, slotID, "", us.NodeKey(), true); err != nil {
 		t.Fatal(err)
 	}
 	out = srv.applyNameSlots([]*subscription.Node{us}, 0)
@@ -93,7 +94,7 @@ func TestApplyNameSlots_TemplateVars(t *testing.T) {
 	}
 
 	// 无变量的名字原样(不回读渲染依赖)
-	if err := st.CreateNameSlotForUser(0, "固定名", hk.NodeKey(), true); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "固定名", hk.NodeKey(), true); err != nil {
 		t.Fatal(err)
 	}
 	out = srv.applyNameSlots([]*subscription.Node{hk}, 0)
@@ -112,13 +113,13 @@ func TestApplyNameSlots_Index(t *testing.T) {
 
 	// 两个前缀同为"主节点-香港-"的槽位({index} 后的后缀不参与前缀分组)
 	// + 一个美国槽位(独占前缀,恒 01)
-	if err := st.CreateNameSlotForUser(0, "主节点-{region}-{index}B", hk1.NodeKey(), false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "主节点-{region}-{index}B", hk1.NodeKey(), false); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CreateNameSlotForUser(0, "主节点-{region}-{index}A", hk2.NodeKey(), false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "主节点-{region}-{index}A", hk2.NodeKey(), false); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CreateNameSlotForUser(0, "美线-{region}-{index}", us1.NodeKey(), false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "美线-{region}-{index}", us1.NodeKey(), false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -139,13 +140,71 @@ func TestApplyNameSlots_Index(t *testing.T) {
 	}
 }
 
-// TestNamingChainOrder 命名链优先级:精选 alias > 槽位名 > 模板标准化 > 原名
+// TestApplyNameSlots_IndexDuplicateTemplates issue #113 核心:同一含 {index}
+// 模板可挂多个节点,按创建顺序(槽位 ID)从 01 自动编号;跨地区前缀各自成组;
+// 改名不改变创建顺序编号;空槽不占号。
+func TestApplyNameSlots_IndexDuplicateTemplates(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	hk1 := &subscription.Node{Name: "甲", Server: "hk1.example.com", Port: 443, Source: "机场A", Region: "HK"}
+	hk2 := &subscription.Node{Name: "乙", Server: "hk2.example.com", Port: 443, Source: "机场A", Region: "HK"}
+	us1 := &subscription.Node{Name: "丙", Server: "us1.example.com", Port: 443, Source: "机场A", Region: "US"}
+
+	// 同模板三个槽位:hk1 → hk2 → 空槽(不占号) → us1(跨地区独立编号)
+	const tmpl = "主节点-{region}-{index}"
+	if _, err := st.CreateNameSlotForUser(0, tmpl, hk1.NodeKey(), false); err != nil {
+		t.Fatalf("first slot: %v", err)
+	}
+	id2, err := st.CreateNameSlotForUser(0, tmpl, hk2.NodeKey(), false)
+	if err != nil {
+		t.Fatalf("duplicate template name must be allowed: %v", err)
+	}
+	if _, err := st.CreateNameSlotForUser(0, tmpl, "", false); err != nil {
+		t.Fatalf("empty slot with same template must be allowed: %v", err)
+	}
+	if _, err := st.CreateNameSlotForUser(0, tmpl, us1.NodeKey(), false); err != nil {
+		t.Fatalf("cross-region same template must be allowed: %v", err)
+	}
+
+	out := srv.applyNameSlots([]*subscription.Node{hk1, hk2, us1}, 0)
+	got := map[string]string{}
+	for _, n := range out {
+		got[n.Server] = n.DisplayName
+	}
+	// 同前缀(香港)同模板:按创建顺序 01/02;跨地区(美国)独立从 01 编起
+	if got["hk1.example.com"] != "主节点-香港-01" {
+		t.Errorf("hk1 = %q, want 主节点-香港-01", got["hk1.example.com"])
+	}
+	if got["hk2.example.com"] != "主节点-香港-02" {
+		t.Errorf("hk2 = %q, want 主节点-香港-02", got["hk2.example.com"])
+	}
+	if got["us1.example.com"] != "主节点-美国-01" {
+		t.Errorf("us1 = %q, want 主节点-美国-01", got["us1.example.com"])
+	}
+
+	// 改名不改变创建顺序编号(ID 不变,编号不动)
+	if err := st.UpdateNameSlotForUser(0, id2, "主力-{region}-{index}", "", false); err != nil {
+		t.Fatal(err)
+	}
+	out = srv.applyNameSlots([]*subscription.Node{hk1, hk2, us1}, 0)
+	got = map[string]string{}
+	for _, n := range out {
+		got[n.Server] = n.DisplayName
+	}
+	if got["hk1.example.com"] != "主节点-香港-01" {
+		t.Errorf("after rename hk1 = %q, want 主节点-香港-01 (编号不漂移)", got["hk1.example.com"])
+	}
+	if got["hk2.example.com"] != "主力-香港-01" {
+		t.Errorf("after rename hk2 = %q, want 主力-香港-01 (新模板独占前缀从 01 编起)", got["hk2.example.com"])
+	}
+}
+
 func TestNamingChainOrder(t *testing.T) {
 	srv, st := newTestServer(t, nil)
 	node := &subscription.Node{
 		Name: "机场原名", Server: "a.example.com", Port: 443, Source: "机场A", Region: "HK",
 	}
-	if err := st.CreateNameSlotForUser(0, "槽位名", node.NodeKey(), false); err != nil {
+	slotID, err := st.CreateNameSlotForUser(0, "槽位名", node.NodeKey(), false)
+	if err != nil {
 		t.Fatal(err)
 	}
 	pool := []*subscription.Node{node}
@@ -163,7 +222,7 @@ func TestNamingChainOrder(t *testing.T) {
 		t.Fatalf("alias should beat slot, got %q", chain[0].DisplayName)
 	}
 	// 无 alias 无槽位的节点:模板生效;标准化关闭:原名(生成器回退,此处 DisplayName 空)
-	if err := st.DeleteNameSlotForUser(0, "槽位名"); err != nil {
+	if err := st.DeleteNameSlotForUser(0, slotID); err != nil {
 		t.Fatal(err)
 	}
 	chain = srv.applyNameSlots(srv.applyStandardization(pool, true, "{region_code}-T{index}", 0), 0)

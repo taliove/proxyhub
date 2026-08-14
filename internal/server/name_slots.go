@@ -4,8 +4,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/taliove/proxyhub/internal/store"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
+
+// slotIndexTmpl 名称模板的序号占位符(与 store.SlotNameHasIndex 同一判定串)。
+const slotIndexTmpl = "{index}"
 
 // slotRenderDeps 槽位名渲染依赖(机场简称表 + 地区信息表),与标准化同源。
 type slotRenderDeps struct {
@@ -46,10 +50,11 @@ func renderSlotName(name string, n *subscription.Node, deps *slotRenderDeps, ind
 // 槽位名支持模板变量(含 "{" 即按挂载节点渲染):
 // {emoji} {region} {region_code} {source} {source_abbr} {original_name} 与标准化
 // 同一变量表;{index} 是槽位序号——渲染前缀({index} 之前部分)相同的多个槽位
-// 按槽位名排序从 01 自动往后排,避免撞名("主节点-{region}-{index}" 场景)。
+// 按 (槽位名, 槽位 ID) 排序从 01 自动往后排(issue #113:同模板同前缀按创建顺序
+// 编号,ID tiebreak 保证跨请求确定;跨地区前缀各自成组),避免撞名。
 // 渲染依赖读取失败时降级为用原始字面量。
 func (s *Server) applyNameSlots(nodes []*subscription.Node, userID int64) []*subscription.Node {
-	slots, err := s.st.SlotNameByNodeKeyForUser(userID)
+	slots, err := s.st.AssignedNameSlotsForUser(userID)
 	if err != nil {
 		s.logger.Warn("list name slots failed, skipping slot overlay", "error", err)
 		return nodes
@@ -60,10 +65,10 @@ func (s *Server) applyNameSlots(nodes []*subscription.Node, userID int64) []*sub
 
 	needRender := false
 	needIndex := false
-	for _, name := range slots {
-		if strings.Contains(name, "{") {
+	for _, sl := range slots {
+		if strings.Contains(sl.Name, "{") {
 			needRender = true
-			if strings.Contains(name, "{index}") {
+			if store.SlotNameHasIndex(sl.Name) {
 				needIndex = true
 			}
 		}
@@ -73,47 +78,23 @@ func (s *Server) applyNameSlots(nodes []*subscription.Node, userID int64) []*sub
 		deps = s.loadSlotRenderDeps()
 	}
 
-	// {index} 编号:按渲染前缀分组(跨节点),组内按槽位名排序,序号从 1 起。
-	// 同一 (用户,槽位名) 只会占一个 node_key(双向唯一),分组键带槽位名消歧。
+	byKey := make(map[string]*subscription.Node, len(nodes))
+	for _, n := range nodes {
+		byKey[n.NodeKey()] = n
+	}
 	indexOf := map[string]int{} // nodeKey -> 序号
 	if needIndex && deps != nil {
-		type entry struct {
-			nodeKey  string
-			slotName string
-			prefix   string
-		}
-		byKey := make(map[string]*subscription.Node, len(nodes))
-		for _, n := range nodes {
-			byKey[n.NodeKey()] = n
-		}
-		entries := []entry{}
-		for key, slotName := range slots {
-			n, ok := byKey[key]
-			if !ok || !strings.Contains(slotName, "{index}") {
-				continue
-			}
-			// 前缀 = {index} 之前的渲染结果(其后的字面部分不参与分组)
-			prefixTmpl := strings.SplitN(slotName, "{index}", 2)[0]
-			prefix := renderSlotName(prefixTmpl, n, deps, 1)
-			entries = append(entries, entry{key, slotName, prefix})
-		}
-		// 前缀分组:组内按槽位名排序赋号(稳定,不随延迟/池序波动)
-		sort.Slice(entries, func(i, j int) bool {
-			if entries[i].prefix != entries[j].prefix {
-				return entries[i].prefix < entries[j].prefix
-			}
-			return entries[i].slotName < entries[j].slotName
-		})
-		groupIdx := map[string]int{}
-		for _, e := range entries {
-			groupIdx[e.prefix]++
-			indexOf[e.nodeKey] = groupIdx[e.prefix]
-		}
+		indexOf = computeSlotIndices(slots, byKey, deps)
+	}
+
+	nameOf := make(map[string]string, len(slots))
+	for _, sl := range slots {
+		nameOf[sl.NodeKey] = sl.Name
 	}
 
 	result := make([]*subscription.Node, 0, len(nodes))
 	for _, n := range nodes {
-		name, ok := slots[n.NodeKey()]
+		name, ok := nameOf[n.NodeKey()]
 		if !ok {
 			result = append(result, n)
 			continue
@@ -128,6 +109,48 @@ func (s *Server) applyNameSlots(nodes []*subscription.Node, userID int64) []*sub
 		result = append(result, &cp)
 	}
 	return result
+}
+
+// computeSlotIndices {index} 编号(issue #113),订阅生成与槽位列表预览共用
+// 同一求值路径(WYSIWYG):前缀(渲染后的 {index} 之前部分)分组,组内按
+// (槽位名, 槽位 ID) 排序从 1 起编号——同模板同前缀按创建顺序(ID 序)编号,
+// 跨地区前缀各自成组;空槽与不在候选集内的槽位不参与编号。
+func computeSlotIndices(slots []store.NameSlot, byKey map[string]*subscription.Node, deps *slotRenderDeps) map[string]int {
+	type entry struct {
+		nodeKey  string
+		slotName string
+		id       int64
+		prefix   string
+	}
+	entries := []entry{}
+	for _, sl := range slots {
+		n, ok := byKey[sl.NodeKey]
+		if !ok || !store.SlotNameHasIndex(sl.Name) {
+			continue
+		}
+		// 前缀 = {index} 之前的渲染结果(其后的字面部分不参与分组)
+		prefixTmpl := strings.SplitN(sl.Name, slotIndexTmpl, 2)[0]
+		prefix := renderSlotName(prefixTmpl, n, deps, 1)
+		entries = append(entries, entry{sl.NodeKey, sl.Name, sl.ID, prefix})
+	}
+	// 排序键 (前缀, 槽位名, 槽位 ID):同前缀不同模板按名排(既有行为),
+	// 同模板按创建顺序(ID)排;全键确定,跨请求不漂移。
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].prefix != entries[j].prefix {
+			return entries[i].prefix < entries[j].prefix
+		}
+		if entries[i].slotName != entries[j].slotName {
+			return entries[i].slotName < entries[j].slotName
+		}
+		return entries[i].id < entries[j].id
+	})
+	groupIdx := map[string]int{}
+	indexOf := make(map[string]int, len(entries))
+	for _, e := range entries {
+		groupIdx[e.prefix]++
+		indexOf[e.nodeKey] = groupIdx[e.prefix]
+	}
+	return indexOf
 }
 
 // slotKeySetForUser 读槽位占用的 node_key 集合(标准化跳过用);读失败返回 nil

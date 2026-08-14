@@ -17,7 +17,7 @@
     :nodes="nodes"
     @changed="onChanged"
   />
-  <NodeSlotAssignDialog ref="assignDialog" :empty-slot-names="emptySlotNames" @saved="onChanged" />
+  <NodeSlotAssignDialog ref="assignDialog" :empty-slots="emptySlots" @saved="onChanged" />
 </template>
 
 <script setup lang="ts">
@@ -39,18 +39,18 @@ const {
   loading,
   monitorEnabled,
   load,
+  slotByNodeKey,
   slotNameByNodeKey,
   emptySlots,
   attentionSlots
 } = useNameSlots()
 
-const emptySlotNames = computed(() => emptySlots.value.map((s) => s.name))
 // 名称列"槽位"标记用的占用集合(供父页传 NodeTable)
 const slotKeys = computed(() => new Set(slotNameByNodeKey.value.keys()))
 
 const assignDialog = ref<InstanceType<typeof NodeSlotAssignDialog> | null>(null)
 const openAssign = (row: UnifiedNode) =>
-  assignDialog.value?.open(row, slotNameByNodeKey.value.get(row.node_key) || '')
+  assignDialog.value?.open(row, slotByNodeKey.value.get(row.node_key) ?? null)
 
 const onChanged = async () => {
   await load()

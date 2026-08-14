@@ -17,6 +17,8 @@ export interface SlotNodeSummary {
 }
 
 export interface NameSlot {
+  // 内部自增 ID(issue #112):变更操作(改名/指派/转移/摘下/删除)一律按 ID 寻址
+  id: number
   name: string
   node_key: string
   empty: boolean
@@ -66,22 +68,27 @@ export const readSlotConflict = (e: unknown): SlotConflict | null => {
 
 export const listSlots = (): Promise<SlotListResponse> => client.get('/slots')
 
-export const createSlot = (name: string, nodeKey = '', force = false): Promise<unknown> =>
+// createSlot 创建成功响应携带新槽位 ID(后续变更按 ID 寻址)
+export const createSlot = (
+  name: string,
+  nodeKey = '',
+  force = false
+): Promise<{ success: boolean; id: number }> =>
   client.post('/slots', { name, node_key: nodeKey, force })
 
-// updateSlot nodeKey 语义:undefined = 不变;'' = 摘下变空槽;非空 = 指派/转移
+// updateSlot 按槽位 ID 寻址(issue #112)。
+// nodeKey 语义:undefined = 不变;'' = 摘下变空槽;非空 = 指派/转移
 export const updateSlot = (
-  name: string,
+  id: number,
   opts: { newName?: string; nodeKey?: string; force?: boolean }
 ): Promise<unknown> =>
-  client.put(`/slots/${encodeURIComponent(name)}`, {
+  client.put(`/slots/${id}`, {
     new_name: opts.newName,
     node_key: opts.nodeKey,
     force: opts.force ?? false
   })
 
-export const deleteSlot = (name: string): Promise<unknown> =>
-  client.delete(`/slots/${encodeURIComponent(name)}`)
+export const deleteSlot = (id: number): Promise<unknown> => client.delete(`/slots/${id}`)
 
 // previewSlotName 槽位名模板实时预览:按挂载节点渲染出订阅实际显示名
 // (与生成链同一 Standardizer);无变量/无节点时 resolved=false、原样返回

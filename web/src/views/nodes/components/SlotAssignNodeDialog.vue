@@ -52,9 +52,10 @@ const open = (row: NameSlot) => {
 
 const doAssign = async (force: boolean) => {
   if (!slot.value || !nodeKey.value) return
+  const slotID = slot.value.id
   const slotName = slot.value.name
   try {
-    await updateSlot(slotName, { nodeKey: nodeKey.value, force })
+    await updateSlot(slotID, { nodeKey: nodeKey.value, force })
     ElMessage.success('已生效，所有订阅立即使用新名称')
     visible.value = false
     emit('saved')

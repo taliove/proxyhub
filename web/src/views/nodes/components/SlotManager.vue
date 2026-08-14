@@ -44,7 +44,7 @@
       @rename="rename"
     />
 
-    <el-table v-else v-loading="loading" :data="filteredSlots" size="small" row-key="name">
+    <el-table v-else v-loading="loading" :data="filteredSlots" size="small" row-key="id">
       <el-table-column label="名称" min-width="180">
         <template #default="{ row }">
           <div class="name-cell">
@@ -156,7 +156,7 @@ import {
   type NameSlot,
   type SlotConflictRow
 } from '@/api/slots'
-import { apiErrorMessage } from '../utils'
+import { apiErrorMessage, slotNameTakenMessage } from '../utils'
 import type { UnifiedNode } from '../selfmerge'
 
 const props = defineProps<{
@@ -240,14 +240,14 @@ const saveEdit = async () => {
       await createSlot(name)
       ElMessage.success('已创建空槽，可指派节点')
     } else if (editTarget.value) {
-      await updateSlot(editTarget.value.name, { newName: name })
+      await updateSlot(editTarget.value.id, { newName: name })
       ElMessage.success('已改名，立即生效')
     }
     editVisible.value = false
     emit('changed')
   } catch (e) {
     if (readSlotConflict(e)?.kind === 'name_taken') {
-      ElMessage.error(`名称「${name}」已存在`)
+      ElMessage.error(slotNameTakenMessage(name))
     } else {
       ElMessage.error(apiErrorMessage(e, '保存失败'))
     }
@@ -273,7 +273,7 @@ const remove = async (row: NameSlot) => {
     return
   }
   try {
-    await deleteSlot(row.name)
+    await deleteSlot(row.id)
     ElMessage.success('已删除')
     emit('changed')
   } catch (e) {
@@ -308,7 +308,7 @@ const doClaim = async (c: SlotConflictRow, name: string) => {
         return
       }
     } else if (conflict?.kind === 'name_taken') {
-      ElMessage.error(`名称「${name}」已存在`)
+      ElMessage.error(slotNameTakenMessage(name))
       return
     } else {
       ElMessage.error(apiErrorMessage(e, '认领失败'))

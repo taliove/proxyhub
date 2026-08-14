@@ -10,7 +10,7 @@
         <span class="slot-group__count num">{{ g.rows.length }}</span>
       </div>
       <div class="slot-group__grid">
-        <div v-for="row in g.rows" :key="row.name" class="slot-card">
+        <div v-for="row in g.rows" :key="row.id" class="slot-card">
           <div class="slot-card__head">
             <span class="slot-card__name" :title="row.name">{{ row.display || row.name }}</span>
             <span class="slot-card__status">{{ meta(statusOf(row)).label }}</span>

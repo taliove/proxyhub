@@ -76,3 +76,8 @@ export const apiErrorMessage = (e: unknown, fallback: string): string => {
   }
   return fallback
 }
+
+// 槽位名重名(409 name_taken)的可操作提示(issue #113):字面名必须唯一,
+// 想复用同一名字就加 {index} 让系统按创建顺序自动编号。
+export const slotNameTakenMessage = (name: string): string =>
+  `名称「${name}」已存在；模板不含 {index} 时名称必须唯一，加入 {index} 可自动编号。`

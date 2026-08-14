@@ -22,11 +22,20 @@ export const useNameSlots = () => {
     }
   }
 
+  // node_key → 槽位(变更操作按 ID 寻址,issue #112;展示层用 slotNameByNodeKey)
+  const slotByNodeKey = computed(() => {
+    const m = new Map<string, NameSlot>()
+    for (const s of slots.value) {
+      if (s.node_key) m.set(s.node_key, s)
+    }
+    return m
+  })
+
   // node_key → 槽位名(名称列标记 + 行内入口判断"此节点已占槽位")
   const slotNameByNodeKey = computed(() => {
     const m = new Map<string, string>()
-    for (const s of slots.value) {
-      if (s.node_key) m.set(s.node_key, s.name)
+    for (const [key, s] of slotByNodeKey.value) {
+      m.set(key, s.name)
     }
     return m
   })
@@ -45,6 +54,7 @@ export const useNameSlots = () => {
     loading,
     monitorEnabled,
     load,
+    slotByNodeKey,
     slotNameByNodeKey,
     emptySlots,
     attentionSlots

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -78,12 +79,20 @@ func TestSlotsAPI_CreateListDelete(t *testing.T) {
 	}
 	srv, _ := newTestServer(t, []*subscription.Node{node})
 
-	// 预建空槽
+	// 预建空槽;创建响应携带新 ID(issue #112)
 	w, req := slotReq(t, http.MethodPost, "/api/slots", map[string]any{"name": "🇭🇰 香港01"})
 	srv.handleCreateSlot(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("create empty slot status = %d, body = %s", w.Code, w.Body.String())
 	}
+	var createResp struct {
+		ID int64 `json:"id"`
+	}
+	decodeSlotResp(t, w, &createResp)
+	if createResp.ID <= 0 {
+		t.Fatalf("create response id = %d, want positive", createResp.ID)
+	}
+	hkSlotID := createResp.ID
 
 	// 名字必填
 	w, req = slotReq(t, http.MethodPost, "/api/slots", map[string]any{"name": "  "})
@@ -116,6 +125,7 @@ func TestSlotsAPI_CreateListDelete(t *testing.T) {
 	}
 	var resp struct {
 		Slots []struct {
+			ID      int64  `json:"id"`
 			Name    string `json:"name"`
 			Empty   bool   `json:"empty"`
 			NodeKey string `json:"node_key"`
@@ -140,24 +150,94 @@ func TestSlotsAPI_CreateListDelete(t *testing.T) {
 	if !resp.Slots[byName["🇭🇰 香港01"]].Empty {
 		t.Error("🇭🇰 香港01 should be empty slot")
 	}
+	if resp.Slots[byName["🇭🇰 香港01"]].ID != hkSlotID {
+		t.Errorf("list id = %d, want create-returned %d (列表每项携带 ID)",
+			resp.Slots[byName["🇭🇰 香港01"]].ID, hkSlotID)
+	}
 	jp := resp.Slots[byName["🇯🇵 日本01"]]
 	if jp.Empty || jp.Node == nil || jp.Node.Name != "机场原名" || !jp.Node.Available || jp.Node.Latency != 88 {
 		t.Errorf("🇯🇵 日本01 view = %+v, want bound node summary", jp)
 	}
 
-	// 删除(名字含非 ASCII,URL 用占位符,PathValue 注入真实名——生产路径由
-	// mux 解码后 PathValue 返回原文,与此同态)
+	// 删除:按 ID 寻址(issue #112)
 	w, req = slotReq(t, http.MethodDelete, "/api/slots/x", nil)
-	req.SetPathValue("name", "🇭🇰 香港01")
+	req.SetPathValue("id", strconv.FormatInt(hkSlotID, 10))
 	srv.handleDeleteSlot(w, req)
 	if w.Code != http.StatusOK {
-		t.Fatalf("delete status = %d", w.Code)
+		t.Fatalf("delete status = %d, body = %s", w.Code, w.Body.String())
 	}
 	w, req = slotReq(t, http.MethodDelete, "/api/slots/x", nil)
-	req.SetPathValue("name", "不存在")
+	req.SetPathValue("id", "99999")
 	srv.handleDeleteSlot(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("delete missing status = %d, want 404", w.Code)
+	}
+}
+
+// TestSlotsAPI_IndexTemplateDuplicateAndWYSIWYG issue #113 HTTP 接缝:
+// 同 {index} 模板可建多槽(挂不同节点);不含 {index} 的字面名重名仍 409;
+// 列表渲染预览带真实分组序号(与订阅输出同一求值路径)。
+func TestSlotsAPI_IndexTemplateDuplicateAndWYSIWYG(t *testing.T) {
+	nodeA := &subscription.Node{Name: "A", Server: "a.example.com", Port: 443, Source: "机场A", Region: "HK"}
+	nodeB := &subscription.Node{Name: "B", Server: "b.example.com", Port: 443, Source: "机场A", Region: "HK"}
+	srv, _ := newTestServer(t, []*subscription.Node{nodeA, nodeB})
+
+	create := func(body map[string]any) *httptest.ResponseRecorder {
+		t.Helper()
+		w, req := slotReq(t, http.MethodPost, "/api/slots", body)
+		srv.handleCreateSlot(w, req)
+		return w
+	}
+	createID := func(body map[string]any) int64 {
+		t.Helper()
+		w := create(body)
+		if w.Code != http.StatusOK {
+			t.Fatalf("create %v: %d %s", body, w.Code, w.Body.String())
+		}
+		var resp struct {
+			ID int64 `json:"id"`
+		}
+		decodeSlotResp(t, w, &resp)
+		return resp.ID
+	}
+
+	// 同模板两槽(含 {index} 重名放行)
+	const tmpl = "主节点-{region}-{index}"
+	id1 := createID(map[string]any{"name": tmpl, "node_key": nodeA.NodeKey()})
+	id2 := createID(map[string]any{"name": tmpl, "node_key": nodeB.NodeKey()})
+	if id1 == id2 {
+		t.Fatalf("two slots share id %d", id1)
+	}
+
+	// 不含 {index} 的字面名重名仍 409(语义不变)
+	if w := create(map[string]any{"name": tmpl, "node_key": ""}); w.Code != http.StatusOK {
+		t.Errorf("empty slot with same template: status = %d, want 200", w.Code)
+	}
+	createID(map[string]any{"name": "字面名"})
+	if w := create(map[string]any{"name": "字面名"}); w.Code != http.StatusConflict {
+		t.Errorf("duplicate literal name: status = %d, want 409", w.Code)
+	}
+
+	// 列表预览:同模板两槽渲染出真实序号 01/02(创建顺序)
+	w, req := slotReq(t, http.MethodGet, "/api/slots", nil)
+	srv.handleListSlots(w, req)
+	var listResp struct {
+		Slots []struct {
+			ID      int64  `json:"id"`
+			Name    string `json:"name"`
+			Display string `json:"display"`
+		} `json:"slots"`
+	}
+	decodeSlotResp(t, w, &listResp)
+	displayByID := map[int64]string{}
+	for _, sl := range listResp.Slots {
+		displayByID[sl.ID] = sl.Display
+	}
+	if displayByID[id1] != "主节点-香港-01" {
+		t.Errorf("slot %d display = %q, want 主节点-香港-01", id1, displayByID[id1])
+	}
+	if displayByID[id2] != "主节点-香港-02" {
+		t.Errorf("slot %d display = %q, want 主节点-香港-02", id2, displayByID[id2])
 	}
 }
 
@@ -241,7 +321,7 @@ func TestSlotsAPI_ProbeGrid(t *testing.T) {
 	put(1, false)
 	put(3, true)
 
-	if err := st.CreateNameSlotForUser(0, "格", node.NodeKey(), false); err != nil {
+	if _, err := st.CreateNameSlotForUser(0, "格", node.NodeKey(), false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -306,9 +386,20 @@ func TestSlotsAPI_ConflictAndForceTransfer(t *testing.T) {
 		srv.handleCreateSlot(w, req)
 		return w
 	}
-	if w := create("主力", nodeA.NodeKey(), false); w.Code != http.StatusOK {
-		t.Fatalf("create 主力: %d %s", w.Code, w.Body.String())
+	// 创建并取出新槽位 ID(变更操作全部按 ID 寻址,issue #112)
+	createID := func(name, key string) int64 {
+		t.Helper()
+		w := create(name, key, false)
+		if w.Code != http.StatusOK {
+			t.Fatalf("create %s: %d %s", name, w.Code, w.Body.String())
+		}
+		var resp struct {
+			ID int64 `json:"id"`
+		}
+		decodeSlotResp(t, w, &resp)
+		return resp.ID
 	}
+	mainID := createID("主力", nodeA.NodeKey())
 
 	// 同名冲突 → 409 + kind=name_taken
 	if w := create("主力", "", false); w.Code != http.StatusConflict {
@@ -342,14 +433,14 @@ func TestSlotsAPI_ConflictAndForceTransfer(t *testing.T) {
 	}
 
 	// 转移:把"主力"改指 nodeB,不 force → 409 reassign(带当前挂载节点)
-	update := func(name string, body map[string]any) *httptest.ResponseRecorder {
+	update := func(id int64, body map[string]any) *httptest.ResponseRecorder {
 		t.Helper()
 		w, req := slotReq(t, http.MethodPut, "/api/slots/x", body)
-		req.SetPathValue("name", name)
+		req.SetPathValue("id", strconv.FormatInt(id, 10))
 		srv.handleUpdateSlot(w, req)
 		return w
 	}
-	w = update("主力", map[string]any{"node_key": nodeB.NodeKey()})
+	w = update(mainID, map[string]any{"node_key": nodeB.NodeKey()})
 	if w.Code != http.StatusConflict {
 		t.Fatalf("reassign status = %d, want 409", w.Code)
 	}
@@ -365,16 +456,16 @@ func TestSlotsAPI_ConflictAndForceTransfer(t *testing.T) {
 	}
 
 	// force 转移成功
-	if w := update("主力", map[string]any{"node_key": nodeB.NodeKey(), "force": true}); w.Code != http.StatusOK {
+	if w := update(mainID, map[string]any{"node_key": nodeB.NodeKey(), "force": true}); w.Code != http.StatusOK {
 		t.Fatalf("force reassign: %d %s", w.Code, w.Body.String())
 	}
 
-	// 改名
-	if w := update("主力", map[string]any{"new_name": "主力v2"}); w.Code != http.StatusOK {
+	// 改名(ID 寻址,改名不影响身份)
+	if w := update(mainID, map[string]any{"new_name": "主力v2"}); w.Code != http.StatusOK {
 		t.Fatalf("rename: %d %s", w.Code, w.Body.String())
 	}
 	// 摘下变空槽(node_key 显式空串)
-	if w := update("主力v2", map[string]any{"node_key": ""}); w.Code != http.StatusOK {
+	if w := update(mainID, map[string]any{"node_key": ""}); w.Code != http.StatusOK {
 		t.Fatalf("unassign: %d %s", w.Code, w.Body.String())
 	}
 	w, req := slotReq(t, http.MethodGet, "/api/slots", nil)

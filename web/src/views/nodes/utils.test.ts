@@ -1,6 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import type { Node } from '@/types'
-import { availabilitySourceText, subscriptionHint } from './utils'
+import { availabilitySourceText, slotNameTakenMessage, subscriptionHint } from './utils'
+
+// slotNameTakenMessage(issue #113):字面名重名 409 的文案必须给出可操作提示
+// (不含 {index} 必须唯一;加入 {index} 可自动编号)
+describe('slotNameTakenMessage', () => {
+  it('含名称与可操作提示', () => {
+    const msg = slotNameTakenMessage('主力')
+    expect(msg).toContain('主力')
+    expect(msg).toContain('{index}')
+    expect(msg).toContain('唯一')
+    expect(msg).toContain('自动编号')
+  })
+})
 
 // 与后端 nodeView 字段对齐的最小 fixture(见 ticket 0016)
 const node = (over: Partial<Node> = {}): Node =>
