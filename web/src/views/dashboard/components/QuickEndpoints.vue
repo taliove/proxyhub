@@ -20,6 +20,19 @@
         </div>
         <div class="endpoint-actions">
           <el-button link type="primary" @click="copyUrl(ep)">复制</el-button>
+          <!-- 按格式复制 + 一键导入(issue #123) -->
+          <el-dropdown trigger="click" @command="(cmd: string) => copyFormatted(ep, cmd)">
+            <el-button link type="primary">
+              格式<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="base64">复制通用订阅（base64）</el-dropdown-item>
+                <el-dropdown-item command="clash">复制 Clash 订阅</el-dropdown-item>
+                <el-dropdown-item command="import">一键导入 Clash</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-button link type="primary" @click="showQR(ep)">二维码</el-button>
         </div>
       </li>
@@ -38,16 +51,29 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
 import type { Endpoint } from '@/types'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { useQuickEndpoints } from '../composables/useQuickEndpoints'
 import { copyText } from '@/utils/clipboard'
+import { clashInstallUrl, subscriptionUrl, type SubscriptionFormat } from '@/utils/subscription-url'
 
 const { endpoints, loading, error, getSubscriptionUrl } = useQuickEndpoints()
 
 // 复制与成功反馈照搬 Endpoints.vue 现成模式;剪贴板被拒绝时显式报错,不假报成功
 const copyUrl = (row: Endpoint) => {
   copyText(getSubscriptionUrl(row))
+    .then(() => ElMessage.success('已复制到剪贴板'))
+    .catch(() => ElMessage.error('复制失败，请检查浏览器剪贴板权限'))
+}
+
+// 按格式复制 / 一键导入(issue #123):显式 format 优先于 UA 分流(ADR 0049)
+const copyFormatted = (row: Endpoint, cmd: string) => {
+  if (cmd === 'import') {
+    window.location.href = clashInstallUrl(row)
+    return
+  }
+  copyText(subscriptionUrl(row, cmd as SubscriptionFormat))
     .then(() => ElMessage.success('已复制到剪贴板'))
     .catch(() => ElMessage.error('复制失败，请检查浏览器剪贴板权限'))
 }

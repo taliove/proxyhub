@@ -31,7 +31,7 @@
           </span>
           <span v-else class="muted"> {{ testResult.pull.clash.error || '生成失败' }}</span>
         </el-descriptions-item>
-        <el-descriptions-item label="V2Ray">
+        <el-descriptions-item label="通用 (base64)">
           <el-tag :type="testResult.pull.v2ray.valid ? 'success' : 'danger'" size="small">
             {{ testResult.pull.v2ray.valid ? '合法' : '异常' }}
           </el-tag>

@@ -1,12 +1,12 @@
 <template>
   <!-- 下发节点清单段(从 EndpointDetailDrawer 抽取,400 行门禁):
-       与 /sub 同一生成链的所见即所得;订阅原文折叠展示,Clash/V2Ray 切换重拉 -->
+       与 /sub 同一生成链的所见即所得;订阅原文折叠展示,Clash/通用 base64 切换重拉 -->
   <div class="drawer-block">
     <div class="drawer-section-title">下发节点清单</div>
     <div class="preview-toolbar">
       <el-radio-group v-model="format" size="small" @change="loadPreview">
         <el-radio-button label="clash">Clash</el-radio-button>
-        <el-radio-button label="v2ray">V2Ray</el-radio-button>
+        <el-radio-button label="base64">通用 (base64)</el-radio-button>
       </el-radio-group>
       <span class="preview-hint">
         共 {{ preview.count }} 个节点（已应用节点范围条件，与终端拉取到的完全一致）
@@ -72,7 +72,7 @@ const props = defineProps<{
   active: boolean
 }>()
 
-const format = ref<'clash' | 'v2ray'>('clash')
+const format = ref<'clash' | 'base64'>('clash')
 const preview = ref<{ count: number; content: string; nodes: PreviewNode[] }>({
   count: 0,
   content: '',

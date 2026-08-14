@@ -27,10 +27,7 @@
           <template #default="{ row }">
             <el-input :value="getSubscriptionUrl(row)" readonly>
               <template #append>
-                <div class="url-actions">
-                  <el-button @click="copyUrl(row)">复制</el-button>
-                  <el-button @click="showSubscriptionQR(row)">二维码</el-button>
-                </div>
+                <EndpointUrlActions :endpoint="row" @qrcode="showSubscriptionQR(row)" />
               </template>
             </el-input>
           </template>
@@ -210,7 +207,8 @@ import {
   filterEndpointsByPicks,
   type PicksStatusFilter
 } from '@/components/endpoint-nodepicks-utils'
-import { copyText } from '@/utils/clipboard'
+import EndpointUrlActions from '@/components/EndpointUrlActions.vue'
+import { subscriptionUrl } from '@/utils/subscription-url'
 
 const endpoints = ref<Endpoint[]>([])
 const loading = ref(false)
@@ -239,15 +237,7 @@ const loadEndpoints = async () => {
 }
 
 // 订阅地址挂根命名空间 /sub(issue #74):不含 Site Path,链接进客户端/日志不泄露管理面路径。
-const getSubscriptionUrl = (row: Endpoint) => {
-  return `${window.location.origin}/sub/${row.path}?token=${row.token}`
-}
-
-const copyUrl = async (row: Endpoint) => {
-  // 降级剪贴板(局域网 http 非安全上下文无 clipboard API,见 utils/clipboard)
-  await copyText(getSubscriptionUrl(row))
-  ElMessage.success('已复制到剪贴板')
-}
+const getSubscriptionUrl = (row: Endpoint) => subscriptionUrl(row)
 
 const toggleEndpoint = async (row: Endpoint) => {
   await client.post(`/endpoints/${row.id}/toggle`)
@@ -361,22 +351,7 @@ onMounted(() => {
   gap: var(--ph-space-3);
   margin-bottom: var(--ph-space-3);
 }
-/* append 槽内容器:EP 默认给 append 内 el-button 设 flex:1 + margin:0 -20px(单按钮填满),
-   多按钮会重叠；容器改为整体撑满 append(负边距抵消内边距),按钮均分宽度并填满高度 */
-.url-actions {
-  display: flex;
-  align-self: stretch;
-  margin: 0 -20px;
-}
-.url-actions .el-button {
-  flex: 1;
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-}
-.url-actions .el-button + .el-button {
-  border-left: 1px solid var(--ph-border);
-}
+/* append 槽内动作区样式见 EndpointUrlActions(400 行门禁抽取) */
 .cfg-hint {
   font-size: var(--ph-text-xs);
   color: var(--ph-text-secondary);
