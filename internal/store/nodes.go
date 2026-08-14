@@ -193,6 +193,35 @@ func purgeExpiredStaleNodes(tx *sql.Tx, now time.Time, userID int64) error {
 	return nil
 }
 
+// UpdateNodeDetectionResult 单节点检测结果即时落库(issue #33):手动检测/批量
+// 检测/订阅实测写回内存池的同时持久化检测字段,与「全量刷新成功才 SaveNodePool」
+// 解耦——机场 URL 拉不通时,手动检出的可用状态不再只活在当前进程里。
+// mode 语义与内存池写回一致:"bandwidth" 只更新带宽三列;其余(quick/real)更新
+// 可用性/延迟/检测时间/判定来源/失败原因。只动检测列,身份列一概不碰(节点身份
+// 可能已被刷新改写,此处不越权)。行不存在(节点从未入过库)静默跳过——内存池
+// 仍是事实源,下轮刷新落库。
+func (s *Store) UpdateNodeDetectionResult(n *subscription.Node, mode string) error {
+	if mode == "bandwidth" {
+		_, err := s.db.Exec(
+			`UPDATE nodes SET bandwidth_down = ?, bandwidth_up = ?, bandwidth_check = ? WHERE node_key = ?`,
+			n.BandwidthDownMbps, n.BandwidthUpMbps, timeOrNull(n.BandwidthCheck), n.NodeKey())
+		if err != nil {
+			return fmt.Errorf("persist bandwidth result %s: %w", n.NodeKey(), err)
+		}
+		return nil
+	}
+	_, err := s.db.Exec(
+		`UPDATE nodes SET available = ?, latency_ms = ?, detection_last_check = ?,
+			detection_kind = ?, detection_fail_reason = ?, detection_fail_detail = ?
+			WHERE node_key = ?`,
+		boolToInt(n.Available), n.Latency, timeOrNull(n.DetectionLastCheck),
+		n.DetectionKind, n.DetectionFailReason, n.DetectionFailDetail, n.NodeKey())
+	if err != nil {
+		return fmt.Errorf("persist detection result %s: %w", n.NodeKey(), err)
+	}
+	return nil
+}
+
 // pruneStaleNodeTags 删除当前所有 stale 节点的自动标签(在 SaveNodePool 事务内调用)。
 func pruneStaleNodeTags(tx *sql.Tx, userID int64) error {
 	query := `DELETE FROM node_tags WHERE node_key IN (SELECT node_key FROM nodes WHERE stale = 1`

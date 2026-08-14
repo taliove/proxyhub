@@ -241,7 +241,25 @@ func (a *Aggregator) UpdateNodeTestResult(nodeKey, mode string, available bool, 
 
 // UpdateNodeTestResultForUser 写回指定用户分片的节点(ticket 07);
 // userID=0 回退为跨分片查找(单管理员/内部路径等价旧行为)。
+//
+// 命中即落库(issue #33):检测状态的持久化不再绑死在「全量刷新成功」上——
+// 机场 URL 拉不通时,手动检测/批量检测/订阅实测写回的可用性不再随重启蒸发。
+// 落库在锁外单行 UPDATE,失败只告警(内存池仍是事实源,下轮刷新兜底落库)。
 func (a *Aggregator) UpdateNodeTestResultForUser(userID int64, nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) bool {
+	updated := a.updateNodeTestResultInPool(userID, nodeKey, mode, available, latency, downMbps, upMbps, failReason, failDetail)
+	if updated == nil {
+		return false
+	}
+	if err := a.st.UpdateNodeDetectionResult(updated, mode); err != nil {
+		a.logger.Warn("persist node test result failed, memory pool updated only",
+			"node", nodeKey, "mode", mode, "error", err)
+	}
+	return true
+}
+
+// updateNodeTestResultInPool 内存池写回(持锁):命中后浅拷贝替换并返回新对象
+// (供锁外落库),未命中返回 nil。
+func (a *Aggregator) updateNodeTestResultInPool(userID int64, nodeKey, mode string, available bool, latency int, downMbps, upMbps float64, failReason, failDetail string) *subscription.Node {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := time.Now()
@@ -277,10 +295,10 @@ func (a *Aggregator) UpdateNodeTestResultForUser(userID int64, nodeKey, mode str
 				}
 			}
 			pool[i] = &updated
-			return true
+			return &updated
 		}
 	}
-	return false
+	return nil
 }
 
 // poolsFor 选取要遍历的分片集合:userID>0 只取该分片;=0 取全部分片(调用方须持锁)。
