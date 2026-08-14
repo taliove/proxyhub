@@ -9,7 +9,7 @@ import (
 
 // TestMigration_JobsTableApplied 迁移执行测试:Open 后 jobs 表存在且 CRUD 可用。
 func TestMigration_JobsTableApplied(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestMigration_JobsTableApplied(t *testing.T) {
 // TestMigration_Idempotent 重复 Open 同一文件不报错(迁移幂等)。
 func TestMigration_JobsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	st1, err := Open(path)
+	st1, err := OpenForTesting(path)
 	if err != nil {
 		t.Fatalf("Open 1: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestMigration_JobsIdempotent(t *testing.T) {
 	}
 	st1.Close()
 
-	st2, err := Open(path)
+	st2, err := OpenForTesting(path)
 	if err != nil {
 		t.Fatalf("Open 2 (re-migrate): %v", err)
 	}

@@ -85,7 +85,7 @@ INSERT INTO endpoints (alias, path, token) VALUES ('存量设备', 'legacypath00
 // reopen) neither fails nor clobbers a configured allowlist.
 func TestMigrateEndpointGeo_Idempotent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	s, err := Open(dbPath)
+	s, err := OpenForTesting(dbPath)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestMigrateEndpointGeo_Idempotent(t *testing.T) {
 	}
 	s.Close()
 
-	reopened, err := Open(dbPath)
+	reopened, err := OpenForTesting(dbPath)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}

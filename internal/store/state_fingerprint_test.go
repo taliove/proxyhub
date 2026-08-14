@@ -107,9 +107,9 @@ func TestRetainedStateFingerprint_EmptyStore(t *testing.T) {
 
 func TestRetainedStateFingerprint_Deterministic(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "fp.db")
-	s1, err := Open(dbPath)
+	s1, err := OpenForTesting(dbPath)
 	if err != nil {
-		t.Fatalf("Open() error = %v", err)
+		t.Fatalf("OpenForTesting() error = %v", err)
 	}
 	populateFingerprintState(t, s1)
 
@@ -123,7 +123,7 @@ func TestRetainedStateFingerprint_Deterministic(t *testing.T) {
 	}
 
 	// 重新打开同一数据库文件,结果必须一致(不依赖进程内状态)
-	s2, err := Open(dbPath)
+	s2, err := OpenForTesting(dbPath)
 	if err != nil {
 		t.Fatalf("reopen error = %v", err)
 	}

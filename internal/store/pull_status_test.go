@@ -22,7 +22,7 @@ func TestMigratePullLogStatus_SchemaInPlace(t *testing.T) {
 // fail nor rewrite existing rows, both in place and across a reopen.
 func TestMigratePullLogStatus_Idempotent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	s, err := Open(dbPath)
+	s, err := OpenForTesting(dbPath)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestMigratePullLogStatus_Idempotent(t *testing.T) {
 	}
 
 	// Reopening runs migrate() again over a populated database.
-	s2, err := Open(dbPath)
+	s2, err := OpenForTesting(dbPath)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}

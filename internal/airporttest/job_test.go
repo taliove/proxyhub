@@ -281,9 +281,9 @@ func TestJobKind_RunFailsWhenAirportDeleted(t *testing.T) {
 // (Resumable=false,对齐 refresh);run 行残留由 store.FailRunningAirportTestRuns
 // 收口为 failed(0024 已覆盖,此处确认 kind 侧衔接)。
 func TestJobKind_RecoverMarksInterrupted(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := store.OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
-		t.Fatalf("store.Open() error = %v", err)
+		t.Fatalf("store.OpenForTesting() error = %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
 

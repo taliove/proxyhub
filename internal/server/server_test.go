@@ -181,7 +181,7 @@ func (f *fakeNodes) ImportManualAirportNodes(_ context.Context, airport *store.A
 
 func newTestServer(t *testing.T, nodes []*subscription.Node) (*Server, *store.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := store.OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}

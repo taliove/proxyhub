@@ -8,9 +8,9 @@ import (
 
 func openServerGeoTestStore(t *testing.T) *Store {
 	t.Helper()
-	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
-		t.Fatalf("Open() error = %v", err)
+		t.Fatalf("OpenForTesting() error = %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
 	return st
@@ -67,18 +67,18 @@ func TestServerGeo_PutReplaces(t *testing.T) {
 // 双路径迁移:既有库(建库后删表模拟旧库)再 Open 一次,表被幂等补建。
 func TestServerGeo_MigrateIdempotent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	st, err := Open(dbPath)
+	st, err := OpenForTesting(dbPath)
 	if err != nil {
-		t.Fatalf("Open() error = %v", err)
+		t.Fatalf("OpenForTesting() error = %v", err)
 	}
 	if _, err := st.db.Exec(`DROP TABLE node_server_geo`); err != nil {
 		t.Fatalf("drop table: %v", err)
 	}
 	st.Close()
 
-	st2, err := Open(dbPath)
+	st2, err := OpenForTesting(dbPath)
 	if err != nil {
-		t.Fatalf("re-Open() error = %v (migration must recreate the table)", err)
+		t.Fatalf("re-OpenForTesting() error = %v (migration must recreate the table)", err)
 	}
 	defer st2.Close()
 	if err := st2.PutServerGeo("example.com", "MV"); err != nil {

@@ -15,9 +15,9 @@ import (
 
 func newTestAdapter(t *testing.T) (*StoreAdapter, *store.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := store.OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
-		t.Fatalf("store.Open() error = %v", err)
+		t.Fatalf("store.OpenForTesting() error = %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
 	// nil 识别器:跳过地区识别,这些测试只关心池合并语义(地区填充有专测)。

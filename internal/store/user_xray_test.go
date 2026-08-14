@@ -8,14 +8,14 @@ import (
 )
 
 // newUserXrayTestStore opens a fresh in-memory-style store for user_xray tests.
-// We still go through the on-disk Open() path (t.TempDir) so migrations apply
+// We still go through the on-disk OpenForTesting() path (t.TempDir) so migrations apply
 // exactly the same as production.
 func newUserXrayTestStore(t *testing.T) *Store {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	s, err := Open(dbPath)
+	s, err := OpenForTesting(dbPath)
 	if err != nil {
-		t.Fatalf("Open() error = %v", err)
+		t.Fatalf("OpenForTesting() error = %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
 	return s

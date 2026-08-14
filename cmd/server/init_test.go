@@ -353,7 +353,7 @@ func TestRunInit_EndToEnd(t *testing.T) {
 		t.Fatalf("runInit() error = %v", err)
 	}
 
-	st, err := store.Open(filepath.Join(dir, "data.db"))
+	st, err := store.OpenForTesting(filepath.Join(dir, "data.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

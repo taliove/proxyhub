@@ -7,9 +7,9 @@ import (
 
 func openExamStore(t *testing.T) *Store {
 	t.Helper()
-	st, err := Open(filepath.Join(t.TempDir(), "exam.db"))
+	st, err := OpenForTesting(filepath.Join(t.TempDir(), "exam.db"))
 	if err != nil {
-		t.Fatalf("Open() error = %v", err)
+		t.Fatalf("OpenForTesting() error = %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
 	return st

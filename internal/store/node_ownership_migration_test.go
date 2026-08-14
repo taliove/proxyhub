@@ -8,7 +8,7 @@ import (
 // TestNodeOwnershipScope_PerUserBlocks 屏蔽名单按属主隔离(021 联合主键):
 // 同一 node_key 可被两个用户独立屏蔽/取消,互不影响;读侧按用户各见各的。
 func TestNodeOwnershipScope_PerUserBlocks(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestNodeOwnershipScope_PerUserBlocks(t *testing.T) {
 // TestNodeOwnershipScope_PerUserOverrides 覆盖层按属主隔离(021 联合主键):
 // 同一 node_key 两个用户各写各的覆盖,读侧按用户返回各自值。
 func TestNodeOwnershipScope_PerUserOverrides(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestNodeOwnershipScope_PerUserOverrides(t *testing.T) {
 // TestMigrateNodeOwnershipScope_Idempotent 迁移幂等:Open 已执行一次,
 // 再调 migrateNodeOwnershipScope 不重建、不丢数据。
 func TestMigrateNodeOwnershipScope_Idempotent(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

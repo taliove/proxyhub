@@ -28,11 +28,11 @@ func TestMigrateAdminToSuperUser_FreshInstall(t *testing.T) {
 func TestMigrateAdminToSuperUser_MigratesLegacyCredentials(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 
-	// Bootstrap a database and seed legacy settings, bypassing the Open()
+	// Bootstrap a database and seed legacy settings, bypassing the OpenForTesting()
 	// migration path so the users table starts empty.
-	s, err := Open(dbPath)
+	s, err := OpenForTesting(dbPath)
 	if err != nil {
-		t.Fatalf("Open() error = %v", err)
+		t.Fatalf("OpenForTesting() error = %v", err)
 	}
 	// Seed legacy credentials and clear any auto-migrated user.
 	if err := s.SetSetting("admin_user", "operator1"); err != nil {
@@ -47,9 +47,9 @@ func TestMigrateAdminToSuperUser_MigratesLegacyCredentials(t *testing.T) {
 	s.Close()
 
 	// Reopen: migrate() should run MigrateAdminToSuperUser.
-	s2, err := Open(dbPath)
+	s2, err := OpenForTesting(dbPath)
 	if err != nil {
-		t.Fatalf("second Open() error = %v", err)
+		t.Fatalf("second OpenForTesting() error = %v", err)
 	}
 	defer s2.Close()
 

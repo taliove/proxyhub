@@ -81,7 +81,7 @@ INSERT INTO endpoints (alias, path, token) VALUES ('example.com', 'legacypath000
 // after a reopen) neither fails nor clobbers a configured public name.
 func TestMigrateEndpointPublicName_Idempotent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	s, err := Open(dbPath)
+	s, err := OpenForTesting(dbPath)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestMigrateEndpointPublicName_Idempotent(t *testing.T) {
 	}
 	s.Close()
 
-	reopened, err := Open(dbPath)
+	reopened, err := OpenForTesting(dbPath)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}

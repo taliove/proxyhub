@@ -32,7 +32,7 @@ func newTestManager(t *testing.T, nodes []*subscription.Node) (*Manager, *store.
 
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
-	st, err := store.Open(dbPath)
+	st, err := store.OpenForTesting(dbPath)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -480,7 +480,7 @@ func TestBuildXrayConfig_SkipsUnsupportedNodes(t *testing.T) {
 func TestSpawnFailure_MarksFailed(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
-	st, err := store.Open(dbPath)
+	st, err := store.OpenForTesting(dbPath)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

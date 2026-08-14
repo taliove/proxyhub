@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/taliove/proxyhub/internal/jobs"
@@ -20,6 +21,23 @@ type Store struct {
 
 // Open 打开（或创建）数据库文件并执行迁移
 func Open(path string) (*Store, error) {
+	return open(path, "")
+}
+
+// OpenForTesting 打开测试专用库(issue #40):与 Open 同语义,但 DSN 带
+// _pragma=synchronous(OFF)——测试库全是 t.TempDir 一次性产物,崩溃耐久性
+// 无意义;去掉每次 commit 的 fsync,消除 CI 高负载 runner 上迁移卡在 fsync
+// 长尾导致的测试二进制 10 分钟超时挂死(v0.7.1/v0.9.2 两次命中,goroutine
+// 栈止于 SQLite _full_fsync)。生产路径永远走 Open(默认 FULL 耐久语义不变)。
+func OpenForTesting(path string) (*Store, error) {
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return open(path, sep+"_pragma=synchronous(OFF)")
+}
+
+func open(path, dsnSuffix string) (*Store, error) {
 	// Ensure the parent directory exists: local runtime state lives under
 	// var/, which is gitignored and may not exist on a fresh checkout.
 	if dir := filepath.Dir(path); dir != "." {
@@ -28,7 +46,7 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", path+dsnSuffix)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -251,16 +269,19 @@ CREATE TABLE IF NOT EXISTS node_overrides (
 );
 
 -- 名称槽位(ADR 0047 / issue #95):命名所有权从节点翻转为用户资产。
--- (user_id, name) 主键;node_key 空串 = 预建空槽;部分唯一索引保证
--- 一个节点在同一用户下只占一个槽位。schema 参考:migrations/028_name_slots.sql。
+-- 自增 ID 主键(issue #112):身份与名字解耦,API 按 ID 寻址;
+-- 字面名(不含 {index})部分唯一索引 + (user_id, node_key) 非空部分唯一索引
+-- 保证双向唯一。schema 参考:migrations/032_name_slots_identity.sql。
 CREATE TABLE IF NOT EXISTS name_slots (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
 	user_id    INTEGER NOT NULL DEFAULT 0,
 	name       TEXT NOT NULL,
 	node_key   TEXT NOT NULL DEFAULT '',
 	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	PRIMARY KEY (user_id, name)
+	updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_name_slots_name_literal
+	ON name_slots(user_id, name) WHERE name NOT LIKE '%{index}%';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_name_slots_node
 	ON name_slots(user_id, node_key) WHERE node_key != '';
 
@@ -493,6 +514,14 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 	// 星标,复用 node_overrides 覆盖层存储;与名称/地区覆盖同表异列,读写互不触碰。
 	// 既有行默认 0(未收藏),无需 backfill。
 	if err := s.addColumnIfMissing("node_overrides", "favorite", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	// 名称槽位身份迁移(032 / issue #112):表重建为自增 ID 主键,(user_id,name)
+	// 主键替换为字面名部分唯一索引(为 {index} 模板重名放行铺路,DB 层先行)。
+	// 幂等、保留存量行 created_at;必须在 migrateOverridesToNameSlots 之前
+	// (回填读的是新表结构)。
+	if err := s.migrateNameSlotsIdentity(); err != nil {
 		return err
 	}
 

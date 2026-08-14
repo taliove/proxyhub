@@ -9,7 +9,7 @@ import (
 // TestGetSettingForUser_FallbackChain 租户级设置回退链:
 // 用户覆盖优先;删除覆盖回退全局默认;两者皆无返回 ErrNotFound(调用方给内置默认)。
 func TestGetSettingForUser_FallbackChain(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestGetSettingForUser_FallbackChain(t *testing.T) {
 // TestClashTemplateForUser_FallbackChain 模板回退链:
 // 用户覆盖优先;删除覆盖回退全局默认;全局也无回退内嵌默认。
 func TestClashTemplateForUser_FallbackChain(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestClashTemplateForUser_FallbackChain(t *testing.T) {
 
 // TestDetectionTargetsForUser_FallbackChain 检测目标回退链:覆盖优先,无覆盖回退全局。
 func TestDetectionTargetsForUser_FallbackChain(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

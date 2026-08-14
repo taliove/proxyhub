@@ -22,9 +22,9 @@ import (
 
 func newTestAggregator(t *testing.T) (*Aggregator, *store.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := store.OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
-		t.Fatalf("store.Open() error = %v", err)
+		t.Fatalf("store.OpenForTesting() error = %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
 

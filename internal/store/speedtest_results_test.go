@@ -168,7 +168,7 @@ func TestSpeedtestResults_Delete(t *testing.T) {
 // TestSpeedtestResults_MigrationIdempotent 迁移幂等:重复 Open 不报错,数据保留。
 func TestSpeedtestResults_MigrationIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	st, err := Open(dir + "/test.db")
+	st, err := OpenForTesting(dir + "/test.db")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestSpeedtestResults_MigrationIdempotent(t *testing.T) {
 	}
 	st.Close()
 
-	st2, err := Open(dir + "/test.db")
+	st2, err := OpenForTesting(dir + "/test.db")
 	if err != nil {
 		t.Fatalf("re-Open: %v", err)
 	}

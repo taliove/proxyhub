@@ -15,7 +15,7 @@ import (
 // TestBatchDetectionManager_TriggerRecordsScope 验证触发范围标记随 params 持久化,
 // 供任务中心生成可读范围标识(全部/选中)。
 func TestBatchDetectionManager_TriggerRecordsScope(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := store.OpenForTesting(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}

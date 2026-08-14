@@ -54,7 +54,7 @@ func TestMigrateMFA_DefaultsForExistingRows(t *testing.T) {
 // clobber existing MFA state, both in-process and across a reopen.
 func TestMigrateMFA_Idempotent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	s, err := Open(dbPath)
+	s, err := OpenForTesting(dbPath)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestMigrateMFA_Idempotent(t *testing.T) {
 	}
 
 	// Reopening runs migrate() again over a populated database.
-	s2, err := Open(dbPath)
+	s2, err := OpenForTesting(dbPath)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
