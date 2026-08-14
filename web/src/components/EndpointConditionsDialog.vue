@@ -76,6 +76,15 @@
           命中 {{ preview.count }} / 共 {{ preview.total }} 个节点
         </el-tag>
         <span class="cfg-hint cond-hint-inline">按当前节点池实时求值，与订阅拉取一致。</span>
+        <!-- 过滤链逐级计数(issue #35):池被清空时定位是哪一道过滤清零 -->
+        <div v-if="preview.stages && preview.stages.length > 0" class="cfg-hint stage-chain">
+          过滤链：{{ stageChain }}
+        </div>
+        <div v-if="zeroingStage" class="stage-zero-hint">
+          {{ zeroingStage.from }} 个节点在「{{
+            zeroingStage.label
+          }}」环节被全部过滤；请检查对应设置或先运行检测。
+        </div>
         <!-- 节点明细小表(前 20 个) -->
         <el-table
           v-if="preview.nodes && preview.nodes.length > 0"
@@ -110,12 +119,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Endpoint, SubscriptionConditions } from '@/types'
 import client from '@/api/client'
 import { parseConditions } from '@/utils/conditions'
 import { tagLabel } from '@/utils/taglabels'
+import {
+  firstZeroingStage,
+  formatStageChain,
+  stageLabel,
+  type FilterStage
+} from '@/utils/filterstages'
 
 // 地区选项:后端 /settings/regions 返回大写键(与 web/src/views/nodes 对齐)
 interface RegionOption {
@@ -175,10 +190,22 @@ interface PreviewNode {
   tags?: string[]
 }
 
-const preview = ref<{ count: number; total: number; nodes: PreviewNode[] }>({
-  count: 0,
-  total: 0,
-  nodes: []
+const preview = ref<{ count: number; total: number; nodes: PreviewNode[]; stages?: FilterStage[] }>(
+  {
+    count: 0,
+    total: 0,
+    nodes: []
+  }
+)
+
+// 过滤链逐级计数(issue #35):链式文案与"清零环节"定位。
+const stageChain = computed(() => formatStageChain(preview.value.stages ?? []))
+const zeroingStage = computed(() => {
+  const stages = preview.value.stages ?? []
+  const hit = firstZeroingStage(stages)
+  if (!hit) return null
+  const idx = stages.indexOf(hit)
+  return { label: stageLabel(hit.stage), from: idx > 0 ? stages[idx - 1].count : 0 }
 })
 const airportOptions = ref<string[]>([])
 const regionOptions = ref<RegionOption[]>([])
@@ -237,5 +264,16 @@ const save = async () => {
 }
 .preview-nodes-table {
   margin-top: var(--ph-space-2);
+}
+.stage-chain {
+  width: 100%;
+  word-break: break-all;
+}
+.stage-zero-hint {
+  width: 100%;
+  font-size: var(--ph-text-xs);
+  line-height: 1.5;
+  margin-top: var(--ph-space-1);
+  color: var(--el-color-warning);
 }
 </style>

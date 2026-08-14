@@ -2247,15 +2247,44 @@ func (s *Server) filteredNodesForDelivery(nodes []*subscription.Node, userID int
 	return s.filteredNodesChain(nodes, userID, picks, false, immuneKeys)
 }
 
+// filterStageCount 过滤链单阶段计数(issue #35):stage 为稳定标识
+// (pool/picks/region_whitelist/keyword_whitelist/keyword_blacklist/node_block/
+// stale/availability/latency/dedupe),count 为该阶段出口节点数。
+// 消费方(条件预览)据逐级计数定位"哪一道把池清空"。
+type filterStageCount struct {
+	Stage string `json:"stage"`
+	Count int    `json:"count"`
+}
+
+// filteredNodesForDeliveryWithStats 下发口径 + 逐级计数(issue #35),
+// 供条件预览等诊断面使用;下发主路径仍走不带计数的 filteredNodesForDelivery。
+func (s *Server) filteredNodesForDeliveryWithStats(nodes []*subscription.Node, userID int64, picks []store.NodePick, immuneKeys map[string]bool) ([]*subscription.Node, []filterStageCount) {
+	return s.filteredNodesChainStats(nodes, userID, picks, false, immuneKeys)
+}
+
 // filteredNodesChain 下发过滤链共享实现。skipAvailability=true 时跳过
 // FilterAvailable/延迟阈值(监控集合专用,见 filteredNodesForMonitor);
 // 否则 immuneKeys 命中的节点豁免这两道过滤(宕机免疫,issue #101)。
 func (s *Server) filteredNodesChain(nodes []*subscription.Node, userID int64, picks []store.NodePick, skipAvailability bool, immuneKeys map[string]bool) []*subscription.Node {
+	result, _ := s.filteredNodesChainStats(nodes, userID, picks, skipAvailability, immuneKeys)
+	return result
+}
+
+// filteredNodesChainStats 是 filteredNodesChain 的带计数形态:过滤语义完全
+// 一致,额外返回各阶段出口节点数(读取失败降级跳过的阶段计数不变,仍记录)。
+func (s *Server) filteredNodesChainStats(nodes []*subscription.Node, userID int64, picks []store.NodePick, skipAvailability bool, immuneKeys map[string]bool) ([]*subscription.Node, []filterStageCount) {
+	stages := make([]filterStageCount, 0, 10)
+	record := func(stage string) {
+		stages = append(stages, filterStageCount{Stage: stage, Count: len(nodes)})
+	}
+
 	// serve-time 合并自建节点:填补「新增后到下轮刷新前」的空档,并保证机场全挂时自建节点仍在。
 	nodes = s.mergeSelfHosted(nodes, userID)
+	record("pool")
 
 	// 端点级精选候选集替换(spec #70):过滤链最前,空精选短路(零回归)。
 	nodes = filterByNodePicks(nodes, picks)
+	record("picks")
 
 	// 过滤链三键按属主读取(租户级设置,回退全局默认);设置未初始化(ErrNotFound)
 	// 按声明默认值(空=不过滤)静默通过——仅真正的 DB 错误才告警(同 #51 降级语义)。
@@ -2264,16 +2293,19 @@ func (s *Server) filteredNodesChain(nodes []*subscription.Node, userID int64, pi
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.logger.Warn("get region whitelist failed, skipping region filter", "error", err)
 	}
+	record("region_whitelist")
 	if kw, err := s.st.GetSettingForUser(userID, "filter_whitelist"); err == nil {
 		nodes = filter.FilterByWhitelist(nodes, filter.SplitKeywords(kw))
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.logger.Warn("get filter whitelist failed, skipping keyword whitelist", "error", err)
 	}
+	record("keyword_whitelist")
 	if kw, err := s.st.GetSettingForUser(userID, "filter_keywords"); err == nil {
 		nodes = filter.FilterByKeywords(nodes, filter.SplitKeywords(kw))
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.logger.Warn("get filter keywords failed, skipping keyword blacklist", "error", err)
 	}
+	record("keyword_blacklist")
 
 	blocked, err := s.st.ListBlockedNodesForUser(userID)
 	if err != nil {
@@ -2281,9 +2313,11 @@ func (s *Server) filteredNodesChain(nodes []*subscription.Node, userID int64, pi
 	} else {
 		nodes = filterBlockedNodes(nodes, blocked)
 	}
+	record("node_block")
 
 	// 剔除 stale 节点(机场订阅中已消失,保留在池中待清理,但不下发订阅)
 	nodes = filterStaleNodes(nodes)
+	record("stale")
 
 	// 可用性、延迟阈值、去重/精选(刷新时不再过滤,挪到这里执行);
 	// 监控集合口径(skipAvailability)跳过可用性/延迟,但保留去重/限量(与实发一致);
@@ -2297,10 +2331,14 @@ func (s *Server) filteredNodesChain(nodes []*subscription.Node, userID int64, pi
 			nodes = filter.FilterByLatencyThreshold(nodes, s.cfg.HealthCheck.LatencyThreshold)
 		}
 	}
+	record("availability")
+	record("latency")
+
 	filt := filter.NewFilter(s.cfg.Filter.NodesPerRegion, s.cfg.Filter.Deduplicate)
 	nodes = filt.Apply(nodes)
+	record("dedupe")
 
-	return nodes
+	return nodes, stages
 }
 
 // filterAvailableImmune 与 filter.FilterAvailable 同语义,但免疫节点豁免
@@ -2510,11 +2548,12 @@ func filterStaleNodes(nodes []*subscription.Node) []*subscription.Node {
 // 3. system_settings.clash_template (global default set by super admin)
 // 4. embedded default template (generator.DefaultTemplate)
 //
-// V2Ray format is unaffected (no template, just base64 link list).
+// Base64 format is unaffected (no template, just base64 link list);
+// format=v2ray 别名在 HTTP 边界已折叠为规范值(见 normalizeSubscriptionFormat)。
 // Soft reference: missing template at any level falls through to next level; never errors.
 func (s *Server) renderSubscriptionForEndpoint(nodes []*subscription.Node, format string, ep *store.Endpoint) (data []byte, contentType string, err error) {
 	switch format {
-	case "v2ray":
+	case formatBase64, formatV2RayAlias:
 		data, err = generator.GenerateV2Ray(nodes)
 		return data, "text/plain; charset=utf-8", err
 	default:

@@ -341,7 +341,64 @@ func TestPreviewConditions_TruncateAt20(t *testing.T) {
 
 
 
-// TestPreviewConditions_ZeroMatch 零命中时 nodes 返回空数组(不是 null)。
+// TestPreviewConditions_StageCounts 钉死 issue #35:预览返回过滤链各阶段计数,
+// 池被某一道清零时能从 stages 定位(池 3 → 可用性后 1)。
+func TestPreviewConditions_StageCounts(t *testing.T) {
+	nodes := []*subscription.Node{
+		{Name: "可用A", Type: "ss", Server: "a.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Region: "HK", Source: "机场A", Available: true},
+		// 已检测不可用(DetectionKind 非空 = 非未检测),会被可用性过滤剔除
+		{Name: "死B", Type: "ss", Server: "b.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Region: "HK", Source: "机场A", Available: false, DetectionKind: "quick"},
+		{Name: "死C", Type: "ss", Server: "c.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Region: "HK", Source: "机场A", Available: false, DetectionKind: "quick"},
+	}
+	srv, st := newTestServer(t, nodes)
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	_ = st
+
+	body, _ := json.Marshal(map[string]any{"regions": []string{}})
+	req := httptest.NewRequest("POST", "/api/endpoints/preview-conditions", bytes.NewReader(body))
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Total  int `json:"total"`
+		Stages []struct {
+			Stage string `json:"stage"`
+			Count int    `json:"count"`
+		} `json:"stages"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Total != 1 {
+		t.Errorf("total = %d, want 1 (只有可用A通过过滤链)", resp.Total)
+	}
+	counts := map[string]int{}
+	var order []string
+	for _, s := range resp.Stages {
+		counts[s.Stage] = s.Count
+		order = append(order, s.Stage)
+	}
+	if counts["pool"] != 3 {
+		t.Errorf("pool stage = %d, want 3", counts["pool"])
+	}
+	if counts["availability"] != 1 {
+		t.Errorf("availability stage = %d, want 1 (死B/死C 被剔除)", counts["availability"])
+	}
+	if counts["dedupe"] != 1 {
+		t.Errorf("dedupe stage = %d, want 1", counts["dedupe"])
+	}
+	// 阶段序列完整且有序:pool 在最前,dedupe 收尾
+	if len(order) == 0 || order[0] != "pool" || order[len(order)-1] != "dedupe" {
+		t.Errorf("stage order = %v, want pool ... dedupe", order)
+	}
+}
+
+
 func TestPreviewConditions_ZeroMatch(t *testing.T) {
 	nodes := []*subscription.Node{
 		{Name: "HK-01", Type: "ss", Server: "hk1.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Region: "HK", Source: "机场A", Available: true},
