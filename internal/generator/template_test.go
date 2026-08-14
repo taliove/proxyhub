@@ -401,6 +401,22 @@ func TestDefaultTemplate_AndroidCompat(t *testing.T) {
 		t.Errorf("unified-delay = %v, want true", doc["unified-delay"])
 	}
 
+	// 规则字段序(issue #114 回归):no-resolve 是 IP-CIDR 规则的末尾可选参数,
+	// 写在前面的位置会被严格客户端(Android/mihomo)当成策略组名报 not found。
+	raw := DefaultTemplate()
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		if !strings.Contains(line, ",") {
+			continue
+		}
+		fields := strings.Split(line, ",")
+		for i, f := range fields[1:] { // 跳过规则类型字段
+			if strings.TrimSpace(f) == "no-resolve" && i+1 != len(fields)-1 {
+				t.Errorf("规则 %q 的 no-resolve 不在末尾(位于第 %d 段)", line, i+2)
+			}
+		}
+	}
+
 	if raw, ok := dns["fake-ip-filter"].([]any); !ok || len(raw) < 10 {
 		t.Errorf("fake-ip-filter 条目 = %d, want 通行清单规模(>=10)", len(raw))
 	}

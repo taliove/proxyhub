@@ -224,10 +224,10 @@ rules:
     - DOMAIN-SUFFIX,lan,🎯 绕过代理
     - DOMAIN-SUFFIX,ip6-localhost,🎯 绕过代理
     - DOMAIN-SUFFIX,ip6-loopback,🎯 绕过代理
-    - IP-CIDR,127.0.0.0/8,no-resolve,🎯 绕过代理
-    - IP-CIDR,10.0.0.0/8,no-resolve,🎯 绕过代理
-    - IP-CIDR,172.16.0.0/12,no-resolve,🎯 绕过代理
-    - IP-CIDR,192.168.0.0/16,no-resolve,🎯 绕过代理
+    - IP-CIDR,127.0.0.0/8,🎯 绕过代理,no-resolve
+    - IP-CIDR,10.0.0.0/8,🎯 绕过代理,no-resolve
+    - IP-CIDR,172.16.0.0/12,🎯 绕过代理,no-resolve
+    - IP-CIDR,192.168.0.0/16,🎯 绕过代理,no-resolve
     - DOMAIN,time.apple.com,🎯 绕过代理
     - DOMAIN,time.windows.com,🎯 绕过代理
     - DOMAIN,pool.ntp.org,🎯 绕过代理
@@ -293,9 +293,9 @@ rules:
     - DOMAIN-SUFFIX,tdesktop.com,📲 电报信息
     - DOMAIN-SUFFIX,telegra.ph,📲 电报信息
     - DOMAIN-SUFFIX,telesco.pe,📲 电报信息
-    - IP-CIDR,91.108.4.0/22,no-resolve,📲 电报信息
-    - IP-CIDR,91.108.56.0/22,no-resolve,📲 电报信息
-    - IP-CIDR,149.154.160.0/20,no-resolve,📲 电报信息
+    - IP-CIDR,91.108.4.0/22,📲 电报信息,no-resolve
+    - IP-CIDR,91.108.56.0/22,📲 电报信息,no-resolve
+    - IP-CIDR,149.154.160.0/20,📲 电报信息,no-resolve
     - DOMAIN-SUFFIX,microsoft.com,Ⓜ️ 微软服务
     - DOMAIN-SUFFIX,windows.com,Ⓜ️ 微软服务
     - DOMAIN-SUFFIX,office.com,Ⓜ️ 微软服务
