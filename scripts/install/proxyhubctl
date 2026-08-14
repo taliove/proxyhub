@@ -77,6 +77,8 @@ acquire_lock() {
 service_stop() {
     if _is_test_mode; then
         _ph_log "test mode: skipping systemctl stop proxyhub.service"
+        # 测试可观测缝:事件流水供套件断言"停服先于指纹捕获"(issue #93)
+        printf 'stop\n' >>"${PROXYHUB_ROOT}/events.log"
         return 0
     fi
     if ! systemctl stop proxyhub.service; then
@@ -90,6 +92,7 @@ service_stop() {
 service_start() {
     if _is_test_mode; then
         _ph_log "test mode: skipping systemctl start proxyhub.service"
+        printf 'start\n' >>"${PROXYHUB_ROOT}/events.log"
         return 0
     fi
     if ! systemctl start proxyhub.service; then
@@ -604,6 +607,54 @@ _capture_state_fingerprint() {
         | grep -v '^timestamp'
 }
 
+# _rollback_update_state - restore the state directory from the pre-update
+# backup on update rollback (issue #93). The pre-swap fingerprint capture runs
+# the new binary's migrations in place (store.Open migrates unconditionally),
+# so rolling back only the binary would strand it on a migrated (newer-schema)
+# database. Every rollback path therefore restores binary AND state together,
+# returning the installation to the exact pre-update generation. A restore
+# failure is loud, never silent: the operator is pointed at the backup archive
+# for manual recovery.
+_rollback_update_state() {
+    local archive state_dir staging
+    archive=$(cat "$(root_path "$PROXYHUB_LAST_BACKUP_FILE")" 2>/dev/null || true)
+    state_dir=$(root_path "$PROXYHUB_STATE_DIR")
+    if [[ -z "$archive" || ! -f "$archive" ]]; then
+        _ph_err "rollback: pre-update backup archive not found; restore the state directory manually"
+        return 1
+    fi
+    staging=$(mktemp -d) || return 1
+    if ! tar -xzf "$archive" -C "$staging" ./state || [[ ! -d "${staging}/state" ]]; then
+        _ph_err "rollback: no state directory in ${archive}; restore it manually"
+        rm -rf "$staging"
+        return 1
+    fi
+    # Swap, don't overwrite in place: a failed copy must not leave a half-restored dir.
+    local aside="${state_dir}.rollback-$$"
+    rm -rf "$aside"
+    if ! mv "$state_dir" "$aside"; then
+        _ph_err "rollback: failed to set aside current state directory; restore ${archive} manually"
+        rm -rf "$staging"
+        return 1
+    fi
+    if ! cp -a "${staging}/state" "$state_dir"; then
+        _ph_err "rollback: state copy failed; attempting to move the previous directory back"
+        # cp may have left a half-created $state_dir; remove it so mv restores
+        # the previous directory in place instead of nesting inside it.
+        rm -rf "$state_dir"
+        if mv "$aside" "$state_dir"; then
+            _ph_err "rollback: previous state directory restored; recover manually from ${archive}"
+        else
+            _ph_err "rollback: previous state directory left at ${aside}; recover manually from ${archive}"
+        fi
+        rm -rf "$staging"
+        return 1
+    fi
+    rm -rf "$aside" "$staging"
+    _ph_log "rollback: state directory restored from pre-update backup ${archive}"
+    return 0
+}
+
 # _read_install_field KEY - read one KEY=value field from the install record.
 _read_install_field() {
     local install_info
@@ -796,12 +847,26 @@ cmd_update() {
     # 把 grpc_authority 纳入自建节点摘要),迁移也可能合法改写记录(如 023 去重
     # 删行);把可预期差异误判为"数据丢失"会锁死升级。真正的硬门是下方
     # 同二进制 pre/post-swap 比对;差异由升级前备份兜底。
+    #
+    # 先停服再捕获(issue #93):新二进制的捕获会原地执行迁移(store.Open 无条件
+    # migrate)——旧服务运行期间改库是竞态窗口,且迁移一旦执行,后续回滚必须
+    # 连同状态目录一起还原(_rollback_update_state)。捕获/迁移/交换全部收敛到
+    # 服务停止窗口内。
     local binary_path auth_key old_fp new_fp
     binary_path=$(root_path "$PROXYHUB_BINARY")
     if [[ ! -x "$binary_path" ]]; then
         _ph_err "current proxyhub binary not found: ${binary_path}"
         return 1
     fi
+    # Stage the current binary for rollback before stopping the service.
+    cp -a "$binary_path" "${workdir}/proxyhub.old" || {
+        _ph_err "failed to stage current binary for rollback"
+        return 1
+    }
+    _ph_log "stopping service for fingerprint capture and binary swap"
+    service_stop || return 1
+    trap "service_start; rm -rf $(printf '%q' "$workdir")" EXIT
+
     auth_key=$(random_token 64) || return 1
     old_fp=$(_capture_state_fingerprint "$binary_path" "$auth_key") || {
         _ph_err "state fingerprint capture failed on current binary"
@@ -824,18 +889,10 @@ cmd_update() {
         fi
     fi
 
-    # Swap the binary, keeping the old one for rollback.
-    cp -a "$binary_path" "${workdir}/proxyhub.old" || {
-        _ph_err "failed to stage current binary for rollback"
-        return 1
-    }
-    _ph_log "stopping service for binary swap"
-    service_stop || return 1
-    trap "service_start; rm -rf $(printf '%q' "$workdir")" EXIT
-
     if ! install -m 0755 "${workdir}/extract/proxyhub" "$binary_path"; then
-        _ph_err "failed to install new binary; restoring previous binary"
+        _ph_err "failed to install new binary; restoring previous binary and pre-update state"
         cp -a "${workdir}/proxyhub.old" "$binary_path" || true
+        _rollback_update_state || _ph_err "state restore failed; recover manually from the pre-update backup above"
         service_start
         return 1
     fi
@@ -848,6 +905,9 @@ cmd_update() {
     if [[ "$installed_fp" != "$new_fp" ]]; then
         _ph_err "post-update state fingerprint mismatch (same binary pre/post swap); rolling back to ${current_version}"
         cp -a "${workdir}/proxyhub.old" "$binary_path" || true
+        # 回滚连同状态目录(issue #93):pre-swap 捕获已把迁移原地跑掉,
+        # 只还原二进制会把旧版本留在新 schema 的库上
+        _rollback_update_state || _ph_err "state restore failed; recover manually from the pre-update backup above"
         service_start
         return 1
     fi
@@ -859,6 +919,7 @@ cmd_update() {
         _ph_err "failed to update install record; rolling back to ${current_version}"
         rm -f "$tmp_info"
         cp -a "${workdir}/proxyhub.old" "$binary_path" || true
+        _rollback_update_state || _ph_err "state restore failed; recover manually from the pre-update backup above"
         service_start
         return 1
     fi

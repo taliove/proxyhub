@@ -69,6 +69,8 @@ if [[ "$1" == "state-fingerprint" ]]; then
         *) echo "state-fingerprint invoked without --config" >&2; exit 1 ;;
     esac
     read -r key
+    # 事件流水(issue #93 排序断言):捕获动作留痕
+    printf 'capture-old\n' >> "${PROXYHUB_ROOT}/events.log"
     echo "fingerprint_version: 1"
     echo "algorithm: HMAC-SHA256"
     echo "state_hash: abc123"
@@ -129,6 +131,13 @@ if [[ "$1" == "state-fingerprint" ]]; then
         *) echo "state-fingerprint invoked without --config" >&2; exit 1 ;;
     esac
     read -r key
+    # 事件流水(issue #93 排序断言)
+    printf 'capture-new\n' >> "${PROXYHUB_ROOT}/events.log"
+    # issue #93 测试标记:migrate-on-capture = 捕获时原地执行迁移
+    # (store.Open 无条件 migrate 的替身):改写状态库内容
+    if [[ -f "${PROXYHUB_ROOT}/migrate-on-capture" ]]; then
+        printf 'migrated\n' >> "${PROXYHUB_ROOT}/var/lib/proxyhub/state.db"
+    fi
     echo "fingerprint_version: 1"
     echo "algorithm: HMAC-SHA256"
     # issue #92 测试标记:fp-drift-new = 跨版本摘要漂移;fp-drift-post =
@@ -686,6 +695,72 @@ test_update_post_swap_fingerprint_mismatch_rolls_back() {
     teardown_test
 }
 
+test_update_stops_service_before_capture() {
+    echo "==> test_update_stops_service_before_capture"
+    setup_test
+
+    # issue #93:指纹捕获(会原地跑迁移)必须发生在服务停止窗口内。
+    # 事件流水:每次捕获前最近一次服务事件必须是 stop(backup 的
+    # stop/start 对在捕获之前闭合,update 段的 stop 覆盖全部三次捕获)。
+    "$PROXYHUBCTL" update v1.1.0 >/dev/null 2>&1
+
+    local bad
+    bad=$(awk '
+        /^stop$/   { svc = "stop"; next }
+        /^start$/  { svc = "start"; next }
+        /^capture/ { if (svc != "stop") { print NR ": " $0 " while service " svc; bad = 1 } }
+        END { exit bad }
+    ' "${PROXYHUB_ROOT}/events.log" || true)
+    assert_true "[[ -z '$bad' ]]" "every fingerprint capture happens while the service is stopped"
+    assert_true "grep -q 'capture-old' '${PROXYHUB_ROOT}/events.log'" "old-binary capture recorded"
+    assert_true "grep -q 'capture-new' '${PROXYHUB_ROOT}/events.log'" "new-binary capture recorded"
+
+    teardown_test
+}
+
+test_update_rollback_restores_state() {
+    echo "==> test_update_rollback_restores_state"
+    setup_test
+    mark_live_binary
+
+    # issue #93:pre-swap 捕获原地跑迁移(migrate-on-capture 模拟),
+    # post-swap 硬门触发回滚(fp-drift-post)——回滚必须连同状态目录还原,
+    # 否则旧二进制被留在新 schema 的库上。
+    touch "${PROXYHUB_ROOT}/migrate-on-capture"
+    touch "${PROXYHUB_ROOT}/fp-drift-post"
+
+    local output rc=0
+    output=$("$PROXYHUBCTL" update v1.1.0 2>&1) || rc=$?
+    assert_true "[[ $rc -ne 0 ]]" "post-swap mismatch fails the update"
+    assert_install_untouched "rollback with migration"
+
+    # 状态目录从升级前备份还原:迁移写入的 'migrated' 行不复存在
+    local state_content
+    state_content=$(cat "$(root_path /var/lib/proxyhub/state.db)")
+    assert_true "[[ '$state_content' == 'state data' ]]" "rollback restores the pre-migration state directory"
+
+    teardown_test
+}
+
+test_update_migration_kept_on_success() {
+    echo "==> test_update_migration_kept_on_success"
+    setup_test
+
+    # 对照组(issue #93):升级成功时迁移结果保留(回滚才还原状态)
+    touch "${PROXYHUB_ROOT}/migrate-on-capture"
+
+    local rc=0
+    "$PROXYHUBCTL" update v1.1.0 >/dev/null 2>&1 || rc=$?
+    assert_true "[[ $rc -eq 0 ]]" "update succeeds with migration"
+
+    local state_content
+    state_content=$(cat "$(root_path /var/lib/proxyhub/state.db)")
+    assert_true "[[ '$state_content' == *'migrated'* ]]" "successful update keeps the migrated state"
+
+    teardown_test
+}
+
+
 main() {
     echo "Running proxyhubctl update tests..."
     echo
@@ -705,6 +780,9 @@ main() {
 
     test_update_cross_version_fingerprint_drift_warns_but_updates
     test_update_post_swap_fingerprint_mismatch_rolls_back
+    test_update_stops_service_before_capture
+    test_update_rollback_restores_state
+    test_update_migration_kept_on_success
     test_update_docker_happy
     test_update_docker_lost_container
 
