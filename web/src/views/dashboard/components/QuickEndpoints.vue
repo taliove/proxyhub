@@ -50,33 +50,17 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
 import type { Endpoint } from '@/types'
 import QRCodeDialog from '@/components/QRCodeDialog.vue'
 import { useQuickEndpoints } from '../composables/useQuickEndpoints'
-import { copyText } from '@/utils/clipboard'
-import { clashInstallUrl, subscriptionUrl, type SubscriptionFormat } from '@/utils/subscription-url'
+import { copySubscriptionAuto, runSubscriptionCommand } from '@/utils/subscription-url'
 
 const { endpoints, loading, error, getSubscriptionUrl } = useQuickEndpoints()
 
-// 复制与成功反馈照搬 Endpoints.vue 现成模式;剪贴板被拒绝时显式报错,不假报成功
-const copyUrl = (row: Endpoint) => {
-  copyText(getSubscriptionUrl(row))
-    .then(() => ElMessage.success('已复制到剪贴板'))
-    .catch(() => ElMessage.error('复制失败，请检查浏览器剪贴板权限'))
-}
-
-// 按格式复制 / 一键导入(issue #123):显式 format 优先于 UA 分流(ADR 0049)
-const copyFormatted = (row: Endpoint, cmd: string) => {
-  if (cmd === 'import') {
-    window.location.href = clashInstallUrl(row)
-    return
-  }
-  copyText(subscriptionUrl(row, cmd as SubscriptionFormat))
-    .then(() => ElMessage.success('已复制到剪贴板'))
-    .catch(() => ElMessage.error('复制失败，请检查浏览器剪贴板权限'))
-}
+// 复制(自动分流)/按格式复制/一键导入:动作统一收口在 subscription-url util(issue #123)
+const copyUrl = (row: Endpoint) => copySubscriptionAuto(row)
+const copyFormatted = (row: Endpoint, cmd: string) => runSubscriptionCommand(row, cmd)
 
 const qrVisible = ref(false)
 const qrDialog = ref<InstanceType<typeof QRCodeDialog>>()

@@ -20,38 +20,16 @@
 </template>
 
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
 import type { Endpoint } from '@/types'
-import { copyText } from '@/utils/clipboard'
-import { clashInstallUrl, subscriptionUrl, type SubscriptionFormat } from '@/utils/subscription-url'
+import { copySubscriptionAuto, runSubscriptionCommand } from '@/utils/subscription-url'
 
 const props = defineProps<{ endpoint: Endpoint }>()
 const emit = defineEmits<{ (e: 'qrcode'): void }>()
 
-// 降级剪贴板(局域网 http 非安全上下文无 clipboard API,见 utils/clipboard)
-const copyUrl = async () => {
-  try {
-    await copyText(subscriptionUrl(props.endpoint))
-    ElMessage.success('已复制到剪贴板')
-  } catch {
-    ElMessage.error('复制失败，请检查浏览器剪贴板权限')
-  }
-}
-
-// 按格式复制 / 一键导入:显式 format 参数永远优先于 UA 分流(ADR 0049)
-const copyFormatted = async (cmd: string) => {
-  if (cmd === 'import') {
-    window.location.href = clashInstallUrl(props.endpoint)
-    return
-  }
-  try {
-    await copyText(subscriptionUrl(props.endpoint, cmd as SubscriptionFormat))
-    ElMessage.success('已复制到剪贴板')
-  } catch {
-    ElMessage.error('复制失败，请检查浏览器剪贴板权限')
-  }
-}
+// 复制(自动分流)/按格式复制/一键导入:动作统一收口在 subscription-url util
+const copyUrl = () => copySubscriptionAuto(props.endpoint)
+const copyFormatted = (cmd: string) => runSubscriptionCommand(props.endpoint, cmd)
 </script>
 
 <style scoped>
