@@ -439,3 +439,32 @@ func TestPreviewConditions_ZeroMatch(t *testing.T) {
 
 
 
+
+
+// TestFilteredNodesChainStats_LatencyStageSeparate 钉死 code-review 修复:
+// availability 与 latency 两个阶段的计数必须分别记录——可用但超延迟阈值的
+// 节点应在 latency 阶段掉出,而不是让两阶段计数永远相同(issue #35 的
+// 「可用后 x → 阈值后 y」逐级语义)。
+func TestFilteredNodesChainStats_LatencyStageSeparate(t *testing.T) {
+	nodes := []*subscription.Node{
+		{Name: "快A", Type: "ss", Server: "a.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Region: "HK", Source: "机场A", Available: true, Latency: 50},
+		{Name: "慢B", Type: "ss", Server: "b.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Region: "HK", Source: "机场A", Available: true, Latency: 500},
+	}
+	srv, _ := newTestServer(t, nodes)
+	srv.cfg.HealthCheck.LatencyThreshold = 100
+
+	out, stages := srv.filteredNodesChainStats(nodes, 1, nil, false, nil)
+	if len(out) != 1 || out[0].Name != "快A" {
+		t.Fatalf("deliverable = %v, want only 快A", out)
+	}
+	counts := map[string]int{}
+	for _, s := range stages {
+		counts[s.Stage] = s.Count
+	}
+	if counts["availability"] != 2 {
+		t.Errorf("availability stage = %d, want 2 (两个节点都可用)", counts["availability"])
+	}
+	if counts["latency"] != 1 {
+		t.Errorf("latency stage = %d, want 1 (慢B 超阈值掉出)", counts["latency"])
+	}
+}

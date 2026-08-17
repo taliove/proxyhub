@@ -2327,13 +2327,18 @@ func (s *Server) filteredNodesChainStats(nodes []*subscription.Node, userID int6
 	if !skipAvailability {
 		if len(immuneKeys) > 0 {
 			nodes = filterAvailableImmune(nodes, immuneKeys)
-			nodes = filterLatencyImmune(nodes, s.cfg.HealthCheck.LatencyThreshold, immuneKeys)
 		} else {
 			nodes = filter.FilterAvailable(nodes)
-			nodes = filter.FilterByLatencyThreshold(nodes, s.cfg.HealthCheck.LatencyThreshold)
 		}
 	}
 	record("availability")
+	if !skipAvailability {
+		if len(immuneKeys) > 0 {
+			nodes = filterLatencyImmune(nodes, s.cfg.HealthCheck.LatencyThreshold, immuneKeys)
+		} else {
+			nodes = filter.FilterByLatencyThreshold(nodes, s.cfg.HealthCheck.LatencyThreshold)
+		}
+	}
 	record("latency")
 
 	filt := filter.NewFilter(s.cfg.Filter.NodesPerRegion, s.cfg.Filter.Deduplicate)
