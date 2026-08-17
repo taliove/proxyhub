@@ -30,7 +30,8 @@ ARG VERSION=dev
 # as scripts/release/package.sh); empty means no buildTime stamp (local builds).
 ARG SOURCE_DATE_EPOCH=""
 # buildx 注入的目标平台(不带默认值声明才能拿到 buildx 自动值;
-# 非 buildx 的本地构建为空,RUN 里回退 linux/amd64,与现状一致)
+# 非 buildx 的本地构建为空,RUN 里回退 linux/amd64——裸 docker build
+# 的产物架构固定为 amd64,不随宿主机架构变化)
 ARG TARGETOS
 ARG TARGETARCH
 RUN BUILD_TIME=""; \
