@@ -46,7 +46,9 @@ func rfc5987Encode(s string) string {
 // setSubscriptionProfileHeaders 给成功下发的订阅响应补 profile 命名头
 // (issue #38):
 //   - Profile-Title: base64(UTF-8 名称)(mihomo/Clash Verge/FlClash 系)
-//   - Content-Disposition: attachment; filename*=UTF-8''<RFC 5987 编码名称>
+//   - Content-Disposition: inline; filename*=UTF-8''<RFC 5987 编码名称>
+//     (inline:浏览器直接显示订阅内容而非强制下载,便于人工查看;
+//     客户端不读 disposition,filename 在另存时仍生效)
 //
 // 两个头值都经过整体编码(base64 / 全量 percent-encode),CRLF 结构性进不去;
 // 校验(trim/去控制字符/50 rune)在 store 边界,只是展示卫生。
@@ -54,7 +56,7 @@ func rfc5987Encode(s string) string {
 func setSubscriptionProfileHeaders(w http.ResponseWriter, ep *store.Endpoint) {
 	title := profileTitle(ep)
 	w.Header().Set("Profile-Title", base64.StdEncoding.EncodeToString([]byte(title)))
-	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+rfc5987Encode(title))
+	w.Header().Set("Content-Disposition", "inline; filename*=UTF-8''"+rfc5987Encode(title))
 }
 
 // injectShadowrocketRemarks 小火箭的订阅命名通道(issue #39,QA 实测确认):

@@ -31,7 +31,7 @@ func TestSubscription_ProfileHeaders_NoPublicName(t *testing.T) {
 	if got := w.Header().Get("Profile-Title"); got != "UHJveHlIdWI=" {
 		t.Errorf("Profile-Title = %q, want base64(\"ProxyHub\")", got)
 	}
-	wantCD := "attachment; filename*=UTF-8''ProxyHub"
+	wantCD := "inline; filename*=UTF-8''ProxyHub"
 	if got := w.Header().Get("Content-Disposition"); got != wantCD {
 		t.Errorf("Content-Disposition = %q, want %q", got, wantCD)
 	}
@@ -58,7 +58,7 @@ func TestSubscription_ProfileHeaders_NonASCIIPublicName(t *testing.T) {
 	if got := w.Header().Get("Profile-Title"); got != "UHJveHlIdWIgwrcg5a626YeM5a695bim" {
 		t.Errorf("Profile-Title = %q, want base64(\"ProxyHub · 家里宽带\")", got)
 	}
-	wantCD := "attachment; filename*=UTF-8''ProxyHub%20%C2%B7%20%E5%AE%B6%E9%87%8C%E5%AE%BD%E5%B8%A6"
+	wantCD := "inline; filename*=UTF-8''ProxyHub%20%C2%B7%20%E5%AE%B6%E9%87%8C%E5%AE%BD%E5%B8%A6"
 	if got := w.Header().Get("Content-Disposition"); got != wantCD {
 		t.Errorf("Content-Disposition = %q, want %q", got, wantCD)
 	}
