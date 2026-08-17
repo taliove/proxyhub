@@ -218,16 +218,21 @@ func (s *Server) handleListSlots(w http.ResponseWriter, r *http.Request) {
 }
 
 // slotConflictPayload 409 结构化载荷:前端据此弹确认("该节点当前叫 X,确认转移?")
+// name_taken 附可操作提示(issue #113 AC):API 消费方不依赖前端文案也能得到指引。
 func slotConflictPayload(ce *store.SlotConflictError) map[string]any {
+	conflict := map[string]any{
+		"kind":            string(ce.Kind),
+		"name":            ce.Name,
+		"node_key":        ce.NodeKey,
+		"holder_name":     ce.HolderName,
+		"holder_node_key": ce.HolderNodeKey,
+	}
+	if ce.Kind == store.SlotConflictName {
+		conflict["hint"] = "模板不含 {index} 时名称必须唯一,加入 {index} 可自动编号。"
+	}
 	return map[string]any{
-		"error": "slot conflict",
-		"conflict": map[string]any{
-			"kind":            string(ce.Kind),
-			"name":            ce.Name,
-			"node_key":        ce.NodeKey,
-			"holder_name":     ce.HolderName,
-			"holder_node_key": ce.HolderNodeKey,
-		},
+		"error":    "slot conflict",
+		"conflict": conflict,
 	}
 }
 

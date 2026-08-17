@@ -8,9 +8,6 @@ import (
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
-// slotIndexTmpl 名称模板的序号占位符(与 store.SlotNameHasIndex 同一判定串)。
-const slotIndexTmpl = "{index}"
-
 // slotRenderDeps 槽位名渲染依赖(机场简称表 + 地区信息表),与标准化同源。
 type slotRenderDeps struct {
 	abbrs   map[string]string
@@ -129,7 +126,7 @@ func computeSlotIndices(slots []store.NameSlot, byKey map[string]*subscription.N
 			continue
 		}
 		// 前缀 = {index} 之前的渲染结果(其后的字面部分不参与分组)
-		prefixTmpl := strings.SplitN(sl.Name, slotIndexTmpl, 2)[0]
+		prefixTmpl := strings.SplitN(sl.Name, store.SlotIndexPlaceholder, 2)[0]
 		prefix := renderSlotName(prefixTmpl, n, deps, 1)
 		entries = append(entries, entry{sl.NodeKey, sl.Name, sl.ID, prefix})
 	}

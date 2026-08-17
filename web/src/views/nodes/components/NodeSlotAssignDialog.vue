@@ -106,10 +106,12 @@ const save = async (force: boolean) => {
     const target = effectiveName.value
     // 选中已有空槽(或新建名恰好命中空槽):按槽位 ID 指派
     // (空槽无 reassign 冲突;node_occupied 走确认)
+    // {index} 模板放行后同名空槽可有多条(issue #113):取 ID 最小者,
+    // 与编号排序的创建顺序 tiebreak 口径一致
     const existing =
       mode.value === 'existing'
         ? pickedSlot.value
-        : (props.emptySlots.find((s) => s.name === target) ?? null)
+        : (props.emptySlots.filter((s) => s.name === target).sort((a, b) => a.id - b.id)[0] ?? null)
     if (existing) {
       await updateSlot(existing.id, { nodeKey: node.value.node_key, force })
     } else {

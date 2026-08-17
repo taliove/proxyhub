@@ -65,14 +65,16 @@ var ErrSlotNameEmpty = errors.New("slot name required")
 // maxSlotNameRunes 槽位名 rune 上限:展示卫生,与精选项别名同规格(50)。
 const maxSlotNameRunes = 50
 
-// slotIndexPlaceholder 名称模板里的序号占位符(名称模板变量表见 CONTEXT.md)。
-const slotIndexPlaceholder = "{index}"
+// SlotIndexPlaceholder 名称模板里的序号占位符(名称模板变量表见 CONTEXT.md)。
+// 导出给 server 渲染层做前缀切分,DB 部分唯一索引的 LIKE 判定串与之一致,
+// 改占位符语法需同步 032 迁移的索引定义。
+const SlotIndexPlaceholder = "{index}"
 
 // SlotNameHasIndex 名字是否含 {index} 占位符。含 {index} 的模板名允许重复
 // (issue #113:同模板多槽位按创建顺序自动编号,渲染层保证不撞名);
 // 不含的字面名仍受 (user_id, name) 唯一约束(应用层查重 + DB 部分唯一索引双保险)。
 func SlotNameHasIndex(name string) bool {
-	return strings.Contains(name, slotIndexPlaceholder)
+	return strings.Contains(name, SlotIndexPlaceholder)
 }
 
 // SanitizeSlotName 槽位名边界归一(trim/去控制字符/rune 截断,剔除 '/')。
