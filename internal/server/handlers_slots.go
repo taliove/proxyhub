@@ -228,7 +228,7 @@ func slotConflictPayload(ce *store.SlotConflictError) map[string]any {
 		"holder_node_key": ce.HolderNodeKey,
 	}
 	if ce.Kind == store.SlotConflictName {
-		conflict["hint"] = "模板不含 {index} 时名称必须唯一,加入 {index} 可自动编号。"
+		conflict["hint"] = "模板不含 {index} 时名称必须唯一，加入 {index} 可自动编号。"
 	}
 	return map[string]any{
 		"error":    "slot conflict",

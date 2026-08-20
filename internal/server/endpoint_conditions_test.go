@@ -284,8 +284,6 @@ func TestPreviewConditions_NodeDetails(t *testing.T) {
 	// latency/bandwidth 检查存在即可(condPool 无 bandwidth)
 }
 
-
-
 // TestPreviewConditions_TruncateAt20 节点明细数组截断在 20 个(count 保持真实值)。
 // 使用 condPool 基础+复制来避开复杂过滤逻辑。
 func TestPreviewConditions_TruncateAt20(t *testing.T) {
@@ -320,7 +318,7 @@ func TestPreviewConditions_TruncateAt20(t *testing.T) {
 	}
 
 	var resp struct {
-		Count int                    `json:"count"`
+		Count int              `json:"count"`
 		Nodes []map[string]any `json:"nodes"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &resp)
@@ -337,9 +335,6 @@ func TestPreviewConditions_TruncateAt20(t *testing.T) {
 		t.Error("nodes array should be truncated, but len(nodes) >= count")
 	}
 }
-
-
-
 
 // TestPreviewConditions_StageCounts 钉死 issue #35:预览返回过滤链各阶段计数,
 // 池被某一道清零时能从 stages 定位(池 3 → 可用性后 1)。
@@ -398,7 +393,6 @@ func TestPreviewConditions_StageCounts(t *testing.T) {
 	}
 }
 
-
 func TestPreviewConditions_ZeroMatch(t *testing.T) {
 	nodes := []*subscription.Node{
 		{Name: "HK-01", Type: "ss", Server: "hk1.example.com", Port: 8388, Cipher: "aes-256-gcm", Password: "p", Region: "HK", Source: "机场A", Available: true},
@@ -421,7 +415,7 @@ func TestPreviewConditions_ZeroMatch(t *testing.T) {
 	}
 
 	var resp struct {
-		Count int                    `json:"count"`
+		Count int              `json:"count"`
 		Nodes []map[string]any `json:"nodes"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &resp)
@@ -436,10 +430,6 @@ func TestPreviewConditions_ZeroMatch(t *testing.T) {
 		t.Errorf("len(nodes) = %d, want 0", len(resp.Nodes))
 	}
 }
-
-
-
-
 
 // TestFilteredNodesChainStats_LatencyStageSeparate 钉死 code-review 修复:
 // availability 与 latency 两个阶段的计数必须分别记录——可用但超延迟阈值的

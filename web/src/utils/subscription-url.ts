@@ -20,14 +20,19 @@ export function clashInstallUrl(row: Endpoint): string {
   return `clash://install-config?url=${encodeURIComponent(subscriptionUrl(row, 'clash'))}`
 }
 
-// copySubscriptionAuto 「复制」主按钮的统一动作:不带 format,交给 UA 分流。
-export async function copySubscriptionAuto(row: Endpoint): Promise<void> {
+// copyWithFeedback 复制 + 消息反馈的统一收口(降级剪贴板见 utils/clipboard)。
+async function copyWithFeedback(url: string): Promise<void> {
   try {
-    await copyText(subscriptionUrl(row))
+    await copyText(url)
     ElMessage.success('已复制到剪贴板')
   } catch {
     ElMessage.error('复制失败，请检查浏览器剪贴板权限')
   }
+}
+
+// copySubscriptionAuto 「复制」主按钮的统一动作:不带 format,交给 UA 分流。
+export async function copySubscriptionAuto(row: Endpoint): Promise<void> {
+  return copyWithFeedback(subscriptionUrl(row))
 }
 
 // runSubscriptionCommand 格式下拉的统一动作(issue #123):import 跳转一键导入,
@@ -37,10 +42,5 @@ export async function runSubscriptionCommand(row: Endpoint, cmd: string): Promis
     window.location.href = clashInstallUrl(row)
     return
   }
-  try {
-    await copyText(subscriptionUrl(row, cmd as SubscriptionFormat))
-    ElMessage.success('已复制到剪贴板')
-  } catch {
-    ElMessage.error('复制失败，请检查浏览器剪贴板权限')
-  }
+  return copyWithFeedback(subscriptionUrl(row, cmd as SubscriptionFormat))
 }
