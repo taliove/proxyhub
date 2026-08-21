@@ -574,6 +574,15 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 存量模板 no-resolve 错序迁移(issue #124):v0.11.0 时代保存的模板带
+	// IP-CIDR,<cidr>,no-resolve,<策略> 错序规则,mihomo 把第三位 no-resolve
+	// 当策略组名报错。规范化 template/template_versions/system_settings.clash_template
+	// 三处存储为尾位 no-resolve;幂等、只动错序行。依赖上方 template 库表与
+	// template_versions 就绪,system_settings 由 migrateMultiTenant 保证存在。
+	if err := s.migrateTemplateNoResolveOrder(); err != nil {
+		return err
+	}
+
 	// MFA 与受信 IP(登录加固 ticket 02):users 加 3 列 + user_trusted_ips 表 +
 	// audit_logs (username, ip, created_at) 复合索引。必须在 017_users.sql 之后。
 	if err := s.migrateMFA(); err != nil {
