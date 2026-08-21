@@ -30,7 +30,7 @@
     "element-plus": "^2.14.4",
     "html-to-image": "^1.11.13",
     "js-yaml": "^5.3.0",
-    "pinia": "^2.1.0",
+    "pinia": "^4.0.3",
     "qrcode": "^1.5.4",
     "vue": "^3.5.41",
     "vue-echarts": "^7.0.3",
