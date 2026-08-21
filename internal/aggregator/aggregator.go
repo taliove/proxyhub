@@ -250,7 +250,7 @@ func (a *Aggregator) UpdateNodeTestResultForUser(userID int64, nodeKey, mode str
 	if updated == nil {
 		return false
 	}
-	if err := a.st.UpdateNodeDetectionResult(updated, mode); err != nil {
+	if err := a.st.UpdateNodeDetectionResult(userID, updated, mode); err != nil {
 		a.logger.Warn("persist node test result failed, memory pool updated only",
 			"node", nodeKey, "mode", mode, "error", err)
 	}

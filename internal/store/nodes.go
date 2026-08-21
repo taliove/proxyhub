@@ -200,23 +200,33 @@ func purgeExpiredStaleNodes(tx *sql.Tx, now time.Time, userID int64) error {
 // 可用性/延迟/检测时间/判定来源/失败原因。只动检测列,身份列一概不碰(节点身份
 // 可能已被刷新改写,此处不越权)。行不存在(节点从未入过库)静默跳过——内存池
 // 仍是事实源,下轮刷新落库。
-func (s *Store) UpdateNodeDetectionResult(n *subscription.Node, mode string) error {
+// userID 谓词(issue #131):nodes.user_id 是 last-writer-wins 归属列,单行可能
+// 归其他租户所有;userID>0 时带 `AND user_id = ?`,行不属本人与「行不存在」同语义
+// 静默跳过(不报错、不写),内存池写回不受影响。userID=0 是内部跨分片回退路径
+// (机场测试探测等,单管理员等价旧行为),不带谓词。
+func (s *Store) UpdateNodeDetectionResult(userID int64, n *subscription.Node, mode string) error {
 	if mode == "bandwidth" {
-		_, err := s.db.Exec(
-			`UPDATE nodes SET bandwidth_down = ?, bandwidth_up = ?, bandwidth_check = ? WHERE node_key = ?`,
-			n.BandwidthDownMbps, n.BandwidthUpMbps, timeOrNull(n.BandwidthCheck), n.NodeKey())
-		if err != nil {
+		query := `UPDATE nodes SET bandwidth_down = ?, bandwidth_up = ?, bandwidth_check = ? WHERE node_key = ?`
+		args := []any{n.BandwidthDownMbps, n.BandwidthUpMbps, timeOrNull(n.BandwidthCheck), n.NodeKey()}
+		if userID > 0 {
+			query += ` AND user_id = ?`
+			args = append(args, userID)
+		}
+		if _, err := s.db.Exec(query, args...); err != nil {
 			return fmt.Errorf("persist bandwidth result %s: %w", n.NodeKey(), err)
 		}
 		return nil
 	}
-	_, err := s.db.Exec(
-		`UPDATE nodes SET available = ?, latency_ms = ?, detection_last_check = ?,
-			detection_kind = ?, detection_fail_reason = ?, detection_fail_detail = ?
-			WHERE node_key = ?`,
-		boolToInt(n.Available), n.Latency, timeOrNull(n.DetectionLastCheck),
-		n.DetectionKind, n.DetectionFailReason, n.DetectionFailDetail, n.NodeKey())
-	if err != nil {
+	query := `UPDATE nodes SET available = ?, latency_ms = ?, detection_last_check = ?,
+		detection_kind = ?, detection_fail_reason = ?, detection_fail_detail = ?
+		WHERE node_key = ?`
+	args := []any{boolToInt(n.Available), n.Latency, timeOrNull(n.DetectionLastCheck),
+		n.DetectionKind, n.DetectionFailReason, n.DetectionFailDetail, n.NodeKey()}
+	if userID > 0 {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	if _, err := s.db.Exec(query, args...); err != nil {
 		return fmt.Errorf("persist detection result %s: %w", n.NodeKey(), err)
 	}
 	return nil
