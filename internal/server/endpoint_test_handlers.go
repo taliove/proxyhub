@@ -141,6 +141,9 @@ func (s *Server) handleEndpointTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nodes := s.endpointDeliverableNodes(ep)
+	// 订阅测试走内部生成链验证订阅内容,与 /sub 成功路径同立场:
+	// 带凭证的响应永不进中间缓存(issue #121/#132)。
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, endpointTestResponse{
 		Pull: map[string]formatCheckResult{
 			"clash": s.validateFormat(nodes, "clash", ep),

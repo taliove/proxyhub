@@ -57,5 +57,7 @@ func (s *Server) handleNodeShareURI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 分享链接含节点凭证(issue #132):响应永不进中间缓存
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, map[string]string{"uri": uri})
 }

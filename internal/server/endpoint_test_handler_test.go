@@ -126,6 +126,39 @@ func TestHandleEndpointTest_PullAndSnapshot(t *testing.T) {
 	}
 }
 
+// 订阅测试接口响应只含格式元数据与池快照(不含凭证,加 no-store 是纵深防御);
+// 预览接口的 content 字段携带完整订阅内容(含节点凭证),是实需。与 /sub 成功
+// 路径同立场:Cache-Control 必须 no-store(issue #132),永不进中间缓存。
+func TestHandleEndpointTest_NoStoreHeader(t *testing.T) {
+	srv, st := newEndpointTestServer(t, endpointTestPool())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	ep, _ := st.CreateEndpointForUser(1, "nostore")
+
+	w := doEndpointRequest(t, h, cookie, http.MethodPost, fmt.Sprintf("/api/endpoints/%d/test", ep.ID), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestHandleEndpointPreview_NoStoreHeader(t *testing.T) {
+	srv, st := newEndpointTestServer(t, endpointTestPool())
+	h := srv.Handler()
+	cookie := authCookie(t, h)
+	ep, _ := st.CreateEndpointForUser(1, "nostore-preview")
+
+	w := doEndpointRequest(t, h, cookie, http.MethodGet, fmt.Sprintf("/api/endpoints/%d/preview?format=clash", ep.ID), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+}
+
 func TestHandleEndpointTest_NotFound(t *testing.T) {
 	srv, _ := newEndpointTestServer(t, endpointTestPool())
 	h := srv.Handler()
@@ -438,6 +471,10 @@ func TestHandleListEndpoints_Availability(t *testing.T) {
 	w := doEndpointRequest(t, h, cookie, http.MethodGet, "/api/endpoints", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	// 列表项含订阅 token 与 path,响应必须 no-store(issue #132)
+	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
 
 	var items []map[string]any

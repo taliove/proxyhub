@@ -1561,6 +1561,8 @@ func (s *Server) handleListEndpoints(w http.ResponseWriter, r *http.Request) {
 			PicksError:   nodePicksBroken(ep),
 		})
 	}
+	// 列表项含订阅 token 与 path(issue #132):响应永不进中间缓存
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, items)
 }
 
@@ -2696,6 +2698,9 @@ func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
 		nodeTags = nil
 	}
 
+	// 预览响应携带完整订阅内容(含节点凭证分享链接),与 /sub 成功路径同立场:
+	// 带凭证的响应永不进中间缓存(issue #121/#132)。
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, map[string]any{
 		"format": format,
 		"count":  len(nodes),

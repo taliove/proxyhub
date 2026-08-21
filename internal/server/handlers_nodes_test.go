@@ -150,6 +150,10 @@ func TestHandleNodeShareURI_PrefersRawLink(t *testing.T) {
 	if res["uri"] != rawLink {
 		t.Errorf("uri = %q, want original RawLink %q", res["uri"], rawLink)
 	}
+	// 分享链接含节点凭证,响应必须 no-store(issue #132)
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
 }
 
 // TestHandleNodeShareURI_RawLinkFragmentNormalized 验证 RawLink 回放时 fragment(备注)
