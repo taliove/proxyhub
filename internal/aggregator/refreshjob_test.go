@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +26,40 @@ func gatedSubscriptionServer(t *testing.T, release <-chan struct{}) *httptest.Se
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// releaseOnce 包装闸门 channel,返回可安全重复调用的放行函数:测试末尾的显式
+// 收尾与 defer 兜底可共存,不会重复 close(issue #133:job goroutine 必须先放行
+// 再等其跑完,否则测试拆除时 goroutine 仍持库,与 TempDir 清理竞态)。
+func releaseOnce(release chan struct{}) func() {
+	var once sync.Once
+	return func() { once.Do(func() { close(release) }) }
+}
+
+// waitJobTerminal 轮询直到 job 到达指定终态之一。与 waitJobStatus 的区别:
+// 后者「非 running 即返回」,而被外部标记 interrupted 的任务需要等其 goroutine
+// 真正跑完(完成时会写成 done/cancelled 覆盖 interrupted),判断条件必须是终态值。
+func waitJobTerminal(t *testing.T, st *store.Store, jobID int64, want ...jobs.Status) jobs.Status {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		rec, err := st.Jobs().Get(jobID)
+		if err == nil {
+			for _, ws := range want {
+				if rec.Status == ws {
+					return rec.Status
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	rec, _ := st.Jobs().Get(jobID)
+	var last jobs.Status
+	if rec != nil {
+		last = rec.Status
+	}
+	t.Fatalf("job %d did not reach %v in time (last: %s)", jobID, want, last)
+	return ""
 }
 
 // waitJobStatus 轮询 jobs 表直到任务到达终态。
@@ -64,6 +99,8 @@ func waitRefreshRun(t *testing.T, st *store.Store, jobID int64) *store.RefreshRu
 func TestStartRefreshJob_AttachesAndLinksRun(t *testing.T) {
 	agg, st := newTestAggregator(t)
 	release := make(chan struct{})
+	releaseNow := releaseOnce(release)
+	defer releaseNow()
 	srv := gatedSubscriptionServer(t, release)
 	if _, err := st.CreateAirport("慢机场", srv.URL); err != nil {
 		t.Fatalf("CreateAirport() error = %v", err)
@@ -102,7 +139,7 @@ func TestStartRefreshJob_AttachesAndLinksRun(t *testing.T) {
 	// refresh_runs 回填 job_id(异步创建,轮询等待)
 	run := waitRefreshRun(t, st, jobID)
 
-	close(release)
+	releaseNow()
 	if status := waitJobStatus(t, st, jobID); status != jobs.StatusDone {
 		t.Errorf("job status = %s, want done", status)
 	}
@@ -117,16 +154,20 @@ func TestStartRefreshJob_AttachesAndLinksRun(t *testing.T) {
 	}
 
 	// 完成后可再次触发(新任务)
-	_, _, started3, err := agg.StartRefreshJob(store.RefreshTriggerManual)
+	jobID3, _, started3, err := agg.StartRefreshJob(store.RefreshTriggerManual)
 	if err != nil || !started3 {
 		t.Errorf("trigger after finish: started=%v err=%v, want new job", started3, err)
 	}
+	// issue #133:收尾必须等第三个 job 跑完——否则测试拆除后其 goroutine 仍持库,
+	// TempDir 清理竞态(directory not empty / sql: database is closed)。
+	waitJobTerminal(t, st, jobID3, jobs.StatusDone)
 }
 
 func TestStartRefreshJob_AirportLevelConflict(t *testing.T) {
 	agg, st := newTestAggregator(t)
 	release := make(chan struct{})
-	defer close(release)
+	releaseNow := releaseOnce(release)
+	defer releaseNow()
 	srv := gatedSubscriptionServer(t, release)
 	airport, err := st.CreateAirport("慢机场", srv.URL)
 	if err != nil {
@@ -134,7 +175,8 @@ func TestStartRefreshJob_AirportLevelConflict(t *testing.T) {
 	}
 
 	// 全量进行中:单机场与全量互斥
-	if _, _, _, err := agg.StartRefreshJob(store.RefreshTriggerManual); err != nil {
+	jobID, _, _, err := agg.StartRefreshJob(store.RefreshTriggerManual)
+	if err != nil {
 		t.Fatalf("StartRefreshJob() error = %v", err)
 	}
 	if _, _, _, err := agg.startRefresh(0, store.RefreshTriggerManual, airport.ID); !errors.Is(err, ErrRefreshConflict) {
@@ -144,6 +186,10 @@ func TestStartRefreshJob_AirportLevelConflict(t *testing.T) {
 	if _, _, _, err := agg.StartRefreshJob(store.RefreshTriggerScheduled); err != nil {
 		t.Errorf("duplicate full refresh should attach, err = %v", err)
 	}
+
+	// issue #133:放行并等在途 job 跑完再拆除,避免 goroutine 持库竞态
+	releaseNow()
+	waitJobTerminal(t, st, jobID, jobs.StatusDone)
 }
 
 func TestCancelRefresh_InterruptsAndKeepsPartial(t *testing.T) {
@@ -187,7 +233,8 @@ func TestCancelRefresh_InterruptsAndKeepsPartial(t *testing.T) {
 func TestRefreshJob_InterruptedOnRestart(t *testing.T) {
 	agg, st := newTestAggregator(t)
 	release := make(chan struct{})
-	defer close(release)
+	releaseNow := releaseOnce(release)
+	defer releaseNow()
 	srv := gatedSubscriptionServer(t, release)
 	if _, err := st.CreateAirport("慢机场", srv.URL); err != nil {
 		t.Fatalf("CreateAirport() error = %v", err)
@@ -223,6 +270,11 @@ func TestRefreshJob_InterruptedOnRestart(t *testing.T) {
 	if other.Status != jobs.StatusRunning {
 		t.Errorf("other kind job status = %s, want running (RecoverOwn must not touch foreign kinds)", other.Status)
 	}
+
+	// issue #133:收尾放行并等被标记 interrupted 的旧 goroutine 真正跑完
+	// (完成时会以 done/cancelled 覆盖 interrupted),否则其持库与 TempDir 清理竞态。
+	releaseNow()
+	waitJobTerminal(t, st, jobID, jobs.StatusDone, jobs.StatusCancelled)
 }
 
 func TestStartAirportRefreshJob_FetchOnlyNoHealthCheck(t *testing.T) {

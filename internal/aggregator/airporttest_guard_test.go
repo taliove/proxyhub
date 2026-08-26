@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/taliove/proxyhub/internal/jobs"
 	"github.com/taliove/proxyhub/internal/store"
 )
 
@@ -11,7 +12,8 @@ import (
 func TestStartAirportTestExclusive_ConflictWithRefresh(t *testing.T) {
 	agg, st := newTestAggregator(t)
 	release := make(chan struct{})
-	defer close(release)
+	releaseNow := releaseOnce(release)
+	defer releaseNow()
 	srv := gatedSubscriptionServer(t, release)
 	airport, err := st.CreateAirport("慢机场", srv.URL)
 	if err != nil {
@@ -25,7 +27,8 @@ func TestStartAirportTestExclusive_ConflictWithRefresh(t *testing.T) {
 	}
 
 	// 全量刷新在跑:任何机场的测试都冲突
-	if _, _, _, err := agg.StartRefreshJob(store.RefreshTriggerManual); err != nil {
+	jobID, _, _, err := agg.StartRefreshJob(store.RefreshTriggerManual)
+	if err != nil {
 		t.Fatalf("StartRefreshJob() error = %v", err)
 	}
 	if _, key, _, err := agg.StartAirportTestExclusive(airport.ID, start); !errors.Is(err, ErrAirportTestConflict) {
@@ -36,6 +39,10 @@ func TestStartAirportTestExclusive_ConflictWithRefresh(t *testing.T) {
 	if startCalled {
 		t.Error("start callback invoked despite conflict")
 	}
+
+	// issue #133:放行并等在途 job 跑完再拆除,避免 goroutine 持库竞态
+	releaseNow()
+	waitJobTerminal(t, st, jobID, jobs.StatusDone)
 }
 
 // 同机场单机场刷新在跑:同机场测试冲突;不同机场不互斥。
