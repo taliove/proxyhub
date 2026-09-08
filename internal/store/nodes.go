@@ -74,12 +74,16 @@ func (s *Store) SaveNodePoolForUser(userID int64, nodes []*subscription.Node) er
 	return nil
 }
 
-// UpsertNodePoolShard 只重写一个来源(机场)分片(issue #152):本来源现有行先
+// UpsertNodePoolShard 只重写一个来源(机场)分片(issue #143):本来源现有行先
 // 整体标记 stale,再逐行 upsert 传入节点,最后清理本分片的死节点标签与超期
 // stale 节点。其他来源的行全程不动——任一节点数据异常只回滚本机场分片,不再
 // 连坐全池。prune/purge 口径与 SaveNodePool 相同,仅作用域收窄到 source。
 // nodes 必须是该来源分片合并后的完整新状态(MergePool 产出:在架 + 消失标 stale),
 // 不在 nodes 里的本来源行会保持 stale。
+//
+// 并发警示:本方法是"标 stale -> upsert"的读-改-写,跨两条语句(即便同事务,
+// 两个并发事务对同一 source 会交错产生错误的 stale 终态)。调用方必须串行——
+// 现由 poolops 包级 upsertMu 保证;禁止绕过 poolops 直接并发调用本方法。
 func (s *Store) UpsertNodePoolShard(source string, nodes []*subscription.Node) error {
 	tx, err := s.db.Begin()
 	if err != nil {

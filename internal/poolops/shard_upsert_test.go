@@ -29,7 +29,7 @@ func loadBySource(t *testing.T, st *store.Store, source string) map[string]subsc
 	return out
 }
 
-// 两机场入池后刷新机场 A,机场 B 的节点必须逐字段不变(issue #152 Bug 3:
+// 两机场入池后刷新机场 A,机场 B 的节点必须逐字段不变(issue #143 Bug 3:
 // 分片局部 upsert,不再读全池-写全池)。
 func TestUpsertAirportNodes_OtherAirportUntouchedFieldByField(t *testing.T) {
 	adapter, st := newTestAdapter(t)
@@ -79,7 +79,7 @@ func TestUpsertAirportNodes_OtherAirportUntouchedFieldByField(t *testing.T) {
 }
 
 // 机场 B 存在"异常数据"(任何重写 B 行的写路径都会失败,用毒触发器模拟)时,
-// 刷新机场 A 仍必须成功(issue #152 Bug 3:旧实现先 UPDATE 全表 stale,
+// 刷新机场 A 仍必须成功(issue #143 Bug 3:旧实现先 UPDATE 全表 stale,
 // B 的异常行会让 A 的刷新连坐回滚)。
 func TestUpsertAirportNodes_CorruptOtherAirportRowsDoNotBlock(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")

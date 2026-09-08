@@ -438,7 +438,7 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDashboardStats 仪表盘统计(ticket 07:按当前用户视角过滤)。
-// 池口径与节点管理页同源(issue #152):serve-time 合并自建节点,
+// 池口径与节点管理页同源(issue #143):serve-time 合并自建节点,
 // 且只统计在架节点——下架节点(Stale=true,已从机场订阅消失)不计入,
 // 与节点管理页默认排除 stale 的语义一致。
 func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {

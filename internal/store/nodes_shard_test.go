@@ -83,7 +83,7 @@ func TestUpsertNodePoolShard_RewritesOnlySourceShard(t *testing.T) {
 }
 
 // TestUpsertNodePoolShard_OtherShardRowsNotTouched 用毒触发器模拟"其他机场
-// 异常数据导致该行无法重写"(issue #152 Bug 3):任何 UPDATE/DELETE airport-b
+// 异常数据导致该行无法重写"(issue #143 Bug 3):任何 UPDATE/DELETE airport-b
 // 行的写路径都会失败。分片 upsert 只写本机场,必须成功;旧的全池重写路径
 // (SaveNodePool 先 UPDATE 全表 stale)会在这里连坐失败。
 func TestUpsertNodePoolShard_OtherShardRowsNotTouched(t *testing.T) {

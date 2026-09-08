@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// 超时拆分 / 重试 / 体上限(issue #156):旧 http.Client.Timeout 一刀切导致
+// 超时拆分 / 重试 / 体上限(issue #143):旧 http.Client.Timeout 一刀切导致
 // 大订阅体读不完即判失败;这里验证分离语义、重试口径与超限错误类。
 
 const timeoutTestNode = "trojan://pw@node1.example.com:443#HK 01"

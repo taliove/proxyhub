@@ -17,7 +17,13 @@ func TestHandleTestNode_SelfNodeQuick(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	ids, _ := st.ListAllSelfHostedNodes()
+	ids, err := st.ListAllSelfHostedNodes()
+	if err != nil {
+		t.Fatalf("list self-hosted nodes: %v", err)
+	}
+	if len(ids) == 0 {
+		t.Fatal("no self-hosted node listed after create")
+	}
 	body, _ := json.Marshal(map[string]any{"self_node_id": ids[0].ID, "mode": "quick"})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/nodes/test", bytes.NewReader(body))
@@ -69,7 +75,7 @@ func TestHandleTestNode_UnresolvableTarget(t *testing.T) {
 	}
 }
 
-// TestHandleTestNode_BandwidthRoutesToStream 即时测试 bandwidth 档走流式实现(issue #159):
+// TestHandleTestNode_BandwidthRoutesToStream 即时测试 bandwidth 档走流式实现(issue #143):
 // 死节点 TCP 快筛 fail-fast,错误文本为流式实现的固定串(legacy 路径带 dial 详情,已删除)。
 func TestHandleTestNode_BandwidthRoutesToStream(t *testing.T) {
 	srv, st := newTestServer(t, nil)
@@ -78,7 +84,13 @@ func TestHandleTestNode_BandwidthRoutesToStream(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	ids, _ := st.ListAllSelfHostedNodes()
+	ids, err := st.ListAllSelfHostedNodes()
+	if err != nil {
+		t.Fatalf("list self-hosted nodes: %v", err)
+	}
+	if len(ids) == 0 {
+		t.Fatal("no self-hosted node listed after create")
+	}
 	body, _ := json.Marshal(map[string]any{"self_node_id": ids[0].ID, "mode": "bandwidth"})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/nodes/test", bytes.NewReader(body))

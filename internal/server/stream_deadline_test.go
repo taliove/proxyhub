@@ -145,7 +145,7 @@ func TestStreamDeadline_TestNodeStream(t *testing.T) {
 	}
 }
 
-// TestSpeedtestDownload_WriteTimeoutExemption issue #158:直发流端点自设的写 deadline
+// TestSpeedtestDownload_WriteTimeoutExemption issue #143:直发流端点自设的写 deadline
 // 覆盖任何全局 WriteTimeout(此处 100ms 缩短替身)——全局配置不再能截断流式响应;
 // WriteTimeout=0(main.go 修复后形态)下同一流同样完整跑完。
 // 客户端限速读取,控制测试流量体量。

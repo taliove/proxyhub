@@ -62,7 +62,7 @@ log:
 	}
 }
 
-// TestLoadFetchDefaults fetch 段缺省时补默认(issue #156:15s/120s 拆分)。
+// TestLoadFetchDefaults fetch 段缺省时补默认(issue #143:15s/120s 拆分)。
 func TestLoadFetchDefaults(t *testing.T) {
 	content := `
 server:

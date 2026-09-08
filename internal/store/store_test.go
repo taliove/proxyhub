@@ -18,7 +18,7 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-// TestOpenProductionPragmas 生产 Open 路径的 DSN pragma(issue #153 / ADR 0051):
+// TestOpenProductionPragmas 生产 Open 路径的 DSN pragma(issue #143 / ADR 0051):
 // busy_timeout=5000、journal_mode=wal,且 synchronous 保持 FULL(=1)不动。
 // 只断言外部可观察行为(连接上实际生效的 PRAGMA 值)。
 func TestOpenProductionPragmas(t *testing.T) {

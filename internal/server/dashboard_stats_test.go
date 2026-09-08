@@ -11,7 +11,7 @@ import (
 )
 
 // TestHandleDashboardStats_ExcludesStaleAndMergesSelfHosted 仪表盘统计口径与节点
-// 管理页同源(issue #152):下架节点(Stale=true,即使残留 Available=true)不计入
+// 管理页同源(issue #143):下架节点(Stale=true,即使残留 Available=true)不计入
 // availableNodes/totalNodes;serve-time 自建节点(未经聚合入池)计入统计。
 func TestHandleDashboardStats_ExcludesStaleAndMergesSelfHosted(t *testing.T) {
 	// 池内:在架可用、在架不可用、下架但残留 Available=true、下架且不可用。

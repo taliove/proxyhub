@@ -53,7 +53,7 @@ func TestBandwidth_TCPUnreachable(t *testing.T) {
 	}
 }
 
-// TestTestNode_BandwidthRoutesToStream 即时测试 bandwidth 档走流式实现(issue #159):
+// TestTestNode_BandwidthRoutesToStream 即时测试 bandwidth 档走流式实现(issue #143):
 // 死节点在 TCP 快筛处 fail-fast,错误文本是流式实现的固定串
 // (legacy io.Copy 全量下载路径带 dial 详情后缀,已删除)。
 func TestTestNode_BandwidthRoutesToStream(t *testing.T) {

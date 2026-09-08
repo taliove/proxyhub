@@ -2,7 +2,7 @@
 //
 // 从 airporttest 上移(原 PoolOperations/StorePoolAdapter,ADR 0025),成为聚合层
 // 共用能力:机场测试的池空补救与单机场刷新(ticket 04)复用同一口径——
-// 解析→地区识别→MergePool carry-forward→分片局部 upsert(issue #152)。
+// 解析→地区识别→MergePool carry-forward→分片局部 upsert(issue #143)。
 package poolops
 
 import (
@@ -62,7 +62,7 @@ func (a *StoreAdapter) LoadPoolBySource(source string) ([]*subscription.Node, er
 }
 
 // UpsertAirportNodes 单机场 upsert:复用全局刷新口径(地区识别 + MergePool),
-// 但只重写本机场分片(issue #152 Bug 3):其他机场节点不动,任一行写失败
+// 但只重写本机场分片(issue #143 Bug 3):其他机场节点不动,任一行写失败
 // 只回滚本机场分片,不再连坐全池。池的读-改-写段由包级 upsertMu 串行,
 // 调用方无需自带锁。
 func (a *StoreAdapter) UpsertAirportNodes(ctx context.Context, airportName string, fetchedNodes []*subscription.Node) error {

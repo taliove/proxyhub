@@ -198,7 +198,7 @@ func TestRefreshFetchDiags_InsertAndList(t *testing.T) {
 		t.Errorf("diag C HTTPStatus = %d, want 0", got[2].HTTPStatus)
 	}
 	if !got[2].TimedOut {
-		t.Errorf("diag C TimedOut = false, want true (issue #156 扩容列)")
+		t.Errorf("diag C TimedOut = false, want true (issue #143 扩容列)")
 	}
 
 	// 其他 run 不可见
