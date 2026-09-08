@@ -39,7 +39,8 @@ const statCards = computed(() => [
     key: 'availableNodes',
     label: '可用节点',
     value: stats.value.availableNodes,
-    caption: '当前订阅可下发'
+    // issue #152:统计口径只含在架节点(排除下架),caption 说明语义
+    caption: '仅计在架节点'
   },
   {
     key: 'endpoints',
