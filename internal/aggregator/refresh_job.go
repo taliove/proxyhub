@@ -100,6 +100,12 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 	// 不再等满读超时与重试尾巴。
 	sub, diag, err := k.agg.fetcher.FetchContext(ctx, airport.Name, airport.URL)
 	if err != nil {
+		// 取消优先于失败(issue #143):取消打断在途拉取时记 cancelled,
+		// 与 jobs 行的权威终态口径一致(参照 executeForUser 的判定顺序)。
+		if ctx.Err() != nil {
+			rl.finish(store.RefreshStatusCancelled, 0, 0, 0, "cancelled")
+			return ctx.Err()
+		}
 		rl.fetchDiag(airport, diag, fetchErrorText(err))
 		rl.event(levelError, stageFetch, fmt.Sprintf("「%s」拉取失败:%s", airport.Name, fetchErrorText(err)),
 			map[string]any{"airport": airport.Name, "http_status": diag.HTTPStatus, "duration_ms": diag.DurationMs})
