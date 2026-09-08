@@ -93,7 +93,7 @@ func (s *sampleReader) Read(p []byte) (int, error) {
 func (s *sampleReader) TotalBytes() int64 { return s.totalBytes }
 
 // TestBandwidthStream 流式带宽测试:下行+上行各自采样,通过 onSample 实时回调瞬时速率。
-// 返回最终聚合 TestResult(与 testBandwidth 判定逻辑一致)。
+// 返回最终聚合 TestResult(双阈值判定,与 SSE 端点/即时测试共用同一实现)。
 // 各方向独立 DirTimeoutSec 超时;方向超时但已下够数据时用已采样字节算平均速率视为完成。
 func (d *Detector) TestBandwidthStream(ctx context.Context, node *subscription.Node, onSample func(Sample)) TestResult {
 	cfg := d.resolveBandwidthConfig()

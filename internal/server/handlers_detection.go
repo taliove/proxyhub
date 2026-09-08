@@ -169,7 +169,14 @@ func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	result := s.detectionService.TestNode(ctx, node, req.Mode)
+	// bandwidth 档走流式实现(固定时长采样,issue #159):legacy 的 io.Copy 全量下载
+	// 路径已删除。不传采样回调,聚合结果口径与 SSE 流式端点一致。
+	var result detection.TestResult
+	if req.Mode == "bandwidth" {
+		result = s.detectionService.TestBandwidthStream(ctx, node, nil)
+	} else {
+		result = s.detectionService.TestNode(ctx, node, req.Mode)
+	}
 
 	// 持久化到 node_health（统一测试路径）
 	if err := s.st.SaveTestResult(node.NodeKey(), node.Name, node.Source, result); err != nil {
