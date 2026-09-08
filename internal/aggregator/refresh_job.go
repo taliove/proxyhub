@@ -122,7 +122,7 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 	}
 
 	// 池写串行化已由 poolops 包内 upsertMu 保证(UpsertAirportNodes 是
-	// "读全池-改本机场-写全池",串行代价低);不同机场的单机场刷新拉取仍并行。
+	// "读全池-改本机场-写本机场分片",串行代价低);不同机场的单机场刷新拉取仍并行。
 	upsertErr := func() error {
 		// 刷新完成后自动重算名称(issue #51):按属主生效设置,开启时重算 DisplayName
 		toUpsert := k.agg.standardizePoolNames(p.UserID, sub.Nodes)
