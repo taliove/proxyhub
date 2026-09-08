@@ -2,6 +2,7 @@ package airporttest
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/taliove/proxyhub/internal/poolops"
@@ -63,6 +64,10 @@ type Orchestrator struct {
 	// 的订阅拉取超时拆分(issue #143);<=0 时取 subscription 包默认值。
 	fetchConnectTimeout time.Duration
 	fetchReadTimeout    time.Duration
+	// fetchClient RunDiagnostic 的订阅拉取 client:Orchestrator 级复用,
+	// 连接池(keep-alive)跨多次诊断生效,不再每次新建 Transport(issue #143)。
+	// 随 SetFetchTimeouts 重建(建连超时是 Transport 级配置)。
+	fetchClient *http.Client
 }
 
 // HealthChecker abstracts health check operations (for testing).
@@ -104,27 +109,33 @@ type Store interface {
 
 // NewOrchestrator creates a new test orchestrator.
 func NewOrchestrator(store Store, healthChecker HealthChecker, poolWriter PoolWriter) *Orchestrator {
-	return &Orchestrator{
+	o := &Orchestrator{
 		store:         store,
 		healthChecker: healthChecker,
 		poolWriter:    poolWriter,
 		poolOps:       nil, // will be set by handler wiring
 	}
+	o.fetchClient = subscription.NewFetchClient(o.fetchConnectTimeout)
+	return o
 }
 
 // NewOrchestratorWithPoolOps creates orchestrator with pool operations (for testing and pool-aware mode).
 func NewOrchestratorWithPoolOps(store Store, healthChecker HealthChecker, poolWriter PoolWriter, poolOps PoolOperations) *Orchestrator {
-	return &Orchestrator{
+	o := &Orchestrator{
 		store:         store,
 		healthChecker: healthChecker,
 		poolWriter:    poolWriter,
 		poolOps:       poolOps,
 	}
+	o.fetchClient = subscription.NewFetchClient(o.fetchConnectTimeout)
+	return o
 }
 
 // SetFetchTimeouts 配置 RunDiagnostic 的订阅拉取超时(建连/响应头与体读取
 // 分离,issue #143);<=0 的分量沿用 subscription 包默认(15s/120s)。
+// 建连超时是 Transport 级配置,随之重建复用中的 fetchClient。
 func (o *Orchestrator) SetFetchTimeouts(connectTimeout, readTimeout time.Duration) {
 	o.fetchConnectTimeout = connectTimeout
 	o.fetchReadTimeout = readTimeout
+	o.fetchClient = subscription.NewFetchClient(connectTimeout)
 }

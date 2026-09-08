@@ -44,8 +44,7 @@ func (o *Orchestrator) RunDiagnostic(ctx context.Context, airportID int64, airpo
 	}
 	req.Header.Set("User-Agent", subscriptionUserAgent)
 
-	client := subscription.NewFetchClient(o.fetchConnectTimeout)
-	resp, err := client.Do(req)
+	resp, err := o.fetchClient.Do(req)
 	if err != nil {
 		return o.persistFailedRun(ctx, run, start, fmt.Errorf("fetch failed: %w", subscription.StripURLError(err)))
 	}
@@ -55,10 +54,16 @@ func (o *Orchestrator) RunDiagnostic(ctx context.Context, airportID int64, airpo
 		return o.persistFailedRun(ctx, run, start, fmt.Errorf("HTTP %d", resp.StatusCode))
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	// 体上限与 fetcher 同口径(issue #143):多读 1 字节判定超限,
+	// 超限即失败(ErrSubscriptionTooLarge),不再无上限读裸 body。
+	body, err := io.ReadAll(io.LimitReader(resp.Body, subscription.DefaultMaxBodyBytes+1))
 	elapsed := time.Since(start)
 	if err != nil {
 		return o.persistFailedRun(ctx, run, start, fmt.Errorf("read body: %w", err))
+	}
+	if int64(len(body)) > subscription.DefaultMaxBodyBytes {
+		return o.persistFailedRun(ctx, run, start, fmt.Errorf("read body: %w: %d bytes over %d limit",
+			subscription.ErrSubscriptionTooLarge, len(body), subscription.DefaultMaxBodyBytes))
 	}
 
 	// 整体 base64 识别与解码收敛到 subscription.DecodeSubscription(三处共用)

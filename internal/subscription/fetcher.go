@@ -241,6 +241,9 @@ func (f *Fetcher) fetchOnce(ctx context.Context, name, subscriptionURL string, d
 	diag.HTTPStatus = resp.StatusCode
 
 	if resp.StatusCode != http.StatusOK {
+		// 重试前排空响应体(截断 1MiB):keep-alive 连接只有体读完才能归池复用,
+		// 5xx/429 重试才不白白新建连接。
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 		return nil, isRetryableStatus(resp.StatusCode), fmt.Errorf("fetch subscription: status %d", resp.StatusCode)
 	}
 
@@ -254,10 +257,11 @@ func (f *Fetcher) fetchOnce(ctx context.Context, name, subscriptionURL string, d
 		diag.TimedOut = isTimeoutError(err)
 		return nil, diag.TimedOut && ctx.Err() == nil, fmt.Errorf("read subscription body: %w", err)
 	}
-	diag.BodyBytes = int64(len(body))
 	if int64(len(body)) > maxBody {
 		return nil, false, fmt.Errorf("read subscription body: %w: %d bytes over %d limit", ErrSubscriptionTooLarge, len(body), maxBody)
 	}
+	// 仅成功读完且不超限时记录字节数(与字段注释口径一致)。
+	diag.BodyBytes = int64(len(body))
 
 	// 整体 base64 识别与解码收敛到 DecodeSubscription(fetcher/airporttest/手动导入共用)
 	decoded := DecodeSubscription(body)
