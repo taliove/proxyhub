@@ -2,14 +2,17 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/taliove/proxyhub/internal/detection"
 	"github.com/taliove/proxyhub/internal/subscription"
 )
 
@@ -22,6 +25,7 @@ type deadlineRecorder struct {
 	code        int
 	deadline    time.Time
 	deadlineSet bool
+	calls       atomic.Int32 // SetWriteDeadline 调用次数(逐帧刷新的流可多次)
 }
 
 func newDeadlineRecorder() *deadlineRecorder {
@@ -44,6 +48,7 @@ func (r *deadlineRecorder) Flush() {}
 func (r *deadlineRecorder) SetWriteDeadline(t time.Time) error {
 	r.deadline = t
 	r.deadlineSet = true
+	r.calls.Add(1)
 	return nil
 }
 
@@ -207,4 +212,149 @@ func TestSpeedtestDownload_WriteTimeoutExemption(t *testing.T) {
 		defer ts.Close()
 		assertFullStream(t, ts)
 	})
+}
+
+// 任务化 SSE(体检/批量任务订阅)墙钟随节点数伸缩、可中途附加,静态总预算
+// 无法覆盖;统一采用逐帧刷新:每写一帧把写 deadline 重置为 now + sseFrameWriteBudget。
+// 以下测试用假 runner(不触真实网络)驱动任务秒级收口,handler 同步返回后断言:
+// deadline 落上过、末帧 deadline 符合步长预算、且逐帧刷新(调用次数 >= 帧数)。
+// 已收口任务在 TTL 内仍可 Attach 回放(见 jobs.Manager.Attach),故启动后同步调用
+// handler 即可确定性地走完整条流,无须并发等待。
+
+// fastExamManager 单节点体检/稳定性流共用的假任务管理器:推 sample + done 帧即收口
+// (done 帧由 runner 发出,管理器只透传,见 examKind.Run)。
+func fastExamManager() *detection.ExamJobManager {
+	return detection.NewExamJobManager(
+		func(_ context.Context, _ *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
+			emit(detection.ExamEvent{Phase: "sample", Section: "stability"})
+			emit(detection.ExamEvent{Phase: "done"})
+			return detection.ExamReport{}
+		},
+		func(int64, string, detection.ExamReport) {},
+	)
+}
+
+// TestStreamDeadline_NodeExamStream 单节点深度体检 SSE 逐帧刷新写 deadline。
+func TestStreamDeadline_NodeExamStream(t *testing.T) {
+	node := examNode()
+	srv, _ := newTestServer(t, []*subscription.Node{node})
+	srv.examJobs = fastExamManager()
+	rec := newDeadlineRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes/exam/stream?node_key="+node.NodeKey(), nil)
+
+	srv.handleNodeExamStream(rec, req)
+
+	if rec.code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.code, rec.body.String())
+	}
+	assertDeadlineNear(t, rec, sseFrameWriteBudget)
+	if got := rec.calls.Load(); got < 2 {
+		t.Errorf("write deadline refreshed %d times, want >= 2 (sample + done frames)", got)
+	}
+	if !strings.Contains(rec.body.String(), `"phase":"done"`) {
+		t.Errorf("SSE body missing done frame: %q", rec.body.String())
+	}
+}
+
+// TestStreamDeadline_NodeStabilityStream 单节点"出网+稳定性"检查 SSE 逐帧刷新写 deadline。
+func TestStreamDeadline_NodeStabilityStream(t *testing.T) {
+	node := examNode()
+	srv, _ := newTestServer(t, []*subscription.Node{node})
+	srv.stabilityExamJobs = fastExamManager()
+	rec := newDeadlineRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes/stability/stream?node_key="+node.NodeKey(), nil)
+
+	srv.handleNodeStabilityStream(rec, req)
+
+	if rec.code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.code, rec.body.String())
+	}
+	assertDeadlineNear(t, rec, sseFrameWriteBudget)
+	if got := rec.calls.Load(); got < 2 {
+		t.Errorf("write deadline refreshed %d times, want >= 2 (sample + done frames)", got)
+	}
+	if !strings.Contains(rec.body.String(), `"phase":"done"`) {
+		t.Errorf("SSE body missing done frame: %q", rec.body.String())
+	}
+}
+
+// TestStreamDeadline_BatchExamStream 批量体检事件流 SSE 逐帧刷新写 deadline。
+func TestStreamDeadline_BatchExamStream(t *testing.T) {
+	node := examNode()
+	srv, _ := newTestServer(t, []*subscription.Node{node})
+	fastRun := func(_ context.Context, _ *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
+		emit(detection.ExamEvent{Phase: "sample", Section: "stability"})
+		return detection.ExamReport{}
+	}
+	srv.batchExamJobs = detection.NewBatchExamJobManager(fastRun, fastRun, func(int64, string, detection.ExamReport) {})
+	if _, err := srv.batchExamJobs.Start([]string{node.NodeKey()}, []*subscription.Node{node}, "selected", ""); err != nil {
+		t.Fatalf("start batch exam: %v", err)
+	}
+	rec := newDeadlineRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes/exam/batch/stream", nil)
+
+	srv.handleBatchExamStream(rec, req)
+
+	if rec.code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.code, rec.body.String())
+	}
+	assertDeadlineNear(t, rec, sseFrameWriteBudget)
+	if rec.body.Len() == 0 {
+		t.Error("SSE body empty, want replayed/live frames")
+	}
+}
+
+// TestStreamDeadline_BatchSpeedtestStream 批量快速测速事件流 SSE 逐帧刷新写 deadline。
+func TestStreamDeadline_BatchSpeedtestStream(t *testing.T) {
+	node := speedtestNode()
+	srv, _ := newTestServer(t, []*subscription.Node{node})
+	srv.speedtestJobs = detection.NewBatchSpeedtestJobManager(
+		func(context.Context, *subscription.Node) detection.TestResult {
+			return detection.TestResult{Available: true, Mode: "bandwidth", DownMbps: 50}
+		},
+		func(int64, *subscription.Node, detection.TestResult) {},
+	)
+	if _, err := srv.speedtestJobs.Start([]string{node.NodeKey()}, []*subscription.Node{node}, "selected"); err != nil {
+		t.Fatalf("start batch speedtest: %v", err)
+	}
+	rec := newDeadlineRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes/speedtest/batch/stream", nil)
+
+	srv.handleBatchSpeedtestStream(rec, req)
+
+	if rec.code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.code, rec.body.String())
+	}
+	assertDeadlineNear(t, rec, sseFrameWriteBudget)
+	if rec.body.Len() == 0 {
+		t.Error("SSE body empty, want replayed/live frames")
+	}
+}
+
+// TestStreamDeadline_BatchStabilityStream 批量"出网+稳定性"事件流 SSE 逐帧刷新写 deadline。
+func TestStreamDeadline_BatchStabilityStream(t *testing.T) {
+	node := examNode()
+	srv, _ := newTestServer(t, []*subscription.Node{node})
+	srv.batchStabilityJobs = detection.NewBatchStabilityJobManager(
+		func(_ context.Context, _ *subscription.Node, emit func(detection.ExamEvent)) detection.ExamReport {
+			emit(detection.ExamEvent{Phase: "sample", Section: "stability"})
+			return detection.ExamReport{}
+		},
+		func(int64, string, detection.ExamReport) {},
+	)
+	if _, err := srv.batchStabilityJobs.Start([]string{node.NodeKey()}, []*subscription.Node{node}, "selected"); err != nil {
+		t.Fatalf("start batch stability: %v", err)
+	}
+	rec := newDeadlineRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes/stability/batch/stream", nil)
+
+	srv.handleBatchStabilityStream(rec, req)
+
+	if rec.code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.code, rec.body.String())
+	}
+	assertDeadlineNear(t, rec, sseFrameWriteBudget)
+	if rec.body.Len() == 0 {
+		t.Error("SSE body empty, want replayed/live frames")
+	}
 }

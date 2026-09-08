@@ -352,14 +352,20 @@ func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeFrame := func(f detection.ExamFrame) {
+	// 全局 WriteTimeout=0(issue #143):每写一帧刷新写 deadline(见 sseFrameWriteBudget),
+	// 写阻塞(慢/死连接)在 deadline 处强制出错即结束本次 SSE;任务在后台不受影响。
+	writeFrame := func(f detection.ExamFrame) bool {
 		b, err := json.Marshal(f)
 		if err != nil {
 			s.logger.Warn("marshal exam frame failed", "error", err)
-			return
+			return true // 序列化失败不是连接故障,继续后续帧
 		}
-		fmt.Fprintf(w, "data: %s\n\n", b)
+		s.setWriteDeadline(w, sseFrameWriteBudget)
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+			return false // 写失败(含 deadline 到点):客户端已走,结束本次 SSE
+		}
 		flusher.Flush()
+		return true
 	}
 
 	// force=1:"重新体检"语义,已收口的旧任务丢弃重开(进行中的任务不受影响,仍附加)。
@@ -374,7 +380,9 @@ func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
 
 	// 先回放缓冲事件(附加语义),再转直播。
 	for _, f := range sub.Replay {
-		writeFrame(f)
+		if !writeFrame(f) {
+			return
+		}
 	}
 
 	for {
@@ -387,7 +395,9 @@ func (s *Server) handleNodeExamStream(w http.ResponseWriter, r *http.Request) {
 				// 任务收口,通道关闭。
 				return
 			}
-			writeFrame(f)
+			if !writeFrame(f) {
+				return
+			}
 		}
 	}
 }
@@ -612,14 +622,22 @@ func (s *Server) handleBatchExamStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeFrame := func(data []byte) {
-		fmt.Fprintf(w, "data: %s\n\n", data)
+	// 全局 WriteTimeout=0(issue #143):每写一帧刷新写 deadline(见 sseFrameWriteBudget),
+	// 写阻塞(慢/死连接)在 deadline 处强制出错即退出;批量任务在后台不受影响。
+	writeFrame := func(data []byte) bool {
+		s.setWriteDeadline(w, sseFrameWriteBudget)
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			return false
+		}
 		flusher.Flush()
+		return true
 	}
 
 	// 回放缓冲事件
 	for _, ev := range sub.Replay {
-		writeFrame(ev.Data)
+		if !writeFrame(ev.Data) {
+			return
+		}
 	}
 
 	// 转直播
@@ -631,7 +649,9 @@ func (s *Server) handleBatchExamStream(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			writeFrame(ev.Data)
+			if !writeFrame(ev.Data) {
+				return
+			}
 		}
 	}
 }
@@ -743,14 +763,22 @@ func (s *Server) handleBatchSpeedtestStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	writeFrame := func(data []byte) {
-		fmt.Fprintf(w, "data: %s\n\n", data)
+	// 全局 WriteTimeout=0(issue #143):每写一帧刷新写 deadline(见 sseFrameWriteBudget),
+	// 写阻塞(慢/死连接)在 deadline 处强制出错即退出;批量任务在后台不受影响。
+	writeFrame := func(data []byte) bool {
+		s.setWriteDeadline(w, sseFrameWriteBudget)
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			return false
+		}
 		flusher.Flush()
+		return true
 	}
 
 	// 回放缓冲事件
 	for _, ev := range sub.Replay {
-		writeFrame(ev.Data)
+		if !writeFrame(ev.Data) {
+			return
+		}
 	}
 
 	// 转直播
@@ -762,7 +790,9 @@ func (s *Server) handleBatchSpeedtestStream(w http.ResponseWriter, r *http.Reque
 			if !ok {
 				return
 			}
-			writeFrame(ev.Data)
+			if !writeFrame(ev.Data) {
+				return
+			}
 		}
 	}
 }

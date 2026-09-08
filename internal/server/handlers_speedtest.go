@@ -24,6 +24,12 @@ const (
 	// streamWriteSlack 流式端点自设写 deadline 时在业务时长外多给的收尾余量
 	// (连接建立、末帧 flush、客户端慢读的最后一块)。
 	streamWriteSlack = 10 * time.Second
+	// sseFrameWriteBudget 任务化 SSE 的逐帧写 deadline 步长(issue #143):
+	// 每写一帧把写 deadline 刷新为 now + 该值。任务墙钟随节点数伸缩、
+	// 且客户端可中途附加,静态总预算无法覆盖全程;逐帧刷新下空闲等待
+	// (无在飞写)不受 deadline 影响,而写阻塞(慢/死连接,内核缓冲已满)
+	// 在 deadline 处强制出错,handler 随即退出回收 goroutine。
+	sseFrameWriteBudget = 30 * time.Second
 )
 
 // setWriteDeadline 为流式/SSE 端点自设连接写 deadline(issue #143):全局
