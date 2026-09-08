@@ -258,6 +258,11 @@ func (s *Server) handleTestNodeStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 全局 WriteTimeout=0(issue #158):SSE 自设写 deadline,与流式测速墙钟预算对齐
+	// (默认 10s 下行 + 10s 上行 + 单方向硬超时与收尾余量,见 BandwidthStreamBudget),
+	// 慢/死连接在 deadline 处被强制回收,handler goroutine 不残留。
+	s.setWriteDeadline(w, s.detectionService.BandwidthStreamBudget())
+
 	// emit SSE 帧(marshal + "data: ...\n\n" + Flush)
 	emit := func(phase string, data any) {
 		b, _ := json.Marshal(data)

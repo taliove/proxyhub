@@ -102,6 +102,32 @@ func (d *Detector) TestBandwidthStream(ctx context.Context, node *subscription.N
 	return d.streamBandwidthTest(ctx, node, downURLs, cfg.UpURL, onSample)
 }
 
+// streamFinishSlack 流式测速墙钟预算的收尾余量(采样收尾 + SSE done 帧)。
+const streamFinishSlack = 15 * time.Second
+
+// streamDirTimeouts 由带宽配置推导固定测速时长与单方向硬超时:
+// 两方向都跑满 testDur(曲线等长);dirTimeout 作硬上限防卡死,至少比 testDur 多 10s。
+// streamBandwidthTest 与 BandwidthStreamBudget 共用同一推导,避免两处漂移。
+func streamDirTimeouts(cfg BandwidthConfig) (testDur, dirTimeout time.Duration) {
+	testDur = time.Duration(cfg.TestDurationSec) * time.Second
+	if testDur <= 0 {
+		testDur = 10 * time.Second
+	}
+	dirTimeout = time.Duration(cfg.DirTimeoutSec) * time.Second
+	if dirTimeout < testDur {
+		dirTimeout = testDur + 10*time.Second
+	}
+	return testDur, dirTimeout
+}
+
+// BandwidthStreamBudget 流式带宽测试(TestBandwidthStream/TestSpeedtestStream)的最长
+// 墙钟预算:两个方向各一次单方向硬超时 + 收尾余量。供 SSE 端点自设写 deadline
+// (全局 WriteTimeout=0,issue #158),保证慢/死连接有界回收。
+func (d *Detector) BandwidthStreamBudget() time.Duration {
+	_, dirTimeout := streamDirTimeouts(d.resolveBandwidthConfig())
+	return 2*dirTimeout + streamFinishSlack
+}
+
 // streamBandwidthTest 流式测速共用实现:端点可参数化(legacy 档传配置 URL 优先,
 // 快速测速档传基准端点),采样/判定/聚合逻辑只有一份。
 func (d *Detector) streamBandwidthTest(ctx context.Context, node *subscription.Node, downURLs []string, upURL string, onSample func(Sample)) TestResult {
@@ -117,14 +143,7 @@ func (d *Detector) streamBandwidthTest(ctx context.Context, node *subscription.N
 	cfg := d.resolveBandwidthConfig()
 
 	// 固定测速时长:两个方向都跑满这个时长 → 曲线等长。DirTimeout 作硬上限防卡死。
-	testDur := time.Duration(cfg.TestDurationSec) * time.Second
-	if testDur <= 0 {
-		testDur = 10 * time.Second
-	}
-	dirTimeout := time.Duration(cfg.DirTimeoutSec) * time.Second
-	if dirTimeout < testDur {
-		dirTimeout = testDur + 10*time.Second // 硬上限至少比测速时长多 10s
-	}
+	testDur, dirTimeout := streamDirTimeouts(cfg)
 
 	start := time.Now()
 	elapsedMs := func() int { return int(time.Since(start).Milliseconds()) }
