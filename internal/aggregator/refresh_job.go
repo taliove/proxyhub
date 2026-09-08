@@ -96,7 +96,9 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 		fmt.Sprintf("单机场刷新「%s」(仅拉取入池,不含健康检查)", airport.Name),
 		map[string]any{"airport": airport.Name, "airport_id": airport.ID})
 
-	sub, diag, err := k.agg.fetcher.FetchWithDiagnostics(airport.Name, airport.URL)
+	// FetchContext 绑定任务 ctx(issue #143):取消单机场刷新时在途拉取立即退出,
+	// 不再等满读超时与重试尾巴。
+	sub, diag, err := k.agg.fetcher.FetchContext(ctx, airport.Name, airport.URL)
 	if err != nil {
 		rl.fetchDiag(airport, diag, fetchErrorText(err))
 		rl.event(levelError, stageFetch, fmt.Sprintf("「%s」拉取失败:%s", airport.Name, fetchErrorText(err)),
