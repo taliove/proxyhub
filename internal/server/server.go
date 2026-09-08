@@ -247,6 +247,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS fs.FS, log
 	healthChecker := NewHealthCheckAdapter(samplingChecker)
 	poolOps := poolops.NewStoreAdapter(st, region.NewFromStore(st, logger))
 	s.testOrchestrator = airporttest.NewOrchestratorWithPoolOps(storeAdapter, healthChecker, nodes, poolOps)
+	s.testOrchestrator.SetFetchTimeouts(cfg.Fetch.ConnectTimeout, cfg.Fetch.ReadTimeout)
 
 	// 机场测试任务运行时(issue 0025:迁入 jobs,ADR 0019 收口):
 	// kind 包装 Orchestrator,不可续跑(重启 interrupted);取消=ctx 中断,
@@ -257,7 +258,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS fs.FS, log
 			logger.Warn("airport test job persistence", "error", err)
 		}),
 	)
-	subFetcher := subscription.NewFetcher(30 * time.Second)
+	subFetcher := subscription.NewFetcher(cfg.Fetch.ConnectTimeout, cfg.Fetch.ReadTimeout)
 	s.airportTestJobs.Register(airporttest.NewJobKind(
 		s.testOrchestrator,
 		storeAdapter,

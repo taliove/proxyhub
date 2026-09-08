@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,27 +21,76 @@ import (
 // 而 Go 默认 UA(Go-http-client)常被机场直接拒绝(401/403)。
 const subscriptionUserAgent = "v2rayN/6.23"
 
+// 拉取超时拆分(issue #156):旧实现用 http.Client.Timeout=30s 一刀切,
+// 该上限覆盖整个响应体读取,数 MB 的大 Clash YAML 在 30s 内读不完即整条
+// 订阅判失败。现在建连/响应头与体读取分离控制。
+const (
+	// DefaultConnectTimeout 建连与响应头等待默认上限。
+	DefaultConnectTimeout = 15 * time.Second
+	// DefaultReadTimeout 单次拉取(含响应体读取)默认总时长上限。
+	DefaultReadTimeout = 120 * time.Second
+	// DefaultMaxBodyBytes 订阅响应体上限。大订阅数 MB,32MiB 留足余量;
+	// 超限返回 ErrSubscriptionTooLarge,与读取超时区分。
+	DefaultMaxBodyBytes = 32 << 20
+
+	// maxFetchAttempts 单次拉取的最大尝试次数:1 次首试 + 2 次重试。
+	maxFetchAttempts = 3
+	// fetchBackoffBase 重试指数退避基数:第 n 次重试前等待 base << (n-1)。
+	fetchBackoffBase = 500 * time.Millisecond
+)
+
+// ErrSubscriptionTooLarge 响应体超过上限的哨兵错误,供 errors.Is 判定;
+// 与读取超时(context deadline)是不同的错误类。
+var ErrSubscriptionTooLarge = errors.New("subscription body too large")
+
 // Fetcher 订阅获取器
 type Fetcher struct {
-	client *http.Client
+	client       *http.Client
+	readTimeout  time.Duration // 单次尝试总预算(建连+响应头+体读取),<=0 取默认
+	maxBodyBytes int64         // 响应体上限,<=0 取默认
+	backoffBase  time.Duration // 重试退避基数,<=0 取默认(测试可缩小)
 }
 
-// NewFetcher 创建订阅获取器
-func NewFetcher(timeout time.Duration) *Fetcher {
+// NewFetcher 创建订阅获取器。connectTimeout 控制建连与响应头等待
+// (DialContext + ResponseHeaderTimeout);readTimeout 控制单次拉取总时长
+// (含响应体读取)。<=0 均取默认值。
+func NewFetcher(connectTimeout, readTimeout time.Duration) *Fetcher {
 	return &Fetcher{
-		client: &http.Client{
-			Timeout: timeout,
-		},
+		client:       NewFetchClient(connectTimeout),
+		readTimeout:  readTimeout,
+		maxBodyBytes: DefaultMaxBodyBytes,
+		backoffBase:  fetchBackoffBase,
 	}
+}
+
+// NewFetchClient 构造订阅拉取用的 http.Client:不设整体 Timeout
+// (体读取时长由调用方 ctx 截止控制),建连与响应头等待由 connectTimeout 控制。
+// 基于 http.DefaultTransport 克隆,保留代理/TLS 等默认行为(ProxyFromEnvironment)。
+func NewFetchClient(connectTimeout time.Duration) *http.Client {
+	if connectTimeout <= 0 {
+		connectTimeout = DefaultConnectTimeout
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   connectTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.ResponseHeaderTimeout = connectTimeout
+	return &http.Client{Transport: transport}
 }
 
 // FetchDiagnostics 单次订阅拉取的结构化诊断(ticket 0018)。
 // 口径与机场测试 RunDiagnostic 对齐:HTTP 状态、拉取耗时、解析成功节点数、解析失败行数。
 type FetchDiagnostics struct {
 	HTTPStatus    int   `json:"http_status"`    // 0 = 请求未发出/网络错误
-	DurationMs    int64 `json:"duration_ms"`    // 请求发出到 body 读完
+	DurationMs    int64 `json:"duration_ms"`    // 请求发出到 body 读完(含重试的总耗时)
 	NodeCount     int   `json:"node_count"`     // 解析成功节点数
 	ParseFailures int   `json:"parse_failures"` // 解析失败行数(非空行中无法解析的)
+	// BodyBytes 响应体实际读取字节数(仅成功读完时记录;issue #156)。
+	BodyBytes int64 `json:"body_bytes"`
+	// TimedOut 本次拉取是否以超时收尾(建连/响应头/体读取任一);
+	// 调用方 ctx 取消不算超时。
+	TimedOut bool `json:"timed_out"`
 	// Usage 机场用量信息(200 响应且带 subscription-userinfo / profile-web-page-url
 	// 头时捕获;无响应头为 nil,调用方据此保留既有落库值)。
 	Usage *UsageInfo `json:"usage,omitempty"`
@@ -117,37 +167,96 @@ func (f *Fetcher) FetchWithDiagnostics(name, subscriptionURL string) (*Subscript
 
 // FetchContext 同 FetchWithDiagnostics,但请求绑定调用方 ctx:
 // ctx 取消即中断拉取(机场测试任务化后取消语义需要,issue 0025)。
+//
+// 重试(issue #156):超时、5xx、429 最多重试 2 次(共 3 次尝试),
+// 指数退避;其他 4xx 与解析失败不重试;ctx 取消立即收口不重试。
+// diag 记录的是最后一次尝试的结果(状态码/超时标记),DurationMs 为全程总耗时。
 func (f *Fetcher) FetchContext(ctx context.Context, name, subscriptionURL string) (*Subscription, *FetchDiagnostics, error) {
 	diag := &FetchDiagnostics{}
 	start := time.Now()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, subscriptionURL, nil)
+	var lastErr error
+	for attempt := 1; attempt <= maxFetchAttempts; attempt++ {
+		if attempt > 1 {
+			backoff := f.backoffBase << (attempt - 2)
+			if backoff <= 0 {
+				backoff = fetchBackoffBase << (attempt - 2)
+			}
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				diag.DurationMs = time.Since(start).Milliseconds()
+				return nil, diag, fmt.Errorf("fetch subscription: %w", ctx.Err())
+			case <-timer.C:
+			}
+		}
+
+		sub, retryable, err := f.fetchOnce(ctx, name, subscriptionURL, diag)
+		diag.DurationMs = time.Since(start).Milliseconds()
+		if err == nil {
+			return sub, diag, nil
+		}
+		lastErr = err
+		if !retryable {
+			break
+		}
+	}
+	return nil, diag, lastErr
+}
+
+// fetchOnce 单次拉取尝试。返回 (订阅, 是否可重试, 错误)。
+func (f *Fetcher) fetchOnce(ctx context.Context, name, subscriptionURL string, diag *FetchDiagnostics) (*Subscription, bool, error) {
+	readTimeout := f.readTimeout
+	if readTimeout <= 0 {
+		readTimeout = DefaultReadTimeout
+	}
+	maxBody := f.maxBodyBytes
+	if maxBody <= 0 {
+		maxBody = DefaultMaxBodyBytes
+	}
+
+	// 体读取总时长由 ctx 截止控制:不再用 http.Client.Timeout 一刀切
+	// (旧 30s 覆盖整个 body 读取,大订阅读不完即整条判失败,issue #156)。
+	fetchCtx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
+	diag.TimedOut = false
+
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, subscriptionURL, nil)
 	if err != nil {
 		// url.Parse 错误会引用原始输入串(含 token),同样剥壳。
-		return nil, diag, fmt.Errorf("build subscription request: %w", StripURLError(err))
+		return nil, false, fmt.Errorf("build subscription request: %w", StripURLError(err))
 	}
 	req.Header.Set("User-Agent", subscriptionUserAgent)
 
 	resp, err := f.client.Do(req)
 	if err != nil {
-		diag.DurationMs = time.Since(start).Milliseconds()
-		return nil, diag, fmt.Errorf("fetch subscription: %w", StripURLError(err))
+		stripped := StripURLError(err)
+		diag.TimedOut = isTimeoutError(stripped)
+		// 调用方取消不是可重试故障。
+		return nil, diag.TimedOut && ctx.Err() == nil, fmt.Errorf("fetch subscription: %w", stripped)
 	}
 	defer resp.Body.Close()
 	diag.HTTPStatus = resp.StatusCode
 
 	if resp.StatusCode != http.StatusOK {
-		diag.DurationMs = time.Since(start).Milliseconds()
-		return nil, diag, fmt.Errorf("fetch subscription: status %d", resp.StatusCode)
+		return nil, isRetryableStatus(resp.StatusCode), fmt.Errorf("fetch subscription: status %d", resp.StatusCode)
 	}
 
 	// 用量信息捕获(spec-manual-airport-import):仅展示用途,解析失败不阻断拉取。
 	diag.Usage = ParseUsageHeaders(resp.Header)
 
-	body, err := io.ReadAll(resp.Body)
-	diag.DurationMs = time.Since(start).Milliseconds()
+	// 体上限:多读 1 字节判定超限,超限错误(ErrSubscriptionTooLarge)
+	// 与读取超时是不同的错误类,诊断据此可区分「订阅过大」与「拉得太慢」。
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
-		return nil, diag, fmt.Errorf("read subscription body: %w", err)
+		diag.TimedOut = isTimeoutError(err)
+		return nil, diag.TimedOut && ctx.Err() == nil, fmt.Errorf("read subscription body: %w", err)
+	}
+	diag.BodyBytes = int64(len(body))
+	if int64(len(body)) > maxBody {
+		return nil, false, fmt.Errorf("read subscription body: %w: %d bytes over %d limit", ErrSubscriptionTooLarge, len(body), maxBody)
 	}
 
 	// 整体 base64 识别与解码收敛到 DecodeSubscription(fetcher/airporttest/手动导入共用)
@@ -158,7 +267,7 @@ func (f *Fetcher) FetchContext(ctx context.Context, name, subscriptionURL string
 	diag.NodeCount = len(parsed.Nodes)
 	diag.ParseFailures = parsed.ParseFailures
 	if len(parsed.Nodes) == 0 {
-		return nil, diag, fmt.Errorf("parse subscription: no valid nodes found")
+		return nil, false, fmt.Errorf("parse subscription: no valid nodes found")
 	}
 
 	return &Subscription{
@@ -166,7 +275,23 @@ func (f *Fetcher) FetchContext(ctx context.Context, name, subscriptionURL string
 		URL:   subscriptionURL,
 		Nodes: parsed.Nodes,
 		Hosts: parsed.Hosts,
-	}, diag, nil
+	}, false, nil
+}
+
+// isTimeoutError 判定错误是否为超时类(ctx 截止或 net.Error.Timeout());
+// 调用方取消(context.Canceled)不算超时。
+func isTimeoutError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var nerr net.Error
+	return errors.As(err, &nerr) && nerr.Timeout()
+}
+
+// isRetryableStatus 仅 429 与 5xx 值得重试;其他 4xx(401/403/404 等)
+// 重试无意义,首试即收口。
+func isRetryableStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status >= 500
 }
 
 // parse 解析订阅内容

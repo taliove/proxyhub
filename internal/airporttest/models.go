@@ -26,11 +26,11 @@ const (
 
 // DiagnosticResult contains the outcome of the diagnostic phase.
 type DiagnosticResult struct {
-	HTTPStatus     int               `json:"http_status"`
-	DurationMs     int64             `json:"duration_ms"`
-	NodeCount      int               `json:"node_count"`
-	ProtocolCounts map[string]int    `json:"protocol_counts"`
-	ParseFailures  int               `json:"parse_failures"`
+	HTTPStatus     int            `json:"http_status"`
+	DurationMs     int64          `json:"duration_ms"`
+	NodeCount      int            `json:"node_count"`
+	ProtocolCounts map[string]int `json:"protocol_counts"`
+	ParseFailures  int            `json:"parse_failures"`
 	// ManualSource 手动机场标记(见 CONTEXT.md「手动机场」):无订阅 URL 可拉,
 	// 诊断段整体为 N/A(显式标记,区别于"拉取失败"的 HTTPStatus=0);
 	// 评分走"URL 不可达且池有节点"权重重归一(现成语义)。
@@ -39,15 +39,15 @@ type DiagnosticResult struct {
 
 // TestRun represents a single test execution for an airport.
 type TestRun struct {
-	ID             int64             `json:"id"`
-	AirportID      int64             `json:"airport_id"`
-	CreatedAt      time.Time         `json:"created_at"`
-	SampleParams   string            `json:"sample_params"`
-	IsFull         bool              `json:"is_full"`
-	Status         RunStatus         `json:"status"`
-	OverallScore   *float64          `json:"overall_score,omitempty"`
-	DimensionsJSON string            `json:"dimensions_json"`
-	ErrorMessage   string            `json:"error_message,omitempty"`
+	ID             int64     `json:"id"`
+	AirportID      int64     `json:"airport_id"`
+	CreatedAt      time.Time `json:"created_at"`
+	SampleParams   string    `json:"sample_params"`
+	IsFull         bool      `json:"is_full"`
+	Status         RunStatus `json:"status"`
+	OverallScore   *float64  `json:"overall_score,omitempty"`
+	DimensionsJSON string    `json:"dimensions_json"`
+	ErrorMessage   string    `json:"error_message,omitempty"`
 	// JobID 关联的 jobs 表任务 id(任务化后由 kind 建行时回填;
 	// 0 = 任务化前旧记录或未关联,对齐 refresh_runs.job_id 口径)。
 	JobID int64 `json:"job_id"`
@@ -59,6 +59,10 @@ type Orchestrator struct {
 	healthChecker HealthChecker
 	poolWriter    PoolWriter
 	poolOps       PoolOperations // for pool-aware logic
+	// fetchConnectTimeout/fetchReadTimeout 遗留同步诊断路径(RunDiagnostic)
+	// 的订阅拉取超时拆分(issue #156);<=0 时取 subscription 包默认值。
+	fetchConnectTimeout time.Duration
+	fetchReadTimeout    time.Duration
 }
 
 // HealthChecker abstracts health check operations (for testing).
@@ -116,4 +120,11 @@ func NewOrchestratorWithPoolOps(store Store, healthChecker HealthChecker, poolWr
 		poolWriter:    poolWriter,
 		poolOps:       poolOps,
 	}
+}
+
+// SetFetchTimeouts 配置 RunDiagnostic 的订阅拉取超时(建连/响应头与体读取
+// 分离,issue #156);<=0 的分量沿用 subscription 包默认(15s/120s)。
+func (o *Orchestrator) SetFetchTimeouts(connectTimeout, readTimeout time.Duration) {
+	o.fetchConnectTimeout = connectTimeout
+	o.fetchReadTimeout = readTimeout
 }

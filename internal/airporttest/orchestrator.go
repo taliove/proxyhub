@@ -26,15 +26,25 @@ func (o *Orchestrator) RunDiagnostic(ctx context.Context, airportID int64, airpo
 
 	start := time.Now()
 
+	// 与刷新拉取同一套超时拆分(issue #156):建连/响应头由 transport 控制,
+	// 体读取总时长由 ctx 截止控制,不再用 http.Client.Timeout 一刀切。
+	// 顺带绑定调用方 ctx:任务取消即中断拉取。
+	readTimeout := o.fetchReadTimeout
+	if readTimeout <= 0 {
+		readTimeout = subscription.DefaultReadTimeout
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
 	// Fetch raw subscription
-	req, err := http.NewRequest(http.MethodGet, airportURL, nil)
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, airportURL, nil)
 	if err != nil {
 		// 订阅 URL 含 token,parse 错误会引用原始输入串,落库前剥壳(见 subscription.StripURLError)。
 		return o.persistFailedRun(ctx, run, start, fmt.Errorf("build request: %w", subscription.StripURLError(err)))
 	}
 	req.Header.Set("User-Agent", subscriptionUserAgent)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := subscription.NewFetchClient(o.fetchConnectTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return o.persistFailedRun(ctx, run, start, fmt.Errorf("fetch failed: %w", subscription.StripURLError(err)))

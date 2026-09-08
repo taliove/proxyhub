@@ -18,7 +18,7 @@ func TestFetch_CapturesUsageHeaders(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	f := NewFetcher(0)
+	f := NewFetcher(0, 0)
 	_, diag, err := f.FetchWithDiagnostics("测试机场", srv.URL)
 	if err != nil {
 		t.Fatalf("FetchWithDiagnostics() error = %v", err)
@@ -43,7 +43,7 @@ func TestFetch_NoUsageHeaders(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	f := NewFetcher(0)
+	f := NewFetcher(0, 0)
 	_, diag, err := f.FetchWithDiagnostics("测试机场", srv.URL)
 	if err != nil {
 		t.Fatalf("FetchWithDiagnostics() error = %v", err)

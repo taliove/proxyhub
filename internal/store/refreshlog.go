@@ -28,8 +28,8 @@ const MaxRefreshRuns = 50
 
 // RefreshRun 一次聚合刷新的记录
 type RefreshRun struct {
-	ID             int64      `json:"id"`
-	Trigger        string     `json:"trigger"`
+	ID      int64  `json:"id"`
+	Trigger string `json:"trigger"`
 	// JobID 关联的 jobs 表任务 id(刷新任务化后回填;0 = 任务化前的旧记录或未关联)
 	JobID          int64      `json:"job_id"`
 	Status         string     `json:"status"`
@@ -220,25 +220,29 @@ func (s *Store) ListRefreshEvents(runID int64) ([]*RefreshEvent, error) {
 // RefreshFetchDiag 一次刷新中单个机场的结构化拉取诊断(ticket 0018)。
 // 口径与机场测试 RunDiagnostic 对齐;拉取失败时 Error 非空、HTTPStatus 可能为 0(网络错误)。
 type RefreshFetchDiag struct {
-	ID            int64     `json:"id"`
-	RunID         int64     `json:"run_id"`
-	Airport       string    `json:"airport"`
-	AirportID     int64     `json:"airport_id"`
-	HTTPStatus    int       `json:"http_status"`
-	DurationMs    int64     `json:"duration_ms"`
-	NodeCount     int       `json:"node_count"`
-	ParseFailures int       `json:"parse_failures"`
-	Error         string    `json:"error"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            int64  `json:"id"`
+	RunID         int64  `json:"run_id"`
+	Airport       string `json:"airport"`
+	AirportID     int64  `json:"airport_id"`
+	HTTPStatus    int    `json:"http_status"`
+	DurationMs    int64  `json:"duration_ms"`
+	NodeCount     int    `json:"node_count"`
+	ParseFailures int    `json:"parse_failures"`
+	// BodyBytes 响应体实际读取字节数;TimedOut 是否以超时收尾
+	// (issue #156 扩容,与「订阅过大」等错误类区分;旧行默认 0/false)。
+	BodyBytes int64     `json:"body_bytes"`
+	TimedOut  bool      `json:"timed_out"`
+	Error     string    `json:"error"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // InsertRefreshFetchDiag 写入一条机场拉取诊断
 func (s *Store) InsertRefreshFetchDiag(d *RefreshFetchDiag) error {
 	res, err := s.db.Exec(
 		`INSERT INTO refresh_fetch_diags
-		 (run_id, airport, airport_id, http_status, duration_ms, node_count, parse_failures, error, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.RunID, d.Airport, d.AirportID, d.HTTPStatus, d.DurationMs, d.NodeCount, d.ParseFailures, d.Error, time.Now())
+		 (run_id, airport, airport_id, http_status, duration_ms, node_count, parse_failures, body_bytes, timed_out, error, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.RunID, d.Airport, d.AirportID, d.HTTPStatus, d.DurationMs, d.NodeCount, d.ParseFailures, d.BodyBytes, d.TimedOut, d.Error, time.Now())
 	if err != nil {
 		return fmt.Errorf("insert refresh fetch diag: %w", err)
 	}
@@ -249,7 +253,7 @@ func (s *Store) InsertRefreshFetchDiag(d *RefreshFetchDiag) error {
 // ListRefreshFetchDiags 按机场列表顺序(写入序)列出某次刷新的全部拉取诊断
 func (s *Store) ListRefreshFetchDiags(runID int64) ([]*RefreshFetchDiag, error) {
 	rows, err := s.db.Query(
-		`SELECT id, run_id, airport, airport_id, http_status, duration_ms, node_count, parse_failures, error, created_at
+		`SELECT id, run_id, airport, airport_id, http_status, duration_ms, node_count, parse_failures, body_bytes, timed_out, error, created_at
 		 FROM refresh_fetch_diags WHERE run_id = ? ORDER BY id ASC`, runID)
 	if err != nil {
 		return nil, fmt.Errorf("query refresh fetch diags: %w", err)
@@ -260,7 +264,7 @@ func (s *Store) ListRefreshFetchDiags(runID int64) ([]*RefreshFetchDiag, error) 
 	for rows.Next() {
 		var d RefreshFetchDiag
 		if err := rows.Scan(&d.ID, &d.RunID, &d.Airport, &d.AirportID,
-			&d.HTTPStatus, &d.DurationMs, &d.NodeCount, &d.ParseFailures, &d.Error, &d.CreatedAt); err != nil {
+			&d.HTTPStatus, &d.DurationMs, &d.NodeCount, &d.ParseFailures, &d.BodyBytes, &d.TimedOut, &d.Error, &d.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan refresh fetch diag: %w", err)
 		}
 		diags = append(diags, &d)
