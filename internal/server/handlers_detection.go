@@ -169,7 +169,7 @@ func (s *Server) handleTestNode(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	// bandwidth 档走流式实现(固定时长采样,issue #159):legacy 的 io.Copy 全量下载
+	// bandwidth 档走流式实现(固定时长采样,issue #143):legacy 的 io.Copy 全量下载
 	// 路径已删除。不传采样回调,聚合结果口径与 SSE 流式端点一致。
 	var result detection.TestResult
 	if req.Mode == "bandwidth" {
@@ -265,7 +265,7 @@ func (s *Server) handleTestNodeStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 全局 WriteTimeout=0(issue #158):SSE 自设写 deadline,与流式测速墙钟预算对齐
+	// 全局 WriteTimeout=0(issue #143):SSE 自设写 deadline,与流式测速墙钟预算对齐
 	// (默认 10s 下行 + 10s 上行 + 单方向硬超时与收尾余量,见 BandwidthStreamBudget),
 	// 慢/死连接在 deadline 处被强制回收,handler goroutine 不残留。
 	s.setWriteDeadline(w, s.detectionService.BandwidthStreamBudget())

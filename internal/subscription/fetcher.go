@@ -21,7 +21,7 @@ import (
 // 而 Go 默认 UA(Go-http-client)常被机场直接拒绝(401/403)。
 const subscriptionUserAgent = "v2rayN/6.23"
 
-// 拉取超时拆分(issue #156):旧实现用 http.Client.Timeout=30s 一刀切,
+// 拉取超时拆分(issue #143):旧实现用 http.Client.Timeout=30s 一刀切,
 // 该上限覆盖整个响应体读取,数 MB 的大 Clash YAML 在 30s 内读不完即整条
 // 订阅判失败。现在建连/响应头与体读取分离控制。
 const (
@@ -86,7 +86,7 @@ type FetchDiagnostics struct {
 	DurationMs    int64 `json:"duration_ms"`    // 请求发出到 body 读完(含重试的总耗时)
 	NodeCount     int   `json:"node_count"`     // 解析成功节点数
 	ParseFailures int   `json:"parse_failures"` // 解析失败行数(非空行中无法解析的)
-	// BodyBytes 响应体实际读取字节数(仅成功读完时记录;issue #156)。
+	// BodyBytes 响应体实际读取字节数(仅成功读完时记录;issue #143)。
 	BodyBytes int64 `json:"body_bytes"`
 	// TimedOut 本次拉取是否以超时收尾(建连/响应头/体读取任一);
 	// 调用方 ctx 取消不算超时。
@@ -168,7 +168,7 @@ func (f *Fetcher) FetchWithDiagnostics(name, subscriptionURL string) (*Subscript
 // FetchContext 同 FetchWithDiagnostics,但请求绑定调用方 ctx:
 // ctx 取消即中断拉取(机场测试任务化后取消语义需要,issue 0025)。
 //
-// 重试(issue #156):超时、5xx、429 最多重试 2 次(共 3 次尝试),
+// 重试(issue #143):超时、5xx、429 最多重试 2 次(共 3 次尝试),
 // 指数退避;其他 4xx 与解析失败不重试;ctx 取消立即收口不重试。
 // diag 记录的是最后一次尝试的结果(状态码/超时标记),DurationMs 为全程总耗时。
 func (f *Fetcher) FetchContext(ctx context.Context, name, subscriptionURL string) (*Subscription, *FetchDiagnostics, error) {
@@ -217,7 +217,7 @@ func (f *Fetcher) fetchOnce(ctx context.Context, name, subscriptionURL string, d
 	}
 
 	// 体读取总时长由 ctx 截止控制:不再用 http.Client.Timeout 一刀切
-	// (旧 30s 覆盖整个 body 读取,大订阅读不完即整条判失败,issue #156)。
+	// (旧 30s 覆盖整个 body 读取,大订阅读不完即整条判失败,issue #143)。
 	fetchCtx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 

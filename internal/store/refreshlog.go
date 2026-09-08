@@ -229,7 +229,7 @@ type RefreshFetchDiag struct {
 	NodeCount     int    `json:"node_count"`
 	ParseFailures int    `json:"parse_failures"`
 	// BodyBytes 响应体实际读取字节数;TimedOut 是否以超时收尾
-	// (issue #156 扩容,与「订阅过大」等错误类区分;旧行默认 0/false)。
+	// (issue #143 扩容,与「订阅过大」等错误类区分;旧行默认 0/false)。
 	BodyBytes int64     `json:"body_bytes"`
 	TimedOut  bool      `json:"timed_out"`
 	Error     string    `json:"error"`

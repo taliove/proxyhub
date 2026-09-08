@@ -122,7 +122,7 @@ func streamDirTimeouts(cfg BandwidthConfig) (testDur, dirTimeout time.Duration) 
 
 // BandwidthStreamBudget 流式带宽测试(TestBandwidthStream/TestSpeedtestStream)的最长
 // 墙钟预算:两个方向各一次单方向硬超时 + 收尾余量。供 SSE 端点自设写 deadline
-// (全局 WriteTimeout=0,issue #158),保证慢/死连接有界回收。
+// (全局 WriteTimeout=0,issue #143),保证慢/死连接有界回收。
 func (d *Detector) BandwidthStreamBudget() time.Duration {
 	_, dirTimeout := streamDirTimeouts(d.resolveBandwidthConfig())
 	return 2*dirTimeout + streamFinishSlack

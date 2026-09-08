@@ -26,7 +26,7 @@ func (o *Orchestrator) RunDiagnostic(ctx context.Context, airportID int64, airpo
 
 	start := time.Now()
 
-	// 与刷新拉取同一套超时拆分(issue #156):建连/响应头由 transport 控制,
+	// 与刷新拉取同一套超时拆分(issue #143):建连/响应头由 transport 控制,
 	// 体读取总时长由 ctx 截止控制,不再用 http.Client.Timeout 一刀切。
 	// 顺带绑定调用方 ctx:任务取消即中断拉取。
 	readTimeout := o.fetchReadTimeout

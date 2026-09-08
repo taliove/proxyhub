@@ -60,7 +60,7 @@ type Orchestrator struct {
 	poolWriter    PoolWriter
 	poolOps       PoolOperations // for pool-aware logic
 	// fetchConnectTimeout/fetchReadTimeout 遗留同步诊断路径(RunDiagnostic)
-	// 的订阅拉取超时拆分(issue #156);<=0 时取 subscription 包默认值。
+	// 的订阅拉取超时拆分(issue #143);<=0 时取 subscription 包默认值。
 	fetchConnectTimeout time.Duration
 	fetchReadTimeout    time.Duration
 }
@@ -123,7 +123,7 @@ func NewOrchestratorWithPoolOps(store Store, healthChecker HealthChecker, poolWr
 }
 
 // SetFetchTimeouts 配置 RunDiagnostic 的订阅拉取超时(建连/响应头与体读取
-// 分离,issue #156);<=0 的分量沿用 subscription 包默认(15s/120s)。
+// 分离,issue #143);<=0 的分量沿用 subscription 包默认(15s/120s)。
 func (o *Orchestrator) SetFetchTimeouts(connectTimeout, readTimeout time.Duration) {
 	o.fetchConnectTimeout = connectTimeout
 	o.fetchReadTimeout = readTimeout

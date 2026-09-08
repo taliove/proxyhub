@@ -81,7 +81,7 @@ func (s *Server) handleSpeedtestProxyDownload(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		return // resolveAndValidateNode 已写错误响应
 	}
-	// 全局 WriteTimeout=0(issue #158):流式转发自设写 deadline = 透传时长上限 + 收尾余量,
+	// 全局 WriteTimeout=0(issue #143):流式转发自设写 deadline = 透传时长上限 + 收尾余量,
 	// 慢/死连接在 deadline 处被强制回收,handler goroutine 不残留。
 	s.setWriteDeadline(w, proxySpeedtestMaxDuration+streamWriteSlack)
 
@@ -220,7 +220,7 @@ func (s *Server) handleSpeedtestProxyUpload(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		return
 	}
-	// 全局 WriteTimeout=0(issue #158):上行转发自设写 deadline = 透传时长上限 + 收尾余量。
+	// 全局 WriteTimeout=0(issue #143):上行转发自设写 deadline = 透传时长上限 + 收尾余量。
 	s.setWriteDeadline(w, proxySpeedtestMaxDuration+streamWriteSlack)
 
 	// buffer 浏览器 body 后带显式 Content-Length 转发:Cloudflare __up 需已知长度,

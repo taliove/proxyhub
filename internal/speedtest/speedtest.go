@@ -17,7 +17,7 @@ const (
 	// MinDownloadDuration 下行发流最短时长,更短测不出稳定速率。
 	MinDownloadDuration = time.Second
 	// MaxDownloadDuration 下行发流最长时长:单次请求必须有界;全局 WriteTimeout
-	// 已取消(issue #158),由 handler 按"时长 + 余量"自设写 deadline。
+	// 已取消(issue #143),由 handler 按"时长 + 余量"自设写 deadline。
 	MaxDownloadDuration = 25 * time.Second
 	// DownloadBlockSize 单次写入的随机块大小:远大于 DEFLATE 32KB 滑窗,
 	// 循环写这一块也不会产生可压缩的重复匹配。

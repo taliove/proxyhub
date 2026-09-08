@@ -51,7 +51,7 @@ type FilterConfig struct {
 	Deduplicate    bool `yaml:"deduplicate"`
 }
 
-// FetchConfig 机场订阅拉取(入站)的传输配置(issue #156)。
+// FetchConfig 机场订阅拉取(入站)的传输配置(issue #143)。
 // 超时拆分:建连/响应头与响应体读取分别控制——旧实现用 http.Client.Timeout
 // 一刀切,数 MB 的大 Clash YAML 在整体超时内读不完即整条订阅判失败。
 type FetchConfig struct {

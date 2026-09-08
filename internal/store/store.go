@@ -21,7 +21,7 @@ type Store struct {
 
 // Open 打开（或创建）数据库文件并执行迁移。
 // 生产 DSN 带 _pragma=busy_timeout(5000) 与 _pragma=journal_mode(WAL)
-// (issue #153 / ADR 0051):busy_timeout 让锁冲突等待重试而非立即
+// (issue #143 / ADR 0051):busy_timeout 让锁冲突等待重试而非立即
 // SQLITE_BUSY;WAL 允许读写并发,消除读阻塞写。synchronous 保持默认 FULL
 // 不动(耐久语义不变,与 OpenForTesting 的 OFF 是两个世界)。
 func Open(path string) (*Store, error) {
@@ -475,7 +475,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
-	// 拉取诊断扩容(issue #156):body 字节数与超时标记。
+	// 拉取诊断扩容(issue #143):body 字节数与超时标记。
 	// 用 addColumnIfMissing(按列存在性幂等);schema 参考
 	// migrations/033_refresh_fetch_diags_body.sql。旧行默认 0/false。
 	if err := s.addColumnIfMissing("refresh_fetch_diags", "body_bytes", "INTEGER NOT NULL DEFAULT 0"); err != nil {

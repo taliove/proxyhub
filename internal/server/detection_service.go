@@ -171,7 +171,7 @@ func (ds *DetectionService) TestBandwidthStream(ctx context.Context, node *subsc
 }
 
 // BandwidthStreamBudget 流式带宽测试墙钟预算透传
-// (SSE 端点自设写 deadline 用,全局 WriteTimeout=0,issue #158)。
+// (SSE 端点自设写 deadline 用,全局 WriteTimeout=0,issue #143)。
 func (ds *DetectionService) BandwidthStreamBudget() time.Duration {
 	return ds.detector.BandwidthStreamBudget()
 }
