@@ -98,10 +98,10 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 
 	sub, diag, err := k.agg.fetcher.FetchWithDiagnostics(airport.Name, airport.URL)
 	if err != nil {
-		rl.fetchDiag(airport, diag, err.Error())
-		rl.event(levelError, stageFetch, fmt.Sprintf("「%s」拉取失败:%s", airport.Name, err.Error()),
+		rl.fetchDiag(airport, diag, fetchErrorText(err))
+		rl.event(levelError, stageFetch, fmt.Sprintf("「%s」拉取失败:%s", airport.Name, fetchErrorText(err)),
 			map[string]any{"airport": airport.Name, "http_status": diag.HTTPStatus, "duration_ms": diag.DurationMs})
-		rl.finish(store.RefreshStatusFailed, 0, 0, 0, err.Error())
+		rl.finish(store.RefreshStatusFailed, 0, 0, 0, fetchErrorText(err))
 		return fmt.Errorf("fetch airport %s: %w", airport.Name, err)
 	}
 	rl.fetchDiag(airport, diag, "")

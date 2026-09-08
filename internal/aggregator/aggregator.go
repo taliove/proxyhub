@@ -485,6 +485,15 @@ func (r *runLog) finish(status string, total, available, final int, errMsg strin
 	}
 }
 
+// fetchErrorText 拉取错误的用户向文案(issue #143):订阅过大给出明确中文提示,
+// 与读取超时区分;其余保留原始错误串。
+func fetchErrorText(err error) string {
+	if errors.Is(err, subscription.ErrSubscriptionTooLarge) {
+		return fmt.Sprintf("订阅过大(响应体超过 %d MiB 上限)", subscription.DefaultMaxBodyBytes>>20)
+	}
+	return err.Error()
+}
+
 // fetchDiag 落一条机场拉取诊断(ticket 0018);失败不阻断,仅丢本条诊断。
 // errMsg 为空表示拉取成功。
 func (r *runLog) fetchDiag(airport *store.Airport, diag *subscription.FetchDiagnostics, errMsg string) {
@@ -769,8 +778,8 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 			sub, diag, err := a.fetcher.FetchWithDiagnostics(airport.Name, airport.URL)
 			if err != nil {
 				a.logger.Warn("fetch airport failed", "airport", airport.Name, "error", err)
-				rl.fetchDiag(airport, diag, err.Error())
-				rl.event(levelWarn, stageFetch, fmt.Sprintf("「%s」拉取失败：%s", airport.Name, err.Error()),
+				rl.fetchDiag(airport, diag, fetchErrorText(err))
+				rl.event(levelWarn, stageFetch, fmt.Sprintf("「%s」拉取失败：%s", airport.Name, fetchErrorText(err)),
 					map[string]any{"airport": airport.Name, "http_status": diag.HTTPStatus, "duration_ms": diag.DurationMs})
 				outcomes[i] = outcome{err: err}
 				return
