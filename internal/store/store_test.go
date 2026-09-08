@@ -18,6 +18,64 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
+// TestOpenProductionPragmas 生产 Open 路径的 DSN pragma(issue #153 / ADR 0051):
+// busy_timeout=5000、journal_mode=wal,且 synchronous 保持 FULL(=1)不动。
+// 只断言外部可观察行为(连接上实际生效的 PRAGMA 值)。
+func TestOpenProductionPragmas(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "prod.db")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	var busyTimeout int
+	if err := s.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatalf("PRAGMA busy_timeout error = %v", err)
+	}
+	if busyTimeout != 5000 {
+		t.Errorf("busy_timeout = %d, want 5000", busyTimeout)
+	}
+
+	var journalMode string
+	if err := s.db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		t.Fatalf("PRAGMA journal_mode error = %v", err)
+	}
+	if journalMode != "wal" {
+		t.Errorf("journal_mode = %s, want wal", journalMode)
+	}
+
+	var synchronous int
+	if err := s.db.QueryRow("PRAGMA synchronous").Scan(&synchronous); err != nil {
+		t.Fatalf("PRAGMA synchronous error = %v", err)
+	}
+	if synchronous != 2 { // 2 = FULL(0=OFF, 1=NORMAL)
+		t.Errorf("synchronous = %d, want 2 (FULL)", synchronous)
+	}
+}
+
+// TestOpenForTestingPragmas 测试路径不受生产 pragma 影响:synchronous=OFF(=0,
+// issue #40 的 CI 超时修复),journal_mode 保持默认 delete(非 WAL)。
+func TestOpenForTestingPragmas(t *testing.T) {
+	s := newTestStore(t)
+
+	var synchronous int
+	if err := s.db.QueryRow("PRAGMA synchronous").Scan(&synchronous); err != nil {
+		t.Fatalf("PRAGMA synchronous error = %v", err)
+	}
+	if synchronous != 0 { // 0 = OFF
+		t.Errorf("synchronous = %d, want 0 (OFF)", synchronous)
+	}
+
+	var journalMode string
+	if err := s.db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		t.Fatalf("PRAGMA journal_mode error = %v", err)
+	}
+	if journalMode == "wal" {
+		t.Errorf("journal_mode = wal, want non-WAL for testing path")
+	}
+}
+
 func TestCreateEndpoint(t *testing.T) {
 	s := newTestStore(t)
 
