@@ -1,10 +1,8 @@
 package detection
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -386,11 +384,12 @@ var connectivityTarget = Target{
 
 // TestNode 对单个节点做即时测试,供聚合检查/手动测试共用。
 // mode="quick":仅 TCP 快筛 + 测延迟;mode="real":构 mihomo adapter 经代理请求 connectivity 目标;
-// mode="bandwidth":测下行+上行带宽;mode="speedtest":快速测速(基准下行 + 保留上行,见 speedtest.go)。
+// mode="bandwidth":流式带宽测试(固定时长采样,见 bandwidth_stream.go,无采样回调);
+// mode="speedtest":快速测速(基准下行 + 保留上行,见 speedtest.go)。
 func (d *Detector) TestNode(ctx context.Context, node *subscription.Node, mode string) TestResult {
 	switch mode {
 	case "bandwidth":
-		return d.testBandwidth(ctx, node)
+		return d.TestBandwidthStream(ctx, node, nil)
 	case "speedtest":
 		return d.TestSpeedtest(ctx, node)
 	case "real":
@@ -442,150 +441,4 @@ func (d *Detector) testReal(ctx context.Context, node *subscription.Node) TestRe
 		}
 	}
 	return tr
-}
-
-// testBandwidth 带宽测试：下行+上行，任一方向失败或低于阈值则不可用。
-// 配置来自 settings（缺省用 DefaultBandwidthConfig）。
-func (d *Detector) testBandwidth(ctx context.Context, node *subscription.Node) TestResult {
-	if err := d.tcpQuickCheckErr(ctx, node); err != nil {
-		return TestResult{
-			Available: false, Mode: "bandwidth",
-			Error:      fmt.Sprintf("TCP connection failed: %v", err),
-			FailReason: ClassifyFailure(err),
-		}
-	}
-
-	adapter, err := d.newProxyAdapter(node)
-	if err != nil {
-		return TestResult{
-			Available: false, Mode: "bandwidth",
-			Error:      fmt.Sprintf("create proxy adapter: %v", err),
-			FailReason: FailReasonProtocol,
-		}
-	}
-
-	cfg := d.resolveBandwidthConfig()
-
-	// 带宽测试超时放宽（下行+上行需更长）
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSec)*time.Second)
-	defer cancel()
-
-	start := time.Now()
-	elapsedMs := func() int { return int(time.Since(start).Milliseconds()) }
-
-	// 下行测试
-	downMbps, err := d.testDownload(ctx, adapter, cfg.DownURL)
-	if err != nil {
-		return TestResult{
-			Available: false, Mode: "bandwidth", Error: fmt.Sprintf("下行测试失败: %v", err),
-			ElapsedMs: elapsedMs(), MinDownMbps: cfg.MinDownMbps, MinUpMbps: cfg.MinUpMbps,
-		}
-	}
-
-	// 上行测试
-	upMbps, err := d.testUpload(ctx, adapter, cfg.UpURL, cfg.UpBytes)
-	if err != nil {
-		return TestResult{
-			Available: false, Mode: "bandwidth", Error: fmt.Sprintf("上行测试失败: %v", err),
-			DownMbps: downMbps, ElapsedMs: elapsedMs(), MinDownMbps: cfg.MinDownMbps, MinUpMbps: cfg.MinUpMbps,
-		}
-	}
-
-	// 判定：两方向都 >= 阈值才可用
-	available := downMbps >= cfg.MinDownMbps && upMbps >= cfg.MinUpMbps
-	var errMsg string
-	if !available {
-		errMsg = fmt.Sprintf("带宽低于阈值: down=%.2f (>= %.2f) up=%.2f (>= %.2f)",
-			downMbps, cfg.MinDownMbps, upMbps, cfg.MinUpMbps)
-	}
-
-	return TestResult{
-		Available:   available,
-		Latency:     0, // 带宽测试不测延迟
-		Mode:        "bandwidth",
-		DownMbps:    downMbps,
-		UpMbps:      upMbps,
-		ElapsedMs:   elapsedMs(),
-		MinDownMbps: cfg.MinDownMbps,
-		MinUpMbps:   cfg.MinUpMbps,
-		Error:       errMsg,
-	}
-}
-
-// testDownload 下行测试：经代理下载固定大小文件，计算 Mbps
-func (d *Detector) testDownload(ctx context.Context, adapter *ProxyAdapter, url string) (float64, error) {
-	start := time.Now()
-
-	client := d.newProxyClient(adapter)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return 0, err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return 0, fmt.Errorf("status %d", resp.StatusCode)
-	}
-
-	// 读取全部内容并计时
-	written, err := io.Copy(io.Discard, resp.Body)
-	if err != nil {
-		return 0, err
-	}
-
-	elapsed := time.Since(start).Seconds()
-	if elapsed == 0 {
-		elapsed = 0.001 // 避免除零
-	}
-
-	mbps := float64(written*8) / elapsed / 1e6
-	return mbps, nil
-}
-
-// testUpload 上行测试：经代理 POST 固定大小数据，计算 Mbps
-func (d *Detector) testUpload(ctx context.Context, adapter *ProxyAdapter, url string, size int) (float64, error) {
-	start := time.Now()
-
-	// 生成随机数据（避免压缩干扰）
-	data := make([]byte, size)
-	for i := range data {
-		data[i] = byte(i % 256)
-	}
-
-	client := d.newProxyClient(adapter)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(data))
-	if err != nil {
-		return 0, err
-	}
-	req.ContentLength = int64(size)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	elapsed := time.Since(start).Seconds()
-	if elapsed == 0 {
-		elapsed = 0.001
-	}
-
-	mbps := float64(size*8) / elapsed / 1e6
-	return mbps, nil
-}
-
-// newProxyClient 构造经代理的 HTTP 客户端（带宽测试专用，超时较长）
-func (d *Detector) newProxyClient(adapter *ProxyAdapter) *http.Client {
-	transport := &http.Transport{
-		DialContext: adapter.DialContext,
-	}
-	return &http.Client{
-		Transport: transport,
-		Timeout:   60 * time.Second,
-	}
 }

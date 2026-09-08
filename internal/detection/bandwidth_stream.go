@@ -93,13 +93,39 @@ func (s *sampleReader) Read(p []byte) (int, error) {
 func (s *sampleReader) TotalBytes() int64 { return s.totalBytes }
 
 // TestBandwidthStream 流式带宽测试:下行+上行各自采样,通过 onSample 实时回调瞬时速率。
-// 返回最终聚合 TestResult(与 testBandwidth 判定逻辑一致)。
+// 返回最终聚合 TestResult(双阈值判定,与 SSE 端点/即时测试共用同一实现)。
 // 各方向独立 DirTimeoutSec 超时;方向超时但已下够数据时用已采样字节算平均速率视为完成。
 func (d *Detector) TestBandwidthStream(ctx context.Context, node *subscription.Node, onSample func(Sample)) TestResult {
 	cfg := d.resolveBandwidthConfig()
 	// 下行:配置的 URL 优先,后接内置回退点(节点出口被 Cloudflare 风控时自动换点)
 	downURLs := append([]string{cfg.DownURL}, downloadFallbackURLs...)
 	return d.streamBandwidthTest(ctx, node, downURLs, cfg.UpURL, onSample)
+}
+
+// streamFinishSlack 流式测速墙钟预算的收尾余量(采样收尾 + SSE done 帧)。
+const streamFinishSlack = 15 * time.Second
+
+// streamDirTimeouts 由带宽配置推导固定测速时长与单方向硬超时:
+// 两方向都跑满 testDur(曲线等长);dirTimeout 作硬上限防卡死,至少比 testDur 多 10s。
+// streamBandwidthTest 与 BandwidthStreamBudget 共用同一推导,避免两处漂移。
+func streamDirTimeouts(cfg BandwidthConfig) (testDur, dirTimeout time.Duration) {
+	testDur = time.Duration(cfg.TestDurationSec) * time.Second
+	if testDur <= 0 {
+		testDur = 10 * time.Second
+	}
+	dirTimeout = time.Duration(cfg.DirTimeoutSec) * time.Second
+	if dirTimeout < testDur {
+		dirTimeout = testDur + 10*time.Second
+	}
+	return testDur, dirTimeout
+}
+
+// BandwidthStreamBudget 流式带宽测试(TestBandwidthStream/TestSpeedtestStream)的最长
+// 墙钟预算:两个方向各一次单方向硬超时 + 收尾余量。供 SSE 端点自设写 deadline
+// (全局 WriteTimeout=0,issue #158),保证慢/死连接有界回收。
+func (d *Detector) BandwidthStreamBudget() time.Duration {
+	_, dirTimeout := streamDirTimeouts(d.resolveBandwidthConfig())
+	return 2*dirTimeout + streamFinishSlack
 }
 
 // streamBandwidthTest 流式测速共用实现:端点可参数化(legacy 档传配置 URL 优先,
@@ -117,14 +143,7 @@ func (d *Detector) streamBandwidthTest(ctx context.Context, node *subscription.N
 	cfg := d.resolveBandwidthConfig()
 
 	// 固定测速时长:两个方向都跑满这个时长 → 曲线等长。DirTimeout 作硬上限防卡死。
-	testDur := time.Duration(cfg.TestDurationSec) * time.Second
-	if testDur <= 0 {
-		testDur = 10 * time.Second
-	}
-	dirTimeout := time.Duration(cfg.DirTimeoutSec) * time.Second
-	if dirTimeout < testDur {
-		dirTimeout = testDur + 10*time.Second // 硬上限至少比测速时长多 10s
-	}
+	testDur, dirTimeout := streamDirTimeouts(cfg)
 
 	start := time.Now()
 	elapsedMs := func() int { return int(time.Since(start).Milliseconds()) }

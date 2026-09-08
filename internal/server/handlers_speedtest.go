@@ -21,7 +21,21 @@ const (
 	maxSpeedtestNodeKeyLen = 256
 	// maxSpeedtestClientInfoLen 客户端自报信息长度上限。
 	maxSpeedtestClientInfoLen = 512
+	// streamWriteSlack 流式端点自设写 deadline 时在业务时长外多给的收尾余量
+	// (连接建立、末帧 flush、客户端慢读的最后一块)。
+	streamWriteSlack = 10 * time.Second
 )
+
+// setWriteDeadline 为流式/SSE 端点自设连接写 deadline(issue #158):全局
+// WriteTimeout=0,长连接必须自带边界——写超时强制回收慢/死连接,
+// 防 handler goroutine 残留。底层 writer 不支持 deadline
+// (如测试里的 httptest.ResponseRecorder)时跳过;其余错误只记日志,不阻断响应。
+func (s *Server) setWriteDeadline(w http.ResponseWriter, budget time.Duration) {
+	err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(budget))
+	if err != nil && !errors.Is(err, http.ErrNotSupported) {
+		s.logger.Warn("set write deadline failed", "error", err)
+	}
+}
 
 // handleSpeedtestPing 延迟探测:极小响应体,浏览器多次小请求算 RTT/抖动。
 func (s *Server) handleSpeedtestPing(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +45,8 @@ func (s *Server) handleSpeedtestPing(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseDownloadDuration 解析下行时长参数(duration_ms),钳制到 [Min, Max]。
-// 上限 MaxDownloadDuration 保证单次请求在全局 30s WriteTimeout 内结束。
+// 上限 MaxDownloadDuration 与 handler 自设的写 deadline(时长 + streamWriteSlack)
+// 配套,保证单次请求有界(全局 WriteTimeout=0,见 issue #158)。
 func parseDownloadDuration(r *http.Request) time.Duration {
 	ms, err := strconv.Atoi(r.URL.Query().Get("duration_ms"))
 	if err != nil {
@@ -47,8 +62,9 @@ func parseDownloadDuration(r *http.Request) time.Duration {
 	return d
 }
 
-// handleSpeedtestDownload 下行发流:不可压缩随机字节 + 显式禁压缩,
-// 时长/字节双上限,单次请求必在 30s 全局 WriteTimeout 内结束。
+// handleSpeedtestDownload 下行发流:不可压缩随机字节 + 显式禁压缩,时长/字节双上限。
+// 全局 WriteTimeout=0(issue #158):自设写 deadline = 发流时长 + 收尾余量,
+// 慢/死连接在 deadline 处被强制回收,handler 不残留。
 // 不设 Content-Length:chunked 流式下发,浏览器按到达节奏实时测速。
 func (s *Server) handleSpeedtestDownload(w http.ResponseWriter, r *http.Request) {
 	block, err := speedtest.NewRandomBlock(speedtest.DownloadBlockSize)
@@ -58,6 +74,7 @@ func (s *Server) handleSpeedtestDownload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	duration := parseDownloadDuration(r)
+	s.setWriteDeadline(w, duration+streamWriteSlack)
 
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")

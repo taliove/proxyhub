@@ -68,3 +68,37 @@ func TestHandleTestNode_UnresolvableTarget(t *testing.T) {
 		}
 	}
 }
+
+// TestHandleTestNode_BandwidthRoutesToStream 即时测试 bandwidth 档走流式实现(issue #159):
+// 死节点 TCP 快筛 fail-fast,错误文本为流式实现的固定串(legacy 路径带 dial 详情,已删除)。
+func TestHandleTestNode_BandwidthRoutesToStream(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+	if err := st.CreateSelfHostedNode(&store.SelfHostedNode{
+		Name: "自建B", Protocol: "vless", Server: "127.0.0.1", Port: 1, Enabled: true,
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	ids, _ := st.ListAllSelfHostedNodes()
+	body, _ := json.Marshal(map[string]any{"self_node_id": ids[0].ID, "mode": "bandwidth"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/nodes/test", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handleTestNode(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var res map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if res["mode"] != "bandwidth" {
+		t.Errorf("mode = %v, want bandwidth", res["mode"])
+	}
+	if res["available"] != false {
+		t.Errorf("available = %v, want false (closed port)", res["available"])
+	}
+	if res["error"] != "TCP connection failed" {
+		t.Errorf("error = %v, want stream-flavor %q", res["error"], "TCP connection failed")
+	}
+}
