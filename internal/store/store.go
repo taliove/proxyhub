@@ -466,6 +466,16 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 		return err
 	}
 
+	// 拉取诊断扩容(issue #156):body 字节数与超时标记。
+	// 用 addColumnIfMissing(按列存在性幂等);schema 参考
+	// migrations/033_refresh_fetch_diags_body.sql。旧行默认 0/false。
+	if err := s.addColumnIfMissing("refresh_fetch_diags", "body_bytes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("refresh_fetch_diags", "timed_out", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
 	// 本机实测历史表（016_speedtest_results.sql,ticket 0032）
 	if err := s.applyMigrationFile("016_speedtest_results.sql"); err != nil {
 		return err

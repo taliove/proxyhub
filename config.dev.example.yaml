@@ -32,6 +32,10 @@ health_check:
   concurrent: 30
   retry: 2
 
+fetch:
+  connect_timeout: 15s
+  read_timeout: 120s
+
 filter:
   nodes_per_region: 10
   deduplicate: true

@@ -35,6 +35,13 @@ health_check:
   concurrent: 30
   retry: 2
 
+# 机场订阅拉取(入站)配置
+fetch:
+  # 建连与响应头等待上限
+  connect_timeout: 15s
+  # 单次拉取总时长上限(含响应体读取;大订阅可达数 MB,不要调得过小)
+  read_timeout: 120s
+
 # 节点过滤配置
 filter:
   nodes_per_region: 10

@@ -124,7 +124,7 @@ func New(cfg *config.Config, alerter Notifier, st *store.Store, logger *slog.Log
 
 	a := &Aggregator{
 		cfg:       cfg,
-		fetcher:   subscription.NewFetcher(30 * time.Second),
+		fetcher:   subscription.NewFetcher(cfg.Fetch.ConnectTimeout, cfg.Fetch.ReadTimeout),
 		checker:   checker,
 		filt:      filter.NewFilter(cfg.Filter.NodesPerRegion, cfg.Filter.Deduplicate),
 		alerter:   alerter,
@@ -499,6 +499,8 @@ func (r *runLog) fetchDiag(airport *store.Airport, diag *subscription.FetchDiagn
 		DurationMs:    diag.DurationMs,
 		NodeCount:     diag.NodeCount,
 		ParseFailures: diag.ParseFailures,
+		BodyBytes:     diag.BodyBytes,
+		TimedOut:      diag.TimedOut,
 		Error:         errMsg,
 	}
 	if err := r.st.InsertRefreshFetchDiag(d); err != nil {

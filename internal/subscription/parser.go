@@ -2,7 +2,6 @@ package subscription
 
 import (
 	"strings"
-	"time"
 )
 
 // maxLineFailures 失败明细条数上限:粘贴导入的内容可达 1MiB 垃圾行,
@@ -61,8 +60,8 @@ func ParseWithStats(content, source string) *ParseResult {
 		TotalLines: 0,
 	}
 
-	// Create a fetcher instance to reuse parsing logic
-	f := NewFetcher(10 * time.Second)
+	// 解析只复用 Fetcher.parseNode(纯函数式,不碰 HTTP 传输),零值实例即可。
+	f := &Fetcher{}
 
 	for i, line := range lines {
 		line = strings.TrimSpace(line)

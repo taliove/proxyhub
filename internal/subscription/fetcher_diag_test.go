@@ -33,7 +33,7 @@ func TestFetchWithDiagnostics_Success(t *testing.T) {
 	}, "\n")
 	srv := diagSubscriptionServer(t, http.StatusOK, content)
 
-	f := NewFetcher(5 * time.Second)
+	f := NewFetcher(5*time.Second, 5*time.Second)
 	sub, diag, err := f.FetchWithDiagnostics("测试机场", srv.URL)
 	if err != nil {
 		t.Fatalf("FetchWithDiagnostics() error = %v", err)
@@ -58,7 +58,7 @@ func TestFetchWithDiagnostics_Success(t *testing.T) {
 func TestFetchWithDiagnostics_HTTPError(t *testing.T) {
 	srv := diagSubscriptionServer(t, http.StatusServiceUnavailable, "")
 
-	f := NewFetcher(5 * time.Second)
+	f := NewFetcher(5*time.Second, 5*time.Second)
 	sub, diag, err := f.FetchWithDiagnostics("测试机场", srv.URL)
 	if err == nil {
 		t.Fatal("FetchWithDiagnostics() should fail on non-200")
@@ -79,7 +79,7 @@ func TestFetchWithDiagnostics_NetworkError(t *testing.T) {
 	url := srv.URL
 	srv.Close() // 立即关闭,连接必失败
 
-	f := NewFetcher(5 * time.Second)
+	f := NewFetcher(5*time.Second, 5*time.Second)
 	_, diag, err := f.FetchWithDiagnostics("测试机场", url)
 	if err == nil {
 		t.Fatal("FetchWithDiagnostics() should fail on unreachable server")
@@ -95,7 +95,7 @@ func TestFetchWithDiagnostics_NetworkError(t *testing.T) {
 func TestFetchWithDiagnostics_NoValidNodes(t *testing.T) {
 	srv := diagSubscriptionServer(t, http.StatusOK, "garbage-line-1\ngarbage-line-2")
 
-	f := NewFetcher(5 * time.Second)
+	f := NewFetcher(5*time.Second, 5*time.Second)
 	_, diag, err := f.FetchWithDiagnostics("测试机场", srv.URL)
 	if err == nil {
 		t.Fatal("FetchWithDiagnostics() should fail when no valid nodes")
@@ -112,7 +112,7 @@ func TestFetchWithDiagnostics_NoValidNodes(t *testing.T) {
 func TestFetch_StillWorks(t *testing.T) {
 	srv := diagSubscriptionServer(t, http.StatusOK, "trojan://pw@example.com:443#HK node1")
 
-	f := NewFetcher(5 * time.Second)
+	f := NewFetcher(5*time.Second, 5*time.Second)
 	sub, err := f.Fetch("测试机场", srv.URL)
 	if err != nil {
 		t.Fatalf("Fetch() error = %v", err)
