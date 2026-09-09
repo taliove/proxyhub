@@ -157,6 +157,21 @@ func (s *Store) BackfillUserID() error {
 	return nil
 }
 
+// ResolveOwnerUserID 归一属主(Invariant B):rowUserID>=1 原样返回;0(未归属)
+// 归一到首个 super_admin;无超管(初始化前)回退 0。与 aggregator.ownerUserID
+// 同一归一规则,供不走 aggregator 的调用方(airporttest 池空补救的分片 upsert,
+// issue #143)复用。查询失败保守回退 0(未归属桶),不报错。
+func (s *Store) ResolveOwnerUserID(rowUserID int64) int64 {
+	if rowUserID > 0 {
+		return rowUserID
+	}
+	id, err := s.firstSuperAdminID()
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
 // firstSuperAdminID returns the id of the first super_admin user, or 0 when
 // the users table does not exist yet (ticket 01 not applied) or contains no
 // super_admin. Both absences are normal during the expand phase and are not

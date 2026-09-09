@@ -41,7 +41,9 @@ func (a *Aggregator) ImportManualAirportNodes(ctx context.Context, airport *stor
 		}
 	}
 
-	if err := a.poolOps.UpsertAirportNodes(ctx, airport.Name, nodes); err != nil {
+	// 分片 upsert 按 (机场名, 属主) 双重限定(issue #143 跨用户隔离):
+	// 两用户同名机场的手动导入互不影响。
+	if err := a.poolOps.UpsertAirportNodes(ctx, airport.Name, owner, nodes); err != nil {
 		return fmt.Errorf("upsert airport nodes: %w", err)
 	}
 	// 内存池回填(DB 已是新状态;读失败不阻断,下轮全量刷新自愈)

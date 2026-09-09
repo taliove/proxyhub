@@ -197,8 +197,13 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 				}
 				return run, nil
 			}
-			// URL通且有节点:upsert入池
-			if err := o.poolOps.UpsertAirportNodes(ctx, airportName, fetchedNodes); err != nil {
+			// URL通且有节点:upsert入池。属主归一(issue #143 跨用户隔离):
+			// 分片 upsert 按 (机场名, 属主) 双重限定,两用户同名机场互不影响。
+			ownerID, err := o.store.GetAirportUserID(ctx, run.AirportID)
+			if err != nil {
+				return nil, fmt.Errorf("resolve airport owner: %w", err)
+			}
+			if err := o.poolOps.UpsertAirportNodes(ctx, airportName, ownerID, fetchedNodes); err != nil {
 				return nil, fmt.Errorf("upsert airport nodes: %w", err)
 			}
 			nodesToTest = fetchedNodes

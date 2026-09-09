@@ -58,7 +58,7 @@ func TestUpsertAirportNodes_OtherAirportUntouchedFieldByField(t *testing.T) {
 	}
 
 	// 刷新机场 A:改一批全新节点(旧 A 节点全部消失)
-	if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", makeNodes("airport-a", "9.9", 3)); err != nil {
+	if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", 0, makeNodes("airport-a", "9.9", 3)); err != nil {
 		t.Fatalf("UpsertAirportNodes() error = %v", err)
 	}
 
@@ -114,7 +114,7 @@ func TestUpsertAirportNodes_CorruptOtherAirportRowsDoNotBlock(t *testing.T) {
 		}
 	}
 
-	if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", makeNodes("airport-a", "3.3", 2)); err != nil {
+	if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", 0, makeNodes("airport-a", "3.3", 2)); err != nil {
 		t.Fatalf("airport-a refresh blocked by corrupt airport-b rows: %v", err)
 	}
 
@@ -129,6 +129,69 @@ func TestUpsertAirportNodes_CorruptOtherAirportRowsDoNotBlock(t *testing.T) {
 	}
 	if got := loadBySource(t, st, "airport-a"); len(got) != 4 { // 2 新 + 2 消失标 stale
 		t.Fatalf("airport-a node count = %d, want 4 (2 active + 2 stale)", len(got))
+	}
+}
+
+// 两用户同名机场(机场名是用户自选字符串,可撞名):用户 A 的单机场 upsert
+// 不得触碰用户 B 的行(issue #143 跨用户隔离)——carry-forward 集、stale 标记、
+// position、标签/prune/purge 全部限定属主;同时新拉取节点被打上属主 user_id。
+func TestUpsertAirportNodes_SameNameAirportUserIsolation(t *testing.T) {
+	adapter, st := newTestAdapter(t)
+
+	checked := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	seed := []*subscription.Node{
+		{
+			Name: "a-old", Type: "vless", Server: "10.1.1.1", Port: 443, Source: "same-airport",
+			UserID: 1, Available: true, Latency: 66, DetectionLastCheck: checked,
+		},
+		{Name: "a-gone", Type: "vless", Server: "10.1.1.2", Port: 443, Source: "same-airport", UserID: 1},
+		{
+			Name: "b-keep", Type: "vless", Server: "10.2.2.1", Port: 443, Source: "same-airport",
+			UserID: 2, Region: "HK", Available: true, Latency: 88, DetectionLastCheck: checked,
+			DetectionKind: "real", BandwidthDownMbps: 12.5,
+		},
+	}
+	if err := st.SaveNodePool(seed); err != nil {
+		t.Fatalf("SaveNodePool() seed error = %v", err)
+	}
+	beforeB := loadBySource(t, st, "same-airport")["10.2.2.1:443"]
+
+	// 用户 A 刷新同名机场:改名留一个(carry-forward)+ 新增一个;a-gone 消失。
+	fetched := []*subscription.Node{
+		{Name: "a-new-name", Type: "vless", Server: "10.1.1.1", Port: 443, Source: "same-airport"},
+		{Name: "a-added", Type: "vless", Server: "10.1.1.3", Port: 443, Source: "same-airport"},
+	}
+	if err := adapter.UpsertAirportNodes(context.Background(), "same-airport", 1, fetched); err != nil {
+		t.Fatalf("UpsertAirportNodes() error = %v", err)
+	}
+
+	after := loadBySource(t, st, "same-airport")
+
+	// 用户 B 的节点逐字段不变(不被误标 stale、检测状态/position 不被重写)。
+	afterB, ok := after["10.2.2.1:443"]
+	if !ok {
+		t.Fatal("user 2 node disappeared after user 1 refresh")
+	}
+	if !reflect.DeepEqual(beforeB, afterB) {
+		t.Errorf("user 2 node rewritten by user 1 refresh:\n before = %+v\n after  = %+v", beforeB, afterB)
+	}
+
+	// 用户 A 的分片语义正常:carry-forward、消失标 stale、新节点打上属主。
+	carried := after["10.1.1.1:443"]
+	if carried.Stale || carried.Name != "a-new-name" {
+		t.Errorf("carried node: stale=%v name=%q, want active a-new-name", carried.Stale, carried.Name)
+	}
+	if !carried.Available || carried.Latency != 66 || !carried.DetectionLastCheck.Equal(checked) {
+		t.Errorf("carry-forward lost on user 1 node: %+v", carried)
+	}
+	if carried.UserID != 1 {
+		t.Errorf("carried node UserID = %d, want 1 (owner tag)", carried.UserID)
+	}
+	if gone := after["10.1.1.2:443"]; !gone.Stale {
+		t.Errorf("disappeared user 1 node Stale = false, want true")
+	}
+	if added := after["10.1.1.3:443"]; added.UserID != 1 || added.Stale {
+		t.Errorf("added node: UserID = %d stale = %v, want owner 1 active", added.UserID, added.Stale)
 	}
 }
 
@@ -153,7 +216,7 @@ func TestUpsertAirportNodes_DisappearedNodesStillMarkedStale(t *testing.T) {
 	fresh := &subscription.Node{
 		Name: "stay-v2", Type: "vless", Server: "10.5.5.1", Port: 443, Source: "airport-a",
 	}
-	if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", []*subscription.Node{fresh}); err != nil {
+	if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", 0, []*subscription.Node{fresh}); err != nil {
 		t.Fatalf("UpsertAirportNodes() error = %v", err)
 	}
 

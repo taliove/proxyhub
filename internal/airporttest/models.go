@@ -105,6 +105,10 @@ type Store interface {
 	// store.AirportSourceManual);手动机场据此跳过 URL 拉取(诊断段 N/A)。
 	// 机场已删返回 ErrAirportGone;空串按拉取型处理(兼容旧数据)。
 	GetAirportSourceType(ctx context.Context, airportID int64) (string, error)
+	// GetAirportUserID 按 airport_id 读归一属主(分片 upsert 的 user_id 隔离,
+	// issue #143):行已带 user_id 直接用,未归属(0)归一到首个超管
+	// (与 aggregator.ownerUserID 同一归一规则)。机场已删返回 ErrAirportGone。
+	GetAirportUserID(ctx context.Context, airportID int64) (int64, error)
 }
 
 // NewOrchestrator creates a new test orchestrator.

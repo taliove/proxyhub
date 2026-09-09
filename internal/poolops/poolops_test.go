@@ -70,7 +70,7 @@ func TestUpsertAirportNodes_ConcurrentDistinctAirports_NoLostUpdate(t *testing.T
 		go func(i int) {
 			defer wg.Done()
 			name := fmt.Sprintf("airport-%d", i)
-			if err := adapter.UpsertAirportNodes(context.Background(), name, makeNodes(name, fmt.Sprintf("%d.0", i), nodesPerAirport)); err != nil {
+			if err := adapter.UpsertAirportNodes(context.Background(), name, 0, makeNodes(name, fmt.Sprintf("%d.0", i), nodesPerAirport)); err != nil {
 				t.Errorf("UpsertAirportNodes(%s) error = %v", name, err)
 			}
 		}(i)
@@ -106,7 +106,7 @@ func TestUpsertAirportNodes_ConcurrentSameAirport_Serialized(t *testing.T) {
 		wg.Add(1)
 		go func(i int, setKey string) {
 			defer wg.Done()
-			if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", makeNodes("airport-a", setKey, nodesPerWriter)); err != nil {
+			if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", 0, makeNodes("airport-a", setKey, nodesPerWriter)); err != nil {
 				t.Errorf("UpsertAirportNodes() error = %v", err)
 			}
 		}(i, setKey)
@@ -176,7 +176,7 @@ func TestUpsertAirportNodes_MergeCarryForward(t *testing.T) {
 		Source: "airport-a",
 	}
 	added := makeNodes("airport-a", "9.9", 1)
-	if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", append([]*subscription.Node{fresh}, added...)); err != nil {
+	if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", 0, append([]*subscription.Node{fresh}, added...)); err != nil {
 		t.Fatalf("UpsertAirportNodes() error = %v", err)
 	}
 

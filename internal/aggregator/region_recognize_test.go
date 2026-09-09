@@ -87,7 +87,7 @@ func TestRegionRecognition_PoolOpsMatchesFullRefresh(t *testing.T) {
 
 	// 路径 2:单机场 upsert(经 poolOps 装配,与生产同一路径)
 	upsertNodes := makeInput()
-	if err := agg.poolOps.UpsertAirportNodes(context.Background(), "机场A", upsertNodes); err != nil {
+	if err := agg.poolOps.UpsertAirportNodes(context.Background(), "机场A", 0, upsertNodes); err != nil {
 		t.Fatalf("UpsertAirportNodes() error = %v", err)
 	}
 	pool, err := st.LoadNodePool()

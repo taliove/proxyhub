@@ -1,6 +1,7 @@
 package store
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -34,7 +35,7 @@ func TestUpsertNodePoolShard_RewritesOnlySourceShard(t *testing.T) {
 		{Name: "a1-renamed", Type: "ss", Server: "10.1.1.1", Port: 8388, Source: "airport-a"},
 		{Name: "a3", Type: "ss", Server: "10.1.1.3", Port: 8388, Source: "airport-a"},
 	}
-	if err := st.UpsertNodePoolShard("airport-a", shard); err != nil {
+	if err := st.UpsertNodePoolShard(0, "airport-a", shard); err != nil {
 		t.Fatalf("UpsertNodePoolShard() error = %v", err)
 	}
 
@@ -82,6 +83,140 @@ func TestUpsertNodePoolShard_RewritesOnlySourceShard(t *testing.T) {
 	}
 }
 
+// TestUpsertNodePoolShard_SameNameAirportUserIsolation 两用户同名机场(机场名是
+// 用户自选字符串,可撞名):用户 A 的分片 upsert 不得触碰用户 B 的行——
+// stale 标记、position、自动标签、超期 purge 全部限定 user_id(issue #143)。
+func TestUpsertNodePoolShard_SameNameAirportUserIsolation(t *testing.T) {
+	st := newTestStore(t)
+
+	recent := time.Now().Add(-time.Hour).Truncate(time.Second)
+	checked := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	seed := []*subscription.Node{
+		{Name: "a-live", Type: "ss", Server: "10.1.1.1", Port: 8388, Source: "same-airport", UserID: 1},
+		{
+			Name: "b-live", Type: "vless", Server: "10.2.2.1", Port: 443, Source: "same-airport", UserID: 2,
+			Region: "HK", Available: true, Latency: 88, DetectionLastCheck: checked,
+			BandwidthDownMbps: 12.5, Plugin: "simple-obfs", PluginOpts: "obfs=http",
+		},
+		{Name: "b-stale", Type: "ss", Server: "10.2.2.2", Port: 8388, Source: "same-airport", UserID: 2, Stale: true, LastSeen: recent},
+		{Name: "b-expired", Type: "ss", Server: "10.2.2.3", Port: 8388, Source: "same-airport", UserID: 2, Stale: true, LastSeen: recent},
+	}
+	if err := st.SaveNodePool(seed); err != nil {
+		t.Fatalf("SaveNodePool() seed error = %v", err)
+	}
+
+	// 种入后再把 b-expired 的 last_seen 改到保留期之前(躲过种子保存时的 purge):
+	// 若分片 purge 越界,它会被 A 的刷新删掉。
+	expired := time.Now().AddDate(0, 0, -(StaleRetentionDays + 1))
+	if _, err := st.db.Exec(`UPDATE nodes SET last_seen = ? WHERE name = 'b-expired'`, expired); err != nil {
+		t.Fatalf("backdate last_seen error = %v", err)
+	}
+
+	// 给用户 B 的 stale 节点挂自动标签:若分片 prune 越界,它会被 A 的刷新删掉。
+	if err := st.ReplaceNodeTags("10.2.2.2:8388", []string{"fast"}); err != nil {
+		t.Fatalf("ReplaceNodeTags() error = %v", err)
+	}
+
+	// 快照用户 B 全部行(逐字段)与 position(position 不在 Node 视图里,直查)。
+	before := make(map[string]subscription.Node)
+	pool, err := st.LoadNodePool()
+	if err != nil {
+		t.Fatalf("LoadNodePool() error = %v", err)
+	}
+	for _, n := range pool {
+		if n.UserID == 2 {
+			before[n.NodeKey()] = *n
+		}
+	}
+	if len(before) != 3 {
+		t.Fatalf("seed: user 2 has %d nodes, want 3", len(before))
+	}
+	beforePos := make(map[string]int)
+	rows, err := st.db.Query(`SELECT node_key, position FROM nodes WHERE user_id = 2`)
+	if err != nil {
+		t.Fatalf("query positions error = %v", err)
+	}
+	for rows.Next() {
+		var key string
+		var pos int
+		if err := rows.Scan(&key, &pos); err != nil {
+			t.Fatalf("scan position error = %v", err)
+		}
+		beforePos[key] = pos
+	}
+	rows.Close()
+
+	// 用户 A 刷新同名机场:a-live 改名(同 NodeKey)+ 新增 a-new。
+	if err := st.UpsertNodePoolShard(1, "same-airport", []*subscription.Node{
+		{Name: "a-live-v2", Type: "ss", Server: "10.1.1.1", Port: 8388, Source: "same-airport", UserID: 1},
+		{Name: "a-new", Type: "ss", Server: "10.1.1.2", Port: 8388, Source: "same-airport", UserID: 1},
+	}); err != nil {
+		t.Fatalf("UpsertNodePoolShard() error = %v", err)
+	}
+
+	// 用户 B 的行逐字段不变(含 b-expired 未被 purge、b-stale 未被重标)。
+	pool, err = st.LoadNodePool()
+	if err != nil {
+		t.Fatalf("LoadNodePool() error = %v", err)
+	}
+	after := make(map[string]subscription.Node)
+	for _, n := range pool {
+		if n.UserID == 2 {
+			after[n.NodeKey()] = *n
+		}
+	}
+	if len(after) != len(before) {
+		t.Fatalf("user 2 node count changed: %d -> %d (cross-user purge?)", len(before), len(after))
+	}
+	for key, want := range before {
+		got, ok := after[key]
+		if !ok {
+			t.Errorf("user 2 node %s disappeared (cross-user purge)", key)
+			continue
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Errorf("user 2 node %s rewritten:\n before = %+v\n after  = %+v", key, want, got)
+		}
+	}
+
+	// position 不被 A 的刷新打乱(stale 标记越界会把 position 改成 999999)。
+	for key, want := range beforePos {
+		var got int
+		if err := st.db.QueryRow(`SELECT position FROM nodes WHERE node_key = ?`, key).Scan(&got); err != nil {
+			t.Fatalf("query position for %s error = %v", key, err)
+		}
+		if got != want {
+			t.Errorf("user 2 node %s position = %d, want %d (cross-user stale mark)", key, got, want)
+		}
+	}
+
+	// 用户 B 的 stale 节点标签不被 A 的刷新 prune。
+	bTags, err := st.ListNodeTags([]string{"10.2.2.2:8388"})
+	if err != nil {
+		t.Fatalf("ListNodeTags() error = %v", err)
+	}
+	if len(bTags["10.2.2.2:8388"]) != 1 || bTags["10.2.2.2:8388"][0] != "fast" {
+		t.Errorf("user 2 stale node tags pruned by other user's refresh: %v", bTags["10.2.2.2:8388"])
+	}
+
+	// 用户 A 的分片本身语义正常:改名节点在架、新节点入池。
+	aNode, err := st.LoadNodePoolByUser(1)
+	if err != nil {
+		t.Fatalf("LoadNodePoolByUser(1) error = %v", err)
+	}
+	if len(aNode) != 2 {
+		t.Fatalf("user 1 has %d nodes, want 2", len(aNode))
+	}
+	for _, n := range aNode {
+		if n.Stale {
+			t.Errorf("user 1 node %s unexpectedly stale", n.Name)
+		}
+		if n.UserID != 1 {
+			t.Errorf("user 1 node %s UserID = %d, want 1", n.Name, n.UserID)
+		}
+	}
+}
+
 // TestUpsertNodePoolShard_OtherShardRowsNotTouched 用毒触发器模拟"其他机场
 // 异常数据导致该行无法重写"(issue #143 Bug 3):任何 UPDATE/DELETE airport-b
 // 行的写路径都会失败。分片 upsert 只写本机场,必须成功;旧的全池重写路径
@@ -114,7 +249,7 @@ func TestUpsertNodePoolShard_OtherShardRowsNotTouched(t *testing.T) {
 		{Name: "a1-new", Type: "ss", Server: "10.1.1.1", Port: 8388, Source: "airport-a"},
 		{Name: "a2", Type: "ss", Server: "10.1.1.2", Port: 8388, Source: "airport-a"},
 	}
-	if err := st.UpsertNodePoolShard("airport-a", shard); err != nil {
+	if err := st.UpsertNodePoolShard(0, "airport-a", shard); err != nil {
 		t.Fatalf("UpsertNodePoolShard() 被 airport-b 异常行连坐: %v", err)
 	}
 
@@ -173,7 +308,7 @@ func TestUpsertNodePoolShard_PruneAndPurgeScopedToSource(t *testing.T) {
 	}
 
 	// 只重写 airport-a 分片:a-live 仍在架,a-stale/a-expired 不在列表(保持 stale)
-	if err := st.UpsertNodePoolShard("airport-a", []*subscription.Node{
+	if err := st.UpsertNodePoolShard(0, "airport-a", []*subscription.Node{
 		{Name: "a-live", Type: "ss", Server: "10.1.1.1", Port: 8388, Source: "airport-a"},
 	}); err != nil {
 		t.Fatalf("UpsertNodePoolShard() error = %v", err)
