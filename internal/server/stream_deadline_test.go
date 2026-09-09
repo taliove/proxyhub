@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -212,6 +213,88 @@ func TestSpeedtestDownload_WriteTimeoutExemption(t *testing.T) {
 		defer ts.Close()
 		assertFullStream(t, ts)
 	})
+}
+
+// TestBulkWriteBudget 大块响应写 deadline 预算:基础 30s + 每 64KB 加 1s,封顶 120s。
+func TestBulkWriteBudget(t *testing.T) {
+	cases := []struct {
+		size int
+		want time.Duration
+	}{
+		{0, 30 * time.Second},
+		{64*1024 - 1, 30 * time.Second},
+		{64 * 1024, 31 * time.Second},
+		{1024 * 1024, 46 * time.Second},      // 16 个 64KB 步进
+		{8 * 1024 * 1024, 120 * time.Second}, // 远超封顶
+	}
+	for _, c := range cases {
+		if got := bulkWriteBudget(c.size); got != c.want {
+			t.Errorf("bulkWriteBudget(%d) = %v, want %v", c.size, got, c.want)
+		}
+	}
+}
+
+// TestStreamDeadline_Subscription /sub 公开端点一次写全量(Clash YAML 可达数 MB),
+// 写出前按响应大小自设写 deadline(issue #143):全局 WriteTimeout=0,
+// 慢读连接不得无限期钉住 handler goroutine。小响应体 = 基础预算 30s。
+func TestStreamDeadline_Subscription(t *testing.T) {
+	srv, st := newTestServer(t, pullLogNodes())
+	ep, _ := st.CreateEndpoint("deadline 设备")
+
+	rec := newDeadlineRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sub/"+ep.Path+"?token="+ep.Token+"&format=clash", nil)
+	req.SetPathValue("path", ep.Path)
+	req.RemoteAddr = "5.6.7.8:1234"
+
+	srv.handleSubscription(rec, req)
+
+	if rec.code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.code, rec.body.String())
+	}
+	assertDeadlineNear(t, rec, bulkWriteBaseBudget)
+	if rec.body.Len() == 0 {
+		t.Error("subscription body is empty, want non-zero bytes")
+	}
+}
+
+// TestStreamDeadline_ListNodes 节点列表 page_size 无上限(全量拉取可达数 MB),
+// 同样按体大小自设写 deadline(issue #143)。
+func TestStreamDeadline_ListNodes(t *testing.T) {
+	srv, _ := newTestServer(t, pullLogNodes())
+
+	rec := newDeadlineRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes?page_size=100000", nil)
+
+	srv.handleListNodes(rec, req)
+
+	if rec.code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.code, rec.body.String())
+	}
+	assertDeadlineNear(t, rec, bulkWriteBaseBudget)
+	if !strings.Contains(rec.body.String(), `"nodes"`) {
+		t.Errorf("list body missing nodes field: %q", rec.body.String())
+	}
+}
+
+// TestStreamDeadline_EndpointPreview 订阅预览内嵌完整订阅内容(与 /sub 同体量),
+// 同样按体大小自设写 deadline(issue #143)。
+func TestStreamDeadline_EndpointPreview(t *testing.T) {
+	srv, st := newTestServer(t, pullLogNodes())
+	ep, _ := st.CreateEndpoint("preview 设备")
+
+	rec := newDeadlineRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/endpoints/"+strconv.FormatInt(ep.ID, 10)+"/preview", nil)
+	req.SetPathValue("id", strconv.FormatInt(ep.ID, 10))
+
+	srv.handleEndpointPreview(rec, req)
+
+	if rec.code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.code, rec.body.String())
+	}
+	assertDeadlineNear(t, rec, bulkWriteBaseBudget)
+	if !strings.Contains(rec.body.String(), `"content"`) {
+		t.Errorf("preview body missing content field: %q", rec.body.String())
+	}
 }
 
 // 任务化 SSE(体检/批量任务订阅)墙钟随节点数伸缩、可中途附加,静态总预算

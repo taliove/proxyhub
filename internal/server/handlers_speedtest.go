@@ -30,6 +30,15 @@ const (
 	// (无在飞写)不受 deadline 影响,而写阻塞(慢/死连接,内核缓冲已满)
 	// 在 deadline 处强制出错,handler 随即退出回收 goroutine。
 	sseFrameWriteBudget = 30 * time.Second
+	// bulkWriteBaseBudget 大块一次性响应(订阅输出/管理面大列表)的写 deadline
+	// 基础预算(issue #143):全局 WriteTimeout=0 后,/sub 等端点必须自带慢读
+	// 回收边界(改动前由全局 30s 强制回收,这是防线回补)。
+	bulkWriteBaseBudget = 30 * time.Second
+	// bulkWriteBytesPerStep 响应每超该字节数,写 deadline 在基础预算外加 1s
+	// (速率预算:Clash YAML 可达数 MB,固定预算对慢客户端不公平)。
+	bulkWriteBytesPerStep = 64 * 1024
+	// bulkWriteMaxBudget 大块响应写 deadline 上限(慢读攻击的回收硬边界)。
+	bulkWriteMaxBudget = 120 * time.Second
 )
 
 // setWriteDeadline 为流式/SSE 端点自设连接写 deadline(issue #143):全局
@@ -41,6 +50,23 @@ func (s *Server) setWriteDeadline(w http.ResponseWriter, budget time.Duration) {
 	if err != nil && !errors.Is(err, http.ErrNotSupported) {
 		s.logger.Warn("set write deadline failed", "error", err)
 	}
+}
+
+// bulkWriteBudget 大块一次性响应的写 deadline 预算:基础 30s + 每 64KB 加 1s,
+// 封顶 120s(见常量注释)。
+func bulkWriteBudget(size int) time.Duration {
+	budget := bulkWriteBaseBudget + time.Duration(size/bulkWriteBytesPerStep)*time.Second
+	if budget > bulkWriteMaxBudget {
+		budget = bulkWriteMaxBudget
+	}
+	return budget
+}
+
+// setWriteDeadlineForSize 为一次写全量的大响应端点(/sub 订阅输出、管理面大列表)
+// 按响应大小自设写 deadline(issue #143):全局 WriteTimeout=0,w.Write 一次写
+// 全量无 deadline 时,慢读攻击者可无限期钉住 handler goroutine。
+func (s *Server) setWriteDeadlineForSize(w http.ResponseWriter, size int) {
+	s.setWriteDeadline(w, bulkWriteBudget(size))
 }
 
 // handleSpeedtestPing 延迟探测:极小响应体,浏览器多次小请求算 RTT/抖动。
