@@ -19,9 +19,13 @@ type Store struct {
 	jobsStore *jobs.Store
 }
 
-// Open 打开（或创建）数据库文件并执行迁移
+// Open 打开（或创建）数据库文件并执行迁移。
+// 生产 DSN 带 _pragma=busy_timeout(5000) 与 _pragma=journal_mode(WAL)
+// (issue #143 / ADR 0051):busy_timeout 让锁冲突等待重试而非立即
+// SQLITE_BUSY;WAL 允许读写并发,消除读阻塞写。synchronous 保持默认 FULL
+// 不动(耐久语义不变,与 OpenForTesting 的 OFF 是两个世界)。
 func Open(path string) (*Store, error) {
-	return open(path, "")
+	return open(path, dsnSeparator(path)+"_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 }
 
 // OpenForTesting 打开测试专用库(issue #40):与 Open 同语义,但 DSN 带
@@ -29,12 +33,17 @@ func Open(path string) (*Store, error) {
 // 无意义;去掉每次 commit 的 fsync,消除 CI 高负载 runner 上迁移卡在 fsync
 // 长尾导致的测试二进制 10 分钟超时挂死(v0.7.1/v0.9.2 两次命中,goroutine
 // 栈止于 SQLite _full_fsync)。生产路径永远走 Open(默认 FULL 耐久语义不变)。
+// 不带生产的 busy_timeout/WAL:测试连接数恒为 1 无锁竞争,保持原样零漂移。
 func OpenForTesting(path string) (*Store, error) {
-	sep := "?"
+	return open(path, dsnSeparator(path)+"_pragma=synchronous(OFF)")
+}
+
+// dsnSeparator returns the correct DSN query separator for path.
+func dsnSeparator(path string) string {
 	if strings.Contains(path, "?") {
-		sep = "&"
+		return "&"
 	}
-	return open(path, sep+"_pragma=synchronous(OFF)")
+	return "?"
 }
 
 func open(path, dsnSuffix string) (*Store, error) {
@@ -463,6 +472,16 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_ip ON audit_logs(ip);
 
 	// 常规刷新每机场拉取诊断表（015_refresh_fetch_diags.sql,ticket 0018）
 	if err := s.applyMigrationFile("015_refresh_fetch_diags.sql"); err != nil {
+		return err
+	}
+
+	// 拉取诊断扩容(issue #143):body 字节数与超时标记。
+	// 用 addColumnIfMissing(按列存在性幂等);schema 参考
+	// migrations/033_refresh_fetch_diags_body.sql。旧行默认 0/false。
+	if err := s.addColumnIfMissing("refresh_fetch_diags", "body_bytes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("refresh_fetch_diags", "timed_out", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 

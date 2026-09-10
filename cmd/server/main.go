@@ -150,10 +150,15 @@ func run(configPath string) error {
 	go scheduler.Run(ctx)
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	httpServer := &http.Server{
-		Addr:         addr,
-		Handler:      srv.Handler(),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:        addr,
+		Handler:     srv.Handler(),
+		ReadTimeout: 30 * time.Second,
+		// WriteTimeout 必须为 0(issue #143):全局写超时是按连接生效的绝对 deadline,
+		// 会在 30s 处强制切断带宽测试/SSE 等长连接响应,且被切断后 handler goroutine
+		// 不退出、累积残留。长流式端点改为在 handler 内经
+		// http.ResponseController.SetWriteDeadline 自设与测试时长匹配的 deadline;
+		// 普通 JSON API 毫秒级写完,无需 deadline。
+		WriteTimeout: 0,
 	}
 
 	go func() {

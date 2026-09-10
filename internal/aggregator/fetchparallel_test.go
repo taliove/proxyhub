@@ -149,3 +149,39 @@ func TestFetchAirports_FailureIsolation(t *testing.T) {
 		t.Errorf("airportNodes[坏机场] = %v, want nil (failed)", result.airportNodes["坏机场"])
 	}
 }
+
+// TestFetchAirports_CancelInterruptsInFlightFetch issue #143:全量刷新取消时,
+// 进行中的订阅拉取绑定调用方 ctx,立即退出,不再等 fetcher 读超时兜底
+// (默认 120s,取消语义形同虚设)。
+func TestFetchAirports_CancelInterruptsInFlightFetch(t *testing.T) {
+	agg, st := newTestAggregator(t)
+
+	// 订阅服务器响应头后立即断流,一直挂到客户端断开:
+	// 不取消的话拉取会卡满 read timeout。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	if _, err := st.CreateAirport("慢机场", srv.URL); err != nil {
+		t.Fatalf("CreateAirport() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_, _ = agg.fetchAirports(ctx, &runLog{}, nil, 0)
+		close(done)
+	}()
+
+	time.Sleep(200 * time.Millisecond) // 等拉取在飞(未在飞则走 skipped 分支,同样应立即返回)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("fetchAirports did not return within 3s after cancel: in-flight fetch not bound to caller ctx")
+	}
+}

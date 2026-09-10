@@ -32,7 +32,7 @@ func TestUpsertAirportNodes_FillsRegion(t *testing.T) {
 		{Name: "🇬🇺 关岛 02", Type: "trojan", Server: "gu1.example.com", Port: 443, Source: "airport-a"},
 		{Name: "节点 03", Type: "trojan", Server: "node3.example.com", Port: 443, Source: "airport-a"},
 	}
-	if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", nodes); err != nil {
+	if err := adapter.UpsertAirportNodes(context.Background(), "airport-a", 0, nodes); err != nil {
 		t.Fatalf("UpsertAirportNodes() error = %v", err)
 	}
 

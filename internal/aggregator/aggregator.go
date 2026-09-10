@@ -124,7 +124,7 @@ func New(cfg *config.Config, alerter Notifier, st *store.Store, logger *slog.Log
 
 	a := &Aggregator{
 		cfg:       cfg,
-		fetcher:   subscription.NewFetcher(30 * time.Second),
+		fetcher:   subscription.NewFetcher(cfg.Fetch.ConnectTimeout, cfg.Fetch.ReadTimeout),
 		checker:   checker,
 		filt:      filter.NewFilter(cfg.Filter.NodesPerRegion, cfg.Filter.Deduplicate),
 		alerter:   alerter,
@@ -485,6 +485,15 @@ func (r *runLog) finish(status string, total, available, final int, errMsg strin
 	}
 }
 
+// fetchErrorText 拉取错误的用户向文案(issue #143):订阅过大给出明确中文提示,
+// 与读取超时区分;其余保留原始错误串。
+func fetchErrorText(err error) string {
+	if errors.Is(err, subscription.ErrSubscriptionTooLarge) {
+		return fmt.Sprintf("订阅过大(响应体超过 %d MiB 上限)", subscription.DefaultMaxBodyBytes>>20)
+	}
+	return err.Error()
+}
+
 // fetchDiag 落一条机场拉取诊断(ticket 0018);失败不阻断,仅丢本条诊断。
 // errMsg 为空表示拉取成功。
 func (r *runLog) fetchDiag(airport *store.Airport, diag *subscription.FetchDiagnostics, errMsg string) {
@@ -499,6 +508,8 @@ func (r *runLog) fetchDiag(airport *store.Airport, diag *subscription.FetchDiagn
 		DurationMs:    diag.DurationMs,
 		NodeCount:     diag.NodeCount,
 		ParseFailures: diag.ParseFailures,
+		BodyBytes:     diag.BodyBytes,
+		TimedOut:      diag.TimedOut,
 		Error:         errMsg,
 	}
 	if err := r.st.InsertRefreshFetchDiag(d); err != nil {
@@ -564,6 +575,14 @@ func (a *Aggregator) executeForUser(ctx context.Context, rl *runLog, progress fu
 		return
 	}
 
+	// 取消判定必须先于全失败分支(issue #143):取消会中断在途拉取,被中断的
+	// 拉取计入 failed——若先走全失败分支,取消会把 refresh run 误记 failed,
+	// 与 jobs 行的 cancelled 终态分歧。
+	if ctx.Err() != nil {
+		a.mergePartialOnCancel(ctx, rl, fetched)
+		return
+	}
+
 	// 全量拉取失败 = 本轮没有任何数据,而非"节点都挂了"。此时保留现有节点池,
 	// 避免一次网络抖动 / 机场临时不可达就把所有节点清空(见用户反馈:刷新失败清空节点)。
 	if fetched.enabled > 0 && fetched.failed == fetched.enabled {
@@ -608,13 +627,6 @@ func (a *Aggregator) executeForUser(ctx context.Context, rl *runLog, progress fu
 			map[string]any{"retained": len(pool), "available": available})
 		rl.finish(store.RefreshStatusFailed, 0, available, len(pool), errMsg)
 		a.checkAlerts(fetched.airportNodes, available)
-		return
-	}
-
-	// 取消:只对成功拉取的机场做 MergePool 入池,未拉取的机场节点原样保留。
-	// 直接走全量 MergePool 会把未拉取机场的节点全部标 stale(见 code-review 发现)。
-	if ctx.Err() != nil {
-		a.mergePartialOnCancel(ctx, rl, fetched)
 		return
 	}
 
@@ -754,7 +766,8 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 		go func(i int, airport *store.Airport) {
 			defer wg.Done()
 			defer reportProgress()
-			// 取消=中断当前拉取:不再启动新拉取(进行中的由 fetcher 超时兜底跑完)
+			// 取消=中断当前拉取:不再启动新拉取,进行中的拉取也经 ctx 立即退出
+			// (fetcher 对 ctx 取消判不可重试,直接收口)。
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
@@ -764,11 +777,11 @@ func (a *Aggregator) fetchAirports(ctx context.Context, rl *runLog, progress fun
 			}
 
 			rl.event(levelInfo, stageFetch, fmt.Sprintf("拉取「%s」…", airport.Name), nil)
-			sub, diag, err := a.fetcher.FetchWithDiagnostics(airport.Name, airport.URL)
+			sub, diag, err := a.fetcher.FetchContext(ctx, airport.Name, airport.URL)
 			if err != nil {
 				a.logger.Warn("fetch airport failed", "airport", airport.Name, "error", err)
-				rl.fetchDiag(airport, diag, err.Error())
-				rl.event(levelWarn, stageFetch, fmt.Sprintf("「%s」拉取失败：%s", airport.Name, err.Error()),
+				rl.fetchDiag(airport, diag, fetchErrorText(err))
+				rl.event(levelWarn, stageFetch, fmt.Sprintf("「%s」拉取失败：%s", airport.Name, fetchErrorText(err)),
 					map[string]any{"airport": airport.Name, "http_status": diag.HTTPStatus, "duration_ms": diag.DurationMs})
 				outcomes[i] = outcome{err: err}
 				return

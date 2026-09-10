@@ -170,6 +170,12 @@ func (ds *DetectionService) TestBandwidthStream(ctx context.Context, node *subsc
 	return ds.detector.TestBandwidthStream(ctx, node, onSample)
 }
 
+// BandwidthStreamBudget 流式带宽测试墙钟预算透传
+// (SSE 端点自设写 deadline 用,全局 WriteTimeout=0,issue #143)。
+func (ds *DetectionService) BandwidthStreamBudget() time.Duration {
+	return ds.detector.BandwidthStreamBudget()
+}
+
 // TestBaselineDown 批量快速测速档透传:仅基准下行(与体检基准行同口径)。
 func (ds *DetectionService) TestBaselineDown(ctx context.Context, node *subscription.Node) detection.TestResult {
 	return ds.detector.TestBaselineDown(ctx, node)

@@ -96,12 +96,20 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 		fmt.Sprintf("单机场刷新「%s」(仅拉取入池,不含健康检查)", airport.Name),
 		map[string]any{"airport": airport.Name, "airport_id": airport.ID})
 
-	sub, diag, err := k.agg.fetcher.FetchWithDiagnostics(airport.Name, airport.URL)
+	// FetchContext 绑定任务 ctx(issue #143):取消单机场刷新时在途拉取立即退出,
+	// 不再等满读超时与重试尾巴。
+	sub, diag, err := k.agg.fetcher.FetchContext(ctx, airport.Name, airport.URL)
 	if err != nil {
-		rl.fetchDiag(airport, diag, err.Error())
-		rl.event(levelError, stageFetch, fmt.Sprintf("「%s」拉取失败:%s", airport.Name, err.Error()),
+		// 取消优先于失败(issue #143):取消打断在途拉取时记 cancelled,
+		// 与 jobs 行的权威终态口径一致(参照 executeForUser 的判定顺序)。
+		if ctx.Err() != nil {
+			rl.finish(store.RefreshStatusCancelled, 0, 0, 0, "cancelled")
+			return ctx.Err()
+		}
+		rl.fetchDiag(airport, diag, fetchErrorText(err))
+		rl.event(levelError, stageFetch, fmt.Sprintf("「%s」拉取失败:%s", airport.Name, fetchErrorText(err)),
 			map[string]any{"airport": airport.Name, "http_status": diag.HTTPStatus, "duration_ms": diag.DurationMs})
-		rl.finish(store.RefreshStatusFailed, 0, 0, 0, err.Error())
+		rl.finish(store.RefreshStatusFailed, 0, 0, 0, fetchErrorText(err))
 		return fmt.Errorf("fetch airport %s: %w", airport.Name, err)
 	}
 	rl.fetchDiag(airport, diag, "")
@@ -122,11 +130,14 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 	}
 
 	// 池写串行化已由 poolops 包内 upsertMu 保证(UpsertAirportNodes 是
-	// "读全池-改本机场-写全池",串行代价低);不同机场的单机场刷新拉取仍并行。
+	// "读全池-改本机场-写本机场分片",串行代价低);不同机场的单机场刷新拉取仍并行。
+	// 属主归一(ownerUserID:未归属行归超管分片):分片 upsert 按 (机场名, 属主)
+	// 双重限定,两用户同名机场互不影响(issue #143 跨用户隔离)。
+	owner := k.agg.ownerUserID(airport.UserID)
 	upsertErr := func() error {
 		// 刷新完成后自动重算名称(issue #51):按属主生效设置,开启时重算 DisplayName
 		toUpsert := k.agg.standardizePoolNames(p.UserID, sub.Nodes)
-		if err := k.agg.poolOps.UpsertAirportNodes(ctx, airport.Name, toUpsert); err != nil {
+		if err := k.agg.poolOps.UpsertAirportNodes(ctx, airport.Name, owner, toUpsert); err != nil {
 			return err
 		}
 		// 内存池回填(DB 已是新状态;读失败不阻断,下轮全量刷新自愈)
@@ -139,7 +150,7 @@ func (k *refreshKind) runSingle(ctx context.Context, p *RefreshJobParams) error 
 	}
 
 	k.agg.mu.RLock()
-	poolSize := len(k.agg.pools[k.agg.ownerUserID(airport.UserID)])
+	poolSize := len(k.agg.pools[owner])
 	k.agg.mu.RUnlock()
 	rl.event(levelInfo, stageDone, fmt.Sprintf("单机场刷新完成:「%s」%d 个节点入池", airport.Name, len(sub.Nodes)),
 		map[string]any{"airport": airport.Name, "nodes": len(sub.Nodes)})

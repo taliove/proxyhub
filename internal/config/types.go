@@ -7,6 +7,7 @@ type Config struct {
 	Server      ServerConfig      `yaml:"server"`
 	Storage     StorageConfig     `yaml:"storage"`
 	HealthCheck HealthCheckConfig `yaml:"health_check"`
+	Fetch       FetchConfig       `yaml:"fetch"`
 	Filter      FilterConfig      `yaml:"filter"`
 	Log         LogConfig         `yaml:"log"`
 }
@@ -48,6 +49,16 @@ type TimeoutConfig struct {
 type FilterConfig struct {
 	NodesPerRegion int  `yaml:"nodes_per_region"`
 	Deduplicate    bool `yaml:"deduplicate"`
+}
+
+// FetchConfig 机场订阅拉取(入站)的传输配置(issue #143)。
+// 超时拆分:建连/响应头与响应体读取分别控制——旧实现用 http.Client.Timeout
+// 一刀切,数 MB 的大 Clash YAML 在整体超时内读不完即整条订阅判失败。
+type FetchConfig struct {
+	// ConnectTimeout 建连与响应头等待上限(默认 15s,<=0 由 loader 补默认)。
+	ConnectTimeout time.Duration `yaml:"connect_timeout"`
+	// ReadTimeout 单次拉取总时长上限,含响应体读取(默认 120s,<=0 补默认)。
+	ReadTimeout time.Duration `yaml:"read_timeout"`
 }
 
 type LogConfig struct {

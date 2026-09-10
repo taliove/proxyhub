@@ -54,6 +54,13 @@ func applyDefaults(cfg *Config) {
 	if cfg.Server.Port == 0 {
 		cfg.Server.Port = 8080
 	}
+	// 订阅拉取超时拆分(issue #143):建连/响应头 15s,体读取总时长 120s。
+	if cfg.Fetch.ConnectTimeout <= 0 {
+		cfg.Fetch.ConnectTimeout = 15 * time.Second
+	}
+	if cfg.Fetch.ReadTimeout <= 0 {
+		cfg.Fetch.ReadTimeout = 120 * time.Second
+	}
 }
 
 func validate(cfg *Config) error {

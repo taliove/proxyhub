@@ -53,6 +53,26 @@ func TestBandwidth_TCPUnreachable(t *testing.T) {
 	}
 }
 
+// TestTestNode_BandwidthRoutesToStream 即时测试 bandwidth 档走流式实现(issue #143):
+// 死节点在 TCP 快筛处 fail-fast,错误文本是流式实现的固定串
+// (legacy io.Copy 全量下载路径带 dial 详情后缀,已删除)。
+func TestTestNode_BandwidthRoutesToStream(t *testing.T) {
+	d := NewDetector(4, 300*time.Millisecond, time.Second)
+	node := &subscription.Node{Server: "127.0.0.1", Port: 1, Type: "vless"}
+
+	res := d.TestNode(context.Background(), node, "bandwidth")
+
+	if res.Available {
+		t.Errorf("bandwidth test on closed port should be unavailable, got %+v", res)
+	}
+	if res.Mode != "bandwidth" {
+		t.Errorf("Mode = %q, want bandwidth", res.Mode)
+	}
+	if res.Error != "TCP connection failed" {
+		t.Errorf("Error = %q, want stream-flavor %q", res.Error, "TCP connection failed")
+	}
+}
+
 // TestDefaultBandwidthConfig 验证默认配置合理
 func TestDefaultBandwidthConfig(t *testing.T) {
 	cfg := DefaultBandwidthConfig()

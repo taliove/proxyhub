@@ -54,6 +54,78 @@ func (s *Store) SaveNodePoolForUser(userID int64, nodes []*subscription.Node) er
 	}
 
 	// 第二步：upsert 本轮池的每个节点
+	if err := upsertPoolNodes(tx, nodes); err != nil {
+		return err
+	}
+
+	// 清理死节点标签:本轮消失(仍 stale=1)的节点标签失去意义,随刷新删除。
+	if err := pruneStaleNodeTags(tx, userID); err != nil {
+		return err
+	}
+
+	// 清理超期 stale 节点:下架超过 StaleRetentionDays 的节点物理删除,防无限累积。
+	if err := purgeExpiredStaleNodes(tx, time.Now(), userID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit node pool: %w", err)
+	}
+	return nil
+}
+
+// UpsertNodePoolShard 只重写一个来源(机场)×属主的分片(issue #143):本分片
+// 现有行先整体标记 stale,再逐行 upsert 传入节点,最后清理本分片的死节点标签
+// 与超期 stale 节点。其他行全程不动——任一节点数据异常只回滚本分片,不再连坐
+// 全池。prune/purge 口径与 SaveNodePool 相同,仅作用域收窄到 (source, user_id)。
+// nodes 必须是该来源分片合并后的完整新状态(MergePool 产出:在架 + 消失标 stale),
+// 不在 nodes 里的本分片行会保持 stale。
+//
+// userID 为机场属主(issue #143 跨用户隔离):机场名是用户自选字符串,两个用户
+// 可有同名机场;stale 标记/prune/purge 全部带 AND user_id = ?,否则用户 A 的
+// 单机场刷新/手动导入会把用户 B 同名机场的节点标 stale、打乱 position、删自动
+// 标签。userID=0 只作用未归属桶(与 staleScope 的 "0=全表" 语义刻意不同——
+// 分片属主隔离是硬边界,见 nodes.go UpdateNodeDetectionResult 的同款约定)。
+//
+// 并发警示:本方法是"标 stale -> upsert"的读-改-写,跨两条语句(即便同事务,
+// 两个并发事务对同一 source 会交错产生错误的 stale 终态)。调用方必须串行——
+// 现由 poolops 包级 upsertMu 保证;禁止绕过 poolops 直接并发调用本方法。
+func (s *Store) UpsertNodePoolShard(userID int64, source string, nodes []*subscription.Node) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 第一步:本来源本属主分片现有行标记 stale(在架与否以本轮 upsert 为准)
+	if _, err := tx.Exec(`UPDATE nodes SET stale = 1, position = 999999 WHERE source = ? AND user_id = ?`, source, userID); err != nil {
+		return fmt.Errorf("mark shard stale: %w", err)
+	}
+
+	// 第二步:upsert 本来源本轮节点(含 MergePool 追加的分片内 stale 节点)
+	if err := upsertPoolNodes(tx, nodes); err != nil {
+		return err
+	}
+
+	// 第三步:分片内清理,口径同 SaveNodePool,作用域收窄到 (source, user_id)
+	if err := pruneStaleNodeTagsForSource(tx, userID, source); err != nil {
+		return err
+	}
+	if err := purgeExpiredStaleNodesForSource(tx, time.Now(), userID, source); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit node pool shard: %w", err)
+	}
+	return nil
+}
+
+// upsertPoolNodes 在事务内逐行 upsert 节点(position 取切片序)。空切片直接返回。
+func upsertPoolNodes(tx *sql.Tx, nodes []*subscription.Node) error {
+	if len(nodes) == 0 {
+		return nil
+	}
 	stmt, err := tx.Prepare(`
 		INSERT INTO nodes (
 			node_key, name, type, server, port, uuid, password, alter_id, cipher, network, tls,
@@ -119,39 +191,34 @@ func (s *Store) SaveNodePoolForUser(userID int64, nodes []*subscription.Node) er
 			return fmt.Errorf("upsert node %s: %w", key, err)
 		}
 	}
-
-	// 清理死节点标签:本轮消失(仍 stale=1)的节点标签失去意义,随刷新删除。
-	if err := pruneStaleNodeTags(tx, userID); err != nil {
-		return err
-	}
-
-	// 清理超期 stale 节点:下架超过 StaleRetentionDays 的节点物理删除,防无限累积。
-	if err := purgeExpiredStaleNodes(tx, time.Now(), userID); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit node pool: %w", err)
-	}
 	return nil
 }
 
 // purgeExpiredStaleNodes 删除下架超过 StaleRetentionDays 的节点(在 SaveNodePool 事务内调用)。
+func purgeExpiredStaleNodes(tx *sql.Tx, now time.Time, userID int64) error {
+	scope, args := staleScope(userID, "")
+	return purgeExpiredStaleNodesScoped(tx, now, scope, args)
+}
+
+// purgeExpiredStaleNodesForSource 删除指定 (属主, 来源) 分片内超期的 stale 节点
+// (在 UpsertNodePoolShard 事务内调用)。user_id 谓词恒在(0 = 未归属桶):
+// 跨用户同名机场互不清理(issue #143)。
+func purgeExpiredStaleNodesForSource(tx *sql.Tx, now time.Time, userID int64, source string) error {
+	scope, args := shardStaleScope(userID, source)
+	return purgeExpiredStaleNodesScoped(tx, now, scope, args)
+}
+
+// purgeExpiredStaleNodesScoped 是超期 stale 清理的 scoped 实现:scope/scopeArgs
+// 由调用方按边界组装(SaveNodePool 用 staleScope,分片 upsert 用 shardStaleScope)。
 //
 // last_seen 在库中是 Go time 格式串(如 "2026-07-20 17:57:05.013304 +0800 CST"),
 // SQLite datetime() 无法解析、裸串比较依赖时区巧合,故必须在 Go 侧解析后比较。
 // 有意不级联删 node_overrides/node_blocks/exam_history:保留期内节点复活时这些仍应生效;
 // 超期删除后若同 key 节点再次复活,旧 override/block 会重新生效(接受此语义)。
-func purgeExpiredStaleNodes(tx *sql.Tx, now time.Time, userID int64) error {
+func purgeExpiredStaleNodesScoped(tx *sql.Tx, now time.Time, scope string, scopeArgs []any) error {
 	cutoff := now.AddDate(0, 0, -StaleRetentionDays)
 
-	query := `SELECT node_key, last_seen FROM nodes WHERE stale = 1`
-	args := []any{}
-	if userID > 0 {
-		query += ` AND user_id = ?`
-		args = append(args, userID)
-	}
-	rows, err := tx.Query(query, args...)
+	rows, err := tx.Query(`SELECT node_key, last_seen FROM nodes WHERE stale = 1`+scope, scopeArgs...)
 	if err != nil {
 		return fmt.Errorf("query stale nodes: %w", err)
 	}
@@ -182,11 +249,8 @@ func purgeExpiredStaleNodes(tx *sql.Tx, now time.Time, userID int64) error {
 	for i, k := range expired {
 		delArgs[i] = k
 	}
-	delQuery := `DELETE FROM nodes WHERE node_key IN (` + placeholders + `)`
-	if userID > 0 {
-		delQuery += ` AND user_id = ?`
-		delArgs = append(delArgs, userID)
-	}
+	delQuery := `DELETE FROM nodes WHERE node_key IN (` + placeholders + `)` + scope
+	delArgs = append(delArgs, scopeArgs...)
 	if _, err := tx.Exec(delQuery, delArgs...); err != nil {
 		return fmt.Errorf("delete expired stale nodes: %w", err)
 	}
@@ -232,15 +296,48 @@ func (s *Store) UpdateNodeDetectionResult(userID int64, n *subscription.Node, mo
 	return nil
 }
 
-// pruneStaleNodeTags 删除当前所有 stale 节点的自动标签(在 SaveNodePool 事务内调用)。
-func pruneStaleNodeTags(tx *sql.Tx, userID int64) error {
-	query := `DELETE FROM node_tags WHERE node_key IN (SELECT node_key FROM nodes WHERE stale = 1`
-	args := []any{}
+// staleScope 组装 stale 行筛选子句:userID>0 限定用户分片,source 非空限定
+// 来源(机场)分片;两者皆空时返回空串(全表)。返回片段以 " AND " 开头,
+// 供拼接在已有 WHERE 条件之后。
+func staleScope(userID int64, source string) (string, []any) {
+	var conds []string
+	var args []any
 	if userID > 0 {
-		query += ` AND user_id = ?`
+		conds = append(conds, "user_id = ?")
 		args = append(args, userID)
 	}
-	query += `)`
+	if source != "" {
+		conds = append(conds, "source = ?")
+		args = append(args, source)
+	}
+	if len(conds) == 0 {
+		return "", nil
+	}
+	return " AND " + strings.Join(conds, " AND "), args
+}
+
+// shardStaleScope 分片 upsert 的 (属主, 来源) 筛选:与 staleScope 同形,但
+// user_id 谓词恒在——0 只命中未归属桶,不是"全表"(issue #143 跨用户隔离:
+// 同名机场的 stale 标记/标签修剪/超期清理不得越过属主边界)。
+func shardStaleScope(userID int64, source string) (string, []any) {
+	return " AND user_id = ? AND source = ?", []any{userID, source}
+}
+
+// pruneStaleNodeTags 删除当前所有 stale 节点的自动标签(在 SaveNodePool 事务内调用)。
+func pruneStaleNodeTags(tx *sql.Tx, userID int64) error {
+	scope, args := staleScope(userID, "")
+	return pruneStaleNodeTagsScoped(tx, scope, args)
+}
+
+// pruneStaleNodeTagsForSource 删除指定 (属主, 来源) 分片内 stale 节点的自动标签
+// (在 UpsertNodePoolShard 事务内调用)。user_id 谓词恒在(0 = 未归属桶)。
+func pruneStaleNodeTagsForSource(tx *sql.Tx, userID int64, source string) error {
+	scope, args := shardStaleScope(userID, source)
+	return pruneStaleNodeTagsScoped(tx, scope, args)
+}
+
+func pruneStaleNodeTagsScoped(tx *sql.Tx, scope string, args []any) error {
+	query := `DELETE FROM node_tags WHERE node_key IN (SELECT node_key FROM nodes WHERE stale = 1` + scope + `)`
 	if _, err := tx.Exec(query, args...); err != nil {
 		return fmt.Errorf("prune stale node tags: %w", err)
 	}

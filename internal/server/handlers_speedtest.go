@@ -21,7 +21,53 @@ const (
 	maxSpeedtestNodeKeyLen = 256
 	// maxSpeedtestClientInfoLen 客户端自报信息长度上限。
 	maxSpeedtestClientInfoLen = 512
+	// streamWriteSlack 流式端点自设写 deadline 时在业务时长外多给的收尾余量
+	// (连接建立、末帧 flush、客户端慢读的最后一块)。
+	streamWriteSlack = 10 * time.Second
+	// sseFrameWriteBudget 任务化 SSE 的逐帧写 deadline 步长(issue #143):
+	// 每写一帧把写 deadline 刷新为 now + 该值。任务墙钟随节点数伸缩、
+	// 且客户端可中途附加,静态总预算无法覆盖全程;逐帧刷新下空闲等待
+	// (无在飞写)不受 deadline 影响,而写阻塞(慢/死连接,内核缓冲已满)
+	// 在 deadline 处强制出错,handler 随即退出回收 goroutine。
+	sseFrameWriteBudget = 30 * time.Second
+	// bulkWriteBaseBudget 大块一次性响应(订阅输出/管理面大列表)的写 deadline
+	// 基础预算(issue #143):全局 WriteTimeout=0 后,/sub 等端点必须自带慢读
+	// 回收边界(改动前由全局 30s 强制回收,这是防线回补)。
+	bulkWriteBaseBudget = 30 * time.Second
+	// bulkWriteBytesPerStep 响应每超该字节数,写 deadline 在基础预算外加 1s
+	// (速率预算:Clash YAML 可达数 MB,固定预算对慢客户端不公平)。
+	bulkWriteBytesPerStep = 64 * 1024
+	// bulkWriteMaxBudget 大块响应写 deadline 上限(慢读攻击的回收硬边界)。
+	bulkWriteMaxBudget = 120 * time.Second
 )
+
+// setWriteDeadline 为流式/SSE 端点自设连接写 deadline(issue #143):全局
+// WriteTimeout=0,长连接必须自带边界——写超时强制回收慢/死连接,
+// 防 handler goroutine 残留。底层 writer 不支持 deadline
+// (如测试里的 httptest.ResponseRecorder)时跳过;其余错误只记日志,不阻断响应。
+func (s *Server) setWriteDeadline(w http.ResponseWriter, budget time.Duration) {
+	err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(budget))
+	if err != nil && !errors.Is(err, http.ErrNotSupported) {
+		s.logger.Warn("set write deadline failed", "error", err)
+	}
+}
+
+// bulkWriteBudget 大块一次性响应的写 deadline 预算:基础 30s + 每 64KB 加 1s,
+// 封顶 120s(见常量注释)。
+func bulkWriteBudget(size int) time.Duration {
+	budget := bulkWriteBaseBudget + time.Duration(size/bulkWriteBytesPerStep)*time.Second
+	if budget > bulkWriteMaxBudget {
+		budget = bulkWriteMaxBudget
+	}
+	return budget
+}
+
+// setWriteDeadlineForSize 为一次写全量的大响应端点(/sub 订阅输出、管理面大列表)
+// 按响应大小自设写 deadline(issue #143):全局 WriteTimeout=0,w.Write 一次写
+// 全量无 deadline 时,慢读攻击者可无限期钉住 handler goroutine。
+func (s *Server) setWriteDeadlineForSize(w http.ResponseWriter, size int) {
+	s.setWriteDeadline(w, bulkWriteBudget(size))
+}
 
 // handleSpeedtestPing 延迟探测:极小响应体,浏览器多次小请求算 RTT/抖动。
 func (s *Server) handleSpeedtestPing(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +77,8 @@ func (s *Server) handleSpeedtestPing(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseDownloadDuration 解析下行时长参数(duration_ms),钳制到 [Min, Max]。
-// 上限 MaxDownloadDuration 保证单次请求在全局 30s WriteTimeout 内结束。
+// 上限 MaxDownloadDuration 与 handler 自设的写 deadline(时长 + streamWriteSlack)
+// 配套,保证单次请求有界(全局 WriteTimeout=0,见 issue #143)。
 func parseDownloadDuration(r *http.Request) time.Duration {
 	ms, err := strconv.Atoi(r.URL.Query().Get("duration_ms"))
 	if err != nil {
@@ -47,8 +94,9 @@ func parseDownloadDuration(r *http.Request) time.Duration {
 	return d
 }
 
-// handleSpeedtestDownload 下行发流:不可压缩随机字节 + 显式禁压缩,
-// 时长/字节双上限,单次请求必在 30s 全局 WriteTimeout 内结束。
+// handleSpeedtestDownload 下行发流:不可压缩随机字节 + 显式禁压缩,时长/字节双上限。
+// 全局 WriteTimeout=0(issue #143):自设写 deadline = 发流时长 + 收尾余量,
+// 慢/死连接在 deadline 处被强制回收,handler 不残留。
 // 不设 Content-Length:chunked 流式下发,浏览器按到达节奏实时测速。
 func (s *Server) handleSpeedtestDownload(w http.ResponseWriter, r *http.Request) {
 	block, err := speedtest.NewRandomBlock(speedtest.DownloadBlockSize)
@@ -58,6 +106,7 @@ func (s *Server) handleSpeedtestDownload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	duration := parseDownloadDuration(r)
+	s.setWriteDeadline(w, duration+streamWriteSlack)
 
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")

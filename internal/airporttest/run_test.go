@@ -62,7 +62,9 @@ type FakeStore struct {
 	AirportURLErr error
 	// AirportSourceType 预置 GetAirportSourceType 返回;空串按拉取型处理(兼容语义)。
 	AirportSourceType string
-	t                 *testing.T
+	// AirportUserID 预置 GetAirportUserID 返回(分片 upsert 属主透传断言用)。
+	AirportUserID int64
+	t             *testing.T
 }
 
 func NewFakeStore(t *testing.T) *FakeStore {
@@ -108,6 +110,11 @@ func (s *FakeStore) GetAirportURL(ctx context.Context, airportID int64) (string,
 // GetAirportSourceType 返回预置的来源类型(空串 = 拉取型,与生产兼容语义一致)。
 func (s *FakeStore) GetAirportSourceType(ctx context.Context, airportID int64) (string, error) {
 	return s.AirportSourceType, s.AirportURLErr
+}
+
+// GetAirportUserID 返回预置的属主 user_id(分片 upsert 隔离透传,issue #143)。
+func (s *FakeStore) GetAirportUserID(ctx context.Context, airportID int64) (int64, error) {
+	return s.AirportUserID, s.AirportURLErr
 }
 
 // RunCount 并发安全地读已建行数(任务化取消测试轮询用)。

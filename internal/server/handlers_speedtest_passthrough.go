@@ -81,6 +81,9 @@ func (s *Server) handleSpeedtestProxyDownload(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		return // resolveAndValidateNode 已写错误响应
 	}
+	// 全局 WriteTimeout=0(issue #143):流式转发自设写 deadline = 透传时长上限 + 收尾余量,
+	// 慢/死连接在 deadline 处被强制回收,handler goroutine 不残留。
+	s.setWriteDeadline(w, proxySpeedtestMaxDuration+streamWriteSlack)
 
 	// 经节点(或直连)构造 client,GET Cloudflare
 	client, err := s.detectionService.ProxyHTTPClient(node, proxySpeedtestTimeout)
@@ -217,6 +220,8 @@ func (s *Server) handleSpeedtestProxyUpload(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		return
 	}
+	// 全局 WriteTimeout=0(issue #143):上行转发自设写 deadline = 透传时长上限 + 收尾余量。
+	s.setWriteDeadline(w, proxySpeedtestMaxDuration+streamWriteSlack)
 
 	// buffer 浏览器 body 后带显式 Content-Length 转发:Cloudflare __up 需已知长度,
 	// 且避免浏览器 duplex streaming(chrome HTTP/1.1 拒发)时 Go 客户端以 chunked 转发的坑。

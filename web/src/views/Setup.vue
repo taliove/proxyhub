@@ -66,14 +66,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import AuthShell from '@/components/AuthShell.vue'
 import client from '@/api/client'
+import { getStatus } from '@/api/status'
 
 const router = useRouter()
 const step = ref(0)
+
+onMounted(async () => {
+  // An initialized system must not offer /setup again (backend already
+  // rejects a second setup with 400); bounce to login up front.
+  try {
+    const status = await getStatus()
+    if (status.initialized) {
+      ElMessage.warning('系统已初始化')
+      router.push('/login')
+    }
+  } catch {
+    // Probe failure is best-effort: first-time setup must not be blocked by
+    // a flaky /status call; a real duplicate submit still hits the 400 below.
+  }
+})
 
 const form = reactive({
   username: '',
@@ -104,18 +120,25 @@ const nextStep = async () => {
     step.value++
   } else if (step.value === 1) {
     try {
-      await client.post('/setup', {
-        username: form.username,
-        password: form.password,
-        security: {
-          ban_threshold: form.banThreshold,
-          ban_duration: `${form.banDuration}h`
-        }
-      })
+      // skipErrorToast: this view owns the wording (400 = already
+      // initialized), the interceptor must not double-toast.
+      await client.post(
+        '/setup',
+        {
+          username: form.username,
+          password: form.password,
+          security: {
+            ban_threshold: form.banThreshold,
+            ban_duration: `${form.banDuration}h`
+          }
+        },
+        { skipErrorToast: true }
+      )
       step.value++
       setTimeout(() => router.push('/login'), 2000)
-    } catch {
-      ElMessage.error('初始化失败')
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      ElMessage.error(status === 400 ? '系统已初始化' : '初始化失败')
     }
   }
 }

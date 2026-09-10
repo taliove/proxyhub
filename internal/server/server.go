@@ -247,6 +247,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS fs.FS, log
 	healthChecker := NewHealthCheckAdapter(samplingChecker)
 	poolOps := poolops.NewStoreAdapter(st, region.NewFromStore(st, logger))
 	s.testOrchestrator = airporttest.NewOrchestratorWithPoolOps(storeAdapter, healthChecker, nodes, poolOps)
+	s.testOrchestrator.SetFetchTimeouts(cfg.Fetch.ConnectTimeout, cfg.Fetch.ReadTimeout)
 
 	// 机场测试任务运行时(issue 0025:迁入 jobs,ADR 0019 收口):
 	// kind 包装 Orchestrator,不可续跑(重启 interrupted);取消=ctx 中断,
@@ -257,7 +258,7 @@ func New(cfg *config.Config, st *store.Store, nodes NodeSource, webFS fs.FS, log
 			logger.Warn("airport test job persistence", "error", err)
 		}),
 	)
-	subFetcher := subscription.NewFetcher(30 * time.Second)
+	subFetcher := subscription.NewFetcher(cfg.Fetch.ConnectTimeout, cfg.Fetch.ReadTimeout)
 	s.airportTestJobs.Register(airporttest.NewJobKind(
 		s.testOrchestrator,
 		storeAdapter,
@@ -1142,6 +1143,10 @@ func (s *Server) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	// profile 命名头(issue #38):与 Content-Type 同处,即守卫链之后、
 	// 成功下发路径;404/429/403 各守卫出口绝不经过这里。
 	setSubscriptionProfileHeaders(w, ep)
+	// 公开面一次写全量(Clash YAML 可达数 MB):按响应大小预算化写 deadline
+	// (issue #143)——全局 WriteTimeout=0,慢读连接没有 deadline 会无限期
+	// 钉住 handler goroutine。
+	s.setWriteDeadlineForSize(w, len(data))
 	w.Write(data)
 }
 
@@ -2126,7 +2131,9 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		lastUpdateStr = lastUpdate.Format(time.RFC3339)
 	}
 
-	writeJSON(w, map[string]any{
+	// page_size 无上限(全量拉取响应可达数 MB):同 /sub 一次写全量,
+	// 按体大小预算化写 deadline(issue #143 慢读回收边界)。
+	s.writeJSONWithDeadline(w, map[string]any{
 		"last_update": lastUpdateStr,
 		"nodes":       views,
 		"total":       res.Total,
@@ -2701,7 +2708,9 @@ func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
 	// 预览响应携带完整订阅内容(含节点凭证分享链接),与 /sub 成功路径同立场:
 	// 带凭证的响应永不进中间缓存(issue #121/#132)。
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, map[string]any{
+	// content 内嵌完整订阅输出(可达数 MB):同 /sub 一次写全量,
+	// 按体大小预算化写 deadline(issue #143 慢读回收边界)。
+	s.writeJSONWithDeadline(w, map[string]any{
 		"format": format,
 		"count":  len(nodes),
 		// 预览展示的是已过滤后的节点，均未被屏蔽，故传空屏蔽集
@@ -2713,6 +2722,22 @@ func (s *Server) handleEndpointPreview(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(v)
+}
+
+// writeJSONWithDeadline 大块 JSON 响应(节点列表全量拉取/订阅预览)先序列化,
+// 按体大小预算化写 deadline(issue #143:全局 WriteTimeout=0,慢读连接没有
+// deadline 会无限期钉住 handler goroutine),再一次写全量。
+// 序列化失败显式回 500(writeJSON 的 Encode 错误被吞,此处不沿用)。
+func (s *Server) writeJSONWithDeadline(w http.ResponseWriter, v any) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		s.logger.Error("marshal json response failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.setWriteDeadlineForSize(w, len(body))
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write(body)
 }
 
 // writeJSONStatus 写入带指定状态码的 JSON 响应（用于错误场景回传结构化原因）。

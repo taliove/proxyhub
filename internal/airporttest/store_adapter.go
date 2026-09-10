@@ -44,6 +44,21 @@ func (a *StoreAdapter) GetAirportSourceType(_ context.Context, airportID int64) 
 	return airport.SourceType, nil
 }
 
+// GetAirportUserID 按 airport_id 现读归一属主(池空补救的分片 upsert 按
+// (机场名, 属主) 隔离,issue #143);未归属行经 store.ResolveOwnerUserID
+// 归一到首个超管(与 aggregator.ownerUserID 同一规则);
+// 机场已删(store.ErrNotFound)映射为 ErrAirportGone。
+func (a *StoreAdapter) GetAirportUserID(_ context.Context, airportID int64) (int64, error) {
+	airport, err := a.s.GetAirportByID(airportID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return 0, ErrAirportGone
+		}
+		return 0, fmt.Errorf("query airport: %w", err)
+	}
+	return a.s.ResolveOwnerUserID(airport.UserID), nil
+}
+
 // CreateTestRun persists a test run.
 func (a *StoreAdapter) CreateTestRun(ctx context.Context, run *TestRun) (int64, error) {
 	storeRun := &store.AirportTestRun{

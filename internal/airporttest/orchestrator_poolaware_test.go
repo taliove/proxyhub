@@ -202,6 +202,41 @@ func TestRunTestWithPool_PoolEmpty_URLReachable(t *testing.T) {
 	}
 }
 
+// TestRunTestWithPool_UpsertPassesAirportOwner 池空补救的 upsert 必须透传机场
+// 归一属主(issue #143 跨用户隔离):分片 upsert 按 (机场名, 属主) 双重限定,
+// 属主缺失会让同名机场的另一用户节点被误标 stale/误清理。
+func TestRunTestWithPool_UpsertPassesAirportOwner(t *testing.T) {
+	store := NewFakeStore(t)
+	store.AirportUserID = 7
+	checker := &FakeHealthChecker{}
+	writer := &FakePoolWriter{}
+	mockPoolOps := &MockPoolOperations{ExistingPool: []*subscription.Node{}}
+	orch := NewOrchestratorWithPoolOps(store, checker, writer, mockPoolOps)
+
+	run := &TestRun{
+		ID:        1,
+		AirportID: 1,
+		CreatedAt: time.Now(),
+		Status:    StatusDiagnosing,
+	}
+	store.Runs[1] = run
+
+	diagResult := &DiagnosticResult{HTTPStatus: 200, NodeCount: 1}
+	fetchedNodes := []*subscription.Node{
+		{Name: "HK-1", Server: "1.1.1.1", Port: 443, Region: "HK", Source: "TestAirport"},
+	}
+
+	if _, err := orch.RunTest(context.Background(), run, "TestAirport", fetchedNodes, diagResult, nil); err != nil {
+		t.Fatalf("RunTest failed: %v", err)
+	}
+	if !mockPoolOps.UpsertCalled {
+		t.Fatal("expected pool upsert to be called for empty pool + URL reachable")
+	}
+	if mockPoolOps.UpsertUserID != 7 {
+		t.Errorf("upsert userID = %d, want airport owner 7", mockPoolOps.UpsertUserID)
+	}
+}
+
 // TestRunTestWithPool_PoolEmpty_URLUnreachable tests Branch B: pool empty, URL unreachable.
 // Expected: run fails with clear error message.
 func TestRunTestWithPool_PoolEmpty_URLUnreachable(t *testing.T) {
@@ -263,6 +298,8 @@ type MockPoolOperations struct {
 	ExistingPool  []*subscription.Node
 	UpsertCalled  bool
 	UpsertedNodes []*subscription.Node
+	// UpsertUserID 记录 UpsertAirportNodes 收到的属主(隔离透传断言,issue #143)。
+	UpsertUserID int64
 }
 
 func (m *MockPoolOperations) LoadPoolBySource(source string) ([]*subscription.Node, error) {
@@ -275,8 +312,9 @@ func (m *MockPoolOperations) LoadPoolBySource(source string) ([]*subscription.No
 	return result, nil
 }
 
-func (m *MockPoolOperations) UpsertAirportNodes(_ context.Context, airportName string, nodes []*subscription.Node) error {
+func (m *MockPoolOperations) UpsertAirportNodes(_ context.Context, airportName string, userID int64, nodes []*subscription.Node) error {
 	m.UpsertCalled = true
+	m.UpsertUserID = userID
 	m.UpsertedNodes = nodes
 	return nil
 }

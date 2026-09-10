@@ -42,7 +42,7 @@ func (f *fakePoolOps) LoadPoolBySource(_ string) ([]*subscription.Node, error) {
 	return f.nodes, nil
 }
 
-func (f *fakePoolOps) UpsertAirportNodes(_ context.Context, _ string, fetched []*subscription.Node) error {
+func (f *fakePoolOps) UpsertAirportNodes(_ context.Context, _ string, _ int64, fetched []*subscription.Node) error {
 	f.upserted = fetched
 	f.nodes = append(f.nodes, fetched...)
 	return nil
@@ -83,7 +83,7 @@ func replaceAirportTestRuntime(t *testing.T, srv *Server, st *store.Store, check
 	mgr.Register(airporttest.NewJobKind(
 		orch,
 		airporttest.NewStoreAdapter(st),
-		airporttest.SubscriptionFetch(subscription.NewFetcher(5*time.Second)),
+		airporttest.SubscriptionFetch(subscription.NewFetcher(5*time.Second, 5*time.Second)),
 		func(key string) int64 { return srv.findRunningJobID(airporttest.JobKindName, key) },
 	))
 	srv.airportTestJobs = mgr

@@ -32,7 +32,7 @@ func TestFetch_ErrorNeverLeaksSubscriptionURL(t *testing.T) {
 			// 连接被拒:*url.Error.Error() 原生会拼 "Get \"<url>\": dial ...",
 			// 修复后只允许出现 dial 原因。
 			name: "dial failure",
-			f:    NewFetcher(2 * time.Second),
+			f:    NewFetcher(2*time.Second, 2*time.Second),
 			url:  tokenURL,
 		},
 		{
@@ -47,7 +47,7 @@ func TestFetch_ErrorNeverLeaksSubscriptionURL(t *testing.T) {
 		{
 			// 配置 URL 本身畸形:host 含空格,url.Parse 报错会引用原始输入串。
 			name: "malformed configured url",
-			f:    NewFetcher(2 * time.Second),
+			f:    NewFetcher(2*time.Second, 2*time.Second),
 			url:  "http://exa mple.com/subscribe?token=" + leakFakeToken,
 		},
 	}
@@ -76,7 +76,7 @@ func TestFetchContext_CancelErrorNeverLeaksSubscriptionURL(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 立即取消:client.Do 返回 *url.Error 包装 context.Canceled
 
-	f := NewFetcher(5 * time.Second)
+	f := NewFetcher(5*time.Second, 5*time.Second)
 	_, _, err := f.FetchContext(ctx, "测试机场", tokenURL)
 	if err == nil {
 		t.Fatal("expected error on cancelled ctx")

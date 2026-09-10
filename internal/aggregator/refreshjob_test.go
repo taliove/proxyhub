@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -94,6 +95,25 @@ func waitRefreshRun(t *testing.T, st *store.Store, jobID int64) *store.RefreshRu
 	}
 	t.Fatalf("no refresh run linked to job %d", jobID)
 	return nil
+}
+
+// waitRefreshEvent 轮询 refresh run 事件流直到出现含 substr 的事件
+// (runLog 事件在 Run goroutine 里异步落库,用作确定性时序信号)。
+func waitRefreshEvent(t *testing.T, st *store.Store, runID int64, substr string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		events, err := st.ListRefreshEvents(runID)
+		if err == nil {
+			for _, ev := range events {
+				if strings.Contains(ev.Message, substr) {
+					return
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("no refresh event containing %q for run %d", substr, runID)
 }
 
 func TestStartRefreshJob_AttachesAndLinksRun(t *testing.T) {
@@ -195,9 +215,21 @@ func TestStartRefreshJob_AirportLevelConflict(t *testing.T) {
 func TestCancelRefresh_InterruptsAndKeepsPartial(t *testing.T) {
 	agg, st := newTestAggregator(t)
 	release := make(chan struct{})
-	srv := gatedSubscriptionServer(t, release)
-	if _, err := st.CreateAirport("慢机场", srv.URL); err != nil {
+	releaseNow := releaseOnce(release)
+	defer releaseNow()
+
+	// 慢机场闸门阻塞(取消时在途拉取经 ctx 立即中断,issue #143);快机场秒回。
+	// 并行拉取(两机场同时在飞),快机场完成不受慢机场阻塞影响。
+	gated := gatedSubscriptionServer(t, release)
+	if _, err := st.CreateAirport("慢机场", gated.URL); err != nil {
 		t.Fatalf("CreateAirport() error = %v", err)
+	}
+	fast := delayedSubscriptionServer(t, 0, "FAST")
+	if _, err := st.CreateAirport("快机场", fast.URL); err != nil {
+		t.Fatalf("CreateAirport() error = %v", err)
+	}
+	if err := st.SetSetting("fetch_concurrency", "2"); err != nil {
+		t.Fatalf("SetSetting() error = %v", err)
 	}
 
 	jobID, key, _, err := agg.StartRefreshJob(store.RefreshTriggerManual)
@@ -206,10 +238,12 @@ func TestCancelRefresh_InterruptsAndKeepsPartial(t *testing.T) {
 	}
 	run := waitRefreshRun(t, st, jobID)
 
+	// 确定性时序:快机场拉取成功事件落库后才取消(此时慢机场必在闸门上)。
+	waitRefreshEvent(t, st, run.ID, "拉取成功")
+
 	if !agg.CancelRefresh(key) {
 		t.Fatal("CancelRefresh() = false, want true (job running)")
 	}
-	close(release) // 放行在途拉取,让任务收口
 
 	if status := waitJobStatus(t, st, jobID); status != jobs.StatusCancelled {
 		t.Errorf("job status = %s, want cancelled", status)
@@ -224,7 +258,8 @@ func TestCancelRefresh_InterruptsAndKeepsPartial(t *testing.T) {
 		t.Errorf("refresh run status = %s, want cancelled", run.Status)
 	}
 
-	// 取消不回滚:已拉取部分照常入池(1 个节点 + 自建 0)
+	// 取消不回滚:快机场已拉取的 1 个节点照常入池;慢机场在途拉取被中断、无数据,
+	// 其(不存在的)节点保持原状不标 stale。
 	if got := len(agg.Nodes()); got != 1 {
 		t.Errorf("pool size = %d, want 1 (partial fetch kept)", got)
 	}

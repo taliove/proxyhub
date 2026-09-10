@@ -2,6 +2,7 @@ package airporttest
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/taliove/proxyhub/internal/poolops"
@@ -26,11 +27,11 @@ const (
 
 // DiagnosticResult contains the outcome of the diagnostic phase.
 type DiagnosticResult struct {
-	HTTPStatus     int               `json:"http_status"`
-	DurationMs     int64             `json:"duration_ms"`
-	NodeCount      int               `json:"node_count"`
-	ProtocolCounts map[string]int    `json:"protocol_counts"`
-	ParseFailures  int               `json:"parse_failures"`
+	HTTPStatus     int            `json:"http_status"`
+	DurationMs     int64          `json:"duration_ms"`
+	NodeCount      int            `json:"node_count"`
+	ProtocolCounts map[string]int `json:"protocol_counts"`
+	ParseFailures  int            `json:"parse_failures"`
 	// ManualSource 手动机场标记(见 CONTEXT.md「手动机场」):无订阅 URL 可拉,
 	// 诊断段整体为 N/A(显式标记,区别于"拉取失败"的 HTTPStatus=0);
 	// 评分走"URL 不可达且池有节点"权重重归一(现成语义)。
@@ -39,15 +40,15 @@ type DiagnosticResult struct {
 
 // TestRun represents a single test execution for an airport.
 type TestRun struct {
-	ID             int64             `json:"id"`
-	AirportID      int64             `json:"airport_id"`
-	CreatedAt      time.Time         `json:"created_at"`
-	SampleParams   string            `json:"sample_params"`
-	IsFull         bool              `json:"is_full"`
-	Status         RunStatus         `json:"status"`
-	OverallScore   *float64          `json:"overall_score,omitempty"`
-	DimensionsJSON string            `json:"dimensions_json"`
-	ErrorMessage   string            `json:"error_message,omitempty"`
+	ID             int64     `json:"id"`
+	AirportID      int64     `json:"airport_id"`
+	CreatedAt      time.Time `json:"created_at"`
+	SampleParams   string    `json:"sample_params"`
+	IsFull         bool      `json:"is_full"`
+	Status         RunStatus `json:"status"`
+	OverallScore   *float64  `json:"overall_score,omitempty"`
+	DimensionsJSON string    `json:"dimensions_json"`
+	ErrorMessage   string    `json:"error_message,omitempty"`
 	// JobID 关联的 jobs 表任务 id(任务化后由 kind 建行时回填;
 	// 0 = 任务化前旧记录或未关联,对齐 refresh_runs.job_id 口径)。
 	JobID int64 `json:"job_id"`
@@ -59,6 +60,14 @@ type Orchestrator struct {
 	healthChecker HealthChecker
 	poolWriter    PoolWriter
 	poolOps       PoolOperations // for pool-aware logic
+	// fetchConnectTimeout/fetchReadTimeout 遗留同步诊断路径(RunDiagnostic)
+	// 的订阅拉取超时拆分(issue #143);<=0 时取 subscription 包默认值。
+	fetchConnectTimeout time.Duration
+	fetchReadTimeout    time.Duration
+	// fetchClient RunDiagnostic 的订阅拉取 client:Orchestrator 级复用,
+	// 连接池(keep-alive)跨多次诊断生效,不再每次新建 Transport(issue #143)。
+	// 随 SetFetchTimeouts 重建(建连超时是 Transport 级配置)。
+	fetchClient *http.Client
 }
 
 // HealthChecker abstracts health check operations (for testing).
@@ -96,24 +105,41 @@ type Store interface {
 	// store.AirportSourceManual);手动机场据此跳过 URL 拉取(诊断段 N/A)。
 	// 机场已删返回 ErrAirportGone;空串按拉取型处理(兼容旧数据)。
 	GetAirportSourceType(ctx context.Context, airportID int64) (string, error)
+	// GetAirportUserID 按 airport_id 读归一属主(分片 upsert 的 user_id 隔离,
+	// issue #143):行已带 user_id 直接用,未归属(0)归一到首个超管
+	// (与 aggregator.ownerUserID 同一归一规则)。机场已删返回 ErrAirportGone。
+	GetAirportUserID(ctx context.Context, airportID int64) (int64, error)
 }
 
 // NewOrchestrator creates a new test orchestrator.
 func NewOrchestrator(store Store, healthChecker HealthChecker, poolWriter PoolWriter) *Orchestrator {
-	return &Orchestrator{
+	o := &Orchestrator{
 		store:         store,
 		healthChecker: healthChecker,
 		poolWriter:    poolWriter,
 		poolOps:       nil, // will be set by handler wiring
 	}
+	o.fetchClient = subscription.NewFetchClient(o.fetchConnectTimeout)
+	return o
 }
 
 // NewOrchestratorWithPoolOps creates orchestrator with pool operations (for testing and pool-aware mode).
 func NewOrchestratorWithPoolOps(store Store, healthChecker HealthChecker, poolWriter PoolWriter, poolOps PoolOperations) *Orchestrator {
-	return &Orchestrator{
+	o := &Orchestrator{
 		store:         store,
 		healthChecker: healthChecker,
 		poolWriter:    poolWriter,
 		poolOps:       poolOps,
 	}
+	o.fetchClient = subscription.NewFetchClient(o.fetchConnectTimeout)
+	return o
+}
+
+// SetFetchTimeouts 配置 RunDiagnostic 的订阅拉取超时(建连/响应头与体读取
+// 分离,issue #143);<=0 的分量沿用 subscription 包默认(15s/120s)。
+// 建连超时是 Transport 级配置,随之重建复用中的 fetchClient。
+func (o *Orchestrator) SetFetchTimeouts(connectTimeout, readTimeout time.Duration) {
+	o.fetchConnectTimeout = connectTimeout
+	o.fetchReadTimeout = readTimeout
+	o.fetchClient = subscription.NewFetchClient(connectTimeout)
 }

@@ -160,9 +160,9 @@ func TestRefreshFetchDiags_InsertAndList(t *testing.T) {
 	}
 
 	diags := []*RefreshFetchDiag{
-		{RunID: run.ID, Airport: "机场A", AirportID: 1, HTTPStatus: 200, DurationMs: 321, NodeCount: 12, ParseFailures: 3},
+		{RunID: run.ID, Airport: "机场A", AirportID: 1, HTTPStatus: 200, DurationMs: 321, NodeCount: 12, ParseFailures: 3, BodyBytes: 4096},
 		{RunID: run.ID, Airport: "机场B", AirportID: 2, HTTPStatus: 503, DurationMs: 88, Error: "fetch subscription: status 503"},
-		{RunID: run.ID, Airport: "机场C", AirportID: 3, HTTPStatus: 0, DurationMs: 1500, Error: "fetch subscription: dial tcp: connection refused"},
+		{RunID: run.ID, Airport: "机场C", AirportID: 3, HTTPStatus: 0, DurationMs: 1500, TimedOut: true, Error: "fetch subscription: context deadline exceeded"},
 	}
 	for _, d := range diags {
 		if err := s.InsertRefreshFetchDiag(d); err != nil {
@@ -188,11 +188,17 @@ func TestRefreshFetchDiags_InsertAndList(t *testing.T) {
 	if a.HTTPStatus != 200 || a.DurationMs != 321 || a.NodeCount != 12 || a.ParseFailures != 3 || a.Error != "" {
 		t.Errorf("diag A = %+v", a)
 	}
+	if a.BodyBytes != 4096 || a.TimedOut {
+		t.Errorf("diag A BodyBytes/TimedOut = %d/%v, want 4096/false", a.BodyBytes, a.TimedOut)
+	}
 	if got[1].HTTPStatus != 503 || got[1].Error == "" {
 		t.Errorf("diag B = %+v", got[1])
 	}
 	if got[2].HTTPStatus != 0 {
 		t.Errorf("diag C HTTPStatus = %d, want 0", got[2].HTTPStatus)
+	}
+	if !got[2].TimedOut {
+		t.Errorf("diag C TimedOut = false, want true (issue #143 扩容列)")
 	}
 
 	// 其他 run 不可见

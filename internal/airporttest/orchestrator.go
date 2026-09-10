@@ -26,16 +26,25 @@ func (o *Orchestrator) RunDiagnostic(ctx context.Context, airportID int64, airpo
 
 	start := time.Now()
 
+	// 与刷新拉取同一套超时拆分(issue #143):建连/响应头由 transport 控制,
+	// 体读取总时长由 ctx 截止控制,不再用 http.Client.Timeout 一刀切。
+	// 顺带绑定调用方 ctx:任务取消即中断拉取。
+	readTimeout := o.fetchReadTimeout
+	if readTimeout <= 0 {
+		readTimeout = subscription.DefaultReadTimeout
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
 	// Fetch raw subscription
-	req, err := http.NewRequest(http.MethodGet, airportURL, nil)
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, airportURL, nil)
 	if err != nil {
 		// 订阅 URL 含 token,parse 错误会引用原始输入串,落库前剥壳(见 subscription.StripURLError)。
 		return o.persistFailedRun(ctx, run, start, fmt.Errorf("build request: %w", subscription.StripURLError(err)))
 	}
 	req.Header.Set("User-Agent", subscriptionUserAgent)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := o.fetchClient.Do(req)
 	if err != nil {
 		return o.persistFailedRun(ctx, run, start, fmt.Errorf("fetch failed: %w", subscription.StripURLError(err)))
 	}
@@ -45,10 +54,16 @@ func (o *Orchestrator) RunDiagnostic(ctx context.Context, airportID int64, airpo
 		return o.persistFailedRun(ctx, run, start, fmt.Errorf("HTTP %d", resp.StatusCode))
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	// 体上限与 fetcher 同口径(issue #143):多读 1 字节判定超限,
+	// 超限即失败(ErrSubscriptionTooLarge),不再无上限读裸 body。
+	body, err := io.ReadAll(io.LimitReader(resp.Body, subscription.DefaultMaxBodyBytes+1))
 	elapsed := time.Since(start)
 	if err != nil {
 		return o.persistFailedRun(ctx, run, start, fmt.Errorf("read body: %w", err))
+	}
+	if int64(len(body)) > subscription.DefaultMaxBodyBytes {
+		return o.persistFailedRun(ctx, run, start, fmt.Errorf("read body: %w: %d bytes over %d limit",
+			subscription.ErrSubscriptionTooLarge, len(body), subscription.DefaultMaxBodyBytes))
 	}
 
 	// 整体 base64 识别与解码收敛到 subscription.DecodeSubscription(三处共用)
@@ -182,8 +197,13 @@ func (o *Orchestrator) RunTest(ctx context.Context, run *TestRun, airportName st
 				}
 				return run, nil
 			}
-			// URL通且有节点:upsert入池
-			if err := o.poolOps.UpsertAirportNodes(ctx, airportName, fetchedNodes); err != nil {
+			// URL通且有节点:upsert入池。属主归一(issue #143 跨用户隔离):
+			// 分片 upsert 按 (机场名, 属主) 双重限定,两用户同名机场互不影响。
+			ownerID, err := o.store.GetAirportUserID(ctx, run.AirportID)
+			if err != nil {
+				return nil, fmt.Errorf("resolve airport owner: %w", err)
+			}
+			if err := o.poolOps.UpsertAirportNodes(ctx, airportName, ownerID, fetchedNodes); err != nil {
 				return nil, fmt.Errorf("upsert airport nodes: %w", err)
 			}
 			nodesToTest = fetchedNodes
